@@ -3,7 +3,8 @@
 import { LspClient, fileUri, initializeParams } from "./client.mjs";
 import { endPosition, languageId, pickPositions, readText, rel } from "./project.mjs";
 
-// Typed at the end of the first file, one character per didChange, with a completion after each.
+// Typed at the end of the first file, one character per didChange (the diff session asks for
+// a completion after each; bench.mjs types it at a fixed speed).
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
 export async function startServer(cmd, root, { stderr } = {}) {

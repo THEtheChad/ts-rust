@@ -1,15 +1,22 @@
-// Concurrent-load benchmark. An editor session typing at a fixed speed in one open file:
-// every keystroke sends a didChange, a completion, and re-pulls diagnostics for all open
-// files plus semantic tokens and inlay hints for the edited one (what VS Code does with
-// interFileDependencies), cancelling the previous keystroke's background pulls still in
-// flight. Every third keystroke also hovers in another open file.
-// Concurrent mode sends on a timer and never waits; one-at-a-time mode sends the same
-// requests and awaits each answer before sending the next.
+// Concurrent-load benchmark: an editor session typing at a fixed speed (--interval ms per
+// key) at the end of the first open file, sending what VS Code sends:
+// - every key: didChange, and a diagnostics pull for the edited file;
+// - a completion where VS Code asks for one: after "." and at the start of a word (it
+//   filters the list itself while the user types the rest of the word);
+// - every DEBOUNCE ms of typing: diagnostics pulls for the other open files, and semantic
+//   tokens and inlay hints for the edited file;
+// - every HOVER_EVERY keys: a hover in another open file (the mouse).
+// A new request of a kind cancels the previous one of that kind still in flight, as the
+// editor does. Concurrent mode sends on the timer and never waits; one-at-a-time mode sends
+// the same requests and awaits each answer before sending the next.
 import { endPosition, pickPositions } from "./project.mjs";
 import { TYPED, append, openFiles, removeTail, startServer } from "./session.mjs";
 
-const ROUNDS = 2;
+const ROUNDS = 4;
+const DEBOUNCE = 500;
+const HOVER_EVERY = 8;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isIdent = (ch) => /[\w$]/.test(ch ?? "");
 
 // pulls: "all", "no-diagnostics" (what completions would wait for if diagnostics ran off the
 // dispatch thread) or "none" (completions and hovers alone).
@@ -26,54 +33,47 @@ export async function runBench(cmd, root, files, { serial, interval, pulls: whic
     // Warm-up, not measured: load the project and check every open file once.
     for (const d of docs) await client.request("textDocument/diagnostic", { textDocument: { uri: d.uri } });
     const edited = docs[0];
+    const td = { uri: edited.uri };
     const other = docs[1] ?? docs[0];
     const hoverAt = pickPositions(other.text, 3).idents[1] ?? { line: 0, character: 0 };
     await client.request("textDocument/hover", { textDocument: { uri: other.uri }, position: hoverAt });
 
-    let background = [];
+    const inFlight = new Map(); // kind or uri -> pending request, for editor-style cancellation
+    const debounceKeys = Math.max(1, Math.round(DEBOUNCE / interval));
     let key = 0;
     for (let round = 0; round < ROUNDS; round++) {
       for (let i = 0; i < TYPED.length; i++, key++) {
-        const position = append(client, edited, TYPED[i]);
-        const td = { uri: edited.uri };
-        const requests = [];
-        if (TYPED[i] !== "\n") {
-          const context = TYPED[i] === "." ? { triggerKind: 2, triggerCharacter: "." } : { triggerKind: 1 };
-          requests.push(() => track("completion", client.request("textDocument/completion", { textDocument: td, position, context })));
+        const ch = TYPED[i];
+        const position = append(client, edited, ch);
+        const sends = []; // [slot, kind, () => promise]
+        if (ch === ".") sends.push(["completion", "completion", () => client.request("textDocument/completion", { textDocument: td, position, context: { triggerKind: 2, triggerCharacter: "." } })]);
+        else if (/[A-Za-z_$]/.test(ch) && !isIdent(TYPED[i - 1]) && TYPED[i - 1] !== ".") {
+          sends.push(["completion", "completion", () => client.request("textDocument/completion", { textDocument: td, position, context: { triggerKind: 1 } })]);
         }
-        if (key % 3 === 0) {
-          requests.push(() => track("hover", client.request("textDocument/hover", { textDocument: { uri: other.uri }, position: hoverAt })));
-        }
-        let pulls = [
-          ...docs.map((d) => () => client.request("textDocument/diagnostic", { textDocument: { uri: d.uri } })),
-          () => client.request("textDocument/semanticTokens/full", { textDocument: td }),
-          () => client.request("textDocument/inlayHint", { textDocument: td, range: { start: { line: 0, character: 0 }, end: endPosition(edited.text) } }),
-        ];
-        let kinds = [...docs.map(() => "diagnostic"), "semanticTokens", "inlayHint"];
-        if (which !== "all") {
-          const keep = kinds.map((k) => which === "no-diagnostics" && k !== "diagnostic");
-          pulls = pulls.filter((_, j) => keep[j]);
-          kinds = kinds.filter((_, j) => keep[j]);
+        if (key % HOVER_EVERY === 0) sends.push(["hover", "hover", () => client.request("textDocument/hover", { textDocument: { uri: other.uri }, position: hoverAt })]);
+        if (which === "all") sends.push([edited.uri, "diagnostic", () => client.request("textDocument/diagnostic", { textDocument: td })]);
+        if (key % debounceKeys === 0 && which !== "none") {
+          if (which === "all") for (const d of docs.slice(1)) sends.push([d.uri, "diagnostic", () => client.request("textDocument/diagnostic", { textDocument: { uri: d.uri } })]);
+          sends.push(["semanticTokens", "semanticTokens", () => client.request("textDocument/semanticTokens/full", { textDocument: td })]);
+          sends.push(["inlayHint", "inlayHint", () => client.request("textDocument/inlayHint", { textDocument: td, range: { start: { line: 0, character: 0 }, end: endPosition(edited.text) } })]);
         }
         if (serial) {
-          for (const send of requests) await send();
-          for (const [j, send] of pulls.entries()) await track(kinds[j], send());
+          for (const [, kind, send] of sends) await track(kind, send());
           continue;
         }
-        for (const send of requests) send();
-        // The editor cancels the previous keystroke's background pulls.
-        for (const p of background) client.cancel(p.id);
-        background = pulls.map((send, j) => {
+        for (const [slot, kind, send] of sends) {
+          const previous = inFlight.get(slot);
+          if (previous) client.cancel(previous.id);
           const p = send();
-          track(kinds[j], p);
-          return p;
-        });
+          inFlight.set(slot, p);
+          track(kind, p).then(() => inFlight.get(slot) === p && inFlight.delete(slot));
+        }
         await sleep(interval);
       }
-      if (!serial) await Promise.all(background);
+      // A pause after the line, then delete it for the next round.
+      while (client.pending.size) await sleep(20);
       removeTail(client, edited, TYPED.length);
     }
-    // Let everything still in flight answer.
     while (client.pending.size) await sleep(20);
   } finally {
     await client.shutdown();
