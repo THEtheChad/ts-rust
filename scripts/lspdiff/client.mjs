@@ -76,12 +76,15 @@ export class LspClient {
     this.notify("$/cancelRequest", { id });
   }
 
-  async shutdown() {
+  // killAfter: how long the server may take to exit after `exit` (a profiler that wraps it
+  // writes its profile then).
+  async shutdown({ killAfter = 5000 } = {}) {
     try {
       await Promise.race([this.request("shutdown", null), new Promise((r) => setTimeout(r, 5000))]);
       this.notify("exit", null);
+      this.proc.stdin.end();
     } catch {}
-    const timer = setTimeout(() => this.proc.kill("SIGKILL"), 5000);
+    const timer = setTimeout(() => this.proc.kill("SIGKILL"), killAfter);
     await this.exited;
     clearTimeout(timer);
   }
