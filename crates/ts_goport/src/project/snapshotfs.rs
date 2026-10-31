@@ -1419,6 +1419,38 @@ impl SourceFS {
         f()
     }
 
+    /// The number of seen files and missing directories that this file
+    /// system tracked (0 and 0 with no tracking).
+    // PORT: not in Go (PERF lsedit1, see `reserve_tracking`).
+    pub fn tracked_counts(&self) -> (usize, usize) {
+        let seen = self
+            .seen_files
+            .borrow()
+            .as_ref()
+            .map_or(0, |seen_files| seen_files.borrow().len());
+        let missing = self
+            .missing_directories
+            .as_ref()
+            .map_or(0, |missing| missing.borrow().len());
+        (seen, missing)
+    }
+
+    /// Makes room for `seen` seen files and `missing` missing directories.
+    // PORT: not in Go (PERF lsedit1). A program load of a language server
+    // project tracks about as many files as the load before it: on umami
+    // (1,375 files) the growth of the seen files alone took 7 ms of each
+    // edit's program update. The capacity changes only the order in which
+    // the seen files iterate, which the watch globs do not depend on
+    // (`watch::create_resolution_lookup_glob_mapper`; Go ranges over a map).
+    pub fn reserve_tracking(&self, seen: usize, missing: usize) {
+        if let Some(seen_files) = self.seen_files.borrow().as_ref() {
+            seen_files.borrow_mut().reserve(seen);
+        }
+        if let Some(missing_directories) = &self.missing_directories {
+            missing_directories.borrow_mut().reserve(missing);
+        }
+    }
+
     // Go: project/snapshotfs.go:802 sourceFS.Track
     pub fn track(&self, file_name: &str) {
         if !self.tracking.get() {

@@ -143,8 +143,12 @@ pub fn new_compiler_host(
     builder: &Rc<ProjectCollectionBuilder>,
     logger: Option<Rc<logging::LogTree>>,
 ) -> Rc<CompilerHost> {
-    let (config_file_path, first_load, resolution_keys, kept_share) = {
+    let (config_file_path, first_load, resolution_keys, kept_share, tracked_counts) = {
         let project = project.borrow();
+        let tracked_counts = project
+            .host
+            .as_ref()
+            .map_or((0, 0), |host| host.source_fs.tracked_counts());
         let (resolution_keys, kept_share) = match &project.host {
             Some(host) => (
                 host.resolution_keys.borrow().clone(),
@@ -160,9 +164,13 @@ pub fn new_compiler_host(
             project.program.is_none(),
             resolution_keys,
             kept_share,
+            tracked_counts,
         )
     };
     let source_fs = new_source_fs(true, builder.fs.clone(), builder.to_path.clone());
+    // PERF (lsedit1): the load tracks about what the previous load of the
+    // project tracked.
+    source_fs.reserve_tracking(tracked_counts.0, tracked_counts.1);
     UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() + 1));
     Rc::new(CompilerHost {
         config_file_path,

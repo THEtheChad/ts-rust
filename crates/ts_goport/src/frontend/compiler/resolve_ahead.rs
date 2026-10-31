@@ -304,6 +304,16 @@ impl ResolveAhead {
             .previous_keys
             .as_ref()
             .map_or((0, 0), |keys| (keys.len() - keys.scopes(), keys.scopes()));
+        // PERF (lsedit1): the loader's module resolution cache gets about
+        // one entry per module key of the previous load. The cache is never
+        // iterated, so its capacity changes no answer. On umami its growth
+        // took 5 ms of each edit's program update.
+        resolver
+            .caches
+            .module_resolution_cache
+            .cache
+            .borrow_mut()
+            .reserve(previous_keys.0);
         let keys = host
             .previous_keys
             .as_deref()
