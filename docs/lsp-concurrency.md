@@ -17,17 +17,19 @@ Pin: microsoft/TypeScript 3e9236361fa9. Go paths are relative to
   which Go agrees with itself are byte-identical in tsc-rs.** The other 9
   are auto-import completions where two Go runs pick different module
   specifiers.
-- **Load benchmark.**
-  - One request at a time, tsc-rs is on par with Go.
-  - On a mid-size Next.js app (umami) at typing speed, tsc-rs's completion
-    and hover p95 is 4 to 14 times Go's (250–500 ms per key), and some
-    runs snowball to a minute.
-  - Diagnostics pulls are the largest share. Removing them brings tsc-rs's
-    completion p50 down to Go's at 250 ms/key.
-  - Two more costs show up. Stale requests aren't cancelled (89 cancelled
-    pulls against Go's 1,903). And the per-edit snapshot update is 1.6 to
-    1.9 times Go's; Go also runs it serially, so concurrency alone won't
-    remove it.
+- **Load benchmark, on an idle machine (section 7, which supersedes the
+  phase 1 numbers in section 3).**
+  - On a mid-size Next.js app (umami), tsc-rs keeps up at 250 and 500 ms
+    per key: completion and hover p95 are 1.3 to 1.6 times Go's.
+  - At 120 ms per key (a fast typist), it falls behind. Completion p95 is
+    3 times Go's (1.0 s against 332 ms) and hover p95 16 times (1.3 s
+    against 83 ms). Every request queues behind the diagnostics pull sent
+    on each key.
+  - Without the diagnostics pulls, tsc-rs at 120 ms/key is back within 1.4
+    times Go. Stage 1 targets exactly this.
+  - Phase 1's numbers (section 3: 4 to 14 times Go at 250–500 ms/key, and
+    89 against 1,903 cancelled pulls) were taken at load 23 to 83 and are
+    mostly load.
 - **Design verdict.** The target design holds, with four amendments (6.1):
   - choose the checker slot on the dispatch thread;
   - give slot threads a per-version `Send` view instead of a shared
@@ -36,10 +38,11 @@ Pin: microsoft/TypeScript 3e9236361fa9. Go paths are relative to
   - share the id counters across threads.
 
   A `Send`/`Sync` language-service layer is not worth it.
-- **Staged plan** (6.7): 1a (cancel queued requests, days), S (profile the
-  snapshot update), 1 (diagnostics on slot-0 threads, 1.2–1.8k lines, 2–3
-  weeks), 2 (semantic tokens, inlay hints), 3 (other single-file queries),
-  4 (completion, code actions; the largest).
+- **Staged plan** (6.7): 1 (diagnostics on slot-0 threads, 1.2–1.8k lines,
+  2–3 weeks) is the next step. 2 (semantic tokens, inlay hints), 3 (other
+  single-file queries) and 4 (completion, code actions; the largest) wait
+  for measurements after stage 1. 1a (cancel queued requests) was tried and
+  dropped; S (the per-edit update) was profiled (section 7).
 
 ## 1. Tools
 
@@ -175,6 +178,11 @@ same 16-core box, with a load average of 23 to 83 during the runs, so the
 absolute numbers are noisy and inflated. Both servers ran under the same
 conditions, one after the other: three runs each, six at 500 ms/key.
 
+**Superseded by section 7.** On an idle machine the gap is much smaller:
+tsc-rs keeps up at 250 and 500 ms/key and falls behind only at 120 ms/key.
+Most of what the tables below show at 250 and 500 ms/key is load, not the
+servers. They are kept as the record of phase 1.
+
 ### Results
 
 Raw samples are in `/tmp/lspdiff/out*/` (`samples.json`). In the tables
@@ -297,7 +305,7 @@ Handler kinds (`handlerMap`, 1263-1333):
 | `registerMultiProjectReferenceRequestHandler` (1440) | default language service and project list | provider; the orchestrator calls back into the session | references, implementation |
 
 Snapshot updates are serialized (`snapshotUpdateMu`,
-`project/session.go:1060`). A snapshot is immutable once made
+`project/session.go:138`, taken at 322). A snapshot is immutable once made
 (`project/snapshot.go:31-59`). A request that is running when a `didChange`
 arrives keeps its old language service and answers from the old snapshot;
 nothing is invalidated, only `$/cancelRequest` stops it.
@@ -569,11 +577,19 @@ working against this harness plus the maintainer's oracle.
 | 5 | Remove the inline fallbacks (except wasm); update PORTING.md | small | - |
 | S | Parallel track: make the per-edit snapshot update cheaper (section 3, point 4) | unknown until profiled | - |
 
-**Order.** Do 1a and S first, since they are cheap or independent and both
-raise the ceiling. Then 1, which is the largest single win measured
-(section 3, point 3). Then 2, because semantic tokens and inlay hints are the
-next pulls that queue on every edit. Stages 3 and 4 matter once a client
-sends several queries at once, or completions pile up behind each other.
+**Order (revised after section 7).** Stage 1 is the only stage the idle-machine
+numbers support. At 120 ms/key it removes most of the gap; at 250 and 500
+ms/key nothing queues. Decide on stages 2 to 4 from measurements taken after
+stage 1. 1a was built and measured (section 7.4) and is dropped, because it is
+not Go-shaped and only helps once requests already queue. S was profiled
+separately (section 7.3).
+
+*Original order (phase 1):* do 1a and S first, since they are cheap or
+independent and both raise the ceiling. Then 1, which is the largest single
+win measured (section 3, point 3). Then 2, because semantic tokens and inlay
+hints are the next pulls that queue on every edit. Stages 3 and 4 matter once
+a client sends several queries at once, or completions pile up behind each
+other.
 
 **Track S.** On umami the first request after an edit costs tsc-rs 376–411
 ms against Go's 214–237 ms. That work stays serial in any design. There was
@@ -620,9 +636,12 @@ thread.**
   (`TSC_RS_LSP_THREADS=diagnostics`) until the harness shows 100% on the
   Go-stable answers and the maintainer's oracle agrees.
 - **Effect.** Pulls never delay completions or hovers on the dispatch thread
-  again, though they still share CPU. The measured upper bound: at 250
-  ms/key, completion p50 drops from 3.4 s to 359 ms, equal to Go's; p95
-  drops from 10.7 s to 7.1 s, against Go's 1.6 s (section 3).
+  again, though they still share CPU. The measured upper bound on an idle
+  machine (section 7): at 120 ms/key, completion p95 drops from 1.0 s to
+  186 ms (Go: 135 ms), and hover p95 from 1.3 s to 107 ms (Go: 73 ms). It is
+  optimistic, because without a pull on every key the program update is also
+  paid less often. (Phase 1, under load: at 250 ms/key completion p50 3.4 s
+  to 359 ms, section 3.)
 
 **No proof of concept in this phase.** A minimal one needs all of stage 1's
 parts at once: the handed-off `AsyncWork`, the slot-0 thread, the remote
@@ -691,3 +710,112 @@ The cross-project search keeps its own threads.
    as possible (trait methods named after the Go `Program` methods).
 8. **wasm** has one thread (`program.rs:4532`), so the inline path stays
    there.
+
+## 7. Re-baseline on an idle machine (2026-11-03)
+
+Phase 1 ran on a shared box at load 23 to 83 (section 3). This section
+repeats the benchmark on an idle machine and measures the per-edit update.
+Its numbers supersede section 3's.
+
+### 7.1 Method
+
+- **Machine:** AMD Ryzen 9 9955HX (16 cores, 32 threads), 47 GB, otherwise
+  idle.
+- **Builds:** tsc-rs `main` @ `91f3d021c` built with `--profile goport`, and
+  the Go oracle at the pin.
+- **Benchmark:** `lspdiff.mjs bench` on umami @ `559e3c6`, 6 files,
+  concurrent mode. Each run is a separate call with `--only go|rs --runs 1`,
+  so the servers alternate run by run.
+- **Load gate:** a run starts only when the 1-minute load average is under
+  1.5, and the load before and after each run is recorded.
+- **Exclusion:** one tsc-rs run at 500 ms/key ended at load 4.9 after an
+  outside CPU burst. Its completion p95 was 258 ms against 189–196 ms in the
+  other runs, so it was replaced by a fourth run and left out.
+- **Per-edit probe:** `probe-edit.mjs` from the stage S branch
+  (`perf/lsp-edit-cost`), with `--edits 20 --cpu --logs`. There are 3 probes
+  per server for each edited file, with the same load gate. "Program update"
+  is each server's own `Program update for … completed in …` log line, and
+  both servers log the same span.
+
+### 7.2 Load benchmark
+
+p50 / p95 pooled over 3 runs per row. Latencies count answered requests only.
+
+| umami, concurrent | completion | hover | diagnostics pull |
+|---|---|---|---|
+| 500 ms/key, tsc-rs | 104 / 196 ms | 97 / 107 ms | 118 / 131 ms |
+| 500 ms/key, Go | 78 / 150 ms | 56 / 74 ms | 96 / 113 ms |
+| 250 ms/key, tsc-rs | 104 / 190 ms | 97 / 117 ms | 118 / 147 ms |
+| 250 ms/key, Go | 68 / 148 ms | 63 / 73 ms | 97 / 112 ms |
+| 120 ms/key, tsc-rs | 530 ms / 1.0 s | 702 ms / 1.3 s | 716 ms / 1.3 s |
+| 120 ms/key, Go | 69 / 332 ms | 56 / 83 ms | 109 / 174 ms |
+| 250 ms/key, no diagnostics pulls, tsc-rs | 99 / 185 ms | 94 / 99 ms | - |
+| 250 ms/key, no diagnostics pulls, Go | 71 / 147 ms | 56 / 74 ms | - |
+| 120 ms/key, no diagnostics pulls, tsc-rs | 99 / 186 ms | 94 / 107 ms | - |
+| 120 ms/key, no diagnostics pulls, Go | 74 / 135 ms | 60 / 73 ms | - |
+
+Per-run completion p95 varies by less than 10% within a row, apart from the
+excluded run, and so does hover p95 at 250 and 500 ms/key. At 120 ms/key,
+tsc-rs's per-run p95 is 842 ms to 1.0 s for completion and 1.1 to 1.4 s for
+hover.
+
+- **At 250 and 500 ms/key nothing queues.** tsc-rs is 1.3 to 1.6 times Go's
+  p95, which is about its one-request cost. Dropping the diagnostics pulls
+  changes nothing.
+- **At 120 ms/key the dispatch thread saturates.** Every kind of request
+  waits behind the per-key diagnostics pull, whose own p50 rises from 118 ms
+  to 716 ms. tsc-rs answers 10 of 60 completions as cancelled, because they
+  were superseded while still queued. Go cancels none.
+- **Without the diagnostics pulls, tsc-rs at 120 ms/key is back within 1.4
+  times Go.** This is stage 1's upper bound. It is optimistic: without a pull
+  on every key, the program update in 7.3 is paid only by the next request,
+  not on every key.
+- **Phase 1 was mostly load.** At 250 ms/key it measured tsc-rs completion p95
+  at 10.7 s against Go's 1.6 s; idle, it is 190 ms against 148 ms.
+
+### 7.3 Per-edit update (track S)
+
+Medians. The first request after an edit pays the program update.
+
+| umami, one-character edit | tsc-rs | Go |
+|---|---|---|
+| `.tsx` edit (`BoardCloneForm.tsx`): program update | 78 ms (75–104) | 41 ms (33–81) |
+| `.tsx` edit: first request after it | 82–85 ms | 47–58 ms |
+| `.tsx` edit: CPU per edit, all threads | 255–261 ms (dispatch 111–114, `goport-resolve` 144–146) | 1,418–1,466 ms |
+| `.ts` edit (`useFunnelQuery.ts`): program update | 0.75 ms | 3.8 ms |
+| `.ts` edit: first request after it | 2.7–3.1 ms | 9.5–10.3 ms |
+
+- **A `.ts` edit reuses the program, and tsc-rs is faster than Go there.**
+- **A `.tsx` edit rebuilds the program in both servers.** Go's
+  `ReuseProgram` refuses files that need a JSX runtime import
+  (`compiler/program.go:399-406`), and the port copies that. Go spends about
+  5 times the CPU, spread over all cores, and finishes in about half the wall
+  time. tsc-rs's loader is serial ("contract 10"), with module resolution on
+  worker threads.
+- **What this means for stage 1.** At 120 ms/key on a `.tsx` file, the
+  rebuild alone keeps tsc-rs's dispatch thread busy for about 65% of each
+  key interval (Go: about 35%). Stage 1 should keep up at that speed, with
+  little headroom. Somewhat faster typing would saturate the thread on the
+  rebuild alone, in any dispatch design. A `ReuseProgram` that handles the
+  JSX runtime import would bring a `.tsx` edit to roughly a `.ts` edit's
+  cost in both servers. See `docs/lsp-edit-cost.md` on `perf/lsp-edit-cost`.
+- **Phase 1 measured the first request after an edit at 376–411 ms against
+  Go's 214–237 ms** (section 3). That too was mostly load.
+
+### 7.4 Stage 1a, tried and dropped
+
+Stage 1a was built on its own branch (`fix/lsp-cancel-queued`): it answers a
+request that the client cancelled while it was queued with -32800, without
+running it. It was measured only at load 7 to 24, where it cut completion
+p95 at 250 ms/key by about a third. It is dropped for two reasons:
+- **It is not Go-shaped.** Go has no queued-cancel path, and when Go's
+  dispatch loop is busy, Go answers normally where 1a answers -32800.
+- **It only helps once requests already queue.** On an idle machine that
+  happens only at 120 ms/key, and stage 1 removes the queue itself.
+
+### 7.5 Plan changes
+
+- **Stage 1 is the next step and the only one these numbers support.**
+- **Stages 2 to 4 wait for measurements after stage 1.**
+- **The `.tsx` rebuild is the next ceiling.** It is best raised with
+  microsoft/TypeScript, since the fix belongs in Go's `ReuseProgram` first.
