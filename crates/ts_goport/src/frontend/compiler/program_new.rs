@@ -202,6 +202,124 @@ impl std::ops::DerefMut for NewProgram {
     }
 }
 
+/// How `NewProgram::update_program_reusing_synthetic` made the new
+/// program. The language server keeps the storage of the old program for
+/// both reuses, but Go builds a new program for `ReusedSynthetic`, so its
+/// project update kind is Go's for a new program (`project.rs`
+/// `create_program`).
+// PORT: not in Go (perf/first-principles A1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReuseOutcome {
+    /// A new program (Go `NewProgram`).
+    Rebuilt,
+    /// The old program with the changed file replaced (Go `ReuseProgram`).
+    Reused,
+    /// The old program with the changed file replaced, and its synthetic
+    /// imports swapped. Go builds a new program here.
+    ReusedSynthetic,
+}
+
+impl ReuseOutcome {
+    /// The new program shares the processed files of the old one.
+    #[must_use]
+    pub fn reused_storage(self) -> bool {
+        self != ReuseOutcome::Rebuilt
+    }
+
+    /// Go reuses the old program (`ReuseProgram` returns true).
+    #[must_use]
+    pub fn go_reuses(self) -> bool {
+        self == ReuseOutcome::Reused
+    }
+}
+
+/// The synthetic specifiers of one replaced file: those of the old version
+/// (`Node::NIL` when absent) and those made for the new version.
+struct SyntheticSwap {
+    path: Path,
+    old_helpers: Node,
+    new_helpers: Node,
+    old_jsx: Node,
+    new_jsx: Node,
+    jsx_module_reference: String,
+}
+
+impl ProcessedFiles {
+    /// Puts the specifiers of `swaps` in the place of the old ones: in both
+    /// specifier maps, the include reasons and the processing diagnostics.
+    /// Each changed map is a new map, so the programs that share the old
+    /// ones keep them. `owner` holds the new specifiers.
+    fn apply_synthetic_swaps(
+        &mut self,
+        swaps: &[SyntheticSwap],
+        owner: Rc<crate::ast::LoadSyntheticOwner>,
+    ) {
+        let mut helpers = self
+            .import_helpers_import_specifiers
+            .as_deref()
+            .cloned()
+            .unwrap_or_default();
+        let mut jsx = self
+            .jsx_runtime_import_specifiers
+            .as_deref()
+            .cloned()
+            .unwrap_or_default();
+        let (mut helpers_changed, mut jsx_changed) = (false, false);
+        let mut owners = self
+            .reused_synthetic_owners
+            .as_deref()
+            .cloned()
+            .unwrap_or_default();
+        for swap in swaps {
+            if swap.new_helpers.is_some() {
+                helpers.insert(swap.path.clone(), swap.new_helpers);
+                helpers_changed = true;
+            }
+            if swap.new_jsx.is_some() {
+                jsx.insert(
+                    swap.path.clone(),
+                    Rc::new(JsxRuntimeImportSpecifier {
+                        module_reference: swap.jsx_module_reference.clone(),
+                        specifier: swap.new_jsx,
+                    }),
+                );
+                jsx_changed = true;
+            }
+            owners.insert(swap.path.clone(), owner.clone());
+        }
+        if helpers_changed {
+            self.import_helpers_import_specifiers = Some(Rc::new(helpers));
+        }
+        if jsx_changed {
+            self.jsx_runtime_import_specifiers = Some(Rc::new(jsx));
+        }
+        self.reused_synthetic_owners = Some(Rc::new(owners));
+
+        let files: Vec<Path> = swaps.iter().map(|swap| swap.path.clone()).collect();
+        let remap = |old: Node| {
+            swaps.iter().find_map(|swap| {
+                if old == swap.old_helpers {
+                    Some(swap.new_helpers)
+                } else if old == swap.old_jsx {
+                    Some(swap.new_jsx)
+                } else {
+                    None
+                }
+            })
+        };
+        let mut replaced = FxHashMap::default();
+        if let Some(reasons) = self
+            .include_processor
+            .file_include_reasons
+            .with_synthetic_remapped(&files, &remap, &mut replaced)
+        {
+            self.include_processor = self
+                .include_processor
+                .with_reasons_replaced(Rc::new(reasons), &replaced);
+        }
+    }
+}
+
 impl NewProgram {
     // PORT: Go `p.resolver` and `p.projectReferenceFileMapper` are set by
     // `processAllProgramFiles`. `ProcessedFiles` holds them as `Option`, so
@@ -556,12 +674,35 @@ impl NewProgram {
         new_host: Rc<dyn CompilerHost>,
         create_module_resolver: Option<CreateModuleResolver>,
     ) -> (NewProgram, Option<Rc<ParsedSourceFile>>, bool) {
-        match self.reuse_program(
-            changed_file_path,
-            new_host.clone(),
-            create_module_resolver.clone(),
-        ) {
-            (Some(result), new_file, true) => (result, new_file, true),
+        let (program, new_file, outcome) =
+            self.update_program_with(changed_file_path, new_host, create_module_resolver, false);
+        (program, new_file, outcome.reused_storage())
+    }
+
+    /// `update_program` for the language server: it also reuses the
+    /// program when the changed file has synthetic imports that stay the
+    /// same (`ReuseOutcome::ReusedSynthetic`), where Go builds a new one.
+    // PORT: not in Go (perf/first-principles A1).
+    pub fn update_program_reusing_synthetic(
+        &self,
+        changed_file_path: &Path,
+        new_host: Rc<dyn CompilerHost>,
+        create_module_resolver: Option<CreateModuleResolver>,
+    ) -> (NewProgram, Option<Rc<ParsedSourceFile>>, ReuseOutcome) {
+        self.update_program_with(changed_file_path, new_host, create_module_resolver, true)
+    }
+
+    fn update_program_with(
+        &self,
+        changed_file_path: &Path,
+        new_host: Rc<dyn CompilerHost>,
+        create_module_resolver: Option<CreateModuleResolver>,
+        reuse_synthetic: bool,
+    ) -> (NewProgram, Option<Rc<ParsedSourceFile>>, ReuseOutcome) {
+        match self.reuse_program_with(changed_file_path, new_host.clone(), reuse_synthetic) {
+            (Some(result), new_file, outcome) if outcome.reused_storage() => {
+                (result, new_file, outcome)
+            }
             (_, new_file, _) => {
                 let (config, hosts) = (self.opts.clone(), ProgramHosts { host: new_host });
                 (
@@ -573,7 +714,7 @@ impl NewProgram {
                         },
                     ),
                     new_file,
-                    false,
+                    ReuseOutcome::Rebuilt,
                 )
             }
         }
@@ -598,6 +739,28 @@ impl NewProgram {
         new_host: Rc<dyn CompilerHost>,
         _create_module_resolver: Option<CreateModuleResolver>,
     ) -> (Option<NewProgram>, Option<Rc<ParsedSourceFile>>, bool) {
+        let (program, new_file, outcome) =
+            self.reuse_program_with(changed_file_path, new_host, false);
+        (program, new_file, outcome.reused_storage())
+    }
+
+    /// Go `ReuseProgram`. With `reuse_synthetic`, a changed file (or
+    /// content-mapper supplemental file) with synthetic imports is replaced
+    /// in place too, when its synthetic imports have the same names,
+    /// presence and resolution modes before and after the change
+    /// (`synthetic_swap`). Its new synthetic specifiers belong to the new
+    /// version, and the specifier maps, the include reasons and the
+    /// processing diagnostics of the new program keep them.
+    fn reuse_program_with(
+        &self,
+        changed_file_path: &Path,
+        new_host: Rc<dyn CompilerHost>,
+        reuse_synthetic: bool,
+    ) -> (
+        Option<NewProgram>,
+        Option<Rc<ParsedSourceFile>>,
+        ReuseOutcome,
+    ) {
         // PORT: Go dereferences a nil old file and panics; so does this.
         let old_file = self
             .files_by_path
@@ -620,7 +783,7 @@ impl NewProgram {
                 .config
                 .get_content_mapper_for_file_name(old_file.file_name())
             else {
-                return (None, None, false);
+                return (None, None, ReuseOutcome::Rebuilt);
             };
             match new_host.get_content_mapped_source_files(old_file.parse_options(), &mapper) {
                 Ok(files) => {
@@ -628,7 +791,7 @@ impl NewProgram {
                     old_supplemental_files = old_file.supplemental_source_files();
                     new_supplemental_files = files.supplemental;
                 }
-                Err(_) => return (None, None, false),
+                Err(_) => return (None, None, ReuseOutcome::Rebuilt),
             }
         } else {
             new_file = new_host.get_source_file(old_file.parse_options());
@@ -646,7 +809,7 @@ impl NewProgram {
             .as_ref()
             .is_some_and(|targets| targets.contains_key(changed_file_path));
         if in_redirect_files || is_redirect_target {
-            return (None, new_file, false);
+            return (None, new_file, ReuseOutcome::Rebuilt);
         }
 
         // #4792: `canReplaceFileInProgram` is a program method.
@@ -654,24 +817,22 @@ impl NewProgram {
         if self.module_resolution_error.is_some()
             || !self.can_replace_file_in_program(&old_file, new_file.as_deref())
         {
-            return (None, new_file, false);
+            return (None, new_file, ReuseOutcome::Rebuilt);
         }
         let new_file = new_file.expect("checked by can_replace_file_in_program");
         // Cloning does not recompute synthetic helper or JSX-runtime import bookkeeping. Fall back to a full
         // build whenever either version requires those imports.
         // tsgo#4712
-        if self.has_import_helpers_import_specifier(old_file.path())
-            || self.needs_import_helpers_import_specifier(&new_file)
-        {
-            return (None, Some(new_file), false);
-        }
-        if self.has_jsx_runtime_import_specifier(old_file.path())
-            || !self.jsx_runtime_import_specifier(&new_file).is_empty()
-        {
-            return (None, Some(new_file), false);
+        // PORT (perf/first-principles A1): with `reuse_synthetic`, equal
+        // synthetic imports are swapped instead (`synthetic_swap`).
+        let mut owner: Option<Rc<crate::ast::LoadSyntheticOwner>> = None;
+        let mut swaps: Vec<SyntheticSwap> = Vec::new();
+        match self.synthetic_swap(&old_file, &new_file, reuse_synthetic, &mut owner) {
+            Ok(swap) => swaps.extend(swap),
+            Err(()) => return (None, Some(new_file), ReuseOutcome::Rebuilt),
         }
         if old_supplemental_files.len() != new_supplemental_files.len() {
-            return (None, Some(new_file), false);
+            return (None, Some(new_file), ReuseOutcome::Rebuilt);
         }
         for (old_supplemental, new_supplemental) in
             old_supplemental_files.iter().zip(&new_supplemental_files)
@@ -679,19 +840,16 @@ impl NewProgram {
             if old_supplemental.path() != new_supplemental.path()
                 || !self.can_replace_file_in_program(old_supplemental, Some(&**new_supplemental))
             {
-                return (None, Some(new_file), false);
+                return (None, Some(new_file), ReuseOutcome::Rebuilt);
             }
-            if self.has_import_helpers_import_specifier(old_supplemental.path())
-                || self.needs_import_helpers_import_specifier(new_supplemental)
-            {
-                return (None, Some(new_file), false);
-            }
-            if self.has_jsx_runtime_import_specifier(old_supplemental.path())
-                || !self
-                    .jsx_runtime_import_specifier(new_supplemental)
-                    .is_empty()
-            {
-                return (None, Some(new_file), false);
+            match self.synthetic_swap(
+                old_supplemental,
+                new_supplemental,
+                reuse_synthetic,
+                &mut owner,
+            ) {
+                Ok(swap) => swaps.extend(swap),
+                Err(()) => return (None, Some(new_file), ReuseOutcome::Rebuilt),
             }
         }
         // TODO: reverify compiler options when config has changed?
@@ -746,12 +904,105 @@ impl NewProgram {
                 .files_by_path
                 .insert(new_supplemental.path().clone(), new_supplemental.clone());
         }
+        let outcome = if swaps.is_empty() {
+            ReuseOutcome::Reused
+        } else {
+            let owner = owner.expect("a swap made its specifiers in the owner");
+            result.processed_files.apply_synthetic_swaps(&swaps, owner);
+            ReuseOutcome::ReusedSynthetic
+        };
         // Go: includeprocessor.go:28 updateFileIncludeProcessor (at
         // 673a5f17d713; removed by ts#64519: each program has its own
         // includeProcessor). The `IncludeProcessor` clone above starts its
         // caches empty.
         result.init_checker_pool();
-        (Some(result), Some(new_file), true)
+        (Some(result), Some(new_file), outcome)
+    }
+
+    /// The synthetic imports of `old_file`, a file of this program, and of
+    /// `new_file`, its new version, when the new version can take the place
+    /// of the old one: Ok(None) when neither has one, Ok(Some(swap)) with the
+    /// new version's specifiers (made in `owner`, made on first use) when both have the same
+    /// ones, in the same resolution modes, and `reuse_synthetic` is set.
+    /// Err when the program must be built again (Go program.go:399-406 and
+    /// :415-420 always rebuild when either version has one).
+    fn synthetic_swap(
+        &self,
+        old_file: &ParsedSourceFile,
+        new_file: &ParsedSourceFile,
+        reuse_synthetic: bool,
+        owner: &mut Option<Rc<crate::ast::LoadSyntheticOwner>>,
+    ) -> Result<Option<SyntheticSwap>, ()> {
+        let path = old_file.path();
+        let old_helpers = self
+            .import_helpers_import_specifiers
+            .as_ref()
+            .and_then(|specifiers| specifiers.get(path))
+            .copied()
+            .unwrap_or(Node::NIL);
+        let old_jsx = self
+            .jsx_runtime_import_specifiers
+            .as_ref()
+            .and_then(|specifiers| specifiers.get(path))
+            .cloned();
+        let new_helpers = self.needs_import_helpers_import_specifier(new_file);
+        let new_jsx = self.jsx_runtime_import_specifier(new_file);
+        if old_helpers.is_nil() && old_jsx.is_none() && !new_helpers && new_jsx.is_empty() {
+            return Ok(None);
+        }
+        if !reuse_synthetic
+            || old_helpers.is_some() != new_helpers
+            || old_jsx
+                .as_ref()
+                .map_or("", |jsx| jsx.module_reference.as_str())
+                != new_jsx
+        {
+            return Err(());
+        }
+        // The specifiers of the new version, in the loader's order
+        // (fileloader.go:835-858), each parented to the new root.
+        let factory = NodeFactory::new();
+        let (new_helpers_node, new_jsx_node) = {
+            let _owner = owner
+                .get_or_insert_with(|| Rc::new(crate::ast::LoadSyntheticOwner::new()))
+                .enter();
+            let helpers = if new_helpers {
+                super::file_loader::make_synthetic_import(
+                    &factory,
+                    EXTERNAL_HELPERS_MODULE_NAME_TEXT,
+                    new_file,
+                )
+            } else {
+                Node::NIL
+            };
+            let jsx = if new_jsx.is_empty() {
+                Node::NIL
+            } else {
+                super::file_loader::make_synthetic_import(&factory, &new_jsx, new_file)
+            };
+            (helpers, jsx)
+        };
+        let same_mode = |old: Node, new: Node| {
+            old.is_nil()
+                || self.get_mode_for_usage_location(old_file, old)
+                    == self.get_mode_for_usage_location(new_file, new)
+        };
+        if !same_mode(old_helpers, new_helpers_node)
+            || !same_mode(
+                old_jsx.as_ref().map_or(Node::NIL, |jsx| jsx.specifier),
+                new_jsx_node,
+            )
+        {
+            return Err(());
+        }
+        Ok(Some(SyntheticSwap {
+            path: path.clone(),
+            old_helpers,
+            new_helpers: new_helpers_node,
+            old_jsx: old_jsx.map_or(Node::NIL, |jsx| jsx.specifier),
+            new_jsx: new_jsx_node,
+            jsx_module_reference: new_jsx,
+        }))
     }
 
     // Go: program.go:456 (*Program).initCheckerPool

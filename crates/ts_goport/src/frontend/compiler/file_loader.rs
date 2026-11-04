@@ -209,6 +209,12 @@ pub struct ProcessedFiles {
     /// Keeps the nodes of jsx_runtime_import_specifiers and import_helpers_import_specifiers alive.
     /// A clone (update_program, program_new.rs:706; Go program.go:336 shares processedFiles) shares it.
     pub synthetic_owner: Option<Rc<crate::ast::LoadSyntheticOwner>>,
+    /// The owners of the synthetic imports that a reuse made for a changed
+    /// file (`NewProgram::reuse_program`), by the file's path. A later reuse
+    /// of the same file replaces its entry in a new map; older programs keep
+    /// theirs. None until the first such reuse.
+    // PORT: not in Go (perf/first-principles A1): Go rebuilds the program.
+    pub reused_synthetic_owners: Option<Rc<FxHashMap<Path, Rc<crate::ast::LoadSyntheticOwner>>>>,
     pub lib_files: Rc<FxHashMap<Path, Rc<LibFile>>>,
     // List of present unsupported extensions
     pub source_files_found_searching_node_modules: Rc<FxHashSet<Path>>,
@@ -2240,17 +2246,7 @@ impl FileLoader {
     // Go: fileloader.go:960 (*fileLoader).createSyntheticImport
     pub fn create_synthetic_import(&self, text: &str, file: &ParsedSourceFile) -> Node {
         let _owner = self.synthetic_owner.enter();
-        let external_helpers_module_reference =
-            self.factory.new_string_literal(text, TokenFlags::NONE);
-        let import_decl = self.factory.new_import_declaration(
-            ModifierList::NIL,
-            Node::NIL,
-            external_helpers_module_reference,
-            Node::NIL,
-        );
-        set_node_parent(external_helpers_module_reference, import_decl);
-        set_node_parent(import_decl, file.root);
-        external_helpers_module_reference
+        make_synthetic_import(&self.factory, text, file)
     }
 
     // Go: fileloader.go:970 (*fileLoader).pathForLibFile
@@ -2906,6 +2902,26 @@ pub(crate) fn get_jsx_implicit_import_base_of_file(
         return result;
     }
     String::new()
+}
+
+/// The body of Go `(*fileLoader).createSyntheticImport` (fileloader.go:960)
+/// with factory `factory`: a string literal `text` in an import declaration
+/// whose parent is the root of `file`. The caller opens the owner scope.
+pub(crate) fn make_synthetic_import(
+    factory: &NodeFactory,
+    text: &str,
+    file: &ParsedSourceFile,
+) -> Node {
+    let external_helpers_module_reference = factory.new_string_literal(text, TokenFlags::NONE);
+    let import_decl = factory.new_import_declaration(
+        ModifierList::NIL,
+        Node::NIL,
+        external_helpers_module_reference,
+        Node::NIL,
+    );
+    set_node_parent(external_helpers_module_reference, import_decl);
+    set_node_parent(import_decl, file.root);
+    external_helpers_module_reference
 }
 
 #[cfg(test)]

@@ -2647,7 +2647,10 @@ impl ProjectCollectionBuilder {
                     p.checker_pool = Some(checker_pool);
                     p.program_update_kind = result.update_kind;
                     p.program_last_update = self.new_snapshot_id;
-                    if result.update_kind == ProgramUpdateKind::CLONED {
+                    // PORT (perf/first-principles A1): a reuse that Go does
+                    // not make read only the changed file too, so it keeps
+                    // the old seen files as a `CLONED` update does.
+                    if result.reused_storage {
                         let seen_files = old_host
                             .as_ref()
                             .unwrap_or_else(|| crate::core::go_nil_dereference())

@@ -107,6 +107,55 @@ impl FileIncludeReasons {
     pub fn map_for_tests(&self) -> &FxHashMap<Path, Vec<Rc<FileIncludeReason>>> {
         &self.0
     }
+
+    /// A copy of this map in which each import reason of a file in `files`
+    /// whose synthetic specifier `remap` maps is a new reason with the new
+    /// specifier, or None when no reason changes. `replaced` gets each old
+    /// reason's address and its new reason, so that the processing
+    /// diagnostics can keep pointer identity with the map
+    /// (`IncludeProcessor::with_reasons_replaced`). The map is not changed:
+    /// older programs share it.
+    // PORT: not in Go (perf/first-principles A1). Go rebuilds a program
+    // whose changed file has a synthetic import. Each entry is visited and
+    // changed on its own, so the map order is not observable.
+    pub fn with_synthetic_remapped(
+        &self,
+        files: &[Path],
+        remap: &dyn Fn(Node) -> Option<Node>,
+        replaced: &mut FxHashMap<*const FileIncludeReason, Rc<FileIncludeReason>>,
+    ) -> Option<Self> {
+        let mut changes: Vec<(&Path, usize, Rc<FileIncludeReason>)> = Vec::new();
+        for (path, reasons) in &self.0 {
+            for (index, reason) in reasons.iter().enumerate() {
+                let FileIncludeData::ReferencedFile(data) = &reason.data else {
+                    continue;
+                };
+                if data.synthetic.is_nil() || !files.contains(&data.file) {
+                    continue;
+                }
+                let Some(new_synthetic) = remap(data.synthetic) else {
+                    continue;
+                };
+                let new_reason = Rc::new(FileIncludeReason {
+                    kind: reason.kind,
+                    data: FileIncludeData::ReferencedFile(ReferencedFileData {
+                        synthetic: new_synthetic,
+                        ..data.clone()
+                    }),
+                });
+                replaced.insert(Rc::as_ptr(reason), new_reason.clone());
+                changes.push((path, index, new_reason));
+            }
+        }
+        if changes.is_empty() {
+            return None;
+        }
+        let mut map = self.clone();
+        for (path, index, new_reason) in changes {
+            map.0.get_mut(path).expect("the path was read above")[index] = new_reason;
+        }
+        Some(map)
+    }
 }
 
 /// Go `includeReasonDiagnosticKey` (ts#64519).
@@ -136,6 +185,52 @@ impl Clone for IncludeProcessor {
 }
 
 impl IncludeProcessor {
+    /// A clone (its caches start empty, as `Clone` does) with the reasons
+    /// `reasons`, where each processing diagnostic that keeps a reason of
+    /// `replaced` keeps its new reason instead, so the diagnostics and the
+    /// map keep Go's pointer identity. Unchanged diagnostics stay shared.
+    // PORT: not in Go (perf/first-principles A1, see
+    // `FileIncludeReasons::with_synthetic_remapped`).
+    #[must_use]
+    pub fn with_reasons_replaced(
+        &self,
+        reasons: Rc<FileIncludeReasons>,
+        replaced: &FxHashMap<*const FileIncludeReason, Rc<FileIncludeReason>>,
+    ) -> Self {
+        let replace = |r: &Rc<FileIncludeReason>| replaced.get(&Rc::as_ptr(r)).cloned();
+        let remap = |d: &Rc<ProcessingDiagnostic>| -> Rc<ProcessingDiagnostic> {
+            let data = match &d.data {
+                ProcessingDiagnosticData::FileIncludeReason(r) => {
+                    replace(r).map(ProcessingDiagnosticData::FileIncludeReason)
+                }
+                ProcessingDiagnosticData::IncludeExplaining(e) => {
+                    e.diagnostic_reason.as_ref().and_then(replace).map(|r| {
+                        ProcessingDiagnosticData::IncludeExplaining(IncludeExplainingDiagnostic {
+                            diagnostic_reason: Some(r),
+                            ..e.clone()
+                        })
+                    })
+                }
+            };
+            match data {
+                Some(data) => Rc::new(ProcessingDiagnostic { kind: d.kind, data }),
+                None => d.clone(),
+            }
+        };
+        IncludeProcessor {
+            file_include_reasons: reasons,
+            processing_diagnostics: self.processing_diagnostics.iter().map(remap).collect(),
+            late_processing_diagnostics: RefCell::new(
+                self.late_processing_diagnostics
+                    .borrow()
+                    .iter()
+                    .map(remap)
+                    .collect(),
+            ),
+            ..IncludeProcessor::default()
+        }
+    }
+
     // Go: includeprocessor.go:37 (*includeProcessor).getDiagnostics
     pub fn get_diagnostics(&self, p: &NewProgram) -> &RefCell<DiagnosticsCollection> {
         self.computed_diagnostics.get_or_init(|| {

@@ -721,6 +721,7 @@ impl Project {
     pub fn create_program(&self) -> CreateProgramResult {
         let mut update_kind = ProgramUpdateKind::NEW_FILES;
         let mut program_cloned = false;
+        let mut go_cloned = false;
         let new_program: Rc<compiler::NewProgram>;
         let mut file_refs: Option<ProgramFileRefs> = None;
 
@@ -801,7 +802,7 @@ impl Project {
         if !self.dirty_file_path.is_empty() && self.program.is_some() && same_command_line {
             let program = self.program.as_deref().expect("checked above");
             let host_rc: Rc<dyn compiler::CompilerHost> = host.clone();
-            let (updated_program, dirty_file, cloned) = ls_program::update_program(
+            let (updated_program, dirty_file, outcome) = ls_program::update_program(
                 program,
                 &self.dirty_file_path,
                 host_rc,
@@ -809,7 +810,14 @@ impl Project {
                 create_module_resolver.clone(),
             );
             new_program = updated_program;
-            program_cloned = cloned;
+            // PORT (perf/first-principles A1): `program_cloned` is the
+            // storage (the new program shares the old one's loads and parse
+            // cache counts); the update kind is Go's. Go builds a new
+            // program where `outcome` is `ReusedSynthetic`, so the kind is
+            // then `SAME_FILE_NAMES` (below), as Go's `HasSameFileNames`
+            // finds for a program with the same files.
+            program_cloned = outcome.reused_storage();
+            go_cloned = outcome.go_reuses();
             // Go: p.host.builder (read in each branch below)
             let builder = || {
                 host.builder
@@ -818,7 +826,9 @@ impl Project {
                     .unwrap_or_else(|| crate::core::go_nil_dereference())
             };
             if program_cloned {
-                update_kind = ProgramUpdateKind::CLONED;
+                if go_cloned {
+                    update_kind = ProgramUpdateKind::CLONED;
+                }
                 let builder = builder();
                 // UpdateProgram acquired the changed file only, so we need to ref everything else
                 // PORT: through the old program's entries (`ProgramFileRefs`),
@@ -895,7 +905,7 @@ impl Project {
             );
         }
 
-        if !program_cloned
+        if !go_cloned
             && self
                 .program
                 .as_ref()
@@ -934,6 +944,7 @@ impl Project {
         CreateProgramResult {
             program: new_program,
             update_kind,
+            reused_storage: program_cloned,
             checker_pool,
             file_refs: Rc::new(file_refs),
         }
@@ -1117,6 +1128,11 @@ impl ls::Project for RefCell<Project> {
 pub struct CreateProgramResult {
     pub program: Rc<compiler::NewProgram>,
     pub update_kind: ProgramUpdateKind,
+    /// Not in Go (perf/first-principles A1): the new program shares the
+    /// storage of the old one. True for every `CLONED` update, and also for
+    /// a reuse that Go does not make (`ReuseOutcome::ReusedSynthetic`),
+    /// whose `update_kind` is Go's for a new program.
+    pub reused_storage: bool,
     pub checker_pool: Option<Rc<CheckerPool>>,
     // Not in Go: the parse cache entries that `program` holds a count on.
     pub file_refs: Rc<ProgramFileRefs>,
