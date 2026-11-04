@@ -524,8 +524,7 @@ The batch that adds it is not accepted until Theo approves.
   keeps it until it ends, so a thread can finish its work after the
   release, as a Go goroutine that holds the program does. A read of a
   released version's tables on a thread with no copy panics ("program
-  version N is released"). `GOPORT_KEEP_VERSION_TABLES=1` keeps them (A/B
-  runs and a field fallback). The `GoProgram` shell and the static file
+  version N is released"). The `GoProgram` shell and the static file
   versions (the first version of each file, but a leased one, below) stay
   leaked for now. A
   one-program process forgets its checkers and the

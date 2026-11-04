@@ -2960,7 +2960,6 @@ pub(super) mod tests {
                     "1",
                 ])
                 .env(EARLY_BIND_CHILD, case)
-                .env_remove("GOPORT_EARLY_BIND")
                 .stdin(std::process::Stdio::null())
                 .output()
                 .expect("run the child test");

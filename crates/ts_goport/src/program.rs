@@ -1143,14 +1143,6 @@ impl TablesSlot {
     }
 }
 
-/// True when `GOPORT_KEEP_VERSION_TABLES=1`: a released program version
-/// keeps its tables, as before lsshells M2a (for A/B runs, and as a field
-/// fallback). Read once.
-fn keep_version_tables() -> bool {
-    static KEEP: OnceLock<bool> = OnceLock::new();
-    *KEEP.get_or_init(|| std::env::var("GOPORT_KEEP_VERSION_TABLES").is_ok_and(|v| v == "1"))
-}
-
 thread_local! {
     /// This thread's copy of the tables of one program version: the one it
     /// read last, or the one from its `WorkerSeed`. A thread that holds the
@@ -1346,23 +1338,12 @@ pub fn bound_symbols_of(program: &'static GoProgram) -> Option<BoundSymbols> {
     Some(BoundSymbols(tables))
 }
 
-/// Frees the tables of program `id` when no other thread holds them: takes
-/// them from the slot and from this thread's copy. With
-/// `keep_version_tables` they stay, and only the declaration diagnostic
-/// cache is emptied, as before.
 /// Takes the tables of program `id` out of its slot and out of this
 /// thread's cache. The caller frees them when it drops the result (other
 /// threads can still hold them).
 fn release_tables(id: u32, state: &ProgramState) -> Option<Arc<VersionTables>> {
     let slot = match &state.tables {
-        TablesSlot::Version(slot) if !keep_version_tables() => slot,
-        TablesSlot::Version(slot) => {
-            let tables = slot.lock().unwrap_or_else(PoisonError::into_inner).clone();
-            if let Some(tables) = tables {
-                clear_declaration_diagnostic_cache(&tables);
-            }
-            return None;
-        }
+        TablesSlot::Version(slot) => slot,
         TablesSlot::Leaked(tables) => {
             clear_declaration_diagnostic_cache(tables);
             return None;
@@ -2792,8 +2773,8 @@ fn take_early_bind() -> Option<EarlyBind> {
 /// program files in file order, all published by this program. Each bind
 /// thread holds the files that it bound; `bind_all` gives the offsets of the
 /// first file and joins them (`EarlyBind::join`). Off with
-/// `--singleThreaded`, with tracing, with fewer than 2 bind threads, with
-/// `GOPORT_EARLY_BIND=0` and when a file has a syntactic diagnostic.
+/// `--singleThreaded`, with tracing, with fewer than 2 bind threads and
+/// when a file has a syntactic diagnostic.
 // PORT: not in Go (bindgap1, go-note 5.2 B1). Go binds when the program is
 // made (program.go:600 BindSourceFiles), and the bind reads only its file
 // (binder.go:120 to :130, `file.BindOnce`), so an early bind gives the same
@@ -2822,10 +2803,7 @@ fn take_early_bind() -> Option<EarlyBind> {
 // thread builds the program tables and the syntactic diagnostics
 // (loadstamp1: 5.8 ms on Sentry, 2.7 ms on VS Code, dbook-lan).
 pub(crate) fn start_early_bind(parsed: &[Rc<crate::frontend::parser::ParsedSourceFile>]) {
-    if single_threaded()
-        || crate::tracing::get().is_some()
-        || std::env::var_os("GOPORT_EARLY_BIND").is_some_and(|value| value == "0")
-    {
+    if single_threaded() || crate::tracing::get().is_some() {
         return;
     }
     let options = &prog().options;
