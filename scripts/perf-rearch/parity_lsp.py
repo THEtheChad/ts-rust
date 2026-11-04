@@ -15,9 +15,10 @@ side by side. quick's
 sessions are all full sessions, so a quick run compares with a full base.
 
 Go's two sessions per item set (go.jsonl, go2.jsonl) are kept in ~/.cache/perf-rearch/parity/
-go-cache/<go sha>/lsp/<session>-<project fingerprint>[-<scenario sources sha>]/ (parity_cli.fingerprint:
-commit, node_modules mtimes; scenarios also key on the sha of the lspdiff sources) and reused, so a
-run starts only tsc-rs. An answer on which Go's two sessions differ is GO-UNSTABLE (scenarios: four
+go-cache/<go sha>/lsp/<session>-<project fingerprint>-<lspdiff sources sha>/ (parity_cli.fingerprint:
+commit, node_modules mtimes; the sha of the vendored lspdiff sources, since they script the session)
+and reused, so a run starts only tsc-rs. Standard sessions run with ATA off (vendor/lspdiff
+client.mjs initializeParams). An answer on which Go's two sessions differ is GO-UNSTABLE (scenarios: four
 Go sessions, go.jsonl to go4.jsonl, since Go's registrations race across its background goroutines). In full, tsc-rs
 runs three times: twice as is and once with GOPORT_PARSE_THREADS=1; an answer on which a later run
 differs from the first is a DIFF with detail rs-nondet or rs-schedule, even when one run matches
@@ -116,7 +117,7 @@ def main():
             root = next((Path(os.path.expanduser(d)) for d in PROJECTS[project] if Path(os.path.expanduser(d)).is_dir()), None)
             if root is None:
                 return {f'lsp/{name}': {'status': 'SKIP', 'detail': 'project not prepared'}}, None, f'lsp {name}: SKIP'
-            key = f'{name}-{fingerprint(root)}' + (f'-{src_sha}' if scenario else '')
+            key = f'{name}-{fingerprint(root)}-{src_sha}'
         cache = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{key}'
         sout = out / name
         cmd = ['node', str(HERE / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root),
