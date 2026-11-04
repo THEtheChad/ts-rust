@@ -21,8 +21,11 @@ for part in $parts; do
     cli-core) "$here/bench.sh" cli --bin go="$go" --bin main="$main" --bin head="$head" --projects $projects \
                 --runs 3 --scenarios noemit,emit,emit-js --out "$out/cli-core" >"$out/cli-core.log" 2>&1 || rc=1 ;;
     # LSP: Go / main / head / head with A1 off.
-    lsp) "$here/bench.sh" lsp --bin go="$golsp" --bin main="$main" --bin head="$head" --bin head-noreuse="$head" \
-           --env head-noreuse:GOPORT_REUSE_SYNTHETIC=0 --runs 3 --out "$out/lsp" >"$out/lsp.log" 2>&1 || rc=1 ;;
+    # bench.sh lsp has no --env: head-noreuse is a wrapper that sets GOPORT_REUSE_SYNTHETIC=0 and execs head.
+    lsp) noreuse="$out/tsgo-head-noreuse"
+         printf '#!/bin/sh\nGOPORT_REUSE_SYNTHETIC=0 exec %q "$@"\n' "$head" >"$noreuse"; chmod +x "$noreuse"
+         "$here/bench.sh" lsp --bin go="$golsp" --bin main="$main" --bin head="$head" --bin head-noreuse="$noreuse" \
+           --runs 3 --out "$out/lsp" >"$out/lsp.log" 2>&1 || rc=1 ;;
     # B1 same-binary A/B on the emit scenarios.
     cli-emit-ab) "$here/bench.sh" cli --bin head="$head" --bin head-barrier="$head" \
                    --env head-barrier:GOPORT_PLAIN_EARLY_EMIT=0 --bin go="$go" --projects umami,hono,ts-pattern,vscode,t3-web \
