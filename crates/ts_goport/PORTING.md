@@ -857,7 +857,7 @@ The batch that adds it is not accepted until Theo approves.
   t3inc3 matrix of 5 option sets and 9 sequences of `--noEmit` runs and
   emitting builds on 91 files (EMIT7 to EMIT9: body edits next to a file
   that affects the global scope), the emitting builds write the same files
-  as with Go's walk (`GOPORT_DTS_WALK_FALLBACK=0`) in 43 of 45 cells, and
+  as with Go's walk in 43 of 45 cells, and
   never fewer files in any cell. The other 2 have no declarations (with and
   without `sourceMap`) and run a fresh `--noEmit` build, a `--noEmit` change
   of `Shape` that skips the walk, an emitting build, and a `--noEmit` body
@@ -866,8 +866,8 @@ The batch that adds it is not accepted until Theo approves.
 
   Go's tsc, tsbuild and tscWatch baselines never reach the limit: a
   program has at most 23 such files, and at most 6 in a baseline that uses
-  `noEmit`. `GOPORT_DTS_WALK_FALLBACK=0` runs Go's walk and Go's
-  signatures. `scripts/goport/t3-incremental-bench.sh` measures it.
+  `noEmit`. `scripts/goport/t3-incremental-bench.sh` measures it
+  against a build of the commit before the fallback.
 - When a changed file that affects the global scope gets a new d.ts
   signature, every file makes its d.ts emit (Go
   `handleDtsMayChangeOfAffectedFile`), one at a time, where Go runs them on

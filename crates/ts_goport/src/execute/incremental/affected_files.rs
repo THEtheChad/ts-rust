@@ -48,14 +48,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// that uses `noEmit`, so the baselines never reach it.
 const DTS_WALK_FILE_LIMIT: usize = 32;
 
-/// False when `GOPORT_DTS_WALK_FALLBACK` is `0`: every change then runs Go's
-/// d.ts walk (`skips_dts_walk`). For A/B tests and timing on one binary.
-/// Read once.
-fn dts_walk_fallback_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GOPORT_DTS_WALK_FALLBACK").as_deref() != Ok("0"))
-}
-
 // Go: incremental/affectedfileshandler.go:18 dtsMayChange
 pub type DtsMayChange = FxIndexMap<Path, FileEmitKind>;
 
@@ -336,9 +328,6 @@ impl<'a> AffectedFilesHandler<'a> {
     ///   emitting build Go's walk runs, so the pending emit stays Go's.
     fn skips_dts_walk(&self) -> bool {
         *self.skips_dts_walk.get_or_init(|| {
-            if !dts_walk_fallback_enabled() {
-                return false;
-            }
             let options = self.program.snapshot.borrow().options;
             if !options.no_emit.is_true()
                 || options

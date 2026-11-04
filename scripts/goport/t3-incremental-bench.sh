@@ -40,9 +40,8 @@
 # emits) and whether incr printed the same diagnostics as a cold run with the edit.
 # The edited files are restored at exit (also on error or Ctrl-C).
 #
-# Go's d.ts walk against the tsc-rs noEmit fallback (affected_files.rs skips_dts_walk)
-# on one tsgo build: GOPORT_DTS_WALK_FALLBACK=0 turns the fallback off. Pass a wrapper script as one
-# <tsc>, e.g. walk=/path/walk.sh with `GOPORT_DTS_WALK_FALLBACK=0 exec /path/tsgo "$@"`.
+# Go's d.ts walk against the tsc-rs noEmit fallback (affected_files.rs skips_dts_walk): pass Go's
+# tsgo, or a tsc-rs build of a commit before the fallback, as another <tsc>.
 # Run it on a quiet machine (a boat sandbox or dbook-lan), not on zbook; compare only cells of one run.
 set -euo pipefail
 

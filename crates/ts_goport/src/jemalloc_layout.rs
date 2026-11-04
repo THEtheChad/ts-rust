@@ -44,8 +44,8 @@
 //! jemlayout1, query check: 5.0k to 6.2k minor faults became 1.2k to 1.6k on
 //! alvin, cup2 (THP `always`) and mini-743d (THP `madvise`). Max RSS within
 //! 1%. It costs up to 0.3 ms at start (three arenas made on this thread).
-//! `GOPORT_JEMALLOC_LAYOUT=0` turns it off (for A/B timing). Under an address
-//! space or data limit it does nothing: such a run counts its address space.
+//! Under an address space or data limit it does nothing: such a run counts
+//! its address space.
 //!
 //! After a jemalloc update, check both behaviors again:
 //! - A: `tcache_destroy` and `arena_migrate` still purge all when
@@ -59,7 +59,7 @@
 //!   grows were not, without it).
 //! - `cargo test --test jemalloc_layout` checks the layout from inside.
 //! - Minor faults (`GOPORT_LAUNCH=0 /usr/bin/time -f %R`) of a query check
-//!   with `GOPORT_JEMALLOC_LAYOUT=0` and without it.
+//!   with a build of the commit before the update and with the new one.
 //!
 //! When jemalloc no longer does A or B, remove that part. In the worst case
 //! the code costs one 4 MiB allocation and free per arena and one parked
@@ -122,11 +122,9 @@ pub fn jemalloc_layout() {
         });
 }
 
-/// False with `GOPORT_JEMALLOC_LAYOUT=0` and under an address space or data
-/// limit (see the module comment).
+/// False under an address space or data limit (see the module comment).
 fn layout_enabled() -> bool {
-    std::env::var_os("GOPORT_JEMALLOC_LAYOUT").is_none_or(|v| v != "0")
-        && crate::gostd::stack::memory_limit().is_none()
+    crate::gostd::stack::memory_limit().is_none()
 }
 
 /// B for the arena of this thread: one free allocation of 4 MiB with 4 MiB

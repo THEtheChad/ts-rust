@@ -67,8 +67,7 @@ one (apps/server, an edit of `config.ts` with about 200 importers: 1.45x cold on
 spreads, and tsc-rs ported that. Under `noEmit`, Go rechecks the whole closure anyway. tsc-rs now
 skips that d.ts walk in large `noEmit` programs, and skips the changed file's own d.ts emit when it
 has at most 32 importers, none of them affects the global scope, and the pending emit stays Go's
-(`crates/ts_goport/PORTING.md`, `skips_dts_walk`; `GOPORT_DTS_WALK_FALLBACK=0` restores Go's
-walk). The output is the same. The build info stores file versions where Go stores d.ts hashes.
+(`crates/ts_goport/PORTING.md`, `skips_dts_walk`). The output is the same. The build info stores file versions where Go stores d.ts hashes.
 
 T3 Code setup, 5 runs, incremental/cold, 0.7.0 to now:
 
