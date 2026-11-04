@@ -6,28 +6,6 @@
 //! them, so the handler state is plain fields. Go `dtsMayChange` maps are
 //! shared by reference between the list and the queued call; here the call
 //! gets the index of its map in the list.
-//!
-//! PORT: not in Go (t3inc1, t3inc3). In a `noEmit` program with more than
-//! `DTS_WALK_FILE_LIMIT` files, a changed file with a new d.ts signature
-//! skips Go's d.ts walk over its importers (`skips_dts_walk`), and a changed
-//! file with few importers, none of which affects the global scope, skips
-//! its own d.ts emit (`uses_version_for_changed_file`), when the pending
-//! emit stays Go's (`pending_emit_covers`). In the run that takes a rule,
-//! the build info differs from Go's only where Go reads the skipped d.ts
-//! emits: the `fileInfos` signatures (versions, as a fresh build stores) and
-//! the package.json files that only those emits look up (`packageJsons`,
-//! `missingPackageJsons`). In a later run, a change of a file that stores
-//! its version and keeps its d.ts counts as a new signature, so its closure
-//! is checked again, where Go checks only that file; when that file or a
-//! file of its closure affects the global scope, every file is checked again
-//! (when the changed file affects it, every file also computes its d.ts
-//! signature, Go's global path, about 2x a cold run on T3 Code apps/web).
-//! When an emitting build without declarations came in between, that run
-//! also makes the files that import it pending (`affectedFilesPendingEmit`;
-//! Go: only that file), and the next emitting build writes them again, with
-//! the same bytes. A change that affects the global scope makes every file
-//! compute its d.ts signature, as in Go, except the files that a rule gave
-//! their version in the same run.
 
 use super::checker_access::*;
 use super::hash::FileInfo;
@@ -37,16 +15,7 @@ use super::snapshot::*;
 use crate::emitter::emitter::EmitOnly;
 use crate::emitter::program_emit::{EmitOptions, WriteFile, WriteFileData, emit};
 use crate::frontend::prelude::*;
-use crate::program::source_file_may_be_emitted;
-use std::cell::OnceCell;
 use std::sync::{Arc, Mutex, OnceLock};
-
-/// PORT: not in Go (t3inc1). The most source files that are not declaration
-/// or JSON files that a `noEmit` program can have and still run Go's d.ts
-/// walk (`skips_dts_walk`). In Go's tsc, tsbuild and tscWatch baselines at
-/// the pin, a program has at most 23 such files, and at most 6 in a baseline
-/// that uses `noEmit`, so the baselines never reach it.
-const DTS_WALK_FILE_LIMIT: usize = 32;
 
 // Go: incremental/affectedfileshandler.go:18 dtsMayChange
 pub type DtsMayChange = FxIndexMap<Path, FileEmitKind>;
@@ -69,8 +38,6 @@ pub struct AffectedFilesHandler<'a> {
     files_to_remove_diagnostics: FxIndexSet<Path>,
     cleaned_diagnostics_of_lib_files: bool,
     seen_file_and_references: FxHashMap<Path, bool>,
-    /// PORT: not in Go (t3inc1). The value of `skips_dts_walk`.
-    skips_dts_walk: OnceCell<bool>,
 }
 
 /// Go `file.Path()` as a `tspath.Path`.
@@ -93,7 +60,6 @@ impl<'a> AffectedFilesHandler<'a> {
             files_to_remove_diagnostics: FxIndexSet::default(),
             cleaned_diagnostics_of_lib_files: false,
             seen_file_and_references: FxHashMap::default(),
-            skips_dts_walk: OnceCell::new(),
         }
     }
 
@@ -221,9 +187,7 @@ impl<'a> AffectedFilesHandler<'a> {
             return Vec::new();
         }
 
-        // PORT: not in Go (t3inc1). Go computes the d.ts signature of `file`.
-        let use_version = self.uses_version_for_changed_file(file);
-        if !self.update_shape_signature(file, use_version) {
+        if !self.update_shape_signature(file, false) {
             return vec![file];
         }
 
@@ -256,25 +220,6 @@ impl<'a> AffectedFilesHandler<'a> {
             return vec![file];
         }
 
-        // PORT: not in Go (t3inc1, t3inc3). Every file that imports `file`
-        // is affected, and its version is its signature (no d.ts emit), when
-        // that keeps Go's pending emit (`walk_skip_keeps_pending_emit`).
-        if self.skips_dts_walk() {
-            let closure = self.for_each_file_referenced_by(file, &mut |_, current_file, _| {
-                (current_file.is_some(), false)
-            });
-            if use_version || self.walk_skip_keeps_pending_emit(file, &closure) {
-                let files: Vec<Node> = closure
-                    .into_values()
-                    .filter(|file| file.is_some())
-                    .collect();
-                for &current_file in &files {
-                    self.update_shape_signature(current_file, true);
-                }
-                return files;
-            }
-        }
-
         // Now we need to if each file in the referencedBy list has a shape change as well.
         // Because if so, its own referencedBy files need to be saved as well to make the
         // emitting result consistent with files on disk.
@@ -291,165 +236,6 @@ impl<'a> AffectedFilesHandler<'a> {
             .into_values()
             .filter(|file| file.is_some())
             .collect()
-    }
-
-    /// PORT: not in Go (t3inc1, perf). True when `getFilesAffectedBy` skips
-    /// the d.ts walk over the files that import a changed file with a new d.ts
-    /// signature: the program has `noEmit`,
-    /// `assumeChangesOnlyAffectDirectDependencies` is off, and the program has
-    /// more than `DTS_WALK_FILE_LIMIT` source files that are not declaration
-    /// or JSON files. The same for every changed file, so read once.
-    ///
-    /// Go's walk computes a d.ts signature for each importer, one at a time,
-    /// and goes on to the importers of each file whose signature changed.
-    /// After a fresh build every stored signature is the file version, so the
-    /// first walk goes through the whole closure. On T3 Code apps/server one
-    /// edit gave 675 serial d.ts emits, and the incremental run took 1.6x the
-    /// cold run (Go at the pin: 1.4x). A small closure can cost as much: in
-    /// T3 Code packages/contracts an edit of a file with 11 importers gave 11
-    /// d.ts emits that took 1.0 s, against 0.35 s for the cold run, because
-    /// printing the inferred Effect Schema types costs more than checking
-    /// them. So the limit is on the program, not on the closure.
-    ///
-    /// The walk does not change which files are checked again:
-    /// `handleDtsMayChangeOfAffectedFile` removes the semantic diagnostics of
-    /// the whole closure of a changed file with a new signature. Under
-    /// `noEmit` it only sets the stored signatures, and the full pending
-    /// emit kind of each file that it visits. So with this rule:
-    /// - the diagnostics are the same;
-    /// - the files of the closure store their version as signature, as after
-    ///   Go's `handleDtsMayChangeOf` (a later change of one of them always
-    ///   counts as a new signature);
-    /// - each file of the closure gets the full pending emit kind, where Go
-    ///   gives it to the files that the walk visits. So the rule applies only
-    ///   when the closure is already pending that kind
-    ///   (`walk_skip_keeps_pending_emit`), as after a fresh build: it makes
-    ///   every file pending, and a `noEmit` build emits no JS. After an
-    ///   emitting build Go's walk runs, so the pending emit stays Go's.
-    fn skips_dts_walk(&self) -> bool {
-        *self.skips_dts_walk.get_or_init(|| {
-            let options = self.program.snapshot.borrow().options;
-            if !options.no_emit.is_true()
-                || options
-                    .assume_changes_only_affect_direct_dependencies
-                    .is_true()
-            {
-                return false;
-            }
-            source_files()
-                .iter()
-                .filter(|&&file| {
-                    !source_file_info(file).is_declaration_file && !is_json_source_file(file)
-                })
-                .nth(DTS_WALK_FILE_LIMIT)
-                .is_some()
-        })
-    }
-
-    /// PORT: not in Go (t3inc1, perf). True when `getFilesAffectedBy` gives
-    /// the changed `file` its version as signature, with no d.ts emit:
-    /// `skips_dts_walk` holds, `file` does not affect the global scope, its
-    /// stored signature is not its version, at most `DTS_WALK_FILE_LIMIT`
-    /// files import it, directly or not, none of them affects the global
-    /// scope, and each of them is already pending the full emit kind. The
-    /// version then counts as a new signature, so the closure of `file` is
-    /// checked again and gets the full pending emit kind. When the d.ts of
-    /// `file` did not change, Go's `getFilesAffectedBy` returns only `file`,
-    /// and no other file gets a pending emit. So the closure must be pending
-    /// that kind already (t3inc3), as after a fresh build, for the pending
-    /// emit to stay Go's. A changed file of the closure is affected in Go
-    /// too, so it does not count. (A file pending the d.ts errors has no
-    /// cached emit diagnostics, so the new pending emit removes none.)
-    ///
-    /// Go computes the d.ts signature of each changed file, so that a change
-    /// that keeps the d.ts checks only that file again. The emit can cost
-    /// more than a check of the whole program: in T3 Code
-    /// packages/contracts, two inferred types of orchestrationV2.ts exceed
-    /// the length that the compiler serializes (TS7056), and its d.ts emit
-    /// took 0.63 s, against 0.36 s for a cold run. With few importers, a
-    /// check of the closure costs little and has a bound. A file with more
-    /// importers still computes its signature. When the stored signature is
-    /// the version, the text did not change (the references or the global
-    /// scope did), and Go's d.ts emit decides, as the version would count as
-    /// no change.
-    fn uses_version_for_changed_file(&self, file: Node) -> bool {
-        if !self.skips_dts_walk() {
-            return false;
-        }
-        let snapshot = self.program.snapshot.borrow();
-        let start = path_of(file);
-        let info = snapshot
-            .file_infos
-            .get(&start)
-            .expect("usesVersionForChangedFile: file info");
-        if info.affects_global_scope || info.signature == info.version {
-            return false;
-        }
-        let mut seen: FxHashSet<Path> = FxHashSet::default();
-        let mut queue = snapshot.referenced_map.get_referenced_by(&start).to_vec();
-        seen.insert(start);
-        while let Some(path) = queue.pop() {
-            if seen.insert(path.clone()) {
-                // `seen` holds `file` too.
-                if seen.len() > DTS_WALK_FILE_LIMIT + 1 {
-                    return false;
-                }
-                let refs = snapshot.referenced_map.get_referenced_by(&path);
-                queue.extend(refs.iter().filter(|r| !seen.contains(*r)).cloned());
-            }
-        }
-        // A file of the closure that affects the global scope would make
-        // every file of the program affected (Go
-        // `handleDtsMayChangeOfGlobalScope`), where Go's d.ts emit of `file`
-        // may find no change and affect only `file`.
-        if seen.iter().any(|path| {
-            snapshot
-                .file_infos
-                .get(path)
-                .is_some_and(|info| info.affects_global_scope)
-        }) {
-            return false;
-        }
-        // `file` is a changed file, so `pending_emit_covers` skips it.
-        let files = seen
-            .iter()
-            .map(|path| (path, get_source_file_by_path(path)));
-        pending_emit_covers(&snapshot, files, get_file_emit_kind(snapshot.options))
-    }
-
-    /// PORT: not in Go (t3inc3). True when skipping Go's walk for the changed
-    /// `file`, whose d.ts signature changed, keeps Go's pending emit.
-    /// `closure` is `file` and the files that import it, directly or not.
-    ///
-    /// The skip makes each file of `closure` affected, so each gets the full
-    /// emit kind (`getDtsMayChange`). Go gives that kind to the files that its
-    /// walk visits: always the direct importers of `file` (its walk visits
-    /// each one), and the changed files (each is affected by its own
-    /// `getFilesAffectedBy`). Each other file of the closure gets the d.ts
-    /// kind of `handleDtsMayChangeOf` (none without declarations) from
-    /// `handleDtsMayChangeOfFileAndReferences`, the same in Go and here. So
-    /// only those other files can differ, in the bits of the full kind that
-    /// the d.ts kind lacks (the JS emit and its maps), and they must be
-    /// pending those bits already.
-    fn walk_skip_keeps_pending_emit(&self, file: Node, closure: &FxIndexMap<Path, Node>) -> bool {
-        let snapshot = self.program.snapshot.borrow();
-        let options = snapshot.options;
-        // Go: handleDtsMayChangeOf, with `invalidateJsFiles` false.
-        let dts_kind = if !options.get_emit_declarations() {
-            FileEmitKind::NONE
-        } else if options.declaration_map.is_true() {
-            FileEmitKind::ALL_DTS
-        } else {
-            FileEmitKind::DTS
-        };
-        let kind = get_file_emit_kind(options).without(dts_kind);
-        let direct_list = snapshot.referenced_map.get_referenced_by(&path_of(file));
-        let direct: FxHashSet<&Path> = direct_list.iter().collect();
-        let deeper = closure
-            .iter()
-            .filter(|(path, _)| !direct.contains(path))
-            .map(|(path, &current_file)| (path, current_file));
-        pending_emit_covers(&snapshot, deeper, kind)
     }
 
     // Go: incremental/affectedfileshandler.go:152 forEachFileReferencedBy
@@ -805,33 +591,6 @@ impl<'a> AffectedFilesHandler<'a> {
     }
 }
 
-/// PORT: not in Go (t3inc3). True when adding `kind` to the pending emit of
-/// each of `files` (path and source file) keeps Go's pending emit: the file
-/// is already pending an emit that includes `kind`
-/// (`addFileToAffectedFilesPendingEmit` ors the kinds), it is a changed file
-/// (affected in Go too), or it has no source file or cannot be emitted. Go
-/// never affects a path with no source file, and drops the pending emit of a
-/// file that cannot be emitted, such as a declaration file or a file of an
-/// external library, from the build info (`setAffectedFilesPendingEmit`)
-/// and at each emit (`emitFilesIncremental`). The handler reads the
-/// snapshot before `updateSnapshot`.
-fn pending_emit_covers<'p>(
-    snapshot: &Snapshot,
-    files: impl IntoIterator<Item = (&'p Path, Node)>,
-    kind: FileEmitKind,
-) -> bool {
-    kind.is_empty()
-        || files.into_iter().all(|(path, file)| {
-            snapshot
-                .affected_files_pending_emit
-                .get(path)
-                .is_some_and(|pending| pending.contains(kind))
-                || snapshot.changed_files_set.contains(path)
-                || file.is_nil()
-                || !source_file_may_be_emitted(file, false)
-        })
-}
-
 // Go: incremental/affectedfileshandler.go:359 collectAllAffectedFiles
 pub fn collect_all_affected_files(program: &Program) {
     if program.snapshot.borrow().changed_files_set.is_empty() {
@@ -1156,52 +915,37 @@ mod tests {
         assert_eq!(kept, c_files);
     }
 
-    // t3inc1: in a `noEmit` program of `DTS_WALK_FILE_LIMIT + 1` files, a
-    // changed file with 3 importers and its importers get their versions as
-    // signatures, with no d.ts emit (Go computes each one).
+    /// The program size of the `noEmit` tests below: more files than the
+    /// limit of the d.ts walk fallback that t3inc1 had (32), which C1 round 2
+    /// removed, so they check that large programs run Go's walk too.
+    const LARGE: usize = 33;
+
+    // A `noEmit` program of `LARGE` files: a changed file with 3 importers
+    // computes its d.ts signature, and Go's walk computes each importer's.
     #[test]
-    fn no_emit_large_program_narrow_change_uses_versions() {
+    fn no_emit_large_program_runs_the_walk() {
         let importers = 3;
         let project = Project {
             importers,
-            others: DTS_WALK_FILE_LIMIT - importers,
+            others: LARGE - importers - 1,
             ..Project::default()
         };
         check_no_emit_change_of_a(
-            "no-emit-large-narrow",
-            project,
-            SignatureUpdateKind::UsedVersion,
-            SignatureUpdateKind::UsedVersion,
-            None,
-        );
-    }
-
-    // t3inc1: with more than `DTS_WALK_FILE_LIMIT` importers, the changed
-    // file computes its d.ts signature, and its importers get their versions.
-    #[test]
-    fn no_emit_large_program_wide_change_computes_the_changed_file() {
-        let project = Project {
-            importers: DTS_WALK_FILE_LIMIT + 1,
-            others: 1,
-            ..Project::default()
-        };
-        check_no_emit_change_of_a(
-            "no-emit-large-wide",
+            "no-emit-large-walk",
             project,
             SignatureUpdateKind::ComputedDts,
-            SignatureUpdateKind::UsedVersion,
+            SignatureUpdateKind::ComputedDts,
             None,
         );
     }
 
-    // t3inc1: in a program of `DTS_WALK_FILE_LIMIT` files, Go's d.ts walk
-    // runs.
+    // In a small program Go's d.ts walk runs too.
     #[test]
     fn no_emit_small_program_computes_signatures() {
         let importers = 3;
         let project = Project {
             importers,
-            others: DTS_WALK_FILE_LIMIT - importers - 1,
+            others: 4,
             ..Project::default()
         };
         check_no_emit_change_of_a(
@@ -1213,15 +957,13 @@ mod tests {
         );
     }
 
-    // t3inc3: after an emitting build no file is pending, so a skip of the
-    // walk would give `c<i>.ts` (which imports `b<i>.ts`) the JS pending emit
-    // that Go's walk gives only to the files it visits. Go's walk runs: it
-    // computes each importer's d.ts, and goes on to `c<i>.ts` because the
-    // d.ts of `b<i>.ts` changed.
+    // After an emitting build no file is pending. Go's walk computes each
+    // importer's d.ts, and goes on to `c<i>.ts` because the d.ts of
+    // `b<i>.ts` changed, so only the files it visits get the JS pending emit.
     #[test]
     fn no_emit_change_after_an_emit_runs_the_walk() {
         let project = Project {
-            importers: DTS_WALK_FILE_LIMIT + 1,
+            importers: LARGE,
             others: 1,
             chained: true,
             after_emit: true,
@@ -1236,57 +978,14 @@ mod tests {
         );
     }
 
-    // t3inc3: Go's walk always visits the direct importers, so when no other
-    // file imports `a.ts` the skip keeps Go's pending emit, after an emit
-    // too.
-    #[test]
-    fn no_emit_change_after_an_emit_of_direct_importers_skips_the_walk() {
-        let project = Project {
-            importers: DTS_WALK_FILE_LIMIT + 1,
-            others: 1,
-            after_emit: true,
-            ..Project::default()
-        };
-        check_no_emit_change_of_a(
-            "no-emit-after-emit-direct",
-            project,
-            SignatureUpdateKind::ComputedDts,
-            SignatureUpdateKind::UsedVersion,
-            None,
-        );
-    }
-
-    // t3inc3: after an emitting build the importers of `a.ts` are not
-    // pending, so `a.ts` computes its d.ts signature: had its d.ts not
-    // changed, Go would make only `a.ts` pending.
-    #[test]
-    fn no_emit_narrow_change_after_an_emit_computes_its_signature() {
-        let importers = 3;
-        let project = Project {
-            importers,
-            others: DTS_WALK_FILE_LIMIT - importers,
-            after_emit: true,
-            ..Project::default()
-        };
-        check_no_emit_change_of_a(
-            "no-emit-after-emit-narrow",
-            project,
-            SignatureUpdateKind::ComputedDts,
-            SignatureUpdateKind::UsedVersion,
-            None,
-        );
-    }
-
-    // t3inc3: a change of `a.ts`, which affects the global scope, makes every
-    // file affected, and each one computes its d.ts signature, as in Go
-    // (`handleDtsMayChangeOfAffectedFile`), also where every file is pending
-    // and the other rules apply. A later change of a file that keeps its d.ts
-    // then checks only that file.
+    // A change of `a.ts`, which affects the global scope, makes every file
+    // affected, and each one computes its d.ts signature, as in Go
+    // (`handleDtsMayChangeOfAffectedFile`).
     #[test]
     fn no_emit_global_change_computes_signatures() {
         let project = Project {
             importers: 3,
-            others: DTS_WALK_FILE_LIMIT,
+            others: LARGE,
             global: true,
             ..Project::default()
         };
@@ -1299,18 +998,17 @@ mod tests {
         );
     }
 
-    // t3inc3 round 3: `b0.ts`, an importer of `a.ts`, affects the global
-    // scope, so a change of `a.ts` with a new d.ts signature makes every file
-    // affected (Go `handleDtsMayChangeOfGlobalScope`). Its version would
-    // count as such a change, so `a.ts`, which stores its d.ts signature
-    // after a first edit, computes it again, as in Go: the second edit keeps
+    // `b0.ts`, an importer of `a.ts`, affects the global scope, so a change
+    // of `a.ts` with a new d.ts signature would make every file affected (Go
+    // `handleDtsMayChangeOfGlobalScope`). `a.ts`, which stores its d.ts
+    // signature after a first edit, computes it again: the second edit keeps
     // the d.ts, so only `a.ts` is checked again.
     #[test]
     fn no_emit_narrow_change_near_a_global_file_computes_its_signature() {
         let importers = 3;
         let project = Project {
             importers,
-            others: DTS_WALK_FILE_LIMIT - importers,
+            others: LARGE - importers - 1,
             global_importer: true,
             same_dts: true,
             ..Project::default()

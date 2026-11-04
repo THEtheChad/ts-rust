@@ -170,6 +170,7 @@ TSFILE: <project>/out/src/u.d.ts
 TSFILE: <project>/out/src/ug.js
 TSFILE: <project>/out/src/ug.d.ts
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
 == wide change, --noEmit: exit 2
 src/c0.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
 src/c1.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
@@ -213,6 +214,7 @@ src/c8.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
 src/c9.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
 src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
 == build after the wide change: exit 2
 tsconfig.json(1,59): error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.
   Visit https://aka.ms/ts6 for migration information.
@@ -339,12 +341,15 @@ TSFILE: <project>/out/src/c7.d.ts
 TSFILE: <project>/out/src/c8.d.ts
 TSFILE: <project>/out/src/c9.d.ts
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
 == revert, --noEmit: exit 2
 src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
 == b0.ts body, --noEmit: exit 2
 src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
 == build after both: exit 2
 tsconfig.json(1,59): error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.
   Visit https://aka.ms/ts6 for migration information.
@@ -471,3 +476,4 @@ TSFILE: <project>/out/src/c7.d.ts
 TSFILE: <project>/out/src/c8.d.ts
 TSFILE: <project>/out/src/c9.d.ts
 TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr

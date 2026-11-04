@@ -1133,105 +1133,138 @@ const NO_EMIT_LARGE_IMPORTERS: usize = 40;
 const NO_EMIT_LARGE_OPTIONS: &str =
     r#"{"incremental":true,"noEmit":true,"strict":true,"skipLibCheck":true,"types":[]}"#;
 
-/// t3inc1, t3inc3: `tsc -p` with `incremental` and `noEmit` on a project of
-/// 85 files, more than the d.ts walk limit (`affected_files.rs`
-/// `skips_dts_walk`), where 81 files import `src/a.ts` (40 directly). The
-/// steps are in `no_emit_large_steps`. After each step the incremental
-/// output must equal a fresh run of the same files. Until a global change
-/// makes every file compute its d.ts signature, the closures store their
-/// versions as signatures (Go's walk gives at least each importer of `a.ts`
-/// one).
-// PORT: no Go counterpart; Go always runs the walk.
+/// `tsc -p` with `incremental` and `noEmit` on a project of 85 files, where
+/// 81 files import `src/a.ts` (40 directly). The steps are in
+/// `no_emit_large_steps`. After each step the incremental output must equal
+/// a fresh run of the same files, and every run must print (stdout, stderr,
+/// exit code) and write (build info) what `tsgo-oracle-3e9236361fa9` does
+/// (`fixtures/dts_walk_go/no-emit`, `go_steps`). Go's d.ts walk gives each
+/// importer whose d.ts it computes a signature; t3inc1's walk skip, which
+/// stored versions there, is gone (C1 round 2).
 #[test]
 fn no_emit_large_project_reports_like_fresh_runs() {
     let root = scratch_dir("no-emit-large");
-    let fallback = root.join("fallback");
-    write_large_project(&fallback, NO_EMIT_LARGE_OPTIONS);
-    for (step, file, text, errors, fallback_signatures) in no_emit_large_steps() {
-        write(&fallback.join(file), &text);
-        let incremental = tsgo_no_emit(&fallback, &[]);
-        let _ = fs::remove_file(fallback.join("fresh.tsbuildinfo"));
-        let fresh = tsgo_no_emit(&fallback, &["--tsBuildInfoFile", "fresh.tsbuildinfo"]);
-        let at = root.display();
-        assert_eq!(
-            incremental, fresh,
-            "{step}: incremental and fresh runs in {at}"
-        );
+    let project = root.join("project");
+    write_large_project(&project, NO_EMIT_LARGE_OPTIONS);
+    let steps = no_emit_large_steps();
+    let go_steps = steps
+        .iter()
+        .map(|(step, file, text, _)| (*step, *file, text.clone(), &[][..]));
+    go_steps_match(&project, "no-emit", "tsconfig.tsbuildinfo", go_steps, |n| {
+        let (step, _, _, errors) = &steps[n];
+        let errors = *errors;
+        let incremental = tsgo_no_emit(&project, &[]);
+        let _ = fs::remove_file(project.join("fresh.tsbuildinfo"));
+        let fresh = tsgo_no_emit(&project, &["--tsBuildInfoFile", "fresh.tsbuildinfo"]);
+        assert_eq!(incremental, fresh, "{step}: incremental and fresh runs");
         assert_eq!(
             error_lines(&incremental.stdout).len(),
             errors,
             "{step}: errors\n{}",
             incremental.stdout
         );
-        // The build info writes a signature only where it is not the
-        // version. Until the global change, only `a.ts` gets one (`b0.ts`
-        // has one importer, so it uses its version).
-        if let Some(fallback_signatures) = fallback_signatures {
-            let info = read(&fallback.join("tsconfig.tsbuildinfo"));
-            assert_eq!(
-                info.matches("\"signature\":").count(),
-                fallback_signatures,
-                "{step}: {info}"
-            );
-        }
-    }
+    });
     let _ = fs::remove_dir_all(&root);
 }
 
 /// The steps of `no_emit_large_project_reports_like_fresh_runs`: (step, file,
-/// its text, error lines, signatures in the fallback's build info). `None`:
-/// the whole build info is Go's, the signatures too.
+/// its text, error lines).
 ///
 /// A change of `Shape` that gives the 40 indirect importers an error, its
 /// revert, an error in `a.ts` that keeps its d.ts, its fix, a second change
 /// of `Shape`, a change of `b0.ts` (only `c0.ts` imports it) that gives
-/// `c0.ts` an error, its revert and a run with no change. Then (t3inc3) a
-/// change of `g.ts`, which affects the global scope, so every file is checked
-/// again and computes its d.ts signature, as in Go; its revert; and an edit
-/// of `a.ts` that keeps its d.ts, which then checks only `a.ts`, as in Go (a
-/// walk skip would store the versions of its closure).
-fn no_emit_large_steps() -> Vec<(&'static str, &'static str, String, usize, Option<usize>)> {
+/// `c0.ts` an error, its revert and a run with no change. Then a change of
+/// `g.ts`, which affects the global scope, so every file is checked again and
+/// computes its d.ts signature; its revert; and an edit of `a.ts` that keeps
+/// its d.ts, which then checks only `a.ts`.
+fn no_emit_large_steps() -> Vec<(&'static str, &'static str, String, usize)> {
     let a = no_emit_large_a;
     let (a_ts, b0_ts, g_ts) = ("src/a.ts", "src/b0.ts", "src/g.ts");
     let wide = 1 + NO_EMIT_LARGE_IMPORTERS;
     vec![
-        ("cold", a_ts, a("x: number", "1"), 1, Some(0)),
-        ("wide change", a_ts, a("x: string", "\"1\""), wide, Some(1)),
-        ("revert", a_ts, a("x: number", "1"), 1, Some(1)),
-        ("error in a.ts", a_ts, a("x: number", "\"1\""), 2, Some(1)),
-        ("fix", a_ts, a("x: number", "1"), 1, Some(1)),
+        ("cold", a_ts, a("x: number", "1"), 1),
+        ("wide change", a_ts, a("x: string", "\"1\""), wide),
+        ("revert", a_ts, a("x: number", "1"), 1),
+        ("error in a.ts", a_ts, a("x: number", "\"1\""), 2),
+        ("fix", a_ts, a("x: number", "1"), 1),
         (
             "second wide change",
             a_ts,
             a("x: number; y?: number", "1"),
             1,
-            Some(1),
         ),
         (
             "narrow change",
             b0_ts,
             "export const v0 = { x: \"0\" };\n".into(),
             2,
-            Some(1),
         ),
-        ("narrow revert", b0_ts, no_emit_large_b(0), 1, Some(1)),
-        ("no change", b0_ts, no_emit_large_b(0), 1, Some(1)),
-        ("global change", g_ts, no_emit_large_g("string"), 2, None),
-        ("global revert", g_ts, no_emit_large_g("number"), 1, None),
-        ("same d.ts", a_ts, a("x: number; y?: number", "2"), 1, None),
+        ("narrow revert", b0_ts, no_emit_large_b(0), 1),
+        ("no change", b0_ts, no_emit_large_b(0), 1),
+        ("global change", g_ts, no_emit_large_g("string"), 2),
+        ("global revert", g_ts, no_emit_large_g("number"), 1),
+        ("same d.ts", a_ts, a("x: number; y?: number", "2"), 1),
     ]
+}
+
+/// Runs `steps` (step, file, its new text, extra `tsc -p` arguments) in
+/// `project` and compares each run with the Go oracle's golden files in
+/// `fixtures/dts_walk_go/<scenario>` (written by
+/// `scripts/perf-rearch/cleanup/dtswalk_go.py` from
+/// `tsgo-oracle-3e9236361fa9`): the build info at `info` after each step,
+/// and `report.txt`, the exit code, stdout and stderr of every step.
+/// `after_step(n)` runs after the comparison of step `n`.
+fn go_steps_match<'s>(
+    project: &Path,
+    scenario: &str,
+    info: &str,
+    steps: impl Iterator<Item = (&'s str, &'s str, String, &'s [&'s str])>,
+    mut after_step: impl FnMut(usize),
+) {
+    let go = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/dts_walk_go")
+        .join(scenario);
+    let mut report = String::new();
+    for (n, (step, file, text, args)) in steps.enumerate() {
+        write(&project.join(file), &text);
+        let run = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+            .args(["-p", "tsconfig.json", "--pretty", "false"])
+            .args(args)
+            .current_dir(project)
+            .output()
+            .expect("run tsgo");
+        let text = |bytes: Vec<u8>| {
+            String::from_utf8(bytes)
+                .expect("tsgo output is UTF-8")
+                .replace(&norm(project), "<project>")
+        };
+        report.push_str(&format!(
+            "== {step}: exit {}\n{}-- stderr\n{}",
+            run.status.code().expect("tsgo exited with a code"),
+            text(run.stdout),
+            text(run.stderr)
+        ));
+        assert_eq!(
+            read(&project.join(info)),
+            read(&go.join(format!("step{n}.tsbuildinfo"))),
+            "{scenario} {step}: build info in {}",
+            project.display()
+        );
+        after_step(n);
+    }
+    assert_eq!(
+        report,
+        read(&go.join("report.txt")),
+        "{scenario}: exit codes, stdout and stderr"
+    );
 }
 
 /// t3inc3: an emitting build, `--noEmit` runs, then emitting builds again, on
 /// the project of `no_emit_large_project_reports_like_fresh_runs` with
-/// `declaration` and `outDir` in place of `noEmit`. An emitting build leaves
-/// no file pending, so the `--noEmit` runs must take Go's walk and Go's own
-/// signature of `b0.ts`: else the next build writes more files than Go's
-/// (`c<i>.js` after the change of `Shape`, `c0.js` after the edit of
-/// `b0.ts`). Each run must print what `tsgo-oracle-3e9236361fa9` prints,
-/// `--listEmittedFiles` too, and write its build info
-/// (`fixtures/dts_walk_go`, from `scripts/perf-rearch/cleanup/dtswalk_go.py`).
-// PORT: no Go counterpart; Go always runs the walk.
+/// `declaration` and `outDir` in place of `noEmit`. Each run must print and
+/// write what `tsgo-oracle-3e9236361fa9` does
+/// (`fixtures/dts_walk_go/emit-builds`, `go_steps_match`), the files of
+/// `--listEmittedFiles` too.
 #[test]
 fn no_emit_runs_between_builds_keep_go_emits() {
     let root = scratch_dir("no-emit-between-builds");
@@ -1240,47 +1273,37 @@ fn no_emit_runs_between_builds_keep_go_emits() {
         &project,
         r#"{"incremental":true,"declaration":true,"outDir":"out","strict":true,"skipLibCheck":true,"types":[]}"#,
     );
-    let go = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dts_walk_go");
-    let mut report = String::new();
     let (a, b0_body) = (
         no_emit_large_a,
         format!("{}const local = 1;\n", no_emit_large_b(0)),
     );
     let (a_ts, b0_ts) = ("src/a.ts", "src/b0.ts");
+    let no_emit: &[&str] = &["--listEmittedFiles", "--noEmit"];
+    let emit: &[&str] = &["--listEmittedFiles"];
     let steps = [
-        ("build", a_ts, a("x: number", "1"), false),
-        ("wide change, --noEmit", a_ts, a("x: string", "\"1\""), true),
+        ("build", a_ts, a("x: number", "1"), emit),
+        (
+            "wide change, --noEmit",
+            a_ts,
+            a("x: string", "\"1\""),
+            no_emit,
+        ),
         (
             "build after the wide change",
             a_ts,
             a("x: string", "\"1\""),
-            false,
+            emit,
         ),
-        ("revert, --noEmit", a_ts, a("x: number", "1"), true),
-        ("b0.ts body, --noEmit", b0_ts, b0_body.clone(), true),
-        ("build after both", b0_ts, b0_body, false),
+        ("revert, --noEmit", a_ts, a("x: number", "1"), no_emit),
+        ("b0.ts body, --noEmit", b0_ts, b0_body.clone(), no_emit),
+        ("build after both", b0_ts, b0_body, emit),
     ];
-    for (n, (step, file, text, no_emit)) in steps.into_iter().enumerate() {
-        let args: &[&str] = if no_emit {
-            &["--listEmittedFiles", "--noEmit"]
-        } else {
-            &["--listEmittedFiles"]
-        };
-        write(&project.join(file), &text);
-        let run = tsgo_no_emit(&project, args);
-        report.push_str(&format!("== {step}: exit {}\n", run.status));
-        report.push_str(&run.stdout.replace(&norm(&project), "<project>"));
-        assert_eq!(
-            read(&project.join("out/tsconfig.tsbuildinfo")),
-            read(&go.join(format!("step{n}.tsbuildinfo"))),
-            "{step}: build info in {}",
-            root.display()
-        );
-    }
-    assert_eq!(
-        report,
-        read(&go.join("report.txt")),
-        "stdout and exit codes"
+    go_steps_match(
+        &project,
+        "emit-builds",
+        "out/tsconfig.tsbuildinfo",
+        steps.into_iter(),
+        |_| {},
     );
     let _ = fs::remove_dir_all(&root);
 }

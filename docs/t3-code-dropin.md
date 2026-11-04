@@ -64,12 +64,13 @@ the plugin options in tsconfig.json) and its oxlint presets. T3 Code uses none o
 With `incremental: true`, an edit of an exported type made an incremental run slower than a cold
 one (apps/server, an edit of `config.ts` with about 200 importers: 1.45x cold on 0.7.0). Go's
 `getFilesAffectedBy` emits the d.ts of each importer, one at a time, to see whether the change
-spreads, and tsc-rs ported that. Under `noEmit`, Go rechecks the whole closure anyway. tsc-rs now
-skips that d.ts walk in large `noEmit` programs, and skips the changed file's own d.ts emit when it
-has at most 32 importers, none of them affects the global scope, and the pending emit stays Go's
-(`crates/ts_goport/PORTING.md`, `skips_dts_walk`). The output is the same. The build info stores file versions where Go stores d.ts hashes.
+spreads, and tsc-rs ported that. Under `noEmit`, Go rechecks the whole closure anyway. tsc-rs
+skipped that d.ts walk in large `noEmit` programs (t3inc1, t3inc3), but its build info then stored
+file versions where Go stores d.ts hashes, so on 2026-11-04 (perf-rearch C1 round 2) Go's walk became
+the only path again: the build info must be Go's. The "now" column below is from the skip and no
+longer holds; the speed has to come back from a faster walk.
 
-T3 Code setup, 5 runs, incremental/cold, 0.7.0 to now:
+T3 Code setup, 5 runs, incremental/cold, 0.7.0 to the walk skip:
 
 | Edit | Project | 0.7.0 | now |
 |---|---|---|---|
