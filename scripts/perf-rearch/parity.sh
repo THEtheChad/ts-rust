@@ -15,7 +15,9 @@
 #   tests   parity_tests.py: the checkout's cargo test binaries and go_baselines (TestLocal in 4 shards),
 #           as ci.yml runs them, per test name and per TestLocal case. It builds the checkout
 #           (--checkout, default this worktree): the tier tests the source, not <tsgo bin>
-#   lsp     parity_lsp.py: lspdiff sessions (umami, ts-pattern; full adds hono and more positions)
+#   lsp     parity_lsp.py: lspdiff sessions (umami, ts-pattern; full adds hono) and watch scenarios
+#           (registrations, pushed diagnostics, refreshes, file-system events, first loads; full adds
+#           umami, hono and query, and runs tsc-rs 3 times: twice, and with GOPORT_PARSE_THREADS=1)
 #   fuzz    parity_fuzz.py: difffuzz cases 0..N-1 of seed 1 (quick 1,500, full 30,000)
 #   corpus  parity_fuzz.py --corpus: every pin test case (about 12,700) through the CLI (full only)
 # quick: cli (quick configs and variants, tsc-rs once), tests (go_baselines only), lsp, fuzz.

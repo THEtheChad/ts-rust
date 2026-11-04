@@ -349,3 +349,4 @@ was the same as Go's.
     measure how much of the ttfd gap it closes.
   - The LSP parity harness lane (watch registrations, two-run LSP,
     first-load cases) provides the proof.
+- **2026-11-04, LSP parity harness merged** (`b00e5c646`): watch registrations, server messages and fs-event sessions; tsc-rs runs 3× per LSP session. Full gate on the head: OK, 186,611 items. base-current moved to that run.
