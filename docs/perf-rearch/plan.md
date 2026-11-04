@@ -249,3 +249,14 @@ until the baseline and parity lanes have released the machine.
     investigated in its own lane. base-current stays at the E0 run; A1 adds
     no gate items.
 - **2026-11-04, A1 verify follow-up merged** (`b5278f0a1`): the verify child replays the server's snapshot view (file cache, directory listings, config texts) and reports ERROR when faithful reconstruction isn't possible.
+- **2026-11-04, B1 merged** (`b22c2a3e6`): early emit for plain `tsc -p`.
+  Transform and print run per checker right after its check and global
+  read; writes are held until every check returns.
+  - **Fallbacks to the barrier:** non-regular output targets, custom
+    `WriteFile` callbacks, and the F1–F4 cases (for example zod).
+  - **Reviews:** three Astra rounds plus a final check. Root fixed the last
+    two findings (`c3921eda8`: `os_path` stat, no secondary panic).
+  - **Evidence:** per-checker call logs identical. Parity full OK on
+    `69a593790`, quick OK on the final.
+  - **Timing still pending:** the command is in lane B1's final report,
+    bin `t3-de2c82a7/target/b1/bins/`.
