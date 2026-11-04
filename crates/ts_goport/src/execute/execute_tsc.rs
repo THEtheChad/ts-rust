@@ -895,13 +895,25 @@ fn show_config(sys: &dyn System, config: &ParsedCommandLine, config_file_name: &
 // the build info tracking. There is no outDir or input guard: tsgo writes
 // next to the sources or into outDir, as Go does.
 pub(crate) fn os_write_file() -> WriteFile {
-    Arc::new(
-        |file_name: &str, text: &str, _data: &mut WriteFileData| -> Result<(), String> {
-            osvfs_fs()
-                .write_file(file_name, text)
-                .map_err(|err| fs_error_text(&err))
-        },
-    )
+    static OS_WRITE_FILE: std::sync::OnceLock<WriteFile> = std::sync::OnceLock::new();
+    OS_WRITE_FILE
+        .get_or_init(|| {
+            Arc::new(
+                |file_name: &str, text: &str, _data: &mut WriteFileData| -> Result<(), String> {
+                    osvfs_fs()
+                        .write_file(file_name, text)
+                        .map_err(|err| fs_error_text(&err))
+                },
+            )
+        })
+        .clone()
+}
+
+/// PORT: not in Go (perf). True when `write_file` is `os_write_file`'s
+/// callback (one shared value): the plain early emit holds only its writes
+/// (`execute::tsc::EarlyEmitCompilerProgram`).
+pub(crate) fn is_os_write_file(write_file: &WriteFile) -> bool {
+    Arc::ptr_eq(write_file, &os_write_file())
 }
 
 #[cfg(test)]

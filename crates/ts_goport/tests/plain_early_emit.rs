@@ -26,11 +26,16 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "test-hooks")]
+use std::{
+    io::{BufRead, BufReader},
+    process::Stdio,
+    time::{Duration, Instant},
+};
 
 const FIXTURE_SRC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/emit_pool/src");
 
@@ -62,13 +67,15 @@ struct Instrumented {
 
 /// The `GOPORT_*` variables that change how a run emits, removed from
 /// every run before it sets its own.
-const RUN_ENV: [&str; 7] = [
+const RUN_ENV: [&str; 9] = [
     "GOPORT_EARLY_EMIT",
     "GOPORT_PLAIN_EARLY_EMIT",
     "GOPORT_EMIT_PHASE_TIMES",
     "GOPORT_CHECKER_CALL_LOG",
     "GOPORT_TEST_CHECK_PANIC",
     "GOPORT_TEST_CHECK_STALL",
+    "GOPORT_TEST_CHECK_SLEEP",
+    "GOPORT_TEST_WRITE_PANIC",
     "GOPORT_EMIT_THREADS",
 ];
 
@@ -517,8 +524,9 @@ fn plain_early_emit_with_output_collisions() {
     fs::remove_dir_all(&root).expect("remove the scratch dir");
 }
 
-/// Failed writes during the early emit (a directory at an output path, or
-/// an out dir that is a file) give the barrier's TS5033 diagnostics.
+/// Failed writes (a directory at an output path, which keeps the barrier,
+/// or an out dir that is a file, where the early emit's held writes fail)
+/// give the barrier's TS5033 diagnostics.
 #[cfg(unix)]
 #[test]
 fn plain_early_emit_reports_failed_writes_as_the_barrier() {
@@ -531,7 +539,9 @@ fn plain_early_emit_reports_failed_writes_as_the_barrier() {
         &root,
         "dir at output",
         &["--declaration", "--sourceMap"],
-        Start::Early,
+        // A directory at an output path keeps the barrier
+        // (`plain_emit_outputs_are_regular_files`).
+        Start::Late,
         Some(&dir_at_output),
     );
     assert!(
@@ -558,6 +568,7 @@ fn plain_early_emit_reports_failed_writes_as_the_barrier() {
 /// A project of many small files and one slow file (`slow.ts`, a deep
 /// conditional type), on 4 checkers, so the other checkers end their check
 /// and emit long before the slow file's checker.
+#[cfg(feature = "test-hooks")]
 fn panic_project() -> PathBuf {
     let root = pool_project("");
     for i in 0..24 {
@@ -578,7 +589,8 @@ fn panic_project() -> PathBuf {
 /// A check that panics (`GOPORT_TEST_CHECK_PANIC`): the early emit cancels
 /// and drains its emit and writes nothing, as the barrier and Go write
 /// nothing before the check ends. stdout, stderr and the exit code are the
-/// barrier's.
+/// barrier's. Needs the `test-hooks` feature.
+#[cfg(feature = "test-hooks")]
 #[test]
 fn plain_early_emit_writes_nothing_after_a_check_panic() {
     let root = panic_project();
@@ -614,7 +626,7 @@ fn plain_early_emit_writes_nothing_after_a_check_panic() {
 /// other checkers have checked and emitted: no output file exists. The
 /// test waits for the hook's line on stderr, then a moment for the other
 /// checkers' emits, then kills the process.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "test-hooks"))]
 #[test]
 fn plain_early_emit_writes_nothing_before_the_check_ends() {
     let root = panic_project();
@@ -664,6 +676,84 @@ fn plain_early_emit_writes_nothing_before_the_check_ends() {
             files.keys()
         );
     }
+    fs::remove_dir_all(&root).expect("remove the scratch dir");
+}
+
+/// A panic in a write that waited (`GOPORT_TEST_WRITE_PANIC`, while
+/// `GOPORT_TEST_CHECK_SLEEP` holds one check, so `index.js` waits): the
+/// writes close, the emit is cancelled and drained, and the panic ends the
+/// run; it does not hang and the panicking output is not written. Needs the
+/// `test-hooks` feature.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn plain_early_emit_drains_after_a_write_panic() {
+    let root = panic_project();
+    let args = ["--declaration", "--sourceMap", "--checkers", "4"];
+    let hooks = [
+        ("GOPORT_TEST_CHECK_SLEEP", "slow.ts"),
+        ("GOPORT_TEST_WRITE_PANIC", "index.js"),
+    ];
+    let start = Instant::now();
+    let run = tsgo(&root, &args, true, None, &hooks);
+    assert!(
+        start.elapsed() < Duration::from_secs(60),
+        "the run ends after the panic"
+    );
+    assert!(
+        run.stderr.contains("GOPORT_TEST_WRITE_PANIC index.js"),
+        "the write hook panics: {}",
+        run.stderr
+    );
+    assert_ne!(run.status, Some(0), "a panic fails the run");
+    assert!(
+        !run.files.contains_key("index.js"),
+        "the panicking write makes no file: {:?}",
+        run.files.keys()
+    );
+    // The barrier never holds a write, so the hook does not fire there.
+    let barrier = tsgo(&root, &args, false, None, &hooks);
+    assert_eq!(barrier.status, Some(0), "barrier: {}", barrier.stderr);
+    fs::remove_dir_all(&root).expect("remove the scratch dir");
+}
+
+/// An output path that exists and is not a regular file (here a FIFO with
+/// a reader): the program keeps the barrier, as a held write that blocks on
+/// it could hold back the other outputs. The outputs and messages are the
+/// barrier's.
+#[cfg(unix)]
+#[test]
+fn plain_early_emit_keeps_the_barrier_with_a_fifo_output() {
+    let root = pool_project("");
+    let fifo = |out: &Path| {
+        fs::create_dir_all(out).expect("create out");
+        let path = out.join("shapes.js");
+        let status = Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo");
+        // A reader, so the write that opens it ends.
+        std::thread::spawn(move || {
+            let _ = fs::read(&path);
+        });
+    };
+    let report = tsgo_instrumented(&root, &["--declaration"], true, Some(&fifo));
+    assert_eq!(report.start, Start::Late, "a FIFO output keeps the barrier");
+    // A directory at an output path also keeps it (the write fails at once
+    // either way; the rule takes any entry that is not a regular file).
+    let dir = |out: &Path| fs::create_dir_all(out.join("index.js")).expect("dir at output");
+    let run = compare_with(
+        &root,
+        "dir at output",
+        &["--declaration"],
+        Start::Late,
+        Some(&dir),
+    );
+    assert!(
+        run.stdout.contains("TS5033"),
+        "dir at output: {}",
+        run.stdout
+    );
     fs::remove_dir_all(&root).expect("remove the scratch dir");
 }
 

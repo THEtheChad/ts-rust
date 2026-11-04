@@ -5007,13 +5007,22 @@ pub fn checker_call_log_enabled() -> bool {
 /// 0 before `GOPORT_CHECKER_CALL_LOG` is read, 1 off, 2 on.
 static CALL_LOG_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
-/// PORT: not in Go (tests). `GOPORT_TEST_CHECK_PANIC=<base name>` panics in
+/// PORT: not in Go (tests, feature `test-hooks`).
+/// `GOPORT_TEST_CHECK_PANIC=<base name>` panics in
 /// the check of the program file with that base name, after a second;
 /// `GOPORT_TEST_CHECK_STALL=<base name>` prints
 /// `GOPORT_TEST_CHECK_STALL <name>` to stderr there and blocks the check
-/// until the process ends. `tests/plain_early_emit.rs` uses them to check
+/// until the process ends; `GOPORT_TEST_CHECK_SLEEP=<base name>` makes that
+/// check a second slower. `tests/plain_early_emit.rs` uses them to check
 /// that the early emit writes nothing before every check ended. Off, one
 /// relaxed load and one predictable branch per checked file.
+/// Built only with the non-default feature `test-hooks`; without it the
+/// hook is empty, so an inherited variable changes nothing.
+#[cfg(not(feature = "test-hooks"))]
+#[inline(always)]
+fn test_check_hook(_source_file: Node) {}
+
+#[cfg(feature = "test-hooks")]
 #[inline]
 fn test_check_hook(source_file: Node) {
     if TEST_CHECK_HOOK_STATE.load(Ordering::Relaxed) == 1 {
@@ -5023,28 +5032,33 @@ fn test_check_hook(source_file: Node) {
 }
 
 /// 0 before the variables are read, 1 when neither is set, 2 when one is.
+#[cfg(feature = "test-hooks")]
 static TEST_CHECK_HOOK_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
+#[cfg(feature = "test-hooks")]
 #[cold]
 fn test_check_hook_slow(source_file: Node) {
-    static HOOKS: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
-    let (panic_name, stall_name) = HOOKS.get_or_init(|| {
+    static HOOKS: OnceLock<[Option<String>; 3]> = OnceLock::new();
+    let [panic_name, stall_name, sleep_name] = HOOKS.get_or_init(|| {
         let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-        (
+        [
             read("GOPORT_TEST_CHECK_PANIC"),
             read("GOPORT_TEST_CHECK_STALL"),
-        )
+            read("GOPORT_TEST_CHECK_SLEEP"),
+        ]
     });
-    if panic_name.is_none() && stall_name.is_none() {
+    if panic_name.is_none() && stall_name.is_none() && sleep_name.is_none() {
         TEST_CHECK_HOOK_STATE.store(1, Ordering::Relaxed);
         return;
     }
     TEST_CHECK_HOOK_STATE.store(2, Ordering::Relaxed);
     let file_name = source_file_file_name(source_file);
     let base = file_name.rsplit('/').next().unwrap_or("");
-    if panic_name.as_deref() == Some(base) {
+    if panic_name.as_deref() == Some(base) || sleep_name.as_deref() == Some(base) {
         // Late, so the other checkers have checked and emitted first.
         std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
+    if panic_name.as_deref() == Some(base) {
         panic!("GOPORT_TEST_CHECK_PANIC {base}");
     }
     if stall_name.as_deref() == Some(base) {

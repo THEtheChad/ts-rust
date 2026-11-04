@@ -65,6 +65,10 @@ nix = { version = "=0.31.3", default-features = false, features = ["process", "s
 # No defaults: ts_goport chooses the global allocator (its `jemalloc`
 # feature turns on this one), so the two crates cannot disagree about it.
 default = []
+# Test-only hooks (`GOPORT_TEST_CHECK_PANIC`, `GOPORT_TEST_CHECK_STALL`,
+# `GOPORT_TEST_WRITE_PANIC`) for tests/plain_early_emit.rs. Off in every
+# shipped build; ts_goport's `test-hooks` turns it on.
+test-hooks = []
 # The binaries' global allocator is jemalloc: thread arenas
 # (`tikv-jemalloc-ctl`), `jemalloc_layout`, and the jemalloc thread budget
 # and glibc tunables in program.rs. Only ts_goport's `jemalloc` turns it on.

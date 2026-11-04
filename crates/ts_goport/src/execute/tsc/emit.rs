@@ -101,6 +101,12 @@ impl ProgramLike for CompilerProgram {
 /// global diagnostics read, emit (with `declaration`, the declaration
 /// transforms run inside each file's emit, as before).
 ///
+/// The early emit runs only with the OS write (`os_write_file`, the
+/// `tsgo` command): any other `WriteFile` (tests, bins) keeps the barrier,
+/// so no callback sees its writes held. With an output path that exists
+/// and is not a regular file it keeps the barrier too
+/// (`plain_emit_outputs_are_regular_files`).
+///
 /// When the rules do not allow it, or the semantic diagnostics are not
 /// asked for (syntactic, option or global errors, `--listFilesOnly`),
 /// every call is the plain program's.
@@ -156,7 +162,10 @@ impl ProgramLike for EarlyEmitCompilerProgram {
         };
         if !file.is_nil()
             || !first
-            || self.write_file.is_none()
+            || !self
+                .write_file
+                .as_ref()
+                .is_some_and(crate::execute::execute_tsc::is_os_write_file)
             || !crate::emitter::program_emit::plain_emit_can_start_with_check()
         {
             return get_semantic_diagnostics(file);
@@ -164,14 +173,16 @@ impl ProgramLike for EarlyEmitCompilerProgram {
         // Per checker: check, global diagnostics read, emit.
         let check = crate::program::start_semantic_diagnostics();
         let global_diagnostics = crate::program::start_global_diagnostics();
-        let emit = crate::emitter::program_emit::start_plain_emit(&EmitOptions {
-            write_file: self.write_file.clone(),
-            ..EmitOptions::default()
-        });
-        {
-            let mut started = self.started.borrow_mut();
-            started.global_diagnostics = Some(global_diagnostics);
-            started.emit = Some(emit);
+        self.started.borrow_mut().global_diagnostics = Some(global_diagnostics);
+        // While the checkers check: with an output path that is not a
+        // regular file, the emit waits for the check (Go's order), as with
+        // the rules off; the checks and reads sent above are the barrier's.
+        if crate::emitter::program_emit::plain_emit_outputs_are_regular_files() {
+            let emit = crate::emitter::program_emit::start_plain_emit(&EmitOptions {
+                write_file: self.write_file.clone(),
+                ..EmitOptions::default()
+            });
+            self.started.borrow_mut().emit = Some(emit);
         }
         check.wait()
     }

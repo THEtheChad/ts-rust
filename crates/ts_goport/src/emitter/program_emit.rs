@@ -264,6 +264,9 @@ struct DeferredWrites {
 struct SinkState {
     /// Set by `open`.
     open: bool,
+    /// Set when the emit is cancelled or a write panicked: no write is
+    /// made after it, and every write is dropped.
+    closed: bool,
     files: FxHashMap<Node, FileWrites>,
 }
 
@@ -287,6 +290,9 @@ impl DeferredWrites {
     /// The `WriteFile` of the emitters.
     fn write(&self, file_name: &str, text: &str, data: &mut WriteFileData) -> Result<(), String> {
         let mut state = self.lock();
+        if state.closed {
+            return Ok(());
+        }
         if state.open
             && state
                 .files
@@ -363,25 +369,31 @@ impl DeferredWrites {
     fn flush_file(&self, node: Node) {
         let _timer = phase_times::start(phase_times::Phase::Write);
         loop {
-            let (mut write, failures) = {
+            let mut write = {
                 let mut state = self.lock();
+                if state.closed {
+                    return;
+                }
                 let file = state.files.get_mut(&node).expect("a flushed file");
                 let Some(write) = file.pending.pop_front() else {
                     file.writing = false;
                     return;
                 };
-                (write, file.failures.clone())
+                write
             };
-            // The emitter's collection holds the file's earlier failures
-            // when it writes inline.
-            if !failures.is_empty() {
-                let mut diagnostics = DiagnosticsCollection::default();
-                for diagnostic in write.data.diagnostics.drain(..).chain(failures) {
-                    diagnostics.add(diagnostic);
-                }
-                write.data.diagnostics = diagnostics.get_diagnostics();
-            }
-            let result = (self.write_file)(&write.file_name, &write.text, &mut write.data);
+            // The write gets the `WriteFileData` that its emitter made. The
+            // early emit runs only with the OS write (`os_write_file`),
+            // which reads none of it.
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                test_write_hook(&write.file_name);
+                (self.write_file)(&write.file_name, &write.text, &mut write.data)
+            }))
+            .unwrap_or_else(|payload| {
+                // No write after a panicking write: the panic goes on to
+                // `StartedPlainEmit`'s drop, which cancels and drains.
+                self.close();
+                resume_unwind(payload)
+            });
             let mut state = self.lock();
             let file = state.files.get_mut(&node).expect("a flushed file");
             match result {
@@ -406,9 +418,12 @@ impl DeferredWrites {
         }
     }
 
-    /// Drops every waiting write (a cancelled emit).
-    fn discard(&self) {
-        self.lock().files.clear();
+    /// Makes no write from now on, and drops every waiting write (a
+    /// cancelled emit, or a panic in a write).
+    fn close(&self) {
+        let mut state = self.lock();
+        state.closed = true;
+        state.files.clear();
     }
 
     /// The outcomes of the writes that waited, by source file.
@@ -423,6 +438,57 @@ impl DeferredWrites {
         );
         std::mem::take(&mut state.files)
     }
+}
+
+/// PORT: not in Go (tests, feature `test-hooks`).
+/// `GOPORT_TEST_WRITE_PANIC=<base name>` panics in the waiting write of the
+/// output with that base name (`DeferredWrites::flush_file`).
+#[cfg(feature = "test-hooks")]
+fn test_write_hook(file_name: &str) {
+    static NAME: OnceLock<Option<String>> = OnceLock::new();
+    let name = NAME.get_or_init(|| {
+        std::env::var("GOPORT_TEST_WRITE_PANIC")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    if let Some(name) = name
+        && file_name.rsplit('/').next() == Some(name.as_str())
+    {
+        panic!("GOPORT_TEST_WRITE_PANIC {name}");
+    }
+}
+
+#[cfg(not(feature = "test-hooks"))]
+#[inline(always)]
+fn test_write_hook(_file_name: &str) {}
+
+/// PORT: not in Go (perf). True when no output path of the plain emit is
+/// a file system entry other than a regular file (a directory, a FIFO, a
+/// device, a socket, a symlink). The early emit holds its writes and makes
+/// them on a few threads after the check; a write that blocks (opening a
+/// FIFO with no reader) could hold back the other outputs that the
+/// barrier path writes. With such an entry the program keeps the barrier.
+/// Loading thread; it stats every output path.
+#[must_use]
+pub fn plain_emit_outputs_are_regular_files() -> bool {
+    let host = new_emit_host_without_checker();
+    get_source_files_to_emit(None, false, false)
+        .into_iter()
+        .all(|file| {
+            let paths =
+                get_output_paths_for_source_file(file, host.as_ref(), ForceEmitPaths::default());
+            [
+                paths.js_file_path(),
+                paths.source_map_file_path(),
+                paths.declaration_file_path(),
+                paths.declaration_map_path(),
+            ]
+            .into_iter()
+            .filter(|path| !path.is_empty())
+            .all(|path| {
+                std::fs::symlink_metadata(path).map_or(true, |meta| meta.file_type().is_file())
+            })
+        })
 }
 
 /// Set when a plain early emit is cancelled (`StartedPlainEmit` dropped
@@ -548,12 +614,14 @@ impl StartedPlainEmit {
                 );
             }
         }
+        // Every check and global diagnostics read ended: the writes start.
+        // `self.files` stays until the waiting writes are made, so a panic
+        // in them closes the writes, cancels and drains the emit (drop).
+        self.writes.open();
         let files = self
             .files
             .take()
             .expect("the early emit is waited for once");
-        // Every check and global diagnostics read ended: the writes start.
-        self.writes.open();
         let mut results = match files {
             PendingPlainFiles::Pool(pool) => pool.wait(),
             PendingPlainFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
@@ -564,19 +632,21 @@ impl StartedPlainEmit {
 }
 
 impl Drop for StartedPlainEmit {
-    /// Without a `wait` (a panic in the check or the global diagnostics
-    /// read): cancels the jobs that have not started, waits for the rest,
-    /// and drops their writes.
+    /// Without a `wait`, or with a panic in the waiting writes (a panic in
+    /// the check, the global diagnostics read or a write): closes the
+    /// writes, cancels the jobs that have not started, waits for the rest,
+    /// and drops their writes. The panic goes on after it.
     fn drop(&mut self) {
         let Some(files) = self.files.take() else {
             return;
         };
+        self.writes.close();
         PLAIN_EMIT_CANCELLED.store(true, std::sync::atomic::Ordering::Release);
         match files {
             PendingPlainFiles::Pool(pool) => pool.drain(),
             PendingPlainFiles::Checkers(jobs) => drop(jobs.wait_all()),
         }
-        self.writes.discard();
+        self.writes.close();
     }
 }
 
