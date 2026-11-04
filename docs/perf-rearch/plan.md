@@ -266,3 +266,4 @@ until the baseline and parity lanes have released the machine.
     `69a593790`, quick OK on the final.
   - **Timing still pending:** the command is in lane B1's final report,
     bin `t3-de2c82a7/target/b1/bins/`.
+- **2026-11-04, parity full on the merged E0+A1+B1 head (`b22c2a3e6`): OK** (186,585 items, 0 lost). It is now base-current.

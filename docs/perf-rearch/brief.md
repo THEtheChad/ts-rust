@@ -46,7 +46,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now E0 at 5852f249f; on main the Effect items were known
+  this branch (now the merged E0+A1+B1 head at b22c2a3e6; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
