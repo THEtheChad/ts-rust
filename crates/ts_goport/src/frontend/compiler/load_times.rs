@@ -10,6 +10,9 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 /// True when `GOPORT_LOAD_TIMES` is set (not `0`).
+// The module is under the feature (its `mod` item); the `cfg` repeats it
+// for `quality.sh`.
+#[cfg(feature = "diagnostics")]
 #[must_use]
 pub fn times_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
