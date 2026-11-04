@@ -18,9 +18,9 @@
 //               the root is not changed): open, pull, then
 //               create a file the open file imports, delete another one, send
 //               didChangeWatchedFiles for both and pull again
-// Writes <out prefix>.dump (the load dump) and <out prefix>.json: every server-to-client
-// request and notification with its full payload (window/logMessage, which carries
-// timings, is left out), and every response to the client's requests in full.
+// Writes <out prefix>.dump (the load dump), <out prefix>.stream (the whole message
+// stream in order, see below; the proof compares it) and <out prefix>.json (a summary:
+// server requests, notifications other than window/logMessage, responses, diagnostics).
 // Server env passes through (GOPORT_FIRST_LOAD_AHEAD).
 // S1A_FILE / S1A_FILE2: the file to open (relative to root / second root), else the first
 // of lspdiff's pickFiles.
@@ -50,11 +50,26 @@ const dump = `${out}.dump`;
 if (existsSync(dump)) rmSync(dump);
 const uri = (p) => pathToFileURL(p).href;
 
+// The only normalization of the message stream: in a window/logMessage
+// notification's message text, durations ("in 12.3ms", "1.2s") and clock times
+// ("[07:12:31.123]") vary from run to run. Every other byte is kept.
+const DURATION = /\d+(?:\.\d+)?(?:ns|µs|us|ms|s|m)\b/g;
+const CLOCK = /\b\d\d:\d\d:\d\d(?:\.\d+)?\b/g;
+function normalizeLog(raw) {
+  if (!raw.includes('"window/logMessage"')) return raw;
+  const msg = JSON.parse(raw);
+  if (msg.method !== "window/logMessage" || typeof msg.params?.message !== "string") return raw;
+  msg.params.message = msg.params.message.replace(CLOCK, "<clock>").replace(DURATION, "<duration>");
+  return JSON.stringify(msg);
+}
+
 class Client {
   constructor(cmd, cwd, env) {
     this.proc = spawn(cmd[0], cmd.slice(1), { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
     this.next = 1; this.pending = new Map(); this.buf = Buffer.alloc(0); this.serverRequests = []; this.notes = [];
     this.responses = []; this.methods = new Map();
+    // Every message in both directions, in order, as its raw JSON text.
+    this.stream = [];
     this.stderr = "";
     this.proc.stdout.on("data", (c) => this.onData(c));
     this.proc.stderr.on("data", (c) => { this.stderr += c; });
@@ -66,7 +81,9 @@ class Client {
       const h = this.buf.indexOf("\r\n\r\n"); if (h < 0) return;
       const len = Number(/Content-Length: *(\d+)/i.exec(this.buf.subarray(0, h).toString())[1]);
       if (this.buf.length < h + 4 + len) return;
-      const msg = JSON.parse(this.buf.subarray(h + 4, h + 4 + len).toString("utf8"));
+      const raw = this.buf.subarray(h + 4, h + 4 + len).toString("utf8");
+      this.stream.push(["s2c", raw]);
+      const msg = JSON.parse(raw);
       this.buf = this.buf.subarray(h + 4 + len);
       if (msg.id !== undefined && msg.method) {
         this.serverRequests.push({ method: msg.method, params: msg.params });
@@ -78,7 +95,7 @@ class Client {
       } else if (msg.method !== "window/logMessage") this.notes.push({ method: msg.method, params: msg.params });
     }
   }
-  write(m) { const b = Buffer.from(JSON.stringify(m)); this.proc.stdin.write(`Content-Length: ${b.length}\r\n\r\n`); this.proc.stdin.write(b); }
+  write(m) { const text = JSON.stringify(m); this.stream.push(["c2s", text]); const b = Buffer.from(text); this.proc.stdin.write(`Content-Length: ${b.length}\r\n\r\n`); this.proc.stdin.write(b); }
   request(method, params) { const id = this.next++; this.methods.set(id, method); const p = new Promise((r) => this.pending.set(id, r)); this.write({ jsonrpc: "2.0", id, method, params }); p.id = id; return p; }
   notify(method, params) { this.write({ jsonrpc: "2.0", method, params }); }
   open(path, text, version = 1) {
@@ -154,7 +171,13 @@ if (scenario === "open") {
   diags.a2 = await c.diag(a);
 } else throw new Error(`unknown scenario ${scenario}`);
 await Promise.race([c.request("shutdown", null), new Promise((r) => setTimeout(r, 5000))]);
-c.notify("exit", null); c.proc.stdin.end();
+// LSP `exit` has no params (with `params: null` the server logs an InvalidParams error).
+c.write({ jsonrpc: "2.0", method: "exit" }); c.proc.stdin.end();
 const t = setTimeout(() => c.proc.kill("SIGKILL"), 5000); await c.exited; clearTimeout(t);
 writeFileSync(`${out}.json`, JSON.stringify({ scenario, root: rootArg, root2, file: a.replace(root, rootArg), serverRequests: c.serverRequests, notifications: c.notes, responses: c.responses, diags, stderr: c.stderr.slice(0, 4000) }, null, 1));
+// <out>.stream: one line per message, in the order the client sent or got it:
+// "c2s <raw JSON>" or "s2c <raw JSON>", byte for byte as on the wire, except the
+// documented normalization (normalizeLog): in the message text of window/logMessage
+// only, durations and clock times.
+writeFileSync(`${out}.stream`, c.stream.map(([dir, raw]) => `${dir} ${normalizeLog(raw)}`).join("\n") + "\n");
 if (scenario === "fsmut") rmSync(root, { recursive: true, force: true });

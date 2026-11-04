@@ -3660,7 +3660,7 @@ impl PrefetchPool {
 
     /// Starts `workers` more parse workers on the queue of this pool.
     /// Waits until no job is queued and every worker sleeps (tests,
-    /// `resolve_ahead::Mode::Force`), at most 60 seconds.
+    /// `resolve_ahead::Mode::Force`). Panics after 60 seconds.
     fn wait_idle(&self) {
         let start = std::time::Instant::now();
         loop {
@@ -3675,9 +3675,12 @@ impl PrefetchPool {
                     return;
                 }
             }
-            if start.elapsed() > std::time::Duration::from_secs(60) {
-                return;
-            }
+            // A test that waits longer would compare a load whose workers
+            // did not finish: it fails here.
+            assert!(
+                start.elapsed() <= std::time::Duration::from_secs(60),
+                "wait_idle: the parse workers were not idle after 60 seconds"
+            );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }

@@ -2033,6 +2033,134 @@ mod tests {
         assert_eq!(entries, expected);
     }
 
+    /// S1a (compiler/resolve_ahead.rs `FirstLoadJob`): a loader that takes
+    /// every module answer from a worker and adopts the package.json lookups
+    /// of each (`adopt_ahead_package_jsons`, the texts that the check read)
+    /// behaves as a loader that resolved every name itself, in the two ways
+    /// that its package.json cache is read:
+    /// - enumeration (`package_json_cache_entries`, the build info and the
+    ///   watch): the same entries;
+    /// - `get` (a later lookup of the loader): the same entry for each key.
+    /// The two stores themselves differ: the adopted reads are pending, so
+    /// `range` and `contains_key` do not see them until a `get` takes one;
+    /// the enumeration lists them through the taken lookups instead.
+    #[test]
+    fn adopted_first_load_lookups_enumerate_and_get_as_a_serial_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "ts_goport_adopted_package_jsons_{}",
+            std::process::id()
+        ));
+        let files = [
+            ("src/deep/local.ts", "export {};"),
+            (
+                "node_modules/pkg-a/package.json",
+                r#"{ "name": "pkg-a", "version": "1.0.0", "types": "index.d.ts" }"#,
+            ),
+            ("node_modules/pkg-a/index.d.ts", "export {};"),
+            ("node_modules/pkg-a/sub/index.d.ts", "export {};"),
+            (
+                "node_modules/@scope/pkg-b/package.json",
+                r#"{ "name": "@scope/pkg-b", "version": "2.0.0", "types": "lib/b.d.ts" }"#,
+            ),
+            ("node_modules/@scope/pkg-b/lib/b.d.ts", "export {};"),
+        ];
+        for (path, text) in files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let dir = root.to_string_lossy().replace('\\', "/");
+        let names: Vec<&str> = NAMES
+            .iter()
+            .copied()
+            .filter(|name| !name.starts_with("@types/"))
+            .collect();
+        let describe = |entry: &crate::frontend::packagejson::InfoCacheEntry| {
+            format!(
+                "{} {} {:?}",
+                entry.package_directory,
+                entry.directory_exists,
+                entry
+                    .contents
+                    .as_ref()
+                    .map(|contents| (contents.parseable, format!("{:?}", contents.fields)))
+            )
+        };
+
+        let serial = test_resolver(&dir, None);
+        resolve(&serial, &dir, &names);
+        let expected = package_json_entries(&serial);
+        assert!(expected.iter().any(|entry| entry.3), "{expected:?}");
+
+        // A worker resolver publishes each answer with its package.json lookups.
+        let shared = Arc::new(SharedResolutionCache::default());
+        let worker = test_resolver(
+            &dir,
+            Some(SharedResolutionLink {
+                cache: shared.clone(),
+                publish: true,
+            }),
+        );
+        resolve(&worker, &dir, &names);
+        // The loader takes each answer and adopts its lookups, with the
+        // texts of the files (the check's reads).
+        let loader = test_resolver(&dir, None);
+        let link = AheadLink {
+            answers: None,
+            accept: Rc::new(|_: AheadAnswer<'_>, _: &[AheadCall]| true),
+            keys: RefCell::new(KeyList::default()),
+            queue: None,
+            cursor: Cell::new(0),
+            stats: Cell::new(AheadStats::default()),
+            scopes: RefCell::default(),
+            missing: RefCell::default(),
+            log_missing: false,
+            package_json_text: Some(Rc::new(|file_name: &str| {
+                std::fs::read_to_string(file_name).ok().map(Arc::from)
+            })),
+            adopted: RefCell::default(),
+        };
+        let containing_directory = format!("{dir}/src/deep");
+        for name in &names {
+            let found = shared
+                .get_module(&(
+                    containing_directory.as_str(),
+                    *name,
+                    ModuleKind::ES_NEXT,
+                    "",
+                ))
+                .expect("a worker answer");
+            loader
+                .caches
+                .note_worker_package_jsons(&found.package_jsons);
+            adopt_ahead_package_jsons(&link, &found.package_jsons, &loader.package_json_info_cache);
+        }
+        // Enumeration: the same entries.
+        assert_eq!(package_json_entries(&loader), expected);
+        // The stores differ: nothing is an entry yet.
+        let mut own = 0;
+        loader.package_json_info_cache.range(|_, _| {
+            own += 1;
+            true
+        });
+        assert_eq!(own, 0, "the adopted reads are pending");
+        // `get`: the same entry for each key, and the enumeration stays the
+        // same after the gets made the pending reads entries.
+        for (key, ..) in &expected {
+            let serial_entry = serial
+                .package_json_info_cache
+                .get(key)
+                .expect("serial entry");
+            let loader_entry = loader
+                .package_json_info_cache
+                .get(key)
+                .expect("adopted entry");
+            assert_eq!(describe(&loader_entry), describe(&serial_entry), "{key}");
+        }
+        assert_eq!(package_json_entries(&loader), expected);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// Go `InfoCache.Set` keeps the first entry of each package.json
     /// (packagejson/cache.go:190), and Go's parse tasks and loader share
     /// that one cache. The parse workers' shared cache keeps the first read

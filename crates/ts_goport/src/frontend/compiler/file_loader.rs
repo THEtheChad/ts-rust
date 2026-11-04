@@ -716,7 +716,7 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
                 .package_json_info_cache
                 .dump_lines()
                 .into_iter()
-                .map(|line| format!("info_cache {line}")),
+                .map(|line| format!("info_cache_{line}")),
         ) {
             out.push_str(&line);
             out.push('\n');

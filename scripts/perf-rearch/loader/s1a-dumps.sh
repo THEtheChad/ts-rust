@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # S1a dump-equality proof: each scenario runs with GOPORT_FIRST_LOAD_AHEAD=1 and =0
-# (twice each, interleaved) and once with GOPORT_RESOLVE_AHEAD=0 (the serial loader, no
-# resolve ahead at all), and compares the load dumps and the whole recorded protocol (every
-# server request and notification with its payload, every response, the full diagnostics)
-# byte for byte. On a difference it prints the first differing protocol path
-# (compare-requests.py).
+# (3 times each, 6 for autoimport, fsmut and edit sessions; S1A_REPS sets the default;
+# interleaved) and once with GOPORT_RESOLVE_AHEAD=0 (the serial loader, no
+# resolve ahead at all), and compares record by record (dump-sections.py): the load dumps
+# section by section, and the whole message stream (every message in both directions, in
+# order, raw; load-dump-session.mjs <out>.stream). A record that varies between the two
+# S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
 # A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]".
 # usage: s1a-dumps.sh <tsgo bin> <out dir>
 set -u
@@ -37,38 +38,38 @@ for c in "${cases[@]}"; do
   read -r name scen root root2 f1 f2 <<<"$c"
   [[ ${root2:-} == - ]] && root2=
   file=${f1#FILE=}; file2=${f2#FILE2=}
-  for rep in a b; do
+  # More runs where the session has work that varies without S1a (background auto-import,
+  # keyed second loads): a record that varies between the off runs is inconclusive, and
+  # more off runs make fewer records so.
+  case $scen in autoimport|fsmut|edit) reps=6 ;; *) reps=${S1A_REPS:-3} ;; esac
+  offs=(); ons=()
+  for rep in $(seq 1 "$reps"); do
     for v in 1 0; do
-      S1A_FILE=$file S1A_FILE2=$file2 GOPORT_FIRST_LOAD_AHEAD=$v GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v$rep"
+      S1A_FILE=$file S1A_FILE2=$file2 GOPORT_FIRST_LOAD_AHEAD=$v GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
+      if [[ $v == 1 ]]; then ons+=("$out/$name-$v-$rep"); else offs+=("$out/$name-$v-$rep"); fi
     done
   done
   S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
-  h() { sha256sum "$1" | cut -c1-16; }
-  # The whole recorded protocol, no normalization (compare-requests.py KEYS).
-  req() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps([d.get(k) for k in ("serverRequests", "notifications", "responses", "diags")]))' "$1" | sha256sum | cut -c1-16; }
   stats=$(python3 -I -c 'import json,re,sys
 for f in sys.argv[1:]:
     s=json.load(open(f))["stderr"]
-    print(" | ".join(re.sub(r"resolve-ahead: LoadStats ","",l) for l in s.splitlines() if "resolve-ahead" in l))' "$out/$name-1a.json")
-  d1a=$(h "$out/$name-1a.dump"); d1b=$(h "$out/$name-1b.dump"); d0a=$(h "$out/$name-0a.dump"); d0b=$(h "$out/$name-0b.dump")
-  r1a=$(req "$out/$name-1a.json"); r1b=$(req "$out/$name-1b.json"); r0a=$(req "$out/$name-0a.json"); r0b=$(req "$out/$name-0b.json")
-  ds=$(h "$out/$name-serial.dump"); rs=$(req "$out/$name-serial.json")
-  if [[ $ds == "$d0a" && $rs == "$r0a" ]]; then serial="serial=SAME"; else serial="serial=DIFF($ds)"; fi
-  lines=$(wc -l < "$out/$name-1a.dump")
-  prev_fail=$fail
-  if [[ $d1a == "$d0a" && $d1b == "$d0a" && $d0b == "$d0a" && $r1a == "$r0a" && $r1b == "$r0a" && $r0b == "$r0a" ]]; then
-    echo "SAME $name dump=$d0a lines=$lines requests=$r0a $serial"
-    rm -f "$out/$name"-{1a,1b,0b}.dump; gzip -f "$out/$name-0a.dump"
-    [[ $serial == serial=SAME ]] && rm -f "$out/$name-serial.dump" || gzip -f "$out/$name-serial.dump"
+    print(" | ".join(re.sub(r"resolve-ahead: LoadStats ","",l) for l in s.splitlines() if "resolve-ahead" in l))' "$out/$name-1-1.json")
+  # The verdict: record by record (dump-sections.py), for the dumps (section by section)
+  # and for the whole message stream (every message in order, raw).
+  python3 -I "$here/dump-sections.py" dumps --off "${offs[@]/%/.dump}" --on "${ons[@]/%/.dump}" --serial "$out/$name-serial.dump" > "$out/$name.dump-verdict"
+  python3 -I "$here/dump-sections.py" stream --off "${offs[@]/%/.stream}" --on "${ons[@]/%/.stream}" --serial "$out/$name-serial.stream" > "$out/$name.stream-verdict"
+  dv=$(tail -1 "$out/$name.dump-verdict"); sv=$(tail -1 "$out/$name.stream-verdict")
+  inc=$(grep -c 'INCONCLUSIVE' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | awk -F: '{s+=$2} END {print s}')
+  exc=$(grep -c 'EXCLUDED' "$out/$name.dump-verdict" | awk -F: '{s+=$NF} END {print s}')
+  ser=$(grep -c '^  SERIAL FAIL' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | awk -F: '{s+=$2} END {print s}')
+  if [[ $dv == "RECORDS OK" && $sv == "RECORDS OK" ]]; then
+    echo "OK $name ($reps on, $reps off): dump $dv, stream $sv; $inc inconclusive, $exc excluded records; serial differences: $ser (dump lines $(wc -l < "$out/$name-0-1.dump"))"
   else
-    echo "DIFF $name dump on=$d1a,$d1b off=$d0a,$d0b requests on=$r1a,$r1b off=$r0a,$r0b"; fail=1
-    python3 -I "$here/compare-requests.py" "$out/$name-0a.json" "$out/$name-0b.json" "$out/$name-1a.json" "$out/$name-1b.json" | sed 's/^/    /'
-    # Section by section: a section that the S1a-off runs do not agree on is
-    # UNSTABLE without S1a; only an S1A-DIFF section (off stable, on differs) fails.
-    python3 -I "$here/dump-sections.py" "$out/$name-0a.dump" "$out/$name-0b.dump" "$out/$name-1a.dump" "$out/$name-1b.dump" "$out/$name-serial.dump" | grep -v '^same' | sed 's/^/    /'
-    if python3 -I "$here/dump-sections.py" "$out/$name-0a.dump" "$out/$name-0b.dump" "$out/$name-1a.dump" "$out/$name-1b.dump" | grep -q '^SECTIONS OK' \
-      && [[ $r1a == "$r0a" && $r1b == "$r0a" && $r0b == "$r0a" ]]; then fail=$prev_fail; echo "  -> no S1a difference (only sections that differ without S1a too)"; fi
+    echo "FAIL $name: dump $dv, stream $sv"; fail=1
+    grep -h '^  FAIL\|^FAIL' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | head -20 | sed 's/^/    /'
   fi
+  { grep -h 'INCONCLUSIVE' "$out/$name.dump-verdict" "$out/$name.stream-verdict" || true; } | cut -c1-220 | sed 's/^/    /' | head -8
+  gzip -f "$out/$name"-*.dump "$out/$name"-*.stream
   echo "  stats(on, run a): $stats"
 done
-[[ $fail == 0 ]] && echo "DUMPS IDENTICAL" || echo "DUMPS DIFFER"
+[[ $fail == 0 ]] && echo "S1A RECORDS OK" || echo "S1A RECORDS FAIL"
