@@ -407,3 +407,22 @@ once a **reconciliation step** is built and tested.
 - **Until then** L1 stays opt-in. The reconciliation step needs its own Astra
   review.
 - **2026-11-04, S1a merged** (`b60c04700`): first-load worker answers go through exact validation at demand. The gain is small; the main value is the S0 proof tools (`GOPORT_LOAD_DUMP`, `GOPORT_LOAD_TIMES`, strict `dump-sections.py`, `load-dump-session.mjs`). Pre-existing: keyed loads don't adopt accepted package.json lookups into `InfoCache`, so it varies with timing (not observable); this is handed to the L1 lane.
+- **2026-11-04, quality dashboard merged** (`c846e7a76`, Chad: no MI). See
+  `quality.md`.
+  - **Behavior switches:** main 30 → head 34 (+`TSC_RS_EFFECT`,
+    `GOPORT_REUSE_SYNTHETIC`, `GOPORT_PLAIN_EARLY_EMIT`,
+    `GOPORT_FIRST_LOAD_AHEAD`).
+  - **Diagnostic, verification and test env names:** 7 → 22.
+  - **About 44% of net production growth is verification and
+    instrumentation.** Complexity and duplication are flat apart from the
+    root loader and emit functions. 4 new clippy warnings.
+  - **Escape-hatch rules added to the brief.**
+  - **Planned cleanup lane, after timing window 2 confirms the gains:**
+    - retire `GOPORT_REUSE_SYNTHETIC`, `GOPORT_PLAIN_EARLY_EMIT` and
+      `GOPORT_FIRST_LOAD_AHEAD` (keep the old paths only if a measured reason
+      exists);
+    - move A1's `GOPORT_VERIFY_REUSE*` child hooks and the load-dump and
+      phase-timer env names behind a `diagnostics` cargo feature;
+    - de-duplicate the verifier copies of `trackingvfs` and `cachedvfs`;
+    - split `process_all_program_files` and `create_program`;
+    - fix the 4 clippy warnings.

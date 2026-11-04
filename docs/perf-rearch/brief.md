@@ -122,3 +122,22 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   continue.
 - **Your final answer is the deliverable:** findings, numbers with their
   method, files changed and commits. Root saves it.
+
+## Code quality: escape hatches (rules from 2026-11-04)
+
+Chad's priority: root-cause fixes, not layers of one-off patches.
+`quality.sh` showed that every optimization so far left a permanent second
+code path behind an env switch. From now on:
+- **A new behavior switch** (an env var that selects a second code path for
+  the compiler's own work) is allowed only as a temporary rollout aid. Your
+  final answer must name the condition and lane that removes it, usually
+  "after the timing window confirms the gain". Don't add one where the old
+  path can simply be replaced.
+- **Diagnostic, verification and test-hook code** goes behind a cargo
+  feature (as B1's `test-hooks` does) or a single diagnostics module, not a
+  new env var per lane, and never into shipped hot paths.
+- **Don't copy code to build a verifier.** Reuse or factor the original.
+- **Functions:** no new function above cognitive complexity 25. If a root
+  path (for example `process_all_program_files`) grows, split it rather than
+  adding branches.
+- **Clippy** under the repo config must not get worse.
