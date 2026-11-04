@@ -29,6 +29,12 @@ so the configured outDir, declarationDir and tsBuildInfoFile are used as they ar
 are the project's real paths, the project never changes, and the written files are exactly the
 upper dir (sha256 each; a file the second run of incr or build rewrites or touches counts again).
 
+The second run of build (and incr) compares file mtimes that the first run wrote, and mtimes come
+from the wall clock. When the wall clock steps during a side (here systemd-timesyncd stepped it back
+about 1.14 s every 32 s; seen as a change of CLOCK_REALTIME - CLOCK_MONOTONIC), a later output can
+be older than an earlier one, and Go and tsc-rs alike then rebuild ("is older than input"). Such a
+side runs again, up to CLOCK_ATTEMPTS times; when every attempt saw a step, the item is an ERROR.
+
 Go's result is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/cli), keyed
 by the Go binary, project path, project fingerprint (commit and node_modules mtimes), config and
 arguments. When the cache is made Go runs twice; an item
@@ -69,6 +75,18 @@ OVERLAY = ['unshare', '-rm', '--', 'sh', '-c',
            'mount -t overlay overlay -o "lowerdir=$1,upperdir=$2,workdir=$3" "$1" && cd "$4" && shift 4 && exec "$@"',
            'overlay']
 CACHE_VERSION = 4  # bump when a change of this file changes Go's cached results
+# A side whose wall clock stepped by more than CLOCK_STEP_NS runs again (see the top comment).
+CLOCK_STEP_NS = 5_000_000
+CLOCK_ATTEMPTS = 6
+
+
+def clock_offset():
+    """CLOCK_REALTIME - CLOCK_MONOTONIC: constant except where the wall clock is stepped."""
+    return time.clock_gettime_ns(time.CLOCK_REALTIME) - time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+
+
+class ClockStepped(Exception):
+    pass
 
 # name: (quick, kind, extra args). {S} is the scratch dir.
 VARIANTS = {
@@ -181,6 +199,7 @@ class Item:
         self.name = f'cli/{project["name"]}/{config["label"]}/{variant}'
         self.scratch = SCRATCH / self.name.replace('/', '__')
         self.cwd = project['root'] / config.get('cwd', '.')
+        self.clock_retries = 0
 
     def args(self):
         quick, kind, extra = VARIANTS[self.variant]
@@ -192,8 +211,22 @@ class Item:
         return ['-p', cfg, *extra]
 
     def run_side(self, cmd):
-        """One side on a fresh overlay: one or two runs (incr, build), each a Run with the files it wrote."""
+        """One side on a fresh overlay: one or two runs (incr, build), each a Run with the files it wrote.
+        A two-run side during which the wall clock stepped runs again (see the top comment)."""
         kind = VARIANTS[self.variant][1]
+        if kind not in ('incr', 'build'):
+            return self.run_side_once(cmd, kind)
+        for _ in range(CLOCK_ATTEMPTS):
+            before = clock_offset()
+            runs = self.run_side_once(cmd, kind)
+            step = clock_offset() - before
+            if abs(step) <= CLOCK_STEP_NS:
+                return runs
+            self.clock_retries += 1
+        raise ClockStepped(f'the wall clock stepped during each of {CLOCK_ATTEMPTS} attempts '
+                           f'(last {step / 1e6:+.0f} ms)')
+
+    def run_side_once(self, cmd, kind):
         clear(self.scratch)
         upper, work = self.scratch / 'upper', self.scratch / 'work'
         upper.mkdir(parents=True)
@@ -338,6 +371,8 @@ def main():
         clear(it.scratch)
         rs_secs = [round(sum(r.secs for r in runs), 1) for runs in rs_all]
         row = {'goSecs': go_secs, 'rsSecs': rs_secs}
+        if it.clock_retries:
+            row['clockRetries'] = it.clock_retries
         diffs = [compare(go_runs, runs) for runs in rs_all]
         nondet = next((compare(rs_all[0], runs) for runs in rs_all[1:] if compare(rs_all[0], runs)), None)
         if gc['unstable']:
