@@ -30,7 +30,7 @@
 # The base on main: ~/.cache/perf-rearch/parity/base-main/.
 #
 # One gate run at a time (a lock: the scratch paths are fixed so that paths in output agree with the
-# Go cache). A full run takes about 1 to 1.5 hours with a warm Go cache; run it under
+# Go cache). A full run takes about 17 minutes with a warm Go cache (45 cold), quick about 4; run it under
 #   systemd-run --user --collect -p MemoryMax=30G -p MemorySwapMax=0 --unit=parity-<name> \
 #     bash -c 'scripts/perf-rearch/parity.sh full <bin> --base ... > <log> 2>&1; echo "DONE rc=$?" >> <log>'
 set -uo pipefail
