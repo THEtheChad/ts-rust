@@ -385,3 +385,4 @@ was the same as Go's.
     - **loader design v2**: parallel discovery with a transactional
       snapshot, answering Astra's findings 1–7, plus binding in the parse
       workers.
+- **2026-11-04, loader design v2** (`design/loader-v2.md`): half of the loader thread's time is kernel time; about 28k OS calls take 90–98 ms on one thread and 14 ms on 15. L1 puts a frozen per-load concurrent OS view V under all snapshot caches, filled by workers, with the serial loader unchanged (est. ttfd 265–300 ms against Go 283–295). L2 binds in the workers (−25 to −30 ms). Astra review next.
