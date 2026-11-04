@@ -102,16 +102,81 @@ binary runs once more on its own, and is FLAKY if it then passes.
 ### lsp: differential LSP sessions (`parity_lsp.py`, `vendor/lspdiff`)
 
 This tier uses lspdiff from `perf/lsp-concurrency` (931fad409). The vendored copy adds
-`--go-cache` and a per-answer `items.json`. Each session opens 12 files of the project. For
+`--go-cache`, a per-answer `items.json`, the watch scenarios (`scenario.mjs`, `fixtures.mjs`),
+repeated tsc-rs runs and more Go runs (below). Up to 4 sessions run side by side (`--jobs`).
+
+**Standard sessions** (`session.mjs`; umami, ts-pattern and, in full only, hono). Each session opens 12 files of the project. For
 each file it asks for diagnostics, semantic tokens, inlay hints, document symbols and folding
 ranges. At 6 identifiers per file it asks for hover, definition, type definition, references,
 document highlight, signature help, prepareRename/rename and code actions; at the member
 positions, for completion; and it asks for quick fixes for the first 3 errors. Then it types
 into one file, asking for a completion per keystroke, and requests diagnostics again. Answers are
 compared as normalized JSON (the root path is masked; completion items and WorkspaceEdit files
-are sorted, since Go itself does not keep those orders). Sessions run on umami, ts-pattern and
-(full only) hono. quick runs the same umami and ts-pattern sessions as full, so quick compares
-directly against a full base.
+are sorted, since Go itself does not keep those orders). The client advertises no dynamic watch
+registration, so both servers log "file watching: disabled".
+
+**Watch scenarios** (`scenario.mjs`). Here the client advertises what VS Code does:
+`workspace.didChangeWatchedFiles` with `dynamicRegistration` and `relativePatternSupport`,
+and `refreshSupport` for diagnostics, semantic tokens, inlay hints and code lenses. It answers
+`client/registerCapability`, `client/unregisterCapability` and every other server request
+with `null`, and records every server-to-client request and notification in order, with
+payloads. A scenario's steps are its requests, which are compared like the standard answers,
+plus checkpoints. A checkpoint waits until the server has been quiet for 1 s (`LSPDIFF_SETTLE_MS`)
+with no request pending, then adds five items for what arrived since the last checkpoint:
+
+| item | method | content |
+|---|---|---|
+| `<cp> watch events` | `watch/events` | every register and unregister, in order, with its watchers (or other `registerOptions`, such as `typescript-config-watch-id`) |
+| `<cp> watch delta` | `watch/delta` | the registrations added and removed since the last checkpoint, sorted: the net effect, free of order |
+| `<cp> watch active` | `watch/active` | every registration in force after the checkpoint, sorted |
+| `<cp> publishDiagnostics` | `publishDiagnostics` | the pushed diagnostics, stable-sorted by uri |
+| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, progress, …) and notification, with payload, in order. Only `window/logMessage`, the server's log with timings, is left out |
+
+Normalization: the project root is `<root>`, as for answers. Registration ids are
+`<name> watcher <n>.<i>`, and the `<n>` comes from a process-wide counter (Go
+`project/watch.go` `watcherID`). Go takes that counter both when it makes a `WatchedFiles` and
+lazily in `Watchers()` (`computeWatchersOnce`), which its background tasks call. Each task is
+its own goroutine (`project/background/queue.go:35`), so `<n>` depends on Go's schedule. On
+watch-hono, the inferred project's `program files` watcher was 37, 42, 39 and 36 in four Go
+runs, and 34 in all three tsc-rs runs. Every item masks `<n>` except one per session,
+`end watch ids`: the sorted raw ids. It is compared too (it MATCHes where Go is stable) and gives
+tsc-rs's rs-nondet check on the raw ids.
+
+Scripts also let the server go quiet (300 ms) after each `didOpen`, so one snapshot's watch
+update ends before the next snapshot starts. Without that, Go's concurrent background tasks
+reorder registrations. In the probes, Go registered `auto-import watcher 11.0` before the older
+`10.0`, unregistered 11 and registered 10 again. Under load, it also registered a second
+`program files for /dev/null/inferred` watcher with a glob the configured project already held.
+tsc-rs runs those tasks in order, and its sequence is what Go does when its tasks happen to run
+in order (seen on a low-load run). Go runs 4 times when a scenario's cache entry is made
+(`--go-runs 4`; standard sessions 2), and any Go run that differs makes the item GO-UNSTABLE.
+
+| session | tier | what it exercises |
+|---|---|---|
+| `fsevents` | quick, full | fixture `watch-small` (a fresh copy in `scratch/lsp-fsevents/` before every server run): first load with one missing import; auto-import completion and `completionItem/resolve`; then, each on disk plus its `workspace/didChangeWatchedFiles` event, with diagnostics and a hover after it: create the missing `src/c.ts`, delete `src/b.ts`, rename `c.ts` to `c2.ts` (one event with the delete and the create), edit `package.json` `imports`, edit a dependency's `package.json` `types`, edit a file through its realpath behind the directory symlink `node_modules/linked-pkg -> packages/linked-pkg`, break and fix `tsconfig.json`, create `src/sub/d.ts` in a new dir under the include glob, open and close it; an overlay not on disk (`src/ghost.ts`), then created on disk while open, then closed |
+| `fsevents-narrow` | quick, full | the same, with the workspace folder at `<root>/src`: `package.json`, `node_modules` and `tsconfig.json` are outside the workspace, so Go watches the directories the loader looked in there instead of covering them with `<root>/**/*` |
+| `pkgjson-overlay` | quick, full | the fixture with `package.json` and `node_modules/fake-pkg/package.json` open with edited text *before* the first load; then the overlay edited, the dependency's overlay closed, the root overlay closed |
+| `watch-ts-pattern-f12` | quick, full | the standard session's first load (12 files, diagnostics each), a member completion, auto-import completion on a new last line plus 3 resolves, the typing and the undo (one `didChange` per character, no completion per keystroke), and a `didClose` |
+| `unsaved-ts-pattern` | quick, full | the first load starts from an open file that is not on disk (`src/lspdiff-unsaved.ts`): diagnostics, hover, definition and completion in it; then a file on disk opened (references across both), the buffer edited and closed |
+| `watch-umami-f12`, `watch-hono-f12` | full | `watch` on umami and hono |
+| `watch-narrow-umami-f12` | full | `watch` on umami with the workspace folder at `umami/src` |
+| `second-project-query` | full | query: `query-core` loads (diagnostics, hover, completion), then a `react-query` file opens: a second tsconfig project's first load with the session's caches warm (diagnostics, hover, definition into query-core, references, completion), then auto-import completion and resolves in it |
+
+Go dedupes watchers per glob (`watchRegistry.Acquire`), and inside the workspace it covers the
+project with one `<root>/**/*` glob, plus `bundled:///libs/**/*` and `node_modules/**/*`. With the
+workspace at the project root, the watch items therefore see the loader's lookups only outside the
+workspace, which is why the `-narrow` sessions exist. In second-project, react-query's globs
+equal query-core's except its own `node_modules`, so that is its only new registration.
+
+**Repeat runs.** In full, tsc-rs runs three times on every session (standard and watch): twice as
+is, and once with `GOPORT_PARSE_THREADS=1` (`--rs-runs 2 --rs-env GOPORT_PARSE_THREADS=1`). An
+answer on which run 2 differs from run 1 is a DIFF with detail `rs-nondet`, and one on which the
+single-worker run differs is `rs-schedule`, even when one of the runs matches Go. quick runs
+tsc-rs once. `--server-logs` (lspdiff) writes each scenario run's `window/logMessage` stream to
+`<run>.server.log` for diagnosis.
+
+quick runs the same sessions as full, minus hono, watch-umami, watch-narrow-umami, watch-hono and
+second-project, so quick compares directly against a full base.
 
 ### fuzz: fixed-seed difffuzz batch (`parity_fuzz.py`, `vendor/difffuzz`)
 
@@ -140,15 +205,71 @@ run in sequence, except tests, which runs beside them. Wall times:
 |---|---|---|---|
 | cli | 12 s | 261 s (tsc-rs ×2) | 420 s |
 | tests | 230 s (go_baselines only) | 260 to 300 s | 260 s |
-| lsp | 82 s | 82 s | 170 s |
+| lsp | 50 s (7 sessions, 4 at a time) | 137 s (12 sessions, tsc-rs ×3) | 252 s (Go ×4 per scenario) |
 | fuzz | 38 s | 516 s (30,000 × tsc-rs ×2) | 24 min |
 | corpus | – | 135 s | 10 min |
 | **total** | **about 4 min** (tests-bound), plus the go_baselines build after a change | **about 17 min** (994 s plus the test build) | about 45 min |
+
+The lsp times are from 2026-11-04 on the head bin `tsgo-head-b2febcd86-goport-w1`, at a load of
+55 (quick) and 32 falling to 7 (full). In the same window, the tier as it was before the watch
+scenarios (the 3 standard sessions, one after another, tsc-rs once) would take about 50 s: its
+tsc-rs runs took 26 to 30 s (umami), 7 s (ts-pattern) and 7 s (hono). The watch scenarios and the
+two extra tsc-rs runs therefore add about 85 s to a warm full run, and about 10 s to quick, where
+umami's standard session bounds the tier. Most scenario time is the settle wait at checkpoints
+(fsevents: 17 checkpoints, 24 s per server run). The full gate that made this base took 21 min
+(12:21 to 12:42 UTC, load 5 at the start and 50 at the end), with a cold `target/`.
 
 The test build is incremental: 0.4 s with nothing changed. After a checker change, rebuilding the
 go_baselines and workspace test binaries takes several minutes. A cold `target/` took about 25
 min with sccache. The Go side is cached, so after a pin or Go-binary change the first run costs
 about twice the warm time. The `js` mode takes about 9.5 minutes.
+
+## LSP watch scenarios on the perf head (2026-11-04)
+
+The full gate with the new LSP items ran on `tsgo-head-b2febcd86-goport-w1` (sha256
+`e409ee41a731…`; the tests tier on this lane's checkout, whose `crates/` equal b2febcd86), against
+`base-current` (`perf-b22c2a3e6-full`). Run dir:
+`~/.cache/perf-rearch/parity/runs/20261104-062114-full-lspwatch/`. Result: **PARITY OK**, 186,611
+items compared, 0 lost, 0 not run, 0 new items not good. cli 170 MATCH; tests 139,889 PASS,
+1 FLAKY (the known `watch_ends_soon_after_sigint_or_sigterm`); fuzz the known `1:23080`; corpus
+12,727 MATCH.
+
+lsp: 2,601 items, 2,548 MATCH and 53 GO-UNSTABLE, no DIFF. The 2,093 standard items are as in the
+base (2,045 MATCH, 48 GO-UNSTABLE). There are 508 new items (9 scenario sessions), and the three
+tsc-rs runs agreed on every item of every session: no `rs-nondet`, no `rs-schedule`.
+
+| session | items | MATCH | GO-UNSTABLE |
+|---|---|---|---|
+| fsevents | 101 | 101 | 0 |
+| fsevents-narrow | 101 | 101 | 0 |
+| pkgjson-overlay | 34 | 34 | 0 |
+| watch-ts-pattern-f12 | 51 | 51 | 0 |
+| unsaved-ts-pattern | 35 | 35 | 0 |
+| watch-umami-f12 | 51 | 49 | 2: `load watch events`, `end watch ids` |
+| watch-narrow-umami-f12 | 51 | 49 | 2: the same |
+| watch-hono-f12 | 51 | 50 | 1: `end watch ids` |
+| second-project-query | 33 | 33 | 0 |
+
+The 5 GO-UNSTABLE items are Go's background race (see "Watch scenarios"). On umami, Go runs 1
+and 2 registered `auto-import watcher` and dropped it again, and took counter values up to 78.
+Runs 3 and 4 did not, and tsc-rs equals runs 3 and 4 byte for byte, raw ids included. On hono,
+only the raw counter of the inferred project's watcher varies (Go 36 to 42, tsc-rs 34 three
+times). These are not tsc-rs differences, so no new known diff is listed.
+
+On the way there, before the quiet wait after `didOpen` and the 4 Go runs, the probes showed
+DIFFs that were harness problems, not tsc-rs ones: Go's out-of-order background tasks
+(a transient `auto-import watcher 11.0`, and under load an extra `/dev/null/inferred`
+registration in pkgjson-overlay that a low-load Go run did not make), and the raw watcher
+counter. Both are handled as described above.
+
+What the watch items saw, on both servers: `typescript-config-watch-id`
+(`workspace/didChangeConfiguration`), `root files for <tsconfig>`, `program files for
+<tsconfig>` (`bundled:///libs/**/*` and, narrow, the directories above the workspace),
+`auto-import` (`node_modules/**/*` per package dir), `program files for /dev/null/inferred`
+(`~/.cache/typescript/7.1/node_modules/**/*`); 22 `workspace/diagnostic/refresh` and 9
+`workspace/inlayHint/refresh` requests; `publishDiagnostics` for each tsconfig, with the
+`bogusOption` error in fsevents. Neither server sent a semanticTokens or codeLens refresh in these
+scenarios, so those are compared only as absent.
 
 ## Base on main (91f3d021c)
 
@@ -255,17 +376,34 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - **Watch mode** (`--watch`, `-b -w`), edits between incremental or `-b` runs (the second run is
   a no-op only; `scripts/goport/compare-build.sh` has edit scenarios), `--build --clean`,
   `--init`, `--help`, `--version`, `--generateTrace` and `--generateCpuProfile` output.
-- **LSP beyond the scripted session.** Workspace symbols, call hierarchy, file watching and
-  workspace changes, multi-project sessions, document links, formatting, LSP diagnostics for
-  push clients, cancellation, and the session-level concurrency that perf/lsp-concurrency
-  benchmarks (answers are compared, not timing or interleaving).
+- **LSP beyond the scripted sessions.** Workspace symbols, call hierarchy, document links,
+  formatting, cancellation, and the session-level concurrency that perf/lsp-concurrency
+  benchmarks (answers are compared, not timing or interleaving). The watch scenarios have these
+  limits:
+  - The client sends every file-system event, whether or not a registered glob matches it (VS Code
+    sends only matching ones). Both servers get the same events, and the globs are compared.
+  - Events outside the scenario's own steps aren't sent: there are no events for what the server
+    writes, and none for real project dirs (only the fixture is changed).
+  - A checkpoint's items depend on a 1 s quiet window. A registration that arrives after it is
+    counted at the next checkpoint (the same for both servers).
+  - Go's debounced work (500 ms diagnostics refresh, 30 s idle cache clean) is reached only
+    where the scenario waits long enough. No step idles for 30 s.
+  - Within the workspace, Go watches whole trees (`<root>/**/*`). Seen files and missing
+    directories become separate globs only outside it (the `-narrow` sessions, the inferred
+    project's typings dir).
+  - The ordered `watch events` item is GO-UNSTABLE wherever Go's background tasks race (the first
+    load of umami). There, only `watch delta` and `watch active` protect the result.
+  - Not exercised: a symlink event on the link path itself, case-only renames, and directory
+    deletes with children.
 - **The msgpack/JSON API** (`scripts/goport/api_oracle.py`) and the native-preview client suite
   (`np-suite.sh`).
 - **Not compared at all:** GO-UNSTABLE and GO-FAIL items, the masked `--extendedDiagnostics`
   memory and time values, and the Go-crash cases.
 - **Nondeterminism that two tsc-rs runs do not show.** Full mode runs tsc-rs twice on cli and
-  fuzz; a race that needs more runs or other load can still pass.
-- **Inputs.** 10 projects (23 configs), 3 LSP projects, 42,727 test-case runs (30,000 fuzz plus
+  fuzz, and three times on lsp (the third with `GOPORT_PARSE_THREADS=1`). A race that needs more
+  runs or other load can still pass, and other worker settings (`GOPORT_MAPPED_THREADS`,
+  large-program workers) are not varied.
+- **Inputs.** 10 projects (23 configs), 4 LSP projects plus the watch-small fixture, 42,727 test-case runs (30,000 fuzz plus
   12,727 corpus). Corpus cases with `@link`, `@symlink`, `@currentDirectory`, their own
   `tsconfig.json` or `..` paths are skipped by difffuzz's seed parser (TestLocal covers them).
 - **Project dirs owned by another lane.** The baseline lane owns most project dirs. A reinstall
@@ -280,7 +418,9 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `parity_compare.py`: `merge`, `compare` and `known`.
 - `parity-projects.json`: the CLI projects; `prepare-parity-projects.sh`: the parity lane's
   project copies.
-- `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache` and `items.json`) and
+- `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
+  `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs` and `--server-logs`; `scenario.mjs` holds the
+  watch scenarios and `fixtures.mjs` the watch-small fixture) and
   `vendor/difffuzz/` (feat/difffuzz 033e55442, unchanged).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `runs/`,
   `logs/` and `scratch/`.
