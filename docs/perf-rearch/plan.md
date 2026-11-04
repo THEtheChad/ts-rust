@@ -248,3 +248,4 @@ until the baseline and parity lanes have released the machine.
     bin, so it's treated as an existing `-b` race under load and is being
     investigated in its own lane. base-current stays at the E0 run; A1 adds
     no gate items.
+- **2026-11-04, A1 verify follow-up merged** (`b5278f0a1`): the verify child replays the server's snapshot view (file cache, directory listings, config texts) and reports ERROR when faithful reconstruction isn't possible.
