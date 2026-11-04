@@ -8,7 +8,9 @@ Method (docs/perf-rearch/brief.md): each run starts when the 1-minute load is un
 order of the labels rotates each round; the load is recorded before and after each run; a run
 whose load after is above 3 is excluded and repeated (at most twice). Every run, kept or not,
 goes into DIR/manifest.jsonl with its load and, for an excluded run, the reason. DIR/summary.md
-has per label the median and range of ttfd, program update, didOpen and diagnostic time.
+has per label the median and range of ttfd, program update (the server's log line), didOpen,
+the diagnostic request's round trip (it waits behind didOpen), process CPU, and for tsc-rs with
+GOPORT_LOAD_TIMES the resolve-ahead counts of the load.
 """
 import json, os, re, statistics, subprocess, sys, time
 from pathlib import Path
@@ -57,6 +59,7 @@ def run_one(label, cmd):
         "program_ms": ms(r"Program update for \S+ completed in ([\d.]+)(ms|µs|s)", txt),
         "didopen_ms": ms(r"textDocument/didOpen. in ([\d.]+)(ms|µs|s)", txt),
         "load_times": lt.group(0) if lt else None,
+        **{k: int(v) for k, v in re.findall(r"\b(new_keys|taken|rejected|missing|scopes_taken|scopes_missing): (\d+)", lt.group(0) if lt else "")},
     }
 
 done = {}
@@ -87,14 +90,15 @@ for rnd in range(runs):
             if kept: break
 
 rows = [json.loads(l) for l in manifest.read_text().splitlines()]
-lines = ["| label | n | ttfd median [range] | program update | didOpen | diagnostic | CPU |", "|---|---|---|---|---|---|---|"]
+lines = ["| label | n | ttfd median [range] | program update | didOpen | diagnostic request round trip | process CPU | keys taken / missing / rejected (median) |", "|---|---|---|---|---|---|---|---|"]
 def cell(vals):
     vals = [v for v in vals if v is not None]
     return f"{statistics.median(vals):.1f} [{min(vals):.1f}–{max(vals):.1f}]" if vals else "-"
 for label, _ in sides:
     kept = [r for r in rows if r["label"] == label and r["kept"]]
     lines.append(f"| {label} | {len(kept)} | {cell([r['ttfd_ms'] for r in kept])} | {cell([r['program_ms'] for r in kept])} | "
-                 f"{cell([r['didopen_ms'] for r in kept])} | {cell([r['diag_ms'] for r in kept])} | {cell([r['cpu_ms'] for r in kept])} |")
+                 f"{cell([r['didopen_ms'] for r in kept])} | {cell([r['diag_ms'] for r in kept])} | {cell([r['cpu_ms'] for r in kept])} | "
+                 + ("/".join(str(statistics.median([r[k] for r in kept if k in r])) for k in ("taken", "missing", "rejected")) if any("taken" in r for r in kept) else "-") + " |")
 excl = [r for r in rows if not r["kept"]]
 lines.append(f"\n{len(rows)} runs recorded, {len(excl)} excluded" + "".join(f"\n- {r['label']} r{r['round']} a{r['attempt']}: {r['reason']}" for r in excl))
 (out / "summary.md").write_text("\n".join(lines) + "\n")
