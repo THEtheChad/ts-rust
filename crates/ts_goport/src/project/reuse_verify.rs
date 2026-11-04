@@ -796,23 +796,7 @@ impl Fs for SnapshotTextFs {
             None => self.inner.read_file(path),
         }
     }
-    fn write_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.write_file(path, data)
-    }
-    fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.append_file(path, data)
-    }
-    fn remove(&self, path: &str) -> Result<(), FsError> {
-        self.inner.remove(path)
-    }
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<std::time::SystemTime>,
-        m_time: Option<std::time::SystemTime>,
-    ) -> Result<(), FsError> {
-        self.inner.chtimes(path, a_time, m_time)
-    }
+    vfs::fs_write_through!(inner);
     fn directory_exists(&self, path: &str) -> bool {
         self.inner.directory_exists(path)
     }
