@@ -395,6 +395,12 @@ impl DeferredWrites {
                 resume_unwind(payload)
             });
             let mut state = self.lock();
+            // Another flush thread's write panicked and closed the writes
+            // (`close` clears `files`): stop without a second panic, so that
+            // panic is the one that goes on.
+            if state.closed {
+                return;
+            }
             let file = state.files.get_mut(&node).expect("a flushed file");
             match result {
                 Ok(()) => file.outcomes.push((
@@ -486,7 +492,10 @@ pub fn plain_emit_outputs_are_regular_files() -> bool {
             .into_iter()
             .filter(|path| !path.is_empty())
             .all(|path| {
-                std::fs::symlink_metadata(path).map_or(true, |meta| meta.file_type().is_file())
+                // The same OS path the write uses (`os_path`), so a name that is
+                // not UTF-8 is checked where it will be written.
+                std::fs::symlink_metadata(crate::frontend::vfs::os_path(path))
+                    .map_or(true, |meta| meta.file_type().is_file())
             })
         })
 }
