@@ -284,7 +284,7 @@ pub(super) fn update_program_version(
 /// server parse cache does (`ast::freeable_path`). `tsc --watch` calls it
 /// for each build (`program::mark_freeable_parses`), and
 /// `update_program_version` (`goport_multiprog`) too, where the rule is off
-/// unless `GOPORT_FREE_FILE_VERSIONS=1`, so a measurement can turn it on
+/// unless `--free-file-versions`, so a measurement can turn it on
 /// (lsshells M3b). A parse that is not a program file gets none: it is
 /// published static.
 pub(super) fn mark_freeable_parses(np: &NewProgram) {

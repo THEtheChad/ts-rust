@@ -29,8 +29,6 @@ use super::projecttestutil::{FileMap, files, wrapped_map_fs};
 use super::util::*;
 
 const CONFIG: &str = "/home/projects/TS/p1/tsconfig.json";
-/// Owned nodes on (lsshells M3c, off by default) for a child test.
-const OWNED_NODES: &[(&str, &str)] = &[("GOPORT_OWNED_NODES", "1")];
 const INDEX_URI: &str = "file:///home/projects/TS/p1/index.ts";
 const INDEX_FILE: &str = "/home/projects/TS/p1/index.ts";
 const INDEX_TEXT: &str = "import { a } from './a';\nexport const x = a + 1;";
@@ -177,9 +175,8 @@ child_test! {
 }
 
 child_test! {
-    env OWNED_NODES;
     // The astdata nodes of each edited version belong to its store
-    // (lsshells M3c, `GOPORT_OWNED_NODES=1`): a new version adds its nodes
+    // (lsshells M3c): a new version adds its nodes
     // and a dead version frees them, so the count does not grow with the
     // edits. The first version of each file is a static parse and owns none.
     fn edited_file_nodes_die_with_their_version() {
@@ -392,7 +389,6 @@ fn panic_message(read: impl FnOnce()) -> Option<String> {
 }
 
 child_test! {
-    env OWNED_NODES;
     // A freeable version keeps no parse: its `GoFile` owns copies of the
     // parse diagnostics and the JSDoc cache, and its JSDoc slice reads the
     // cache at each use. When the version dies they go with it, and a read
@@ -473,7 +469,6 @@ child_test! {
 }
 
 child_test! {
-    env OWNED_NODES;
     // AST node records, step 4: the node shell of each edited version is in
     // a pooled block. A dead version gives it back, and it waits for two
     // more program releases (one per edit here): the version that dies in
@@ -596,7 +591,6 @@ const TWIN_FILE: &str = "/home/projects/TS/p1/twin.ts";
 const EDITED_TEXT: &str = "import { a } from './a';\nexport const x = a + 2;";
 
 child_test! {
-    env OWNED_NODES;
     // Twin files: twin.ts has the text of index.ts after an edit, so its
     // static first version and the freeable edited version of index.ts
     // (with owned nodes, M3c) are twin parses. Every accessor gives the same answer on both: node
@@ -696,60 +690,6 @@ child_test! {
                 .all(|file| file_version_probe(file.root).is_none())
         );
     }
-}
-
-/// `GOPORT_FREE_FILE_VERSIONS=0` in a session: every file version is
-/// static, as before M3a, so a version of a released program still reads.
-#[test]
-fn flag_off_keeps_every_file_version_static() {
-    let path = concat!(module_path!(), "::flag_off_keeps_every_file_version_static");
-    let test = path.split_once("::").map_or(path, |(_, rest)| rest);
-    crate::support::child::run_test_in_child_with_env(
-        test,
-        &[("GOPORT_FREE_FILE_VERSIONS", "0")],
-        || {
-            crate::project_lsp::projecttestutil::install_fs_override();
-            let session = open_p1();
-            assert!(!free_file_versions(), "the flag turns freeing off");
-            body_edit(&session, 2, "2");
-            let second = root(&program(&session, INDEX_URI), INDEX_FILE);
-            assert!(
-                file_version_probe(second).is_none(),
-                "the edited version is static"
-            );
-            body_edit(&session, 3, "3");
-            import_edit(&session, 4);
-            assert_eq!((file_versions_made(), dead_file_versions()), (0, 0));
-            assert_eq!(owned_node_count(), 0, "every parse is static");
-            assert_eq!(source_file_info(second).file_name, INDEX_FILE);
-            assert!(!tree(second).is_empty());
-        },
-    );
-}
-
-/// Owned nodes off (`GOPORT_OWNED_NODES=0`) in a session: an edited version
-/// is freeable (its store and `GoFile` go with it), but its parse is
-/// static, as before lsshells M3c: no store owns astdata nodes, and the
-/// node data of a dead version still reads, from its node shell.
-#[test]
-fn owned_nodes_off_keeps_node_data_leaked() {
-    let path = concat!(module_path!(), "::owned_nodes_off_keeps_node_data_leaked");
-    let test = path.split_once("::").map_or(path, |(_, rest)| rest);
-    crate::support::child::run_test_in_child_with_env(test, &[("GOPORT_OWNED_NODES", "0")], || {
-        crate::project_lsp::projecttestutil::install_fs_override();
-        let session = open_p1();
-        body_edit(&session, 2, "2");
-        let second = root(&program(&session, INDEX_URI), INDEX_FILE);
-        let probe = file_version_probe(second).expect("the edited version is freeable");
-        let statements = second.statements().len();
-        body_edit(&session, 3, "3");
-        assert!(
-            probe.is_freed(),
-            "the version of the released program is not freed"
-        );
-        assert_eq!(owned_node_count(), 0, "every parse is static");
-        assert_eq!(second.statements().len(), statements);
-    });
 }
 
 /// bindkinds (followups22, R169 reviewer on bindfast1): the project of

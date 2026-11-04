@@ -21,8 +21,9 @@
 //! version with the same text; a difference fails the run. After the last
 //! release it prints `file_versions made=<n> dead=<m>`: the freeable file
 //! versions (lsshells M3b) that the process made and freed. They are 0
-//! unless `GOPORT_FREE_FILE_VERSIONS=1`, which gives each new parse of the
-//! changed file a freeable version, as the language server does.
+//! unless `--free-file-versions`, which gives each new parse of the changed
+//! file a freeable version that owns its nodes, as the language server does
+//! (`ast::set_editor_process`).
 //!
 //! Both modes put the original text back into the changed file at the end,
 //! also after a failed check. A failed check or an unported hit panics.
@@ -39,8 +40,8 @@ use ts_goport::execute::tsc::{
 use ts_goport::frontend::tspath::{normalize_path, resolve_path};
 use ts_goport::prelude::*;
 
-const USAGE: &str = "usage: goport_multiprog pair <tsconfig> <changed-file> <new-text-file> <out-dir> [--first <other-tsconfig>]
-       goport_multiprog cycles <tsconfig> <changed-file> <count>";
+const USAGE: &str = "usage: goport_multiprog pair <tsconfig> <changed-file> <new-text-file> <out-dir> [--first <other-tsconfig>] [--free-file-versions]
+       goport_multiprog cycles <tsconfig> <changed-file> <count> [--free-file-versions]";
 
 /// The comment line that `cycles` adds and removes.
 const CYCLE_LINE: &str = "\n// goport_multiprog cycle\n";
@@ -75,6 +76,8 @@ fn run(args: &[String]) -> Result<(), String> {
     while let Some(arg) = iter.next() {
         if arg == "--first" {
             first = Some(iter.next().ok_or("--first needs a tsconfig")?.as_str());
+        } else if arg == "--free-file-versions" {
+            ts_goport::ast::set_editor_process();
         } else {
             rest.push(arg.as_str());
         }
@@ -197,8 +200,8 @@ fn check_versions(
         );
     }
     // lsshells M3b: the first version of the changed file is static. Its
-    // version in B is a freeable file version exactly when
-    // `GOPORT_FREE_FILE_VERSIONS=1` (see `cycles`).
+    // version in B is a freeable file version exactly with
+    // `--free-file-versions` (see `cycles`).
     assert!(
         file_version_probe(go_file(a_changed).root).is_none(),
         "file {a_changed} (A) is not static"
@@ -206,7 +209,7 @@ fn check_versions(
     assert_eq!(
         file_version_probe(go_file(b_changed).root).is_some(),
         free_file_versions(),
-        "file {b_changed} (B) is a freeable file version only when GOPORT_FREE_FILE_VERSIONS=1"
+        "file {b_changed} (B) is a freeable file version only with --free-file-versions"
     );
 }
 

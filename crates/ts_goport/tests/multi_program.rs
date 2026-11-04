@@ -126,14 +126,11 @@ fn programs_after_an_unrelated_program() {
     assert_new_c_error(&pair);
 }
 
-/// lsshells M3b. `GOPORT_FREE_FILE_VERSIONS=1` turns freeing on in
-/// `goport_multiprog` (a CLI process, where it is off by default), and
-/// `GOPORT_OWNED_NODES=1` makes the parse of each freed version own its
-/// nodes (M3c, off by default), so the checker reads them in scopes.
-const FREE_FILE_VERSIONS: &[(&str, &str)] = &[
-    ("GOPORT_FREE_FILE_VERSIONS", "1"),
-    ("GOPORT_OWNED_NODES", "1"),
-];
+/// lsshells M3b. `--free-file-versions` turns freeing on in
+/// `goport_multiprog` (a CLI process, where it is off), as in a language
+/// server, and with it owned nodes (M3c): the parse of each freed version
+/// owns its nodes, so the checker reads them in scopes.
+const FREE: bool = true;
 
 /// lsshells M3b: with freeing on, each new parse of B is a freeable file
 /// version (its store and `GoFile` belong to the version, not to a leaked
@@ -143,12 +140,7 @@ const FREE_FILE_VERSIONS: &[(&str, &str)] = &[
 // PORT: no Go counterpart.
 #[test]
 fn freeable_file_versions_report_like_fresh_runs() {
-    let pair = check_pair_with_env(
-        "free-keeps-imports",
-        Some("edits/a.ts"),
-        false,
-        FREE_FILE_VERSIONS,
-    );
+    let pair = check_pair_with_env("free-keeps-imports", Some("edits/a.ts"), false, FREE, &[]);
     assert!(
         pair.reused,
         "an edit with the same imports must reuse the other files"
@@ -158,7 +150,8 @@ fn freeable_file_versions_report_like_fresh_runs() {
         "free-changes-imports",
         Some("edits/a-imports.ts"),
         false,
-        FREE_FILE_VERSIONS,
+        FREE,
+        &[],
     );
     assert!(
         !pair.reused,
@@ -176,9 +169,9 @@ fn freeable_file_versions_report_like_fresh_runs() {
 #[test]
 fn cycles_free_file_versions_only_when_the_flag_is_on() {
     const CYCLES: usize = 4;
-    let (made, dead) = run_cycles("cycles-default", CYCLES, &[]);
+    let (made, dead) = run_cycles("cycles-default", CYCLES, !FREE, &[]);
     assert_eq!((made, dead), (0, 0), "a CLI process makes no file version");
-    let (made, dead) = run_cycles("cycles-free", CYCLES, FREE_FILE_VERSIONS);
+    let (made, dead) = run_cycles("cycles-free", CYCLES, FREE, &[]);
     assert!(
         made >= CYCLES,
         "each cycle parses the changed file again, so it makes a file version (made {made})"
@@ -200,14 +193,13 @@ fn cycles_free_file_versions_only_when_the_flag_is_on() {
 fn reused_version_tables_equal_a_full_build() {
     const CHECK: (&str, &str) = ("GOPORT_CHECK_VERSION_TABLES", "1");
     const CYCLES: usize = 4;
-    let pair = check_pair_with_env("tables-check", Some("edits/a.ts"), false, &[CHECK]);
+    let pair = check_pair_with_env("tables-check", Some("edits/a.ts"), false, !FREE, &[CHECK]);
     assert!(
         pair.reused,
         "an edit with the same imports must reuse the other files"
     );
     assert_new_c_error(&pair);
-    let env = [FREE_FILE_VERSIONS[0], FREE_FILE_VERSIONS[1], CHECK];
-    let (made, dead) = run_cycles("tables-check-cycles", CYCLES, &env);
+    let (made, dead) = run_cycles("tables-check-cycles", CYCLES, FREE, &[CHECK]);
     assert!(
         made >= CYCLES,
         "each cycle parses the changed file again, so it makes a file version (made {made})"
@@ -219,11 +211,9 @@ fn reused_version_tables_equal_a_full_build() {
 }
 
 /// Runs `goport_multiprog cycles` `count` times on a new copy of the fixture
-/// with `env` set, and gives the numbers of its last line,
-/// `file_versions made=<n> dead=<m>`. `GOPORT_FREE_FILE_VERSIONS` is unset
-/// unless `env` sets it, so the test environment does not change the
-/// default.
-fn run_cycles(test: &str, count: usize, env: &[(&str, &str)]) -> (usize, usize) {
+/// with `env` set (and `--free-file-versions` when `free`), and gives the
+/// numbers of its last line, `file_versions made=<n> dead=<m>`.
+fn run_cycles(test: &str, count: usize, free: bool, env: &[(&str, &str)]) -> (usize, usize) {
     let root = scratch_dir(test);
     let project = root.join("project");
     copy_dir(Path::new(FIXTURE), &project);
@@ -234,7 +224,7 @@ fn run_cycles(test: &str, count: usize, env: &[(&str, &str)]) -> (usize, usize) 
         .arg("tsconfig.json")
         .arg(norm(&changed))
         .arg(count.to_string())
-        .env_remove("GOPORT_FREE_FILE_VERSIONS")
+        .args(free.then_some("--free-file-versions"))
         .envs(env.iter().copied())
         .current_dir(&project)
         .output()
@@ -560,7 +550,6 @@ fn watch_frees_file_versions() {
         .arg(CHANGED)
         .args(&edits)
         .args(["--", "--watch", "-p", "tsconfig.json", "--noEmit"])
-        .env_remove("GOPORT_FREE_FILE_VERSIONS")
         .current_dir(&project)
         .output()
         .expect("run goport_watch");
@@ -657,7 +646,6 @@ fn watch_copied_errors_read_their_file_versions() {
             "edits/a-y-4.ts",
         ])
         .args(["--", "--watch", "-p", "tsconfig.json", "--pretty"])
-        .env_remove("GOPORT_FREE_FILE_VERSIONS")
         .current_dir(&project)
         .output()
         .expect("run goport_watch");
@@ -757,7 +745,6 @@ fn watch_build_frees_file_versions() {
             "edits/a-4.ts",
         ])
         .args(["--", "-b", "--watch", "tsconfig.json", "--pretty", "false"])
-        .env_remove("GOPORT_FREE_FILE_VERSIONS")
         .current_dir(&project)
         .output()
         .expect("run goport_watch");
@@ -926,7 +913,6 @@ fn watch_config_edits(test: &str, tsc_args: &[&str], expected: &str) {
         ])
         .arg("--")
         .args(tsc_args)
-        .env_remove("GOPORT_FREE_FILE_VERSIONS")
         .current_dir(&project)
         .output()
         .expect("run goport_watch");
@@ -1516,15 +1502,16 @@ fn read_tree(dir: &Path) -> BTreeMap<String, String> {
 /// loads, reports and releases a second copy, so A and B are not the first
 /// program of the process.
 fn check_pair(test: &str, edit: Option<&str>, with_first: bool) -> Pair {
-    check_pair_with_env(test, edit, with_first, &[])
+    check_pair_with_env(test, edit, with_first, false, &[])
 }
 
 /// `check_pair` with `env` set for `goport_multiprog` (not for the fresh
-/// `goport` runs).
+/// `goport` runs), and with `--free-file-versions` when `free`.
 fn check_pair_with_env(
     test: &str,
     edit: Option<&str>,
     with_first: bool,
+    free: bool,
     env: &[(&str, &str)],
 ) -> Pair {
     let root = scratch_dir(test);
@@ -1555,6 +1542,9 @@ fn check_pair_with_env(
     if let Some(config) = &first_config {
         args.push("--first".into());
         args.push(norm(config));
+    }
+    if free {
+        args.push("--free-file-versions".into());
     }
     let run = Command::new(env!("CARGO_BIN_EXE_goport_multiprog"))
         .args(&args)

@@ -3330,7 +3330,7 @@ pub fn try_load_version(
 /// the imports and references, the new version shares every other file
 /// version with `old` and the second value is true. Else every file is
 /// parsed again. `old` stays usable. Loading thread only. With
-/// `GOPORT_FREE_FILE_VERSIONS=1`, each new parse of a path that was
+/// `ast::free_file_versions` on, each new parse of a path that was
 /// published before is a freeable file version (lsshells M3b), as in the
 /// language server and `tsc --watch`.
 pub fn update_program_version(

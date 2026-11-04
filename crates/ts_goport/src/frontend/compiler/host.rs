@@ -353,7 +353,7 @@ impl CompilerHost for CompilerHostImpl {
             }
         };
         // Not in Go: while `ast::free_file_versions` is on (`tsc --watch`,
-        // or `GOPORT_FREE_FILE_VERSIONS=1`), a new parse of a path that this
+        // or `goport_multiprog --free-file-versions`), a new parse of a path that this
         // thread published keeps its nodes in its store (lsshells M3c), as
         // the language server parse cache does;
         // `program::mark_freeable_parses` gives it a `FileVersion`. A store

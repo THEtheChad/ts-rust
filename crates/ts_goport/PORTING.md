@@ -318,8 +318,7 @@ methods reach the AST through it.
   on read and is never given to another node. Code whose synthetic nodes
   a cache keeps across program versions (token cache, lazy JSDoc, parses,
   files published outside a program) opens `enter_base_synthetic_owner()`
-  so they belong to the thread. `GOPORT_SYNTHETIC_OWNERS=0` turns owners
-  off.
+  so they belong to the thread.
 - Print scopes (n1free): Go `getNodeBuilder` returns `release`
   (`Factory.ReleaseArenas`), which the to-string entries of
   `checker/printer.go` defer. Here those entries open a `PrintScope`
@@ -623,9 +622,8 @@ The batch that adds it is not accepted until Theo approves.
   block of its id (a pooled block, AST node records step 4), so a header or child
   read of the edited file stays inline (a pinned read per node read made
   edits 3 to 4 ms slower); the child link column is dropped, and the
-  binder's child walk reads the node data. With owned nodes (M3c; on by
-  default in a language server or API process since M3g,
-  `GOPORT_OWNED_NODES=0` turns them off) its parse was a freeable parse
+  binder's child walk reads the node data. With owned nodes (M3c; on
+  wherever file versions are freed since M3g) its parse was a freeable parse
   (`enter_freeable_parse`, opened by the parse cache), so its store owns
   its astdata nodes, list table, JSDoc cache and parse diagnostics
   (`OwnedAst`), and they are freed with its store, when the version dies
@@ -658,8 +656,8 @@ The batch that adds it is not accepted until Theo approves.
   its foreign parents and its text stay leaked for now. The first publish, the
   first version of each file (but a leased one, above) and every CLI
   publish except `tsc --watch` and `tsc -b --watch` never get one.
-  `GOPORT_FREE_FILE_VERSIONS=0` turns this off, `=1` turns it on in any
-  process; there `update_program_version` (`goport_multiprog`) also gives
+  `goport_multiprog --free-file-versions` turns it on in that CLI
+  process; there `update_program_version` also gives
   each new parse of a published path a version, so a leak record can
   measure it.
 - A `tsc -b` build (`goport_build`, `tsgo -b`) is a multi-program process,

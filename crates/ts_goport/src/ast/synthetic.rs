@@ -763,9 +763,9 @@ impl SyntheticArena {
     /// a live freeable version, else the thread. It frees the entries of the
     /// versions that died since the last call first.
     fn alias_owner(&mut self, n: Node) -> OwnerKey {
-        // PERF: two atomic loads in a process that frees no file version
+        // PERF: one atomic load in a process that frees no file version
         // (the CLI).
-        if !super::file_version::any_freeable_published() || !owners_enabled() {
+        if !super::file_version::any_freeable_published() {
             return OwnerKey::Base;
         }
         if self.dead_seen != super::file_version::dead_file_versions() {
@@ -1158,23 +1158,12 @@ thread_local! {
     static SCOPE_OWNER: Cell<Option<OwnerKey>> = const { Cell::new(None) };
 }
 
-/// False when `GOPORT_SYNTHETIC_OWNERS=0`: then no program version becomes
-/// an owner, and every entry belongs to its thread, as before owners (for
-/// A/B runs, and as a fallback).
-fn owners_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| !matches!(std::env::var("GOPORT_SYNTHETIC_OWNERS").as_deref(), Ok("0")))
-}
-
 /// Makes program version `id` an owner on this thread: the synthetic
 /// entries made while it is current go to its own chunks, until
 /// `free_synthetic_owner(id)` frees them. `ls_program` calls it for each
 /// language server program version. Other threads and programs have no
 /// owners, so all their entries belong to their thread.
 pub fn open_synthetic_owner(id: u32) {
-    if !owners_enabled() {
-        return;
-    }
     ARENA.with(|a| {
         let mut a = a.borrow_mut();
         assert!(
@@ -1203,9 +1192,6 @@ impl LoadSyntheticOwner {
     }
     #[must_use]
     pub fn enter(&self) -> SyntheticOwnerScope {
-        if !owners_enabled() {
-            return enter_base_synthetic_owner();
-        }
         ARENA.with(|a| {
             a.borrow_mut().loads.entry(self.id).or_default();
         });
