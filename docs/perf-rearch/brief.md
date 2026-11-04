@@ -132,6 +132,13 @@ is a rewrite, so it does not keep old code behind switches:
   selects between the old and the new path for the compiler's own work.
   Safety comes from the parity gate (it compares with Go, not with our old
   code) and from git: for an A/B, build the base commit as the other side.
+- **When removing an existing switch, keep the path whose output matches
+  Go**, not just the path that shipped by default. If the default diverges
+  from Go and the alternative matches, the Go-matching one stays and the
+  speed is recovered another way. Check pure `--noEmit`, `-b`, watch and LSP,
+  not only the common CLI case.
+- **Verification code is gated whole:** state, functions, counters and test
+  setters, not only the env read. The shipped binary must not contain it.
 - **Spikes** (prototypes that only measure) may add a switch on their own
   branch. It never merges: the implementation that follows replaces the path.
 - **Product options stay:** user-facing behavior Chad chose (Effect rules off
