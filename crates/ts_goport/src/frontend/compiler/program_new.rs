@@ -1005,6 +1005,38 @@ impl NewProgram {
         }))
     }
 
+    /// A program with the same files, maps and diagnostics whose caches
+    /// start empty (the include processor's, as a `Clone`), so a reader
+    /// can build them without changing what this program gives later.
+    /// It keeps whether this program is bound. The reuse verify mode reads
+    /// it (`program::reuse_verify`).
+    // PORT: not in Go (perf/first-principles A1).
+    #[must_use]
+    pub fn shadow(&self) -> NewProgram {
+        let shadow = NewProgram {
+            opts: self.opts.clone(),
+            hosts: self.hosts.clone(),
+            module_resolution_error: None,
+            processed_files: self.processed_files.clone(),
+            uses_uri_style_node_core_modules: self.uses_uri_style_node_core_modules,
+            common_source_directory: OnceCell::new(),
+            program_diagnostics: self.program_diagnostics.clone(),
+            has_emit_blocking_diagnostics: self.has_emit_blocking_diagnostics.clone(),
+            source_files_to_emit: OnceCell::new(),
+            unresolved_imports: LazyValue::default(),
+            known_symlinks: LazyValue::default(),
+            package_names: LazyValue::default(),
+            has_ts_file: OnceCell::new(),
+        };
+        shadow.include_processor.program_bound.store(
+            self.include_processor
+                .program_bound
+                .load(std::sync::atomic::Ordering::Acquire),
+            std::sync::atomic::Ordering::Release,
+        );
+        shadow
+    }
+
     // Go: program.go:456 (*Program).initCheckerPool
     // PORT: the checker pool stays in program.rs (`ls_program`), so only the
     // check is kept.

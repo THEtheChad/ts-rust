@@ -722,6 +722,7 @@ impl Project {
         let mut update_kind = ProgramUpdateKind::NEW_FILES;
         let mut program_cloned = false;
         let mut go_cloned = false;
+        let mut reuse_outcome = None;
         let new_program: Rc<compiler::NewProgram>;
         let mut file_refs: Option<ProgramFileRefs> = None;
 
@@ -818,6 +819,7 @@ impl Project {
             // finds for a program with the same files.
             program_cloned = outcome.reused_storage();
             go_cloned = outcome.go_reuses();
+            reuse_outcome = Some(outcome);
             // Go: p.host.builder (read in each branch below)
             let builder = || {
                 host.builder
@@ -915,6 +917,21 @@ impl Project {
         }
 
         ls_program::bind_source_files(&new_program);
+
+        // Not in Go (perf/first-principles A1): `GOPORT_VERIFY_REUSE` checks
+        // a reused program against a full build in a child process.
+        let verify = crate::program::reuse_verify::mode();
+        if verify != crate::program::reuse_verify::Mode::Off
+            && match reuse_outcome {
+                Some(compiler::ReuseOutcome::ReusedSynthetic) => true,
+                Some(compiler::ReuseOutcome::Reused) => {
+                    verify == crate::program::reuse_verify::Mode::All
+                }
+                _ => false,
+            }
+        {
+            crate::program::reuse_verify::verify(&new_program, &self.dirty_file_path);
+        }
 
         // Go: defer cleanupModuleResolver() (ts#64299)
         let cleanup = cleanup_module_resolver.borrow_mut().take();

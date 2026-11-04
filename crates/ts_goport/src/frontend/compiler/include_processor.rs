@@ -156,6 +156,21 @@ impl FileIncludeReasons {
         }
         Some(map)
     }
+
+    /// Calls `f` with each synthetic specifier that a reason keeps, with
+    /// the path of the file the specifier belongs to. The verify mode of
+    /// the reuse (`reuse_verify`) checks them; the order is not observable.
+    pub fn for_each_synthetic(&self, f: &mut dyn FnMut(&Path, Node)) {
+        for reasons in self.0.values() {
+            for reason in reasons {
+                if let FileIncludeData::ReferencedFile(data) = &reason.data
+                    && !data.synthetic.is_nil()
+                {
+                    f(&data.file, data.synthetic);
+                }
+            }
+        }
+    }
 }
 
 /// Go `includeReasonDiagnosticKey` (ts#64519).
