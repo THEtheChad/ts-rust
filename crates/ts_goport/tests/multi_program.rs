@@ -1047,8 +1047,9 @@ let wrong: string = rounded;
 /// the new lineage arena, so the snapshot joins as a file arena and its ids
 /// move (`lib_snapshot::load`, `BoundFile::remap`). The types, symbols and
 /// diagnostics must equal those of the parallel bind (the default on more
-/// than one core), where each file binds into an arena of its own, and
-/// those of a serial live bind (`GOPORT_LIB_SNAPSHOT=0`).
+/// than one core), where each file binds into an arena of its own. A
+/// `diagnostics` feature build also checks the trace of the load
+/// (`GOPORT_LIB_SNAPSHOT=trace`).
 #[test]
 fn a_serial_bind_with_a_lib_snapshot_in_the_new_lineage_equals_the_parallel_bind() {
     let dir = scratch_dir("serial-bind");
@@ -1059,11 +1060,7 @@ fn a_serial_bind_with_a_lib_snapshot_in_the_new_lineage_equals_the_parallel_bind
     write(&dir.join("a.ts"), SERIAL_BIND_SCRIPT);
     // (bind threads, GOPORT_LIB_SNAPSHOT): the serial bind traces its
     // snapshot loads.
-    let sides = [
-        ("serial", "1", "trace"),
-        ("parallel", "4", "1"),
-        ("live", "1", "0"),
-    ];
+    let sides = [("serial", "1", "trace"), ("parallel", "4", "")];
     let runs: Vec<(BTreeMap<String, String>, Report, String)> = sides
         .iter()
         .map(|&(side, threads, snapshot)| {

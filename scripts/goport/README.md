@@ -330,7 +330,7 @@ Root decision of 2026-10-11 (state note `tbxperf0-result-2026-10-11`; data in `t
   `GOPORT_PIN*`), `_RJEM_MALLOC_CONF`, `MALLOC_*`, `GLIBC_TUNABLES`, `GOMAXPROCS`, `GOGC`, `GOMEMLIMIT` and
   `GODEBUG`. `perf.sh env` prints the ones set. host.txt records them on its `env` line (`none` when no one is
   set), and `compare` refuses two runs with a different env. `testbox.sh perf` passes them on to the testbox.
-  For an A/B of a variable (for example `GOPORT_LIB_SNAPSHOT=0`), put both sides in one run: one side is a
+  For an A/B of a variable (for example `GOPORT_THP_GUARD=0`), put both sides in one run: one side is a
   wrapper script that sets the variable and execs the bin (the start of bash counts on that side).
 - Time like against like: every Rust side is a stable build. On a testbox, build with
   `TS_CARGO_NIGHTLY=0 TS_CARGO_INCREMENTAL=0 TS_CARGO_JOBS=32 scripts/run-cargo-capped.sh build --release ...`.
