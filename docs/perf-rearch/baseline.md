@@ -6,7 +6,16 @@ oracle at pin `3e9236361fa9`. Measured 2026-11-03 on MS-A2. Tools:
 `scripts/perf-rearch/` (README there). Raw data: `~/.cache/perf-rearch/baseline/`
 and `~/.cache/perf-rearch/profiles/`.
 
-<!-- STATUS -->
+**Status (2026-11-03 22:35):** tools, project set, instruction counts and
+profiles are done. **The wall-clock cells are pending.** The brief's gate
+(1-minute load under 1.5) has not opened since 16:36: other lanes' gates,
+tests and builds kept the load between 6 and 125. The full wall suite is
+queued as systemd unit `perf-rearch-baseline-wall4`
+(`scripts/perf-rearch/baseline.sh <rs> ~/.cache/perf-rearch/baseline cli lsp thp`).
+It starts by itself at idle, resumes from `runs.jsonl` if restarted, and ends
+by writing `~/.cache/perf-rearch/baseline/gap.md` (all cells, wall + instructions).
+Its last log line is `DONE` or `FAIL rc=N` (`baseline.log`).
+
 
 ## Machine
 
@@ -112,7 +121,79 @@ LSP scenarios, on umami (`scripts/lspdiff`, wrapped by `bench.sh lsp`):
 | probe-tsx / probe-ts | `probe-edit.mjs --edits 20 --cpu`: a one-character edit, then a hover in another file, a second hover, and the edited file's diagnostics; `.tsx` = `BoardCloneForm.tsx`, `.ts` = `useFunnelQuery.ts` | median first request after an edit |
 | concurrent-120/250/500 | `lspdiff.mjs bench --modes concurrent --pulls all` at 120, 250 and 500 ms per key | completion p95 |
 
-<!-- GAP TABLE -->
+## Gap table
+
+Wall ratio = tsc-rs median / Go median (pending, see Status). Instruction
+ratio = single-threaded user-space instructions, tsc-rs / Go (measured;
+load-independent; Go ±3%). **"slower?"** marks the cells where tsc-rs is or is
+expected to be slower than Go on the wall, with the evidence for each.
+
+### CLI
+
+| Scenario | ts-pattern | query | hono | zod | effect | umami | t3-web | t3-server | vscode |
+|---|---|---|---|---|---|---|---|---|---|
+| noemit, wall | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+| noemit, instr. (1 thread) | 0.42 | 0.48 | 0.40 | 0.43 | 0.56 | 0.52 | 0.51 | 0.38 | 0.65 |
+| emit (as configured), wall | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+| emit, instr. | 0.46 | 0.46 | 0.46 | 0.43 | 0.53 | 0.53 | 0.54 | 0.41 | 0.76 |
+| emit-js, wall | pending | pending | pending | pending | pending | **slower?** (A) | pending | pending | pending |
+| emit-js, instr. | 0.43 | 0.54 | 0.46 | 0.42 | 0.58 | 0.56 | 0.59 | 0.41 | 0.75 |
+| emit-cjs, wall | pending | pending | pending | n/a | pending | **slower?** (A) | pending | n/a | n/a |
+| emit-cjs, instr. | 0.42 | 0.55 | 0.51 | n/a | 0.60 | 0.57 | 0.62 | n/a | n/a |
+| single (`--singleThreaded`), wall | pending (1-thread walls at load: 0.50) | (0.57) | (0.47) | (0.43) | (0.56) | (0.55) | (0.53) | (0.41) | (0.63) |
+| incr-warm, wall | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+| build-cold / build-warm, wall | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+| noemit THP guard off (`GOPORT_THP_GUARD=0`), wall | | | | pending | | | | pending | pending |
+
+The single row's parenthesized numbers are the 1-thread wall ratios from the
+icount runs. Those ran at load 25 to 90, so they are indications, not
+measurements.
+
+(A) The emit audit (`docs/perf-rearch/audits/emit.md` on
+`perf/first-principles`, at load 5–88, minimums) measured umami JS-only
+0.126 s against Go 0.100 s, JS + source maps 0.151 s against 0.102 s, and
+CommonJS ES2017 0.179 s against 0.159 s. Profile 4 below shows why: tsc-rs's
+emit takes 1.5× Go's CPU and runs after the check on 8 threads. umami's
+`emit` row is the config's JS + source maps, the audit's second mode: also
+**slower?**. The instruction ratio is still 0.53–0.57, so the cause is the
+schedule, not the work.
+
+VS Code is the other CLI candidate. In a quiet minute (18:10, load 0.56
+before the runs; one unrecorded run each), its `noemit` took 12.9 s in tsc-rs against
+11.3 s in Go (1.14×), with the same output. It also has the smallest
+instruction margin (0.65). Profile 1 shows 4 checkers with uneven work and
+no overlap between parse, bind and check. Mark it **slower?** until the
+queued run measures it.
+
+### LSP (umami)
+
+| Scenario | Wall | Evidence so far |
+|---|---|---|
+| ttfd | pending | 465 ms against 449 ms in one smoke run at load 15–20: **slower?** (by 4%, within noise) |
+| probe-tsx (first request after a `.tsx` edit) | pending | **slower**: 78 ms against 41 ms program update (`docs/lsp-concurrency.md` §7, idle MS-A2 on 2026-11-03); smoke at load 15: first request 107 ms against 67 ms, update 101 ms against 53 ms |
+| probe-ts | pending | faster: update 0.75 ms against 3.8 ms (§7); smoke: first request 8 ms against 17 ms |
+| concurrent-120 | pending | **slower**: completion p95 1.0 s against 332 ms, hover p95 1.3 s against 83 ms (§7, idle) |
+| concurrent-250 | pending | **slower**: 1.3–1.5× Go (§7, idle); smoke at load 15: 2.55× |
+| concurrent-500 | pending | **slower**: 1.3–1.5× Go (§7, idle) |
+
+CPU per `.tsx` edit (probe `--cpu`): tsc-rs 335–341 ms, Go 1,494–1,572 ms.
+tsc-rs's update uses less than a quarter of Go's CPU and still takes about
+twice as long.
+
+### Where tsc-rs is (or is expected to be) slower than Go on the wall
+
+1. LSP typing, concurrent at 120 ms/key (and 1.3–1.5× at 250 and 500): the
+   program rebuild and the request work share the main dispatch thread
+   (profile 3).
+2. LSP `.tsx` edit, program update: about 1.9× Go. Every module is resolved
+   again, partly serially on the main thread (profile 2).
+3. JS emit on umami (JS only, JS + maps, CommonJS): 1.1–1.5× Go. Emit runs
+   after the check, on the 4 checker threads and their twins (profile 4).
+4. VS Code CLI check: 1.14× in one run, to be confirmed (profile 1).
+
+Everything else measured so far (the icount table, the T3 server profile run
+at 11.7 s against 29.4 s, the audits' other modes) has tsc-rs faster.
+
 
 ## CPU work: single-threaded instructions (load-independent)
 
@@ -291,13 +372,38 @@ check 62.3 s and GC 18.3 s.
 
 ## Load
 
-The brief's gate never opened for hours. From 16:36 to at least 20:00 the
-1-minute load stayed between 12 and 99. The other perf-rearch lanes were running
+The brief's gate never opened. From 16:36 to 22:35 the 1-minute load stayed
+between 6 and 125 (its lowest, 1.75 at 20:18, lasted under a minute). The other perf-rearch lanes were running
 (units `parity-base-main`, `parity-base-extra`, `parity-full-vs-base`,
 `b1-tests3`, `lsp-audit-all`), along with another project's Rust builds.
-`perf-rearch-baseline-wall` (`scripts/perf-rearch/baseline.sh … cli lsp thp`)
+Phase-2 lanes (a1, b1, d0, e0) and their gates followed. `perf-rearch-baseline-wall4`
 waits for the gate and resumes from `runs.jsonl` if restarted.
 
 ## Not measured, and why
 
-<!-- UNMEASURED -->
+- **Wall clock, every cell** (CLI: noemit, emit, emit-js, emit-cjs, single,
+  incr-warm, build-cold, build-warm, the THP check; LSP: ttfd, probe-tsx,
+  probe-ts, concurrent 120/250/500). The load gate did not open from 16:36
+  to 22:35. The unit `perf-rearch-baseline-wall4` is queued and will fill
+  `~/.cache/perf-rearch/baseline/gap.md`. Before it starts, every cell has its
+  instruction count above.
+- **Quiet-machine profiles.** All profiles ran at load 20–90. Their CPU
+  shares hold, but their timelines (critical path, imbalance) are
+  qualitative. Profiles 1–3 should be retaken once the box is idle:
+  `scripts/perf-rearch/README.md` has the commands.
+- **Go's threads.** Go's goroutines run on unnamed OS threads, so Go's
+  profiles split by phase only, not by thread.
+- **Multi-threaded instruction counts** are recorded on every wall run, but
+  they include spin and wait loops that depend on timing. Only the
+  single-threaded counts are load-independent.
+- **LSP instructions:** the probe gives CPU per edit (schedstat) but no
+  instruction counts. The server is a child of node, so a counter would also
+  count node.
+- **Sentry and the README's other four apps** (setup size and time). VS Code
+  and T3 Code stand for the large apps.
+- **CommonJS emit for nodenext configs** (zod, T3 server, VS Code): TS5110 is
+  not a measurable mode.
+- **Effect with its plugin:** not like for like (tsc-rs runs the Effect rules,
+  Go does not), so only the plugin-free config is measured. Lane E0 turns
+  the rules off by default (`TSC_RS_EFFECT=1` turns them on).
+

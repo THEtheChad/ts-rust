@@ -8,6 +8,7 @@ Every tool prints its usage with `help` (or `--help`).
 |---|---|
 | `setup-projects.sh` | Clones the benchmark projects at their pins into `~/.cache/perf-rearch/projects` and installs their dependencies without install scripts. Pins and configs: `projects.tsv`. |
 | `bench.sh` (`bench.py`) | Times CLI and LSP scenarios for labelled binaries, load-gated and interleaved; writes `runs.jsonl`, `results.json` and `results.md`; `bench.sh table` merges result dirs into one gap table. |
+| `baseline.sh` | The whole baseline set for one tsc-rs binary against Go (icount, CLI wall, LSP, THP check), resumable; ends with `gap.md`. |
 | `lsp-ttfd.mjs` | Time to first diagnostics: spawn the server, initialize, open one file, pull its diagnostics. |
 | `samply_top.py` | Summarizes a samply profile: on-CPU time per thread, per phase and phase × thread, top self and inclusive frames, callers of a function. |
 | `../lspdiff/` | The LSP harness (`lspdiff.mjs bench`, `probe-edit.mjs`), from branches `perf/lsp-concurrency` and `perf/lsp-edit-cost`. `bench.sh lsp` wraps it. |
@@ -32,8 +33,14 @@ tsc-rs runs the Effect diagnostics built in, so with plugins the two sides
 would not do the same work).
 
 The projects are inputs: nothing writes into them. `bench.sh` sends emit
-output and build info to its scratch dir, runs `-b` on a copy, and stops if
-`git status` of an input changes during a scenario.
+output and build info to its scratch dir, and stops if `git status` of an
+input changes during a scenario. Emit and `-b` run on a scratch copy of the
+repo (git files, the top-level `node_modules` linked, package `node_modules`
+copied with their links, so workspace packages stay inside the copy). Emit
+also gets `--rootDir` at the copy's root: TypeScript 7 stops at TS5011 or
+TS6059 before checking when outDir is set without a fitting rootDir. And
+T3 Code's web config makes both compilers write JS next to sources outside
+its root. The emit copy drops files a run added before the next run.
 
 ## Timing
 
