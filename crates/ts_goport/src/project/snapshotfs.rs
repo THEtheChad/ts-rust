@@ -675,15 +675,9 @@ impl SnapshotFSBuilder {
         path: &tspath::Path,
         source: &Rc<dyn FileHandle>,
     ) -> Option<Rc<dyn FileHandle>> {
-        // Loader v2 L1: the file keeps the source's hash with no hash of
-        // its own (the result is the same).
-        let file = if vfs::loadview::enabled() {
-            new_cached_file_hashed(file_name, source.shared_content(), source.hash())
-        } else {
-            let file = new_cached_file(file_name, source.shared_content());
-            file.borrow().file_base.hash.set(source.hash());
-            file
-        };
+        // Go: newCachedFile(fileName, source.Content(), source.Hash())
+        // PORT: the file keeps the source's text and hash (no copy, no hash).
+        let file = new_cached_file_hashed(file_name, source.shared_content(), source.hash());
         let (entry, loaded) = self.cache_files.load_or_store(path.clone(), file);
         let entry = entry?;
         if !loaded && path.0.contains("/node_modules/") {

@@ -1,6 +1,6 @@
 //! The scope of a language server program load with the per-load OS view
-//! (`vfs::loadview`, loader v2 L1, `GOPORT_LOAD_VIEW=1`), and the
-//! reconciliation after the watch registration.
+//! (`vfs::loadview`, loader v2 L1), and the reconciliation after the watch
+//! registration.
 //!
 //! `begin` attaches a new view under the session's host for the load on this
 //! thread; the scope detaches it when it ends, before any later load or
@@ -66,9 +66,9 @@ impl Drop for LoadViewScope {
         // observations (`reconcile_pending`); it frees the view then. A
         // replayed view (the V-replay oracle) holds no live observation.
         #[cfg(feature = "diagnostics")]
-        let reconcile = reconcile_enabled() && !view.is_frozen();
+        let reconcile = diag::reconciles(&view);
         #[cfg(not(feature = "diagnostics"))]
-        let reconcile = reconcile_enabled();
+        let reconcile = true;
         if reconcile {
             PENDING.with(|pending| pending.borrow_mut().push(view));
         } else {
@@ -77,17 +77,6 @@ impl Drop for LoadViewScope {
         #[cfg(feature = "diagnostics")]
         diag::after_load();
     }
-}
-
-/// True when a load's view is reconciled after its watch registration: with
-/// the view (a test can turn it off, `diag::set_reconcile`).
-#[must_use]
-pub fn reconcile_enabled() -> bool {
-    #[cfg(feature = "diagnostics")]
-    if let Some(on) = diag::reconcile_override() {
-        return on && loadview::enabled();
-    }
-    loadview::enabled()
 }
 
 /// A file event that the reconciliation found, as a file watcher would

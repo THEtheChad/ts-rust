@@ -537,17 +537,11 @@ impl OverlayFS {
         if let Some(source) = as_file_handle_source(&*self.host) {
             return source.get_file_by_path(file_name, path);
         }
-        // Loader v2 L1: with the per-load OS view, the host gives the text
-        // that a worker read and its hash (no copy, no hash here).
-        if vfs::loadview::enabled() {
-            let text = self.host.read_file_shared(file_name)?;
-            return Some(new_cached_file_hashed(file_name, text.text, text.hash));
-        }
-        let (content, ok) = self.host.read_file(file_name);
-        if !ok {
-            return None;
-        }
-        Some(new_cached_file(file_name, content))
+        // Loader v2 L1: the host gives the text as a shared text with its
+        // hash (the per-load OS view gives the text that a worker read, with
+        // no copy and no hash here).
+        let text = self.host.read_file_shared(file_name)?;
+        Some(new_cached_file_hashed(file_name, text.text, text.hash))
     }
 }
 

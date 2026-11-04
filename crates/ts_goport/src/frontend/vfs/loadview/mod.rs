@@ -1,9 +1,8 @@
 //! The per-load frozen OS view **V** (perf/first-principles loader v2, lane
-//! L0+L1, `docs/perf-rearch/design/loader-v2.md`). Opt-in for now:
-//! `GOPORT_LOAD_VIEW=1` is a rollout aid. It goes once the reconciliation
-//! (`compiler::load_view_scope`) passes Astra's review and the timing window
-//! confirms the gain; the view then becomes the language server's only load
-//! path, unless a measurement gives a reason to keep the serial OS path.
+//! L0+L1, `docs/perf-rearch/design/loader-v2.md`): the language server's
+//! program loads read the OS through it, with the reconciliation after the
+//! watch registration (`compiler::load_view_scope`). It replaced the live OS
+//! path of those loads; there is no switch.
 //!
 //! **Placement.** V sits under the language server's `OverlayFS.host`: the
 //! session's host is `bundled::wrap_fs(os_view_fs())`, and `ViewFs` in loader
@@ -76,18 +75,6 @@ impl SharedText {
     }
 }
 
-/// True when the language server loads through the per-load OS view
-/// (`GOPORT_LOAD_VIEW=1`, a rollout aid; see the module docs).
-#[must_use]
-pub fn enabled() -> bool {
-    #[cfg(feature = "diagnostics")]
-    if let Some(on) = diag::enabled_override() {
-        return on;
-    }
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("GOPORT_LOAD_VIEW").is_ok_and(|value| value == "1"))
-}
-
 thread_local! {
     /// The view of the load that runs on this thread (`attach`).
     static ATTACHED: RefCell<Option<Arc<LoadView>>> = const { RefCell::new(None) };
@@ -124,12 +111,13 @@ pub fn worker_fs(view: Option<&Arc<LoadView>>) -> Rc<dyn Fs> {
 }
 
 /// Attaches a new view for the load that starts on this thread, and
-/// returns it. `None` (nothing attached) when V is off, when no loader
-/// `ViewFs` lives on this thread (the session's host is another file
-/// system), or when a view is attached already (a nested load uses the
-/// outer one). `view` makes the view.
+/// returns it. `None` (nothing attached) when no loader `ViewFs` lives on
+/// this thread (the session's host is another file system: a test's map
+/// file system, the API's client file system, the CLI), or when a view is
+/// attached already (a nested load uses the outer one). `view` makes the
+/// view.
 pub fn attach(view: impl FnOnce() -> Arc<LoadView>) -> Option<Arc<LoadView>> {
-    if !enabled() || LOADER_HOSTS.with(Cell::get) == 0 {
+    if LOADER_HOSTS.with(Cell::get) == 0 {
         return None;
     }
     if ATTACHED.with(|attached| attached.borrow().is_some()) {

@@ -1657,7 +1657,7 @@ TMPDIR="$1/t" exec "$2" --exact "$3" --nocapture --test-threads=1"#;
     assert!(!text.contains("skipped"), "{text}");
 }
 
-// Loader v2 L1: the per-load OS view (`vfs::loadview`, `GOPORT_LOAD_VIEW`), its
+// Loader v2 L1: the per-load OS view (`vfs::loadview`) of `tsgo --lsp`, its
 // V-replay oracle and its reconciliation. Their hooks are diagnostics, so
 // these tests run with the `diagnostics` cargo feature.
 #[cfg(feature = "diagnostics")]
@@ -1669,7 +1669,9 @@ mod load_view {
     use ts_goport::frontend::vfs::loadview::{self, diag as view_diag};
 
     /// A session whose host is the OS file system with the per-load OS view
-    /// under its overlays (as `tsgo --lsp` with `GOPORT_LOAD_VIEW=1`).
+    /// under its overlays, as `tsgo --lsp` has. A session on the plain OS file
+    /// system (`os_session`) has no view: the tests use it for the serial
+    /// reference loads.
     fn os_view_session(root: &str) -> Rc<Session> {
         project::new_session(&SessionInit {
             background_ctx: bg(),
@@ -1705,7 +1707,6 @@ mod load_view {
         mode: Option<Mode>,
         steps: &dyn Fn(&Rc<Session>, &str),
     ) -> (Left, Option<(view_diag::ViewCounts, u64)>) {
-        view_diag::set_enabled(Some(view));
         resolve_ahead::set_mode(mode);
         let session = if view {
             os_view_session(root)
@@ -1716,7 +1717,6 @@ mod load_view {
         let left = (observe(&session, root), observe_snapshot_fs(&session, root));
         let counts = scope_diag::last_counts();
         resolve_ahead::set_mode(None);
-        view_diag::set_enabled(None);
         drop(session);
         (left, counts)
     }
@@ -1741,7 +1741,7 @@ mod load_view {
             };
             let root = fresh_project("viewfirst");
             let (serial, counts) = run_view(&root, false, Some(Mode::Off), &open_with_unsaved);
-            assert!(counts.is_none(), "a view without GOPORT_LOAD_VIEW");
+            assert!(counts.is_none(), "a view on a session without a view host");
             // The workers race the loader (on a busy machine they may fill
             // nothing before it asks): every attempt must equal the serial load,
             // and the test repeats until a demand found a worker's observation.
@@ -2102,7 +2102,6 @@ mod load_view {
         let index = |root: &str| file_uri(root, "src/index.ts");
         let root = fresh_project(label);
         prepare(&root);
-        view_diag::set_enabled(Some(true));
         scope_diag::set_reconcile(Some(reconcile));
         let changed = Rc::new(std::cell::Cell::new(false));
         let hook = {
@@ -2164,7 +2163,6 @@ mod load_view {
         resolve_ahead::set_mode(None);
         resolve_ahead::set_first_load(None);
         scope_diag::set_reconcile(None);
-        view_diag::set_enabled(None);
         drop(session);
         // A fresh serial session of the final disk (same root path).
         let final_root = fresh_project(label);
@@ -2219,6 +2217,26 @@ mod load_view {
         vec![(CHANGED, "src/a.ts".to_string())]
     }
 
+    /// A package.json changes what its package resolves to (`types`).
+    fn edit_package_json(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+        write(
+            root,
+            "node_modules/pkg/package.json",
+            r#"{ "name": "pkg", "version": "1.0.0", "types": "other.d.ts" }"#,
+        );
+        vec![(CHANGED, "node_modules/pkg/package.json".to_string())]
+    }
+
+    /// A negative lookup turns positive: `./missing/x`, which the index
+    /// imports, appears.
+    fn create_missing(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+        write(root, "src/missing/x.ts", "export const x = 4;");
+        vec![
+            (CREATED, "src/missing".to_string()),
+            (CREATED, "src/missing/x.ts".to_string()),
+        ]
+    }
+
     const POINTS: [ChangePoint; 4] = [
         ChangePoint::BeforeObservation,
         ChangePoint::BetweenObservationAndDemand,
@@ -2271,6 +2289,22 @@ mod load_view {
         /// load window.
         fn the_reconciliation_recovers_an_edited_file() {
             reconciles_at_every_point("recedit", &edit_a);
+        }
+    }
+
+    os_child_test! {
+        /// L1 reconciliation: a package.json edit that changes what its
+        /// package resolves to, at each point of the load window.
+        fn the_reconciliation_recovers_a_package_json_edit() {
+            reconciles_at_every_point("recpj", &edit_package_json);
+        }
+    }
+
+    os_child_test! {
+        /// L1 reconciliation: a missing module (a negative lookup) that
+        /// appears, at each point of the load window.
+        fn the_reconciliation_recovers_a_negative_lookup() {
+            reconciles_at_every_point("recneg", &create_missing);
         }
     }
 }

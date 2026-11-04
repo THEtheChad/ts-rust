@@ -2596,7 +2596,7 @@ impl Session {
 }
 
 impl Session {
-    /// Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): right after the watch
+    /// Loader v2 L1: right after the watch
     /// registration, the observations of the snapshot's loads through their
     /// OS views are checked against the disk on another thread
     /// (`load_view_scope::reconcile_pending`). A change between a worker's

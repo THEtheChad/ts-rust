@@ -103,8 +103,10 @@ pub(super) fn after_load() {
     }
 }
 
-pub(super) fn reconcile_override() -> Option<bool> {
-    RECONCILE_OVERRIDE.with(Cell::get)
+/// Whether the reconciliation checks `view`: not a replayed view (it holds
+/// no live observation), nor any view after `set_reconcile(Some(false))`.
+pub(super) fn reconciles(view: &LoadView) -> bool {
+    !view.is_frozen() && RECONCILE_OVERRIDE.with(Cell::get) != Some(false)
 }
 
 pub(super) fn note_events(events: &[ReconcileEvent]) {
@@ -135,10 +137,10 @@ pub fn set_replay(records: Option<&[u8]>) {
 }
 
 /// The counts of the last load's view on this thread, and its OS calls
-/// that bypassed the view.
+/// that bypassed the view, once.
 #[must_use]
 pub fn last_counts() -> Option<(ViewCounts, u64)> {
-    LAST_COUNTS.with(Cell::get)
+    LAST_COUNTS.with(Cell::take)
 }
 
 /// Tests: `hook` runs when each load's scope ends on this thread (after the
@@ -147,8 +149,8 @@ pub fn set_after_load(hook: Option<Rc<dyn Fn()>>) {
     AFTER_LOAD.with(|after| *after.borrow_mut() = hook);
 }
 
-/// Tests: turns the reconciliation on or off for this thread (`None`: on
-/// with the view).
+/// Tests: `Some(false)` turns the reconciliation off on this thread, to
+/// show what it recovers (`None`: on).
 pub fn set_reconcile(on: Option<bool>) {
     RECONCILE_OVERRIDE.with(|cell| cell.set(on));
 }

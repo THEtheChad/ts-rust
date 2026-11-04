@@ -11,7 +11,6 @@
 //! - the record of a view and a frozen view read back from it (the V-replay
 //!   oracle, `compiler::load_view_scope::diag`); `GOPORT_LOAD_VIEW_REPLAY_LOG=1`
 //!   names each demand that a replayed view lacks;
-//! - test hooks (`set_enabled`).
 // PORT: not in Go (perf diagnostics).
 //
 // The whole module is under the feature (its `mod` item); the items that read
@@ -26,22 +25,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 thread_local! {
-    static ENABLED_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
     /// Nonzero while a view makes its OS call on this thread.
     static IN_VIEW: Cell<u32> = const { Cell::new(0) };
     /// The OS calls made on this thread while a view was attached that did
     /// not come from a view (`note_os_call`).
     static BYPASS: Cell<u64> = const { Cell::new(0) };
-}
-
-/// Tests: turns the view on or off for this thread (`None`: the
-/// environment).
-pub fn set_enabled(on: Option<bool>) {
-    ENABLED_OVERRIDE.with(|cell| cell.set(on));
-}
-
-pub(super) fn enabled_override() -> Option<bool> {
-    ENABLED_OVERRIDE.with(Cell::get)
 }
 
 /// A load scope starts on this thread (`attach`).
