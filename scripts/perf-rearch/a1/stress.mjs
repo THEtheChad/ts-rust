@@ -3,7 +3,8 @@
 // `.tsx` keystrokes over several files, each followed by a completion that is cancelled at once,
 // with hovers and diagnostic pulls, import edits that build the program again, and close/reopen
 // cycles that release snapshots. The server writes a GOPORT_REUSE_STATS line after each program
-// update; this samples them and the server's RSS.
+// update (a `diagnostics` feature build only: --features diagnostics); this samples them and the
+// server's RSS.
 //
 //   node scripts/perf-rearch/a1/stress.mjs --bin <tsgo> --project <dir> --edit <rel>... [--iterations 600]
 //        [--sample 50] [--stats <file>] [--env NAME=VALUE...]
@@ -90,6 +91,10 @@ for (let i = 0; i < n && !exited; i++) {
   }
 }
 const lines = stats();
+if (opt.stats !== "/dev/null" && lines.length === 0) {
+  console.error(`stress.mjs: ${opt.bin} wrote no GOPORT_REUSE_STATS lines (not a diagnostics feature build?)`);
+  process.exitCode = 1;
+}
 const count = (k) => lines.filter((l) => l.startsWith(`outcome=${k} `)).length;
 const died = exited;
 await client.shutdown();

@@ -12,6 +12,10 @@ and the emitted tree (every file's bytes). With --diagnostics or
 --extendedDiagnostics the time and memory lines are dropped before the
 compare (counts stay). The rs sides also write GOPORT_CHECKER_CALL_LOG, and
 the per-checker call logs of the rs sides are compared with each other.
+The rs bins must be `diagnostics` feature builds (`scripts/run-cargo-capped.sh
+build --release -p ts_goport --features diagnostics --bin tsgo`): the call log
+and the phase report are not in a shipped build. For an A/B of the early emit,
+build the base commit as the other rs side.
 
 Projects come from ~/.cache/perf-rearch/projects (and umami from lspdiff);
 outputs never go into a project. The error fixtures are made under
@@ -252,18 +256,14 @@ def norm_stats(text: str, stats: bool) -> str:
     return "".join(out)
 
 
-# Every GOPORT_* variable is removed from the inherited environment, then
-# each side sets what it depends on (so an inherited GOPORT_EARLY_EMIT=0 or
-# GOPORT_PLAIN_EARLY_EMIT=0 cannot turn the early emit off unnoticed).
-BASE_ENV = {"GOPORT_EARLY_EMIT": "1", "GOPORT_PLAIN_EARLY_EMIT": "1"}
-
 REPORT_HEADER = "emit phase times (GOPORT_EMIT_PHASE_TIMES)"
 REPORT_ROUTING = "emit routing (files)"
 
 
 def clean_env(extra: dict) -> dict:
+    # Every GOPORT_* variable is removed from the inherited environment, then
+    # each side sets what it depends on.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GOPORT_")}
-    env.update(BASE_ENV)
     env.update(extra)
     return env
 
@@ -404,6 +404,9 @@ def main() -> int:
                     "GOPORT_EMIT_PHASE_TIMES": "1",
                 })
                 err = ri["stderr"].decode("utf-8", "replace")
+                if REPORT_HEADER not in err and not (log.exists() and log.stat().st_size):
+                    sys.exit(f"b1_emit_parity.py: {binary} printed no phase report and wrote no call "
+                             f"log ({name}): not a diagnostics feature build?")
                 try:
                     rest, routes = split_report(err)
                     (case_dir / f"{label}.phases").write_text(err)

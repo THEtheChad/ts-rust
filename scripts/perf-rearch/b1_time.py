@@ -13,7 +13,8 @@ under ~/.cache/perf-rearch/scratch/b1/time-out (never into the project).
 GOPORT_LAUNCH=0 is set for the rs sides so wait4 sees the work process.
 Prints one line per run and, at the end, the median and min-max of wall,
 user and sys per side and project. --phases adds a last run of each rs side
-with GOPORT_EMIT_PHASE_TIMES=1 and prints its report.
+with GOPORT_EMIT_PHASE_TIMES=1 and prints its report (that needs a `diagnostics` feature build:
+`scripts/run-cargo-capped.sh build --release -p ts_goport --features diagnostics --bin tsgo`).
 """
 
 import argparse
@@ -137,6 +138,9 @@ def main() -> int:
                 env2 = dict(env)
                 env2["GOPORT_EMIT_PHASE_TIMES"] = "1"
                 wall, *_rest, err = run(binary, env2, project, extra, rs)
+                if "emit phase times (GOPORT_EMIT_PHASE_TIMES)" not in err:
+                    sys.exit(f"b1_time.py: {binary} printed no phase report for {project} "
+                             "(not a diagnostics feature build?)")
                 emit(f"## phases {project} {label} wall={wall:.3f}\n{err.rstrip()}")
     return 0
 

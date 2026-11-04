@@ -151,7 +151,9 @@ impl EmitContext {
         }
     }
 
-    /// A copy of the side tables of this context (`PrintTables`).
+    /// A copy of the side tables of this context (`PrintTables`), for the
+    /// d.ts twin check mode (a `diagnostics` feature build).
+    #[cfg(feature = "diagnostics")]
     #[must_use]
     pub fn clone_print_tables(&self) -> PrintTables {
         PrintTables {

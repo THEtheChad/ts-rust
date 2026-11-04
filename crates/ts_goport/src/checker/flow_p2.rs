@@ -1683,7 +1683,10 @@ impl Checker {
         node: Node,
     ) -> (Cow<'static, str>, bool) {
         // flowskip1 verify: an effect site (flow_skip.rs).
-        self.flow_skip.effects += 1;
+        #[cfg(feature = "diagnostics")]
+        {
+            self.flow_skip.effects += 1;
+        }
         let symbol = self.resolve_entity_name(
             node,
             SymbolFlags::VALUE,

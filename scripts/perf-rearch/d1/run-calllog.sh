@@ -4,7 +4,8 @@
 # per file), which do not depend on load, so no load gate.
 #
 # Usage: run-calllog.sh [OUT_DIR]   default OUT_DIR: ~/.cache/perf-rearch/scratch/d1/calllog
-#   TSGO=<bin>   the tsc-rs bin (default: the window-1 head bin)
+#   TSGO=<bin>   the tsc-rs bin (default: the window-1 head bin); since C1 it must be a `diagnostics` feature
+#                build (`scripts/run-cargo-capped.sh build --release -p ts_goport --features diagnostics --bin tsgo`)
 # Then: refine_sim.py OUT_DIR/<project>-c4.log OUT_DIR/<project>-c16.log 4   (METRIC=types for the types proxy)
 set -u
 H=${TSGO:-$HOME/.cache/perf-rearch/bins/tsgo-head-b2febcd86-goport-w1}
@@ -13,9 +14,17 @@ out=${1:-$HOME/.cache/perf-rearch/scratch/d1/calllog}
 mkdir -p "$out"
 run() {
   local name=$1 dir=$2 cfg=$3 n=$4
-  ( cd "$dir" && GOPORT_CHECKER_CALL_LOG="$out/$name-c$n.log" "$H" -p "$cfg" --noEmit --incremental false \
+  local log="$out/$name-c$n.log"
+  rm -f "$log"
+  ( cd "$dir" && GOPORT_CHECKER_CALL_LOG="$log" "$H" -p "$cfg" --noEmit --incremental false \
       --composite false --checkers "$n" >/dev/null 2>&1 )
-  echo "$name c$n rc=$? load $(cut -d' ' -f1 /proc/loadavg)"
+  local rc=$?
+  # A build without the diagnostics feature runs fine and writes no log.
+  if [[ ! -s $log ]]; then
+    echo "FAIL: $H wrote no call log for $name c$n (not a diagnostics feature build?)" >&2
+    exit 1
+  fi
+  echo "$name c$n rc=$rc load $(cut -d' ' -f1 /proc/loadavg)"
 }
 for n in 4 16; do
   run vscode "$P/vscode" src/tsconfig.json "$n"

@@ -241,7 +241,6 @@ fn inner(name: &str, conf: &str) -> bool {
         .args(["--test-threads", "1"])
         .env(INNER, "1")
         .env("_RJEM_MALLOC_CONF", conf)
-        .env_remove("GOPORT_JEMALLOC_LAYOUT")
         .status()
         .unwrap();
     assert!(status.success(), "{status}");
@@ -335,7 +334,6 @@ fn tsgo(args: &[&str]) -> Command {
         .env(EXEC_PARENT, std::process::id().to_string())
         .env(EXEC_ARGS, args.join("\n"))
         .env("GOPORT_LAUNCH", "0")
-        .env_remove("GOPORT_JEMALLOC_LAYOUT")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

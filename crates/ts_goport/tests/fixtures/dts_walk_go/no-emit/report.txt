@@ -1,0 +1,79 @@
+== cold: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== wide change: exit 2
+src/c0.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c1.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c10.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c11.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c12.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c13.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c14.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c15.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c16.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c17.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c18.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c19.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c2.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c20.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c21.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c22.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c23.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c24.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c25.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c26.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c27.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c28.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c29.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c3.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c30.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c31.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c32.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c33.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c34.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c35.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c36.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c37.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c38.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c39.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c4.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c5.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c6.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c7.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c8.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c9.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== revert: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== error in a.ts: exit 2
+src/a.ts(2,37): error TS2322: Type 'string' is not assignable to type 'number'.
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== fix: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== second wide change: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== narrow change: exit 2
+src/c0.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== narrow revert: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== no change: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== global change: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/ug.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== global revert: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr
+== same d.ts: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+-- stderr

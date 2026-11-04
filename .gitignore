@@ -1,5 +1,7 @@
 target/
 *.tsbuildinfo
+# Go oracle goldens of tests/multi_program.rs (scripts/perf-rearch/cleanup/dtswalk_go.py).
+!/crates/ts_goport/tests/fixtures/dts_walk_go/*/step*.tsbuildinfo
 .claude
 
 __pycache__/
