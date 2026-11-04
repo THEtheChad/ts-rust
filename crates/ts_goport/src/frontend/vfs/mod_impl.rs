@@ -322,6 +322,20 @@ pub struct Common {
     pub is_reparse_point: Option<fn(&str) -> bool>,
 }
 
+/// Go `Common.FileExists` of a stat result (internal.go:59): it exists and
+/// is not a directory. The per-load OS view (`loadview`) answers
+/// `file_exists` from its stat with it.
+#[must_use]
+pub fn stat_is_file(stat: &Option<FileInfo>) -> bool {
+    matches!(stat, Some(stat) if !stat.is_dir())
+}
+
+/// Go `Common.DirectoryExists` of a stat result (internal.go:64).
+#[must_use]
+pub fn stat_is_dir(stat: &Option<FileInfo>) -> bool {
+    matches!(stat, Some(stat) if stat.is_dir())
+}
+
 // Go: internal.go:20 RootLength
 pub fn root_length(p: &str) -> i32 {
     let l = get_encoded_root_length(p);
@@ -365,14 +379,12 @@ impl Common {
 
     // Go: internal.go:59 FileExists
     pub fn file_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if !stat.is_dir())
+        stat_is_file(&self.stat(path))
     }
 
     // Go: internal.go:64 DirectoryExists
     pub fn directory_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if stat.is_dir())
+        stat_is_dir(&self.stat(path))
     }
 
     // Go: internal.go:69 GetAccessibleEntries

@@ -1096,13 +1096,7 @@ impl Job {
     /// A worker's OS file system for this job: the OS file system of its
     /// thread, under the load's OS view when there is one.
     fn worker_os(&self) -> Rc<dyn Fs> {
-        match &self.os_view {
-            Some(view) => wrap_fs(Rc::new(crate::frontend::vfs::loadview::ViewFs::worker(
-                osvfs_fs(),
-                view.clone(),
-            ))),
-            None => wrap_fs(osvfs_fs()),
-        }
+        crate::frontend::vfs::loadview::worker_fs(self.os_view.as_ref())
     }
 }
 

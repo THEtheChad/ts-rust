@@ -62,6 +62,10 @@ same-file = "=1.0.6"
 nix = { version = "=0.31.3", default-features = false, features = ["process", "resource", "signal", "time"] }
 
 [features]
+# Loader v2 diagnostics (src/frontend/compiler/load_view_scope/diag.rs and
+# goport_util's): never in a shipped build; ts_goport's `diagnostics` turns
+# it on.
+diagnostics = ["goport_util/diagnostics"]
 # No defaults: ts_goport chooses the global allocator (its `jemalloc`
 # feature turns on this one), so the two crates cannot disagree about it.
 default = []

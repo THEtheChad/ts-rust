@@ -73,6 +73,10 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 notify = { version = "=8.2.0", default-features = false }
 
 [features]
+# Loader v2 diagnostics (src/frontend/vfs/loadview/diag.rs): the load view's
+# counters, bypass count, call trace, record and replay, and test hooks. Never
+# in a shipped build; ts_goport's `diagnostics` turns it on.
+diagnostics = []
 # Go build tag `noembed`: the lib files are read from next to the binary, not
 # embedded (src/frontend/bundled.rs). Build it through ts_goport's feature.
 noembed = []

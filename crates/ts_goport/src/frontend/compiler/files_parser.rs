@@ -4119,25 +4119,10 @@ pub(crate) static MAPPED_WAIT_FOR_WORKER: Mutex<Vec<String>> = Mutex::new(Vec::n
 fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
     // Go: sys.FS() is bundled.WrapFS(osvfs.FS()). The workers share one
     // stat cache, like the Go parse tasks share the host's cachedvfs.
-    // Loader v2 L1: with the load's OS view, the OS file system of the
-    // worker is the view's worker side (`loadview::ViewFs::worker`), from
-    // the first job after the loader set it.
-    let worker_os = || match shared.view.get() {
-        Some(view) => crate::frontend::bundled::wrap_fs(Rc::new(
-            crate::frontend::vfs::loadview::ViewFs::worker(
-                crate::frontend::vfs::osvfs_fs(),
-                view.clone(),
-            ),
-        )),
-        None => crate::frontend::bundled::wrap_fs(crate::frontend::vfs::osvfs_fs()),
-    };
-    let mut viewed = shared.view.get().is_some();
-    let mut os_fs = worker_os();
-    let mut fs: Rc<dyn Fs> = Rc::new(WorkerFs {
-        fs: os_fs.clone(),
-        stats: shared.stats.clone(),
-        keep_package_jsons: None,
-    });
+    // Loader v2 L1: with the load's OS view, the worker's OS file system is
+    // the view's worker side (`loadview::worker_fs`), from the first job
+    // after the loader set it (`WorkerFiles::refresh`).
+    let mut files = WorkerFiles::new(shared);
     let mut resolver: Option<WorkerResolver> = None;
     let mut resolver_failed = false;
     // S1a: a worker that resolves for a first-load job ends its
@@ -4171,7 +4156,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
                     }
                     if let Some((jobs, count)) = queue.rank.take() {
                         drop(queue);
-                        shared.rank_largest(&*fs, jobs, count);
+                        shared.rank_largest(&*files.fs, jobs, count);
                         queue = lock(&shared.queue);
                         continue;
                     }
@@ -4197,15 +4182,8 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
             }
             *state = PrefetchState::Running;
         }
-        if !viewed && shared.view.get().is_some() {
-            viewed = true;
-            os_fs = worker_os();
-            fs = Rc::new(WorkerFs {
-                fs: os_fs.clone(),
-                stats: shared.stats.clone(),
-                keep_package_jsons: None,
-            });
-        }
+        files.refresh(shared);
+        let (os_fs, fs, viewed) = (files.os.clone(), files.fs.clone(), files.viewed);
         let started = timed.then(std::time::Instant::now);
         let running = RunningJob(&job);
         #[cfg(test)]
@@ -4353,6 +4331,40 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
         if let Some(started) = started {
             let busy = started.elapsed();
             shared.count(|c| c.busy += busy);
+        }
+    }
+}
+
+/// A parse worker's file systems: the OS file system of its thread (under
+/// the load's OS view once the loader set it, loader v2 L1) and the
+/// worker's `WorkerFs` over it.
+struct WorkerFiles {
+    os: Rc<dyn Fs>,
+    fs: Rc<dyn Fs>,
+    /// `os` reads through the load's OS view.
+    viewed: bool,
+}
+
+impl WorkerFiles {
+    fn new(shared: &PrefetchShared) -> Self {
+        let view = shared.view.get();
+        let os = crate::frontend::vfs::loadview::worker_fs(view);
+        WorkerFiles {
+            fs: Rc::new(WorkerFs {
+                fs: os.clone(),
+                stats: shared.stats.clone(),
+                keep_package_jsons: None,
+            }),
+            os,
+            viewed: view.is_some(),
+        }
+    }
+
+    /// Takes the load's OS view when the loader set it after this worker
+    /// started (an early pool).
+    fn refresh(&mut self, shared: &PrefetchShared) {
+        if !self.viewed && shared.view.get().is_some() {
+            *self = WorkerFiles::new(shared);
         }
     }
 }

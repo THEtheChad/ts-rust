@@ -11,9 +11,9 @@
 #      recorded views (GOPORT_LOAD_VIEW_REPLAY), on the mutated disk;
 #   4. fresh: the serial loader with no view on the mutated disk (sensitivity: it must differ).
 # The replay must equal the record in every dump record and every stream message
-# (dump-sections.py with the record as the reference); replay_miss must be 0. The
-# reconciliation is off in all three runs (GOPORT_LOAD_VIEW_RECONCILE=0): it would find the
-# mutation and reload, which is a later load, not the load under test.
+# (dump-sections.py with the record as the reference); replay_miss must be 0. A replayed
+# view is not reconciled (it holds no live observation); the record's disk does not change
+# during its session. Needs a bin built with the `diagnostics` cargo feature.
 # usage: l1-replay-oracle.sh <tsgo bin> <out dir>   (ONLY=<regex> picks cases)
 set -u
 bin=$(realpath "$1"); mkdir -p "$2"; out=$(realpath "$2")
@@ -43,7 +43,7 @@ for c in "${cases[@]}"; do
   rm -f "$out/$name".{rec,rep,fresh}.* "$out/$name.view"
   run() { # <label> <env...>
     local label=$1; shift
-    env "$@" GOPORT_LOAD_VIEW_RECONCILE=0 S1A_SETTLE_MS=4000 S1A_FILE=$file GOPORT_LOAD_TIMES=1 \
+    env "$@" S1A_SETTLE_MS=4000 S1A_FILE=$file GOPORT_LOAD_TIMES=1 \
       node "$here/load-dump-session.mjs" "$bin" "$out/$name.$label" "$scen" "$scratch" || echo "ERROR $name $label"
   }
   run rec GOPORT_LOAD_VIEW=1 GOPORT_LOAD_VIEW_DUMP="$out/$name.view"

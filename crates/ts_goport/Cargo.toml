@@ -56,6 +56,13 @@ same-file = "=1.0.6"
 nix = { version = "=0.31.3", default-features = false, features = ["process", "resource", "signal", "time"] }
 
 [features]
+# Loader v2 diagnostics: the load view's counters, live-OS bypass count, call
+# trace, the V-replay oracle (record and replay) and the test hooks of the
+# load view and its reconciliation. Never in a shipped build. The L1 tests of
+# tests/go_baselines (project_lsp/resolveahead_test.rs) run only with it:
+# `scripts/run-cargo-capped.sh test --release -p ts_goport --features
+# diagnostics --test go_baselines -- resolveahead`.
+diagnostics = ["goport_core/diagnostics", "goport_util/diagnostics"]
 default = ["jemalloc"]
 # jemalloc as the global allocator of the goport binaries (default; the
 # shipped build). `--no-default-features` gives glibc malloc with its
