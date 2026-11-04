@@ -154,6 +154,7 @@ def analyze(profile, syms, args):
     func_phase = {}
     leaf_phase = defaultdict(Counter)
     gc_ms = Counter()
+    thread_ids = defaultdict(set)
     timeline = defaultdict(Counter)
     t_first = min((t["samples"]["time"][0] for t in profile["threads"] if t["samples"]["length"]), default=0)
     if lo is not None:
@@ -217,6 +218,7 @@ def analyze(profile, syms, args):
             if args.timeline:
                 timeline[int((tm - t_first) // args.timeline)][phase] += w
             by_thread[name] += w
+            thread_ids[name].add(t.get("tid"))
             by_phase[phase] += w
             phase_thread[phase][name] += w
             leaf = stack[-1]
@@ -238,7 +240,7 @@ def analyze(profile, syms, args):
         func_phase[f] = c.most_common(1)[0][0]
     return {"total_ms": total, "by_thread": by_thread, "by_phase": by_phase, "phase_thread": phase_thread,
             "self": self_t, "incl": incl_t, "func_phase": func_phase, "alloc_self_ms": alloc_self,
-            "callers": callers, "gc_ms": gc_ms, "timeline": timeline}
+            "callers": callers, "gc_ms": gc_ms, "thread_count": {k: len(v) for k, v in thread_ids.items()}, "timeline": timeline}
 
 
 def short(name, n=110):
@@ -249,9 +251,10 @@ def short(name, n=110):
 def report(r, top):
     tot = r["total_ms"] or 1
     out = [f"total on-CPU {tot:.0f} ms; allocator/munmap self {r['alloc_self_ms']:.0f} ms "
-           f"({100 * r['alloc_self_ms'] / tot:.1f}%)", "", "| thread | CPU ms | % |", "|---|---|---|"]
+           f"({100 * r['alloc_self_ms'] / tot:.1f}%)", "", "| thread (name) | threads with CPU | CPU ms | % |",
+           "|---|---|---|---|"]
     for k, v in r["by_thread"].most_common(top):
-        out.append(f"| {k} | {v:.0f} | {100 * v / tot:.1f} |")
+        out.append(f"| {k} | {r['thread_count'].get(k, '')} | {v:.0f} | {100 * v / tot:.1f} |")
     gc = r.get("gc_ms") or {}
     out += ["", "| phase | CPU ms | % | top threads |" + (" of it Go GC/alloc ms |" if gc else ""),
             "|---|---|---|---|" + ("---|" if gc else "")]

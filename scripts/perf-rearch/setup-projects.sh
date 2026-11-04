@@ -74,4 +74,21 @@ if [[ -d $root/t3code/node_modules && ! -f $root/t3code/apps/web/tsconfig.noeffe
       strip(`${p}/tsconfig.json`, `${p}/tsconfig.noeffect.json`, "../../tsconfig.base.json", "../../tsconfig.base.noeffect.json")
   ')
 fi
+# Effect: the same for packages/effect (its base config lists the Effect language service plugin, and tsc-rs runs
+# the Effect rules from it even when an extending config sets "plugins": [], 38% of check CPU per the checker audit).
+if [[ -d $root/effect/node_modules && ! -f $root/effect/packages/effect/tsconfig.noeffect.json ]]; then
+  # shellcheck disable=SC2016
+  (cd "$root/effect" && TS="$tools/ts6/node_modules/typescript/lib/typescript.js" node -e '
+    const fs = require("fs"), ts = require(process.env.TS)
+    const strip = (file, to, extendsFrom, extendsTo) => {
+      const json = ts.parseConfigFileTextToJson(file, fs.readFileSync(file, "utf8")).config
+      if (json.compilerOptions) delete json.compilerOptions.plugins
+      if (json.extends === extendsFrom) json.extends = extendsTo
+      fs.writeFileSync(to, JSON.stringify(json, null, 2))
+    }
+    strip("tsconfig.base.json", "tsconfig.base.noeffect.json")
+    strip("packages/effect/tsconfig.json", "packages/effect/tsconfig.noeffect.json", "../../tsconfig.base.json",
+      "../../tsconfig.base.noeffect.json")
+  ')
+fi
 echo ready

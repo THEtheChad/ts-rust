@@ -21,7 +21,8 @@ GO_DEFAULT = HOME / ".local/bin/tsgo-oracle-3e9236361fa9"
 GO_LSP_DEFAULT = HOME / ".local/bin/tsgo-lsp-oracle-3e9236361fa9"
 MAX_LOAD = float(os.environ.get("MAX_LOAD", "1.5"))
 REPEAT_LOAD = float(os.environ.get("REPEAT_LOAD", "3"))
-CLI_SCENARIOS = ["noemit", "emit", "single", "incr", "build"]
+OTHER_CORES = float(os.environ.get("OTHER_CORES", "1.0"))
+CLI_SCENARIOS = ["noemit", "emit", "emit-js", "emit-cjs", "single", "icount", "incr", "build"]
 LSP_SCENARIOS = ["concurrent", "probe", "ttfd"]
 
 USAGE = """\
@@ -181,10 +182,35 @@ def _subreaper():
     libc.prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER: orphaned descendants (tsc-rs's worker) come to us
 
 
+class _PerfCounter:
+    """User-space instructions of a process and its descendants (perf_event_open, excl_kernel, inherit,
+    enable_on_exec; works at perf_event_paranoid=2), as scripts/perf-rearch/icount.py on perf/first-principles.
+    Load-independent; with --singleThreaded (and GOMAXPROCS=1 for Go) the CPU-work measure."""
+
+    def __init__(self, pid):
+        import ctypes
+        import struct
+        self.struct = struct
+        libc = ctypes.CDLL(None, use_errno=True)
+        attr = bytearray(128)
+        struct.pack_into("IIQ", attr, 0, 0, 128, 1)  # PERF_TYPE_HARDWARE, size, PERF_COUNT_HW_INSTRUCTIONS
+        # disabled | inherit | exclude_kernel | exclude_hv | enable_on_exec
+        struct.pack_into("Q", attr, 40, (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6) | (1 << 12))
+        self.fd = libc.syscall(298, (ctypes.c_char * 128).from_buffer(attr), pid, -1, -1, 0)
+
+    def read(self):
+        if self.fd < 0:
+            return None
+        v = self.struct.unpack("Q", os.read(self.fd, 8))[0]
+        os.close(self.fd)
+        return v
+
+
 def run_measured(argv, cwd, timeout, env_extra=None):
     """Runs argv; returns wall (until the started process exits), user/sys CPU and max RSS of it and every
     descendant (wait4; this process is a child subreaper, so a worker that outlives its launcher is reaped
-    here too), the exit code and a hash of stdout+stderr.
+    here too), user-space instructions (perf counter, all threads and descendants), the exit code and a hash
+    of stdout+stderr.
 
     tsc-rs's CLI starts a worker by default and its launcher exits as soon as the worker sends its exit code
     (before the worker's memory is unmapped), which is what a user waits for. PR_LAUNCH=0 sets
@@ -197,15 +223,46 @@ def run_measured(argv, cwd, timeout, env_extra=None):
         env.pop("GOPORT_LAUNCH", None)
     if env_extra:
         env.update(env_extra)
+    exe = shutil.which(argv[0], path=env.get("PATH")) or argv[0]
+    out_r, out_w = os.pipe()
+    go_r, go_w = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child: wait until the counter is attached, then exec
+        try:
+            os.close(out_r)
+            os.close(go_w)
+            os.read(go_r, 1)
+            os.close(go_r)
+            os.dup2(out_w, 1)
+            os.dup2(out_w, 2)
+            os.close(out_w)
+            fd = os.open("/dev/null", os.O_RDONLY)
+            os.dup2(fd, 0)
+            os.chdir(cwd)
+            os.execve(exe, argv, env)
+        finally:
+            os._exit(127)
+    os.close(out_w)
+    os.close(go_r)
+    counter = _PerfCounter(pid)
+    chunks = []
+
+    def drain_pipe():
+        while True:
+            c = os.read(out_r, 1 << 16)
+            if not c:
+                break
+            chunks.append(c)
+    reader = threading.Thread(target=drain_pipe)
+    reader.start()
     busy0 = machine_busy_s()
     t0 = time.perf_counter()
-    p = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    chunks = []
-    reader = threading.Thread(target=lambda: chunks.extend(iter(lambda: p.stdout.read(1 << 16), b"")))
-    reader.start()
-    killer = threading.Timer(timeout, p.kill)
+    os.write(go_w, b"x")
+    os.close(go_w)
+    killed = []
+    killer = threading.Timer(timeout, lambda: (killed.append(1), os.kill(pid, 9)))
     killer.start()
-    _, status, ru = os.wait4(p.pid, 0)
+    _, status, ru = os.wait4(pid, 0)
     wall = time.perf_counter() - t0
     killer.cancel()
     cpu_u, cpu_s, rss = ru.ru_utime, ru.ru_stime, ru.ru_maxrss
@@ -218,36 +275,41 @@ def run_measured(argv, cwd, timeout, env_extra=None):
         cpu_s += r2.ru_stime
         rss = max(rss, r2.ru_maxrss)
     reader.join()
+    os.close(out_r)
     drain = time.perf_counter() - t0
     busy1 = machine_busy_s()
+    instr = counter.read()
     out = b"".join(chunks)
-    p.returncode = os.waitstatus_to_exitcode(status)
+    rc = os.waitstatus_to_exitcode(status)
     cpu = cpu_u + cpu_s
     return {
-        "wall": wall, "drain": drain, "user": cpu_u, "sys": cpu_s, "cpu": cpu,
-        "maxrss_mb": rss / 1024, "rc": p.returncode, "timed_out": p.returncode == -9,
+        "wall": wall, "drain": drain, "user": cpu_u, "sys": cpu_s, "cpu": cpu, "instr": instr,
+        "maxrss_mb": rss / 1024, "rc": rc, "timed_out": bool(killed),
         "out_hash": hashlib.sha256(out).hexdigest()[:16],
         "out_lines": out.count(b"\n"), "other_cpu": max(0.0, (busy1 - busy0) - cpu),
-        "launch": env.get("GOPORT_LAUNCH", "default"), "_out": out,
+        "launch": env.get("GOPORT_LAUNCH", "default"), "env": env_extra or {}, "_out": out,
     }
 
 
-def gated_run(rec, desc, fn):
+def gated_run(rec, desc, fn, ungated=False):
     """Load gate + repeat rule around fn() -> result dict with wall and cpu."""
     for attempt in range(3):
-        before = wait_quiet(rec.log)
+        before = load1() if ungated else wait_quiet(rec.log)
         r = fn()
         after = load1()
         wall, cpu = r.get("wall", 0), r.get("cpu", 0)
         decay = math.exp(-wall / 60.0)
         self_load = (cpu / wall if wall else 0) * (1 - decay)
         limit = REPEAT_LOAD + self_load
-        r.update(load_before=before, load_after=after, load_limit=round(limit, 2), attempt=attempt)
-        rec.log(f"  {desc}: wall {wall:.3f}s cpu {cpu:.2f}s rss {r.get('maxrss_mb', 0):.0f}MB rc {r.get('rc')} "
-                f"load {before}->{after} (limit {limit:.1f}) other_cpu {r.get('other_cpu', 0):.1f}s")
-        if after <= limit:
+        other = r.get("other_cpu", 0) / wall if wall else 0
+        r.update(load_before=before, load_after=after, load_limit=round(limit, 2), attempt=attempt,
+                 other_cores=round(other, 2))
+        instr = f" instr {r['instr'] / 1e9:.3f}G" if r.get("instr") else ""
+        rec.log(f"  {desc}: wall {wall:.3f}s cpu {cpu:.2f}s rss {r.get('maxrss_mb', 0) or 0:.0f}MB rc {r.get('rc')}"
+                f"{instr} load {before}->{after} (limit {limit:.1f}) other cores {other:.2f}")
+        if ungated or (after <= limit and other <= OTHER_CORES):
             return r
-        rec.log("  load after the run is above the limit: repeating")
+        rec.log("  load or other processes' CPU above the limit: repeating")
     r["load_flag"] = True
     return r
 
@@ -325,22 +387,34 @@ def cli(args):
             elif scen == "single":
                 labs = [l for l, _ in bins if l != ref or args.single_ref]
                 variants.append(("single", labs, lambda b, lab: [b] + noemit + ["--singleThreaded"], None, repo))
-            elif scen == "emit":
-                def emit_argv(b, lab):
-                    d = scratch / f"emit-{name}-{lab}"
+            elif scen in ("emit", "emit-js", "emit-cjs"):
+                # emit: the config's own outputs (JS, maps, d.ts as configured). emit-js: JS only (no maps,
+                # no d.ts). emit-cjs: JS only, CommonJS ES2017 (the emit audit's three modes).
+                extra = [] if scen == "emit" else ["--sourceMap", "false", "--declaration", "false",
+                                                   "--declarationMap", "false", "--emitDeclarationOnly", "false"]
+                if scen == "emit-cjs":
+                    extra += ["--module", "commonjs", "--target", "es2017"]
+
+                def emit_argv(b, lab, scen=scen, extra=extra):
+                    d = scratch / f"{scen}-{name}-{lab}"
                     a = [b] + base + ["--noEmit", "false", "--incremental", "false"] + comp + [
                                       "--outDir", str(d / "out")]
-                    if opts.get("declaration") or opts.get("composite") or opts.get("declarationDir"):
+                    if scen == "emit" and (opts.get("declaration") or opts.get("composite")
+                                           or opts.get("declarationDir")):
                         a += ["--declarationDir", str(d / "decl")]
                     if opts.get("outFile"):
                         a += ["--outFile", str(d / "out.js")]
-                    return a
+                    return a + extra
 
-                def emit_pre(lab):
-                    d = scratch / f"emit-{name}-{lab}"
+                def emit_pre(lab, scen=scen):
+                    d = scratch / f"{scen}-{name}-{lab}"
                     shutil.rmtree(d, ignore_errors=True)
                     d.mkdir(parents=True)
-                variants.append(("emit", [l for l, _ in bins], emit_argv, emit_pre, repo))
+                variants.append((scen, [l for l, _ in bins], emit_argv, emit_pre, repo))
+            elif scen == "icount":
+                # Single-threaded user-space instructions: tsc-rs --singleThreaded, Go also GOMAXPROCS=1.
+                variants.append(("icount", [l for l, _ in bins], lambda b, lab: [b] + noemit + ["--singleThreaded"],
+                                 None, repo))
             elif scen == "incr":
                 def incr_argv(b, lab):
                     return [b] + base + ["--noEmit", "--incremental"] + comp + [
@@ -358,8 +432,21 @@ def cli(args):
     summarize_dir(out, ref)
 
 
+def label_env(args, lab, variant):
+    env = {}
+    for spec in args.env or []:
+        l, _, kv = spec.partition(":")
+        k, _, v = kv.partition("=")
+        if l == lab:
+            env[k] = v
+    if variant == "icount" and lab == args.ref:
+        env["GOMAXPROCS"] = "1"
+    return env
+
+
 def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, repo):
-    need = {lab: args.runs - rec.count(variant, name, lab) for lab, _ in bins}
+    runs = args.icount_runs if variant == "icount" else args.runs
+    need = {lab: runs - rec.count(variant, name, lab) for lab, _ in bins}
     if all(n <= 0 for n in need.values()):
         return
     rec.log(f"{name} {variant}: {', '.join(l for l, _ in bins)}")
@@ -386,19 +473,23 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
                            timeout=args.timeout)
         if pre == "incr":
             Path(a[a.index("--tsBuildInfoFile") + 1]).unlink(missing_ok=True)
-        r = run_measured(a, c, args.timeout)
+        if variant == "icount":
+            break  # deterministic: no warm-up
+        r = run_measured(a, c, args.timeout, label_env(args, lab, variant))
         first[lab] = r
         rec.log(f"  warm-up {lab}: wall {r['wall']:.3f}s rc {r['rc']} lines {r['out_lines']}")
     n = max(need.values())
     for i in range(n):
         order = bins[i % len(bins):] + bins[:i % len(bins)]
         for lab, b in order:
-            if rec.count(variant, name, lab) >= args.runs:
+            if rec.count(variant, name, lab) >= runs:
                 continue
             a, c = prep(lab, b)
-            r = gated_run(rec, f"{variant} {name} {lab} run{i + 1}", lambda: run_measured(a, c, args.timeout))
-            if variant == "emit":
-                r["emit_hash"] = tree_hash(scratch / f"emit-{name}-{lab}")
+            env = label_env(args, lab, variant)
+            r = gated_run(rec, f"{variant} {name} {lab} run{i + 1}",
+                          lambda: run_measured(a, c, args.timeout, env), ungated=variant == "icount")
+            if variant.startswith("emit"):
+                r["emit_hash"] = tree_hash(scratch / f"{variant}-{name}-{lab}")
             out = r.pop("_out")
             if i == 0:
                 (rec.out / "outputs").mkdir(exist_ok=True)
@@ -545,6 +636,11 @@ def build_cells(rows, ref):
             walls = [r["wall"] for r in rs]
             side = {"n": len(rs), "wall": median(walls), "wall_min": min(walls), "wall_max": max(walls),
                     "cpu": median([r.get("cpu", 0) for r in rs]),
+                    "instr": median([r["instr"] for r in rs if r.get("instr")]) if any(r.get("instr") for r in rs)
+                    else None,
+                    "instr_spread": (max(r["instr"] for r in rs if r.get("instr")) /
+                                     min(r["instr"] for r in rs if r.get("instr")) - 1)
+                    if any(r.get("instr") for r in rs) else None,
                     "maxrss_mb": median([r["maxrss_mb"] for r in rs if r.get("maxrss_mb") is not None]),
                     "rc": sorted({r.get("rc") for r in rs}), "out_hash": sorted({str(r.get("out_hash")) for r in rs}),
                     "emit_hash": sorted({str(r.get("emit_hash")) for r in rs if "emit_hash" in r}),
@@ -558,12 +654,15 @@ def build_cells(rows, ref):
                     v is not None for v in vs) else None for k, vs in keys.items()}
             cell["sides"][lab] = side
         if ref in cell["sides"]:
-            rw = cell["sides"][ref]["wall"]
+            # icount cells compare instructions; every other cell compares wall time.
+            key = "instr" if scen == "icount" else "wall"
+            cell["metric"] = key
+            rw = cell["sides"][ref][key]
             for lab, side in cell["sides"].items():
                 if lab == ref:
                     continue
-                side["ratio"] = side["wall"] / rw if rw else None
-                side["slower"] = bool(rw) and side["wall"] > rw
+                side["ratio"] = side[key] / rw if rw and side[key] is not None else None
+                side["slower"] = bool(rw) and side[key] is not None and side[key] > rw
                 side["same_output"] = (side["out_hash"] == cell["sides"][ref]["out_hash"]
                                        and side["rc"] == cell["sides"][ref]["rc"]
                                        and side["emit_hash"] == cell["sides"][ref]["emit_hash"])
@@ -586,8 +685,8 @@ def fmt_s(v):
 
 
 def markdown(cells, ref):
-    lines = [f"| scenario | project | side | wall median (min..max) | CPU | max RSS | vs {ref} | output |",
-             "|---|---|---|---|---|---|---|---|"]
+    lines = [f"| scenario | project | side | wall median (min..max) | CPU | max RSS | instructions | vs {ref} | output |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for c in cells:
         for lab, s in sorted(c["sides"].items(), key=lambda kv: kv[0] != ref):
             ratio = s.get("ratio")
@@ -598,6 +697,7 @@ def markdown(cells, ref):
             rss = f"{s['maxrss_mb']:.0f} MB" if s.get("maxrss_mb") else "-"
             lines.append(f"| {c['scenario']} | {c['project']} | {lab} | {fmt_s(s['wall'])} "
                          f"({fmt_s(s['wall_min'])}..{fmt_s(s['wall_max'])}){flag} | {fmt_s(s['cpu'])} | {rss} | "
+                         f"{(str(round(s['instr'] / 1e9, 2)) + 'G') if s.get('instr') else '-'} | "
                          f"{mark} | {same} |")
     return "\n".join(lines) + "\n"
 
@@ -606,6 +706,9 @@ def table(args):
     rows = []
     for d in args.dirs:
         f = Path(d) / "runs.jsonl"
+        if not f.exists():
+            print(f"skipped (no runs.jsonl): {d}", file=sys.stderr)
+            continue
         rows += [json.loads(l) for l in f.read_text().splitlines()]
     cells = build_cells(rows, args.ref)
     md = markdown(cells, args.ref)
@@ -636,6 +739,8 @@ def main():
             p.add_argument("--projects-root", default=str(DEFAULT_PROJECTS))
             p.add_argument("--scenarios", default="noemit,emit,single,incr")
             p.add_argument("--single-ref", action="store_true")
+            p.add_argument("--env", action="append", help="LABEL:VAR=VALUE, an environment variable for one label")
+            p.add_argument("--icount-runs", type=int, default=1)
         else:
             p.add_argument("--project")
             p.add_argument("--scenarios", default="ttfd,probe,concurrent")
