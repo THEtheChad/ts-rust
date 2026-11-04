@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # L1 dump-equality proof (loader v2, the per-load OS view): each scenario runs with
 # GOPORT_LOAD_VIEW=1 and =0 (S1a on in both)
-# (2 times each; L1_REPS and L1_REPS_VARY set it;
+# (3 times each, 6 for autoimport, fsmut and edit sessions; S1A_REPS sets the default;
 # interleaved) and once with GOPORT_RESOLVE_AHEAD=0 (the serial loader, no
 # resolve ahead at all), and compares record by record (dump-sections.py): the load dumps
 # section by section, and the whole message stream (every message in both directions, in
 # order, raw; load-dump-session.mjs <out>.stream). A record that varies between the two
-# view-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
-# A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]".
-# usage: l1-dumps.sh <tsgo bin> <out dir>  (L1_ONLY=<regex> picks cases; L1_REPS, L1_REPS_VARY: runs per side, default 2)
+# S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
+# A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]". S1A_ONLY=<regex> runs the
+# cases whose name matches.
+# usage: l1-dumps.sh <tsgo bin> <out dir>  (S1A_ONLY=<regex> picks cases; L1_REPS (2), L1_REPS_VARY (3): runs per side)
 set -u
 bin=$(realpath "$1"); mkdir -p "$2"; out=$(realpath "$2")
-only=${L1_ONLY:-.}
 here=$(cd "$(dirname "$0")" && pwd)
 P=~/.cache/perf-rearch/projects
 U=~/.cache/lspdiff/projects/umami
@@ -38,25 +38,28 @@ cases=(
 fail=0
 for c in "${cases[@]}"; do
   read -r name scen root root2 f1 f2 <<<"$c"
-  [[ $name =~ $only ]] || continue
   [[ ${root2:-} == - ]] && root2=
   file=${f1#FILE=}; file2=${f2#FILE2=}
   # More runs where the session has work that varies without S1a (background auto-import,
   # keyed second loads): a record that varies between the off runs is inconclusive, and
   # more off runs make fewer records so.
-  case $scen in autoimport|fsmut|edit) reps=${L1_REPS_VARY:-2} ;; *) reps=${L1_REPS:-2} ;; esac
+  # Their later step also waits 4 s (S1A_SETTLE_MS) so the first load's background work
+  # (the auto-import registry) settles: a faster first load otherwise moves that work into
+  # another snapshot, which is timing, not state (shown with and without the wait).
+  case $scen in autoimport|fsmut|edit) reps=${L1_REPS_VARY:-3}; settle=${S1A_SETTLE_MS:-4000} ;; *) reps=${L1_REPS:-2}; settle=0 ;; esac
+  [[ -n ${S1A_ONLY:-} && ! $name =~ $S1A_ONLY ]] && continue
   offs=(); ons=()
   for rep in $(seq 1 "$reps"); do
     for v in 1 0; do
-      S1A_FILE=$file S1A_FILE2=$file2 GOPORT_LOAD_VIEW=$v GOPORT_LOAD_TIMES=1 GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
+      S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_LOAD_VIEW=$v GOPORT_LOAD_TIMES=1 GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
       if [[ $v == 1 ]]; then ons+=("$out/$name-$v-$rep"); else offs+=("$out/$name-$v-$rep"); fi
     done
   done
-  S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
+  S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
   stats=$(python3 -I -c 'import json,re,sys
 for f in sys.argv[1:]:
     s=json.load(open(f))["stderr"]
-    print(" | ".join(re.sub(r"goport load-view: t0=[\d.]+ t1=[\d.]+ ","",l)[:200] for l in s.splitlines() if "goport load-view" in l))' "$out/$name-1-1.json")
+    print(" | ".join(re.sub(r"goport load-view: t0=[\d.]+ t1=[\d.]+ ","",l)[:220] for l in s.splitlines() if "goport load-view:" in l))' "$out/$name-1-1.json")
   # The verdict: record by record (dump-sections.py), for the dumps (section by section)
   # and for the whole message stream (every message in order, raw).
   python3 -I "$here/dump-sections.py" dumps --off "${offs[@]/%/.dump}" --on "${ons[@]/%/.dump}" --serial "$out/$name-serial.dump" > "$out/$name.dump-verdict"

@@ -1514,7 +1514,8 @@ os_child_test! {
     /// call would find the new disk. `broken` has a
     /// package.json but no types file, and `not-installed` has no directory;
     /// no file of the program is in them, so the loader did not look them up
-    /// itself.
+    /// itself. The load adopted the taken answers' package.json lookups into
+    /// its own cache (`adopt_ahead_package_jsons`, keyed loads too).
     fn a_later_package_json_lookup_uses_the_taken_answers() {
         let root = make_project("pjlookup");
         write(
@@ -1543,12 +1544,13 @@ os_child_test! {
             .as_ref()
             .and_then(|resolver| resolver.as_default_resolver())
             .expect("the default resolver");
-        for name in [&broken, &not_installed] {
-            assert!(
-                resolver.package_json_info_cache.get(name).is_none(),
-                "the loader looked up {name} itself"
-            );
-        }
+        // The keyed load adopted the package.json lookups of the answers it
+        // took (as a first load does), so the loader's cache has the entry
+        // of `broken` as a serial load's cache has it.
+        assert!(
+            resolver.package_json_info_cache.get(&broken).is_some(),
+            "the taken answer's package.json lookup was not adopted"
+        );
         std::fs::remove_dir_all(format!("{root}/node_modules/broken")).unwrap();
         write(
             &root,

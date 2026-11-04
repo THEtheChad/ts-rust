@@ -246,8 +246,8 @@ pub struct ResolveAheadHost {
     /// snapshot's lookup cache, as the loader's own calls would, so the
     /// lookups of answers that the loader did not take leave no trace.
     pub first_load: Box<dyn FnOnce()>,
-    /// The text of a package.json that the check read in this load, for a
-    /// first-load link (`AheadLink::package_json_text`).
+    /// The text of a package.json that the check read in this load
+    /// (`AheadLink::package_json_text`).
     pub package_json_text: AheadText,
     /// Keeps the keys of this load for the next load.
     pub keep_keys: Box<dyn FnOnce(Arc<KeyList>)>,
@@ -416,7 +416,11 @@ impl ResolveAhead {
             scopes: RefCell::default(),
             missing: RefCell::default(),
             log_missing: debug_log_enabled(),
-            package_json_text: first_load.then_some(host.package_json_text),
+            // Every load adopts the package.json lookups of the answers it
+            // takes (keyed loads too): the loader's package.json cache then
+            // holds a serial load's entries whichever answers arrived in
+            // time.
+            package_json_text: Some(host.package_json_text),
             adopted: RefCell::default(),
         });
         // A first-load job has no keys: its parse workers make the answers,
