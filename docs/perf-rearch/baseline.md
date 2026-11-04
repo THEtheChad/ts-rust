@@ -116,26 +116,43 @@ LSP scenarios, on umami (`scripts/lspdiff`, wrapped by `bench.sh lsp`):
 
 ## CPU work: single-threaded instructions (load-independent)
 
-`~/.cache/perf-rearch/baseline/icount/`. 2 runs per side. Output was the same on every project.
+`~/.cache/perf-rearch/baseline/icount/` (`icount-table.md` is the full table, with
+single-threaded walls). Each cell is tsc-rs / Go user-space instructions, single
+threaded, 2 runs per side, with the ratio. The output (exit code, stdout, emitted
+tree) was the same as Go's in every cell.
 
-| Project | tsc-rs instructions | Go instructions | tsc-rs / Go | 1-thread wall, tsc-rs | 1-thread wall, Go |
-|---|---|---|---|---|---|
-| ts-pattern | 0.59 G | 1.41 G | 0.42 | 0.20 s | 0.40 s |
-| query | 0.69 G | 1.42 G (±12%) | 0.48 | 0.28 s | 0.49 s |
-| hono | 2.15 G | 5.39 G (±17%) | 0.40 | 0.72 s | 1.53 s |
-| zod | 11.53 G | 26.75 G | 0.43 | 3.78 s | 8.79 s |
-| effect | 14.74 G | 26.42 G | 0.56 | 5.50 s | 9.87 s |
-| umami | 16.51 G | 31.55 G | 0.52 | 4.39 s | 7.92 s |
-| t3-web | 47.08 G | 91.78 G | 0.51 | 11.76 s | 22.18 s |
-| t3-server | 71.42 G | 188.91 G | 0.38 | 17.22 s | 42.41 s |
-| vscode | 164.19 G | 251.34 G | 0.65 | 50.88 s | 80.70 s |
+| Project | check (`icount`) | emit as configured | JS only | CommonJS ES2017 |
+|---|---|---|---|---|
+| ts-pattern | 0.6 / 1.4 G = **0.42** | 0.6 / 1.4 G = **0.46** | 0.6 / 1.4 G = **0.43** | 0.6 / 1.4 G = **0.42** |
+| query | 0.7 / 1.4 G = **0.48** | 0.7 / 1.6 G = **0.46** | 0.8 / 1.5 G = **0.54** | 0.8 / 1.5 G = **0.55** |
+| hono | 2.1 / 5.4 G = **0.40** | 2.9 / 6.2 G = **0.46** | 2.6 / 5.7 G = **0.46** | 2.9 / 5.6 G = **0.51** |
+| zod | 11.5 / 26.7 G = **0.43** | 13.3 / 30.7 G = **0.43** | 13.3 / 31.4 G = **0.42** | n/a (TS5110) |
+| effect | 14.7 / 26.4 G = **0.56** | 24.5 / 46.0 G = **0.53** | 17.9 / 30.9 G = **0.58** | 20.5 / 34.1 G = **0.60** |
+| umami | 16.5 / 31.5 G = **0.52** | 19.0 / 35.8 G = **0.53** | 18.5 / 32.7 G = **0.56** | 19.9 / 34.7 G = **0.57** |
+| t3-web | 47.1 / 91.8 G = **0.51** | 57.9 / 107.9 G = **0.54** | 52.6 / 89.3 G = **0.59** | 58.6 / 95.0 G = **0.62** |
+| t3-server | 71.4 / 188.9 G = **0.38** | 81.4 / 199.7 G = **0.41** | 81.4 / 197.2 G = **0.41** | n/a (TS5110) |
+| vscode | 164.2 / 251.3 G = **0.65** | 274.6 / 360.0 G = **0.76** | 274.6 / 364.9 G = **0.75** | n/a (TS5110) |
 
-Single-threaded walls are medians of the 2 runs at load 25 to 90: rough, but
-the instructions are not. **One thread of tsc-rs does 35–62% less work than
-one thread of Go on every project.** Go's count includes its GC, which is
-part of its cost. So wherever tsc-rs is slower than Go on the wall, the
-cause is how the work is spread over threads (or a phase run serially), not
-the work. VS Code has the least margin (0.65).
+- **Single-threaded, tsc-rs does 24–62% less work than Go in every cell.**
+  So wherever tsc-rs is slower than Go on the wall, the cause is how the work
+  is spread over threads (or a phase that runs serially), not the amount of
+  work.
+- The margin is smallest on VS Code (0.65 check, 0.75 emit) and in emit
+  generally. Emit adds more instructions in tsc-rs than in Go: VS Code
+  emit minus check is 110 G for tsc-rs against 109 G for Go (about equal),
+  T3 web JS-only adds 5.5 G for tsc-rs against −2.5 G (noise) for Go. Go's
+  emit costs relatively less than its check.
+- Repeatability: tsc-rs repeats within 0.02%. Go varies by 3% in the median
+  cell and by up to 17% (hono, query), because its GC work depends on
+  timing. Treat Go's numbers as ±3%.
+- CommonJS is n/a for zod, T3 server and VS Code: their configs use
+  `moduleResolution: nodenext`, and `--module commonjs` with it is TS5110,
+  which stops the run at the config (`bench.sh` skips the cell).
+- Emit cells run on a scratch copy of the repo with `--rootDir` at its root.
+  Without it, TypeScript 7 stops at TS5011/TS6059 before the check whenever
+  outDir is set (zod, ts-pattern, T3 Code). T3 web's config also makes
+  **both** compilers write JS and d.ts next to `scripts/lib/*.ts` outside the
+  outDir; the copy keeps that out of the input.
 
 ## Profiles
 

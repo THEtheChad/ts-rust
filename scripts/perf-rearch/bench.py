@@ -457,6 +457,11 @@ def cli(args):
                     shutil.rmtree(d, ignore_errors=True)
                     d.mkdir(parents=True)
                     clean_copy(str(repo), src)
+                if scen_emit == "emit-cjs" and str(opts.get("moduleResolution", "")).lower() in ("node16", "nodenext"):
+                    # --module commonjs with moduleResolution node16/nodenext is TS5110: the run would stop at
+                    # the config.
+                    rec.log(f"{name} {scen}: skipped (moduleResolution {opts.get('moduleResolution')}, TS5110)")
+                    continue
                 variants.append((scen, [l for l, _ in bins], emit_argv, emit_pre, src))
             elif scen == "icount":
                 # Single-threaded user-space instructions: tsc-rs --singleThreaded, Go also GOMAXPROCS=1.
