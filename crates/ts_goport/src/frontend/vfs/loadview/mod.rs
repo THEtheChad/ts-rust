@@ -307,23 +307,26 @@ impl LoadView {
     /// Notes a demand or a worker lookup that found `slot` (`race`: after
     /// its own OS call).
     #[inline]
-    #[allow(unused_variables)]
     fn found<V>(&self, slot: &mut Slot<V>, kind: Kind, who: Who, used: u8, race: bool) {
         if who == Who::Loader {
             slot.used |= used;
         }
         #[cfg(feature = "diagnostics")]
         self.diag.found(kind, who, slot.by_worker, race);
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = (kind, race);
     }
 
     /// `load()`, the OS call of a view.
     #[inline]
-    #[allow(unused_variables)]
     fn os_call<V>(&self, kind: Kind, who: Who, path: &str, load: impl FnOnce() -> V) -> V {
         #[cfg(feature = "diagnostics")]
         return diag::os_call(kind, who, path, load);
         #[cfg(not(feature = "diagnostics"))]
-        load()
+        {
+            let _ = (kind, who, path);
+            load()
+        }
     }
 
     fn stat_with<R>(
