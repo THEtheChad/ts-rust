@@ -234,6 +234,11 @@ fn os_session(dir: &str) -> Rc<Session> {
 /// Runs `body` in a child test process with the verify mode on (a
 /// difference or an error panics), and returns the verify log.
 fn with_verify(test: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> {
+    with_verify_mode(test, "all-panic", body)
+}
+
+/// `with_verify` with the verify mode `mode`.
+fn with_verify_mode(test: &str, mode: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> {
     let log = std::env::temp_dir().join(format!(
         "ts_goport_verify_log_{}_{}",
         test.rsplit("::").next().unwrap(),
@@ -245,7 +250,7 @@ fn with_verify(test: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> 
     crate::support::child::run_test_in_child_with_env(
         test,
         &[
-            ("GOPORT_VERIFY_REUSE", "all-panic"),
+            ("GOPORT_VERIFY_REUSE", mode),
             ("GOPORT_VERIFY_REUSE_LOG", &log_name),
             ("GOPORT_VERIFY_REUSE_CHILD_ARGS", &args),
         ],
@@ -358,4 +363,73 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
     let ok = lines.iter().filter(|l| l.starts_with("goport verify-reuse: OK")).count();
     assert!(ok >= 3, "{lines:?}");
     assert!(lines.iter().all(|l| l.starts_with("goport verify-reuse: OK")), "{lines:?}");
+}
+
+// Review follow-up (Astra, A1 at 7972cba71): when the disk changes with no
+// watch event, the server keeps its snapshot (config, package.json and
+// source texts), and so does Go's rebuild. The child gets the snapshot's
+// answers, so the verify mode reports OK, not MISMATCH. A new file under
+// the include glob changes the child's own config parse (the server keeps
+// its root files, as Go's rebuild does): the child cannot rebuild the
+// server's inputs, which is an ERROR, not a MISMATCH.
+#[test]
+fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
+    let lines = with_verify_mode(
+        "project_lsp::synthetic_reuse_test::verify_mode_uses_the_snapshot_when_the_disk_changes_without_events",
+        "all",
+        || {
+            if !in_verify_child() {
+                return;
+            }
+            let p = TempProject::new(
+                "no_events",
+                &[
+                    ("tsconfig.json", r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[]},"include":["src"]}"#),
+                    ("node_modules/react/package.json", r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#),
+                    ("node_modules/react/index.d.ts", "export {};\n"),
+                    (
+                        "node_modules/react/jsx-runtime.d.ts",
+                        "export declare function jsx(type: any, props: any): any;\nexport declare namespace JSX { interface IntrinsicElements { [name: string]: any } type Element = any; }\n",
+                    ),
+                    ("src/a.tsx", "export const A = () => <div />;\n"),
+                    ("src/b.ts", "export const b = 1;\n"),
+                    ("src/c.ts", "export const c = 1;\n"),
+                ],
+            );
+            let session = os_session(&p.dir());
+            let a = p.uri("src/a.tsx");
+            open_kind(&session, &a, "export const A = () => <div />;\n", lsproto::LanguageKind::TYPE_SCRIPT_REACT);
+            let _ = program(&session, &a);
+            let mut version = 1;
+            let mut edit_a = |session: &Rc<Session>| {
+                version += 1;
+                edit(session, &a, version, (0, 31), (0, 31), " //");
+                let _ = program(session, &a);
+            };
+            let write = |name: &str, text: &str| std::fs::write(p.0.join(name), text).unwrap();
+            // The config, react's package.json, and a closed source file
+            // change; a closed source file goes. No event for any of them.
+            write("tsconfig.json", r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[],"strict":true,"noImplicitAny":true},"include":["src"]}"#);
+            edit_a(&session);
+            write("node_modules/react/package.json", r#"{"name":"react","version":"20.0.0","types":"index.d.ts","type":"module"}"#);
+            edit_a(&session);
+            write("src/b.ts", "export const b: string = 1;\n");
+            edit_a(&session);
+            std::fs::remove_file(p.0.join("src/c.ts")).unwrap();
+            edit_a(&session);
+            // A new file under the include glob.
+            write("src/d.ts", "export const d = 1;\n");
+            edit_a(&session);
+            session.close();
+        },
+    );
+    if in_verify_child() {
+        return;
+    }
+    let kinds: Vec<&str> = lines
+        .iter()
+        .map(|l| l.split_whitespace().nth(2).unwrap_or(""))
+        .collect();
+    assert_eq!(kinds, ["OK", "OK", "OK", "OK", "ERROR"], "{lines:#?}");
+    assert!(lines[4].contains("inputs not reconstructed"), "{}", lines[4]);
 }
