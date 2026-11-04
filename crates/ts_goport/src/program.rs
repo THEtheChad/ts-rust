@@ -4990,8 +4990,70 @@ pub fn with_checker_at<R>(index: usize, f: impl FnOnce(&mut Checker) -> R) -> R 
 /// emit of plain `tsc -p` (`program_emit::start_plain_emit`) must not change
 /// it. `write_checker_call_log` writes it, sorted by checker, at the end of
 /// the run. Off, each site is one load of a `OnceLock`.
+#[inline]
 pub fn checker_call_log_enabled() -> bool {
-    checker_call_log_path().is_some()
+    // One relaxed load and one predictable branch once the variable is read.
+    match CALL_LOG_STATE.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => {
+            let on = checker_call_log_path().is_some();
+            CALL_LOG_STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// 0 before `GOPORT_CHECKER_CALL_LOG` is read, 1 off, 2 on.
+static CALL_LOG_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// PORT: not in Go (tests). `GOPORT_TEST_CHECK_PANIC=<base name>` panics in
+/// the check of the program file with that base name, after a second;
+/// `GOPORT_TEST_CHECK_STALL=<base name>` prints
+/// `GOPORT_TEST_CHECK_STALL <name>` to stderr there and blocks the check
+/// until the process ends. `tests/plain_early_emit.rs` uses them to check
+/// that the early emit writes nothing before every check ended. Off, one
+/// relaxed load and one predictable branch per checked file.
+#[inline]
+fn test_check_hook(source_file: Node) {
+    if TEST_CHECK_HOOK_STATE.load(Ordering::Relaxed) == 1 {
+        return;
+    }
+    test_check_hook_slow(source_file);
+}
+
+/// 0 before the variables are read, 1 when neither is set, 2 when one is.
+static TEST_CHECK_HOOK_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[cold]
+fn test_check_hook_slow(source_file: Node) {
+    static HOOKS: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
+    let (panic_name, stall_name) = HOOKS.get_or_init(|| {
+        let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        (
+            read("GOPORT_TEST_CHECK_PANIC"),
+            read("GOPORT_TEST_CHECK_STALL"),
+        )
+    });
+    if panic_name.is_none() && stall_name.is_none() {
+        TEST_CHECK_HOOK_STATE.store(1, Ordering::Relaxed);
+        return;
+    }
+    TEST_CHECK_HOOK_STATE.store(2, Ordering::Relaxed);
+    let file_name = source_file_file_name(source_file);
+    let base = file_name.rsplit('/').next().unwrap_or("");
+    if panic_name.as_deref() == Some(base) {
+        // Late, so the other checkers have checked and emitted first.
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        panic!("GOPORT_TEST_CHECK_PANIC {base}");
+    }
+    if stall_name.as_deref() == Some(base) {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "GOPORT_TEST_CHECK_STALL {base}");
+        loop {
+            std::thread::park();
+        }
+    }
 }
 
 fn checker_call_log_path() -> Option<&'static str> {
@@ -6069,6 +6131,7 @@ pub fn get_semantic_diagnostics_with_checker(
     c: &mut Checker,
     source_file: Node,
 ) -> Vec<Diagnostic> {
+    test_check_hook(source_file);
     let mut diags = filter_no_emit_semantic_diagnostics(
         get_bind_and_check_diagnostics_with_checker(
             ctx,

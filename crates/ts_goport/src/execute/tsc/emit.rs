@@ -93,6 +93,10 @@ impl ProgramLike for CompilerProgram {
 /// read here is queued before its emit, so an emit cannot add global
 /// diagnostics to it, and the next `get_global_diagnostics` call returns
 /// these reads. The `emit` call then waits for the emit that started.
+/// The emit jobs make no write: their writes stay in memory until that
+/// `emit` call, after every check and read ended, and then run in each
+/// file's order (`program_emit::StartedPlainEmit`). A panic in the check
+/// drops the started emit, which cancels it and writes nothing.
 /// Each checker gets the same jobs in the same order as in Go: check,
 /// global diagnostics read, emit (with `declaration`, the declaration
 /// transforms run inside each file's emit, as before).
@@ -152,6 +156,7 @@ impl ProgramLike for EarlyEmitCompilerProgram {
         };
         if !file.is_nil()
             || !first
+            || self.write_file.is_none()
             || !crate::emitter::program_emit::plain_emit_can_start_with_check()
         {
             return get_semantic_diagnostics(file);
@@ -174,7 +179,18 @@ impl ProgramLike for EarlyEmitCompilerProgram {
         get_declaration_diagnostics(file)
     }
     fn emit(&self, options: EmitOptions) -> EmitResult {
-        if let Some(started) = self.started.borrow_mut().emit.take() {
+        let (global_diagnostics, started) = {
+            let mut started = self.started.borrow_mut();
+            (started.global_diagnostics.take(), started.emit.take())
+        };
+        if let Some(started) = started {
+            // The writes wait for every check and global diagnostics read
+            // (`EmitFilesAndReportErrors` took the reads already; a panic
+            // there drops `started`, which then writes nothing).
+            assert!(
+                global_diagnostics.is_none(),
+                "the emit came before the global diagnostics read"
+            );
             return started.wait(&options);
         }
         emit(options)

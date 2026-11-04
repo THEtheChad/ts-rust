@@ -208,11 +208,21 @@ fn plain_early_emit_enabled() -> bool {
 }
 
 /// PORT: not in Go (perf). The emit of plain `tsc -p` sent behind the
-/// check (`start_plain_emit`), not waited for yet.
+/// check (`start_plain_emit`), not waited for yet. Its writes are held in
+/// memory (`DeferredWrites`) until `wait`, which runs after every check and
+/// global diagnostics read ended without a panic. When it drops without a
+/// `wait` (a panic in the check unwinds through its owner), it cancels the
+/// emit jobs that have not started, waits for the others and writes
+/// nothing, as Go's plain program writes nothing before its check ends.
 pub struct StartedPlainEmit {
-    files: PendingPlainFiles,
-    /// The `WriteFile` of the start. `wait` must get the same.
-    write_file: Option<WriteFile>,
+    /// The emit jobs; None once `wait` or the drop took them.
+    files: Option<PendingPlainFiles>,
+    /// The files of the jobs, in file order (one result per file).
+    source_files: Vec<Node>,
+    /// The `WriteFile` of the start: the real writes, at `wait`.
+    write_file: WriteFile,
+    /// The writes that the emit jobs made.
+    writes: Arc<DeferredWrites>,
     /// `program::bind_thread_fingerprint` of this thread after the start.
     /// The emit pool starts from a copy of this thread's state, so until
     /// the wait this thread must not change it, else the pool would start
@@ -223,6 +233,211 @@ pub struct StartedPlainEmit {
 enum PendingPlainFiles {
     Pool(PendingPoolEmit),
     Checkers(PendingCheckerJobs<EmitResult>),
+}
+
+/// One write of an emit, held until the check ends (`StartedPlainEmit`).
+struct DeferredWrite {
+    file_name: String,
+    text: String,
+    data: WriteFileData,
+}
+
+/// The writes of a plain early emit, by source file.
+///
+/// Until `open` (the check and the global diagnostics reads ended), every
+/// write waits here and its emitter sees a success. `open` then makes the
+/// waiting writes on a few threads, each file's in its order (the source
+/// map then the JS file, then the declaration map then the d.ts file; a
+/// file's d.ts part writes only after its JS part ended,
+/// `Emitter::wait_for_js_part`). After `open`, a write of a file with no
+/// write waiting is made at once by its emitter, as in the barrier path,
+/// so it gets its own result; a write of a file whose earlier writes still
+/// wait goes behind them. The outcome of each write that waited is applied
+/// to its file's result at the end (`apply_deferred_outcomes`).
+struct DeferredWrites {
+    /// The real writes.
+    write_file: WriteFile,
+    state: Mutex<SinkState>,
+}
+
+#[derive(Default)]
+struct SinkState {
+    /// Set by `open`.
+    open: bool,
+    files: FxHashMap<Node, FileWrites>,
+}
+
+#[derive(Default)]
+struct FileWrites {
+    /// The writes that wait, in order.
+    pending: std::collections::VecDeque<DeferredWrite>,
+    /// A flush thread makes this file's waiting writes.
+    writing: bool,
+    /// Each made write that waited: its file name and outcome.
+    outcomes: Vec<(String, WriteOutcome)>,
+    /// The TS5033 diagnostics of the failed writes that waited.
+    failures: Vec<Diagnostic>,
+}
+
+impl DeferredWrites {
+    fn lock(&self) -> std::sync::MutexGuard<'_, SinkState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The `WriteFile` of the emitters.
+    fn write(&self, file_name: &str, text: &str, data: &mut WriteFileData) -> Result<(), String> {
+        let mut state = self.lock();
+        if state.open
+            && state
+                .files
+                .get(&data.source_file)
+                .is_none_or(|file| file.pending.is_empty() && !file.writing)
+        {
+            drop(state);
+            return (self.write_file)(file_name, text, data);
+        }
+        state
+            .files
+            .entry(data.source_file)
+            .or_default()
+            .pending
+            .push_back(DeferredWrite {
+                file_name: file_name.to_owned(),
+                text: text.to_owned(),
+                data: data.clone(),
+            });
+        Ok(())
+    }
+
+    /// Makes the writes that wait, on a few threads, and lets later writes
+    /// through (see the type). Returns when no write waits.
+    fn open(&self) {
+        let _flush_timer = phase_times::start_flush();
+        let queue: Vec<Node> = {
+            let mut state = self.lock();
+            state.open = true;
+            state
+                .files
+                .iter_mut()
+                .filter(|(_, file)| !file.pending.is_empty())
+                .map(|(&node, file)| {
+                    file.writing = true;
+                    node
+                })
+                .collect()
+        };
+        if queue.is_empty() {
+            return;
+        }
+        let threads = std::thread::available_parallelism()
+            .map_or(4, std::num::NonZeroUsize::get)
+            .clamp(1, 8)
+            .min(queue.len());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads)
+                .map(|index| {
+                    let (next, queue) = (&next, &queue);
+                    std::thread::Builder::new()
+                        .name(format!("flush-{index}"))
+                        .spawn_scoped(scope, move || {
+                            while let Some(&node) =
+                                queue.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                            {
+                                self.flush_file(node);
+                            }
+                        })
+                        .expect("spawn a write thread")
+                })
+                .collect();
+            for worker in workers {
+                if let Err(payload) = worker.join() {
+                    resume_unwind(payload);
+                }
+            }
+        });
+    }
+
+    /// Makes the waiting writes of `node`, also those that its emitter
+    /// adds meanwhile, then lets its writes through.
+    fn flush_file(&self, node: Node) {
+        let _timer = phase_times::start(phase_times::Phase::Write);
+        loop {
+            let (mut write, failures) = {
+                let mut state = self.lock();
+                let file = state.files.get_mut(&node).expect("a flushed file");
+                let Some(write) = file.pending.pop_front() else {
+                    file.writing = false;
+                    return;
+                };
+                (write, file.failures.clone())
+            };
+            // The emitter's collection holds the file's earlier failures
+            // when it writes inline.
+            if !failures.is_empty() {
+                let mut diagnostics = DiagnosticsCollection::default();
+                for diagnostic in write.data.diagnostics.drain(..).chain(failures) {
+                    diagnostics.add(diagnostic);
+                }
+                write.data.diagnostics = diagnostics.get_diagnostics();
+            }
+            let result = (self.write_file)(&write.file_name, &write.text, &mut write.data);
+            let mut state = self.lock();
+            let file = state.files.get_mut(&node).expect("a flushed file");
+            match result {
+                Ok(()) => file.outcomes.push((
+                    write.file_name,
+                    WriteOutcome::Written(write.data.skipped_dts_write),
+                )),
+                Err(err) => {
+                    // A source map is `<file>.map` (`outputpaths`), and Go's
+                    // TS5033 for it names the file it maps.
+                    let message_file = write
+                        .file_name
+                        .strip_suffix(".map")
+                        .unwrap_or(&write.file_name);
+                    file.failures.push(new_compiler_diagnostic(
+                        diag::Could_not_write_file_0_Colon_1,
+                        args![message_file, err],
+                    ));
+                    file.outcomes.push((write.file_name, WriteOutcome::Failed));
+                }
+            }
+        }
+    }
+
+    /// Drops every waiting write (a cancelled emit).
+    fn discard(&self) {
+        self.lock().files.clear();
+    }
+
+    /// The outcomes of the writes that waited, by source file.
+    fn take(&self) -> FxHashMap<Node, FileWrites> {
+        let mut state = self.lock();
+        debug_assert!(
+            state
+                .files
+                .values()
+                .all(|file| file.pending.is_empty() && !file.writing),
+            "a deferred write was not made"
+        );
+        std::mem::take(&mut state.files)
+    }
+}
+
+/// Set when a plain early emit is cancelled (`StartedPlainEmit` dropped
+/// without a wait): its emit jobs that have not started yet return an
+/// empty result. One plain program runs at a time in a process (the
+/// loading thread waits for or drops its emit before the next program).
+static PLAIN_EMIT_CANCELLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The `wrap` of the plain early emit: no work once it is cancelled.
+fn plain_emit_wrap(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
+    if PLAIN_EMIT_CANCELLED.load(std::sync::atomic::Ordering::Acquire) {
+        return EmitResult::default();
+    }
+    emit_file()
 }
 
 /// PORT: not in Go (perf). The first half of `emit(options)` for plain
@@ -236,12 +451,16 @@ enum PendingPlainFiles {
 /// differs, and no checker reads another's state. The JS parts that need
 /// no checker run on the emit pool during the check.
 ///
+/// The jobs transform and print, but make no write and no directory: each
+/// write goes to memory, and `StartedPlainEmit::wait` makes the writes with
+/// `options.write_file` once the check ended (`DeferredWrites`).
+///
 /// The caller checks `plain_emit_can_start_with_check`. `options` must be
 /// the options of the `emit` call of `EmitFilesAndReportErrors`: no target
-/// file, `EmitOnly::All`, no `force_emit`. With the rules, `noEmit` and
-/// `noEmitOnError` are off, so `handle_no_emit_options` returns None, and
-/// `--singleThreaded` and a trace are off, so the jobs run in file order
-/// and write no trace event.
+/// file, `EmitOnly::All`, no `force_emit`, and a `write_file`. With the
+/// rules, `noEmit` and `noEmitOnError` are off, so `handle_no_emit_options`
+/// returns None, and `--singleThreaded` and a trace are off, so the jobs
+/// run in file order and write no trace event.
 pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
     debug_assert!(
         options.target_source_files.is_none()
@@ -255,42 +474,66 @@ pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
             && crate::tracing::get().is_none(),
         "start_plain_emit: the options do not allow an early emit"
     );
-    let target = EmitterOptions::of(options);
+    let write_file = options
+        .write_file
+        .clone()
+        .expect("start_plain_emit: the early emit needs a WriteFile");
+    PLAIN_EMIT_CANCELLED.store(false, std::sync::atomic::Ordering::Release);
+    let writes = Arc::new(DeferredWrites {
+        write_file: write_file.clone(),
+        state: Mutex::default(),
+    });
+    let record: WriteFile = {
+        let writes = Arc::clone(&writes);
+        Arc::new(
+            move |file_name: &str, text: &str, data: &mut WriteFileData| {
+                writes.write(file_name, text, data)
+            },
+        )
+    };
+    let target = EmitterOptions {
+        emit_only: options.emit_only,
+        force_emit: options.force_emit,
+        write_file: Some(record),
+    };
     let source_files = get_source_files_to_emit(None, false, false);
     phase_times::route(Route::StartPlainEarly, source_files.len());
-    let wrap: Wrap = |emit_file| emit_file();
-    let files = match start_emit_files_with_pool(&source_files, |_| target.clone(), wrap) {
+    let files = match start_emit_files_with_pool(&source_files, |_| target.clone(), plain_emit_wrap)
+    {
         Some(pool) => PendingPlainFiles::Pool(pool),
         None => PendingPlainFiles::Checkers(send_on_checker_threads_for_files(
             &source_files,
             move |source_file| {
-                let result = emit_source_file(source_file, &target);
+                let result = plain_emit_wrap(&|| emit_source_file(source_file, &target));
                 log_checker_emit(source_file);
                 result
             },
         )),
     };
     StartedPlainEmit {
-        files,
-        write_file: options.write_file.clone(),
+        files: Some(files),
+        source_files,
+        write_file,
+        writes,
         fingerprint: crate::program::bind_thread_fingerprint(),
     }
 }
 
 impl StartedPlainEmit {
     /// The second half of `emit(options)`: waits for the jobs that
-    /// `start_plain_emit` sent and combines their results in file order.
-    /// `options` must be the options of the start.
-    pub fn wait(self, options: &EmitOptions) -> EmitResult {
+    /// `start_plain_emit` sent, lets their writes start (`DeferredWrites::open`)
+    /// and combines the results in file order. `options` must be the
+    /// options of the start. The caller calls it only after every check and
+    /// global diagnostics read ended.
+    pub fn wait(mut self, options: &EmitOptions) -> EmitResult {
         assert!(
             options.target_source_files.is_none()
                 && options.emit_only == EmitOnly::All
                 && !options.force_emit
-                && match (&options.write_file, &self.write_file) {
-                    (Some(write_file), Some(started)) => Arc::ptr_eq(write_file, started),
-                    (None, None) => true,
-                    _ => false,
-                },
+                && options
+                    .write_file
+                    .as_ref()
+                    .is_some_and(|write_file| Arc::ptr_eq(write_file, &self.write_file)),
             "the emit did not get the options of the emit that started with the check"
         );
         let fingerprint = crate::program::bind_thread_fingerprint();
@@ -305,12 +548,86 @@ impl StartedPlainEmit {
                 );
             }
         }
-        let results = match self.files {
+        let files = self
+            .files
+            .take()
+            .expect("the early emit is waited for once");
+        // Every check and global diagnostics read ended: the writes start.
+        self.writes.open();
+        let mut results = match files {
             PendingPlainFiles::Pool(pool) => pool.wait(),
             PendingPlainFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
         };
+        apply_deferred_outcomes(&self.source_files, &mut results, self.writes.take());
         combine_emit_results(results)
     }
+}
+
+impl Drop for StartedPlainEmit {
+    /// Without a `wait` (a panic in the check or the global diagnostics
+    /// read): cancels the jobs that have not started, waits for the rest,
+    /// and drops their writes.
+    fn drop(&mut self) {
+        let Some(files) = self.files.take() else {
+            return;
+        };
+        PLAIN_EMIT_CANCELLED.store(true, std::sync::atomic::Ordering::Release);
+        match files {
+            PendingPlainFiles::Pool(pool) => pool.drain(),
+            PendingPlainFiles::Checkers(jobs) => drop(jobs.wait_all()),
+        }
+        self.writes.discard();
+    }
+}
+
+/// The outcome of one write that waited (`DeferredWrites`).
+enum WriteOutcome {
+    /// Written; true when the `WriteFile` skipped a d.ts write.
+    Written(bool),
+    /// The write failed.
+    Failed,
+}
+
+/// Changes each file's result for the outcomes of its writes that waited
+/// (`DeferredWrites`), as the emitter would have with the write inline
+/// (`Emitter::print_source_file`): a failed write is not an emitted file
+/// and adds TS5033 to its file's diagnostics, and a write that the
+/// `WriteFile` skipped (`skipped_dts_write`) is not an emitted file.
+fn apply_deferred_outcomes(
+    source_files: &[Node],
+    results: &mut [EmitResult],
+    mut outcomes: FxHashMap<Node, FileWrites>,
+) {
+    for (file, result) in source_files.iter().zip(results.iter_mut()) {
+        let Some(file_writes) = outcomes.remove(file) else {
+            continue;
+        };
+        for (file_name, outcome) in file_writes.outcomes {
+            let emitted = match outcome {
+                WriteOutcome::Written(skipped) => !skipped,
+                WriteOutcome::Failed => false,
+            };
+            if !emitted
+                && let Some(at) = result
+                    .emitted_files
+                    .iter()
+                    .position(|name| *name == file_name)
+            {
+                result.emitted_files.remove(at);
+            }
+        }
+        if !file_writes.failures.is_empty() {
+            let mut diagnostics = DiagnosticsCollection::default();
+            for diagnostic in std::mem::take(&mut result.diagnostics)
+                .into_iter()
+                .chain(file_writes.failures)
+            {
+                diagnostics.add(diagnostic);
+            }
+            result.diagnostics = diagnostics.get_diagnostics();
+        }
+    }
+    debug_assert!(outcomes.is_empty(), "a deferred write of no emitted file");
 }
 
 /// PORT: not in Go. The API emit (`handle_emit`) writes the outputs after
@@ -933,6 +1250,21 @@ impl PendingPoolEmit {
     /// (`wait_emit_jobs`).
     fn wait(self) -> Vec<EmitResult> {
         wait_emit_jobs(|| self.wait_here())
+    }
+
+    /// Waits for every job and drops the results and panics
+    /// (`StartedPlainEmit`'s drop).
+    fn drain(self) {
+        if let Ok(jobs) = self.checker {
+            for output in jobs.wait_all() {
+                if let Ok(CheckerOutput::Twin(job)) = output {
+                    drop(job.join());
+                }
+            }
+        }
+        for (_, job) in self.on_pool {
+            drop(job.join());
+        }
     }
 
     /// `wait` without `wait_emit_jobs`.

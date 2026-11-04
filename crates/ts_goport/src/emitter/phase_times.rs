@@ -17,8 +17,7 @@
 //! `sourceMappingURL` comment and the map's JSON text.
 
 use std::cell::Cell;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// One emit phase.
@@ -46,10 +45,14 @@ enum ThreadKind {
     Checker = 1,
     Pool = 2,
     Twin = 3,
-    Other = 4,
+    /// The threads that make the deferred writes of the plain early emit
+    /// (`program_emit::flush_deferred_writes`).
+    Flush = 4,
+    Other = 5,
 }
 
-const KIND_NAMES: [&str; 5] = ["loading", "checker", "pool", "twin", "other"];
+const KINDS: usize = 6;
+const KIND_NAMES: [&str; KINDS] = ["loading", "checker", "pool", "twin", "flush", "other"];
 
 /// Where a file's JS part runs, and why (`program_emit::file_route`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,14 +118,34 @@ const ZERO: AtomicU64 = AtomicU64::new(0);
 #[allow(clippy::declare_interior_mutable_const)]
 const ZERO_ROW: [AtomicU64; 5] = [ZERO; 5];
 
-static NANOS: [[AtomicU64; 5]; 5] = [ZERO_ROW; 5];
-static CALLS: [[AtomicU64; 5]; 5] = [ZERO_ROW; 5];
+static NANOS: [[AtomicU64; 5]; KINDS] = [ZERO_ROW; KINDS];
+static CALLS: [[AtomicU64; 5]; KINDS] = [ZERO_ROW; KINDS];
+/// The wall time of the deferred writes on the loading thread
+/// (`start_flush`), and how many flushes ran.
+static FLUSH_NANOS: AtomicU64 = ZERO;
+static FLUSHES: AtomicU64 = ZERO;
 static ROUTES: [AtomicU64; 15] = [ZERO; 15];
 
-/// True when `GOPORT_EMIT_PHASE_TIMES` is `1`. Read once.
+/// True when `GOPORT_EMIT_PHASE_TIMES` is `1`. Read once; then one relaxed
+/// load and one predictable branch per call.
+#[inline]
 pub fn enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GOPORT_EMIT_PHASE_TIMES").as_deref() == Ok("1"))
+    match STATE.load(Ordering::Relaxed) {
+        OFF => false,
+        ON => true,
+        _ => init_enabled(),
+    }
+}
+
+const OFF: u8 = 1;
+const ON: u8 = 2;
+static STATE: AtomicU8 = AtomicU8::new(0);
+
+#[cold]
+fn init_enabled() -> bool {
+    let on = std::env::var("GOPORT_EMIT_PHASE_TIMES").as_deref() == Ok("1");
+    STATE.store(if on { ON } else { OFF }, Ordering::Relaxed);
+    on
 }
 
 fn thread_kind() -> ThreadKind {
@@ -141,6 +164,8 @@ fn thread_kind() -> ThreadKind {
             ThreadKind::Pool
         } else if name.starts_with("dts-twin-") {
             ThreadKind::Twin
+        } else if name.starts_with("flush-") {
+            ThreadKind::Flush
         } else if name == "tsgo" || name == "main" || name == "goport" {
             ThreadKind::Loading
         } else {
@@ -170,6 +195,27 @@ impl Drop for Timer {
             let kind = thread_kind() as usize;
             NANOS[kind][phase as usize].fetch_add(nanos, Ordering::Relaxed);
             CALLS[kind][phase as usize].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// A running timer of the deferred writes of a plain early emit, on the
+/// loading thread (`program_emit::flush_deferred_writes`): the wall time
+/// that the writes add after the check. It adds its time when it drops.
+#[must_use]
+pub struct FlushTimer(Option<Instant>);
+
+/// Starts a `FlushTimer`, when the timers are on.
+pub fn start_flush() -> FlushTimer {
+    FlushTimer(enabled().then(Instant::now))
+}
+
+impl Drop for FlushTimer {
+    fn drop(&mut self) {
+        if let Some(start) = self.0.take() {
+            let nanos = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            FLUSH_NANOS.fetch_add(nanos, Ordering::Relaxed);
+            FLUSHES.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -215,6 +261,14 @@ pub fn report() {
         let _ = write!(text, " {:>8.2}ms     ", nanos as f64 / 1e6);
     }
     text.push('\n');
+    let flushes = FLUSHES.load(Ordering::Relaxed);
+    if flushes > 0 {
+        let _ = writeln!(
+            text,
+            "  deferred writes after the check: {:.2}ms wall ({flushes} flush)",
+            FLUSH_NANOS.load(Ordering::Relaxed) as f64 / 1e6
+        );
+    }
     text.push_str("emit routing (files)\n");
     for (index, name) in ROUTE_NAMES.iter().enumerate() {
         let count = ROUTES[index].load(Ordering::Relaxed);
