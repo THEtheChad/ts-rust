@@ -360,3 +360,13 @@ was the same as Go's.
   - **The remaining 43–49 ms is serial loader work.** Next: bind in the
     parse workers (S7, −25 to −30 ms), and skip checking or replaying calls
     the load already checked (−15 to −25 ms).
+- **2026-11-04, Astra reviewed the D1 design:** overall rework; S1 go with
+  changes, as an uncertified opt-in experiment
+  (`reviews/2026-11-04-astra-d1-design.md`). Concrete counterexamples break
+  the "colder is safer" premise: the relation budget depends on cache size,
+  counter resets, `deep_true` order, tie filters, deferred-queue order and
+  diagnostic collection epochs.
+  - **Next:** D1-S1, a static refinement split as an opt-in. It measures the
+    real wall against the default and Go-N, and how often the output differs
+    from the default across the corpus (as D0-1A did).
+  - Certification waits on that data.
