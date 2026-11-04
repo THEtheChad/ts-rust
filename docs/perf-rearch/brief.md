@@ -51,6 +51,12 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   record.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
   checkout's source, so run it from your own worktree.
+- **Quality report (report only, no gate):** before reporting, run
+  `scripts/perf-rearch/quality.sh report HEAD --base perf/first-principles`
+  from your worktree (about 1 minute, more while another Cargo run holds the
+  slot; `--no-clippy` skips clippy) and paste its summary into your final
+  answer. It covers escape hatches, complexity, duplication, churn and
+  hygiene; `docs/perf-rearch/quality.md` explains each one.
 
 ## Rules
 

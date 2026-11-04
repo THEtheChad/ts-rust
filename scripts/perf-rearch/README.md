@@ -10,6 +10,7 @@ Every tool prints its usage with `help` (or `--help`).
 | `bench.sh` (`bench.py`) | Times CLI and LSP scenarios for labelled binaries, load-gated and interleaved; writes `runs.jsonl`, `results.json` and `results.md`; `bench.sh table` merges result dirs into one gap table. |
 | `baseline.sh` | The whole baseline set for one tsc-rs binary against Go (icount, CLI wall, LSP, THP check), resumable; ends with `gap.md`. |
 | `lsp-ttfd.mjs` | Time to first diagnostics: spawn the server, initialize, open one file, pull its diagnostics. |
+| `quality.sh` (`quality.py`) | Code-quality report for `crates/` at a revision, with a delta against a base: escape hatches (`GOPORT_*`/`TSC_RS_*` switches), per-function complexity (rust-code-analysis), duplication, churn and hygiene, plus clippy in `report`; `history` walks the branch's merges. Report only (`docs/perf-rearch/quality.md`). |
 | `samply_top.py` | Summarizes a samply profile: on-CPU time per thread, per phase and phase × thread, top self and inclusive frames, callers of a function. |
 | `../lspdiff/` | The LSP harness (`lspdiff.mjs bench`, `probe-edit.mjs`), from branches `perf/lsp-concurrency` and `perf/lsp-edit-cost`. `bench.sh lsp` wraps it. |
 
