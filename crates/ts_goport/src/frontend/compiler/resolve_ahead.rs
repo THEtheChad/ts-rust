@@ -580,22 +580,7 @@ impl FirstLoadJob {
     pub fn worker_resolver(&self) -> DefaultResolver {
         let job = &self.0;
         let view = &job.view;
-        let fs = Rc::new(AheadFs {
-            os: job.worker_os(),
-            job: job.clone(),
-        });
-        let directory_exists = {
-            let fs = fs.clone();
-            Rc::new(move |path: &str| fs.directory_exists_unlogged(path))
-                as Rc<dyn Fn(&str) -> bool>
-        };
-        begin_ahead_thread(
-            &view.current_directory,
-            view.use_case_sensitive_file_names,
-            FxHashMap::default(),
-            FxHashSet::default(),
-            directory_exists,
-        );
+        let fs = begin_ahead_fs(job, FxHashMap::default(), FxHashSet::default());
         let package_jsons = Rc::new(new_info_cache(
             &view.current_directory,
             view.use_case_sensitive_file_names,
@@ -1100,15 +1085,15 @@ impl Job {
     }
 }
 
-/// A worker's part of `job`: resolves the next key until none is left, the
-/// job ends or a worker failed it (`run_task`). A resolution that panics (a Go panic) panics on the loader
-/// too when it resolves the same key; the worker ends that key with no
-/// answer and leaves the job. A panic outside the resolutions fails the
-/// job (`run_task`). The worker's resolver and its caches are freed here,
-/// on the worker.
-fn run_job(job: &Arc<Job>) {
+/// A worker's file system for `job` (`AheadFs`), after it makes this thread
+/// an ahead thread of the job (`begin_ahead_thread`) with the kept
+/// package.json `reads` and `kept` files.
+fn begin_ahead_fs(
+    job: &Arc<Job>,
+    reads: FxHashMap<String, Option<u128>>,
+    kept: FxHashSet<String>,
+) -> Rc<AheadFs> {
     let view = &job.view;
-    let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
     let fs = Rc::new(AheadFs {
         os: job.worker_os(),
         job: job.clone(),
@@ -1124,6 +1109,19 @@ fn run_job(job: &Arc<Job>) {
         kept,
         directory_exists,
     );
+    fs
+}
+
+/// A worker's part of `job`: resolves the next key until none is left, the
+/// job ends or a worker failed it (`run_task`). A resolution that panics (a Go panic) panics on the loader
+/// too when it resolves the same key; the worker ends that key with no
+/// answer and leaves the job. A panic outside the resolutions fails the
+/// job (`run_task`). The worker's resolver and its caches are freed here,
+/// on the worker.
+fn run_job(job: &Arc<Job>) {
+    let view = &job.view;
+    let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
+    let fs = begin_ahead_fs(job, reads, kept);
     let fs: Rc<dyn Fs> = fs;
     let mut resolver = job.config.new_resolver(fs, Some(package_jsons.clone()));
     resolver.caches.shared = Some(SharedResolutionLink {

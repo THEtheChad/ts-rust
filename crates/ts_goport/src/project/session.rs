@@ -2503,19 +2503,7 @@ impl Session {
                         }
                     }
                 }
-                // Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): right after the watch
-                // registration, the observations of the snapshot's loads
-                // through their OS views are checked against the disk. A
-                // change between a worker's observation and the
-                // registration, which no watch event reports, goes through
-                // `didChangeWatchedFiles` as its watch event would.
-                // PORT: not in Go (perf).
-                if let Some(reconciled) =
-                    crate::frontend::compiler::load_view_scope::reconcile_pending()
-                    && !reconciled.events.is_empty()
-                {
-                    s.did_change_watched_files(ctx, &reconcile_file_events(&reconciled.events));
-                }
+                s.reconcile_load_views(ctx);
                 let _ = s.update_content_mapper_registrations(ctx, new_snapshot);
                 s.publish_program_diagnostics(old_snapshot, new_snapshot);
                 s.send_project_info_telemetry_for_new_projects(old_snapshot, new_snapshot);
@@ -2603,6 +2591,23 @@ impl Session {
         self.background_queue.wait();
         while !self.warm_auto_import_preempt.busy() && gostd::local::run_idle() {
             self.background_queue.wait();
+        }
+    }
+}
+
+impl Session {
+    /// Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): right after the watch
+    /// registration, the observations of the snapshot's loads through their
+    /// OS views are checked against the disk
+    /// (`load_view_scope::reconcile_pending`). A change between a worker's
+    /// observation and the registration, which no watch event reports, goes
+    /// through `didChangeWatchedFiles` as its watch event would.
+    // PORT: not in Go (perf).
+    fn reconcile_load_views(self: &Rc<Self>, ctx: &Context) {
+        if let Some(reconciled) = crate::frontend::compiler::load_view_scope::reconcile_pending()
+            && !reconciled.events.is_empty()
+        {
+            self.did_change_watched_files(ctx, &reconcile_file_events(&reconciled.events));
         }
     }
 }

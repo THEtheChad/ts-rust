@@ -12,6 +12,9 @@
 //!   set in process, a hook after each load, the reconciliation switch and
 //!   its last events.
 // PORT: not in Go (perf diagnostics).
+//
+// The whole module is under the feature (its `mod` item); the items that read
+// an environment variable repeat the `cfg` so that `quality.sh` sees it.
 
 use super::ReconcileEvent;
 use crate::frontend::prelude::*;
@@ -42,6 +45,7 @@ static REPLAY_FILE: OnceLock<Option<String>> = OnceLock::new();
 
 /// The next recorded view to replay: from `set_replay`, else from
 /// `GOPORT_LOAD_VIEW_REPLAY`.
+#[cfg(feature = "diagnostics")]
 pub(super) fn next_replay() -> Option<Arc<LoadView>> {
     let set = REPLAY.with(|replay| replay.borrow().is_some());
     if !set {
@@ -58,6 +62,7 @@ pub(super) fn next_replay() -> Option<Arc<LoadView>> {
 }
 
 /// The end of a load's scope: its counts line, record and test hooks.
+#[cfg(feature = "diagnostics")]
 pub(super) fn end_scope(view: &LoadView, t0: f64) {
     loadview::diag::flush_logs();
     let bypass = loadview::diag::take_bypass();

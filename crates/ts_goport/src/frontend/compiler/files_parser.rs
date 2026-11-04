@@ -592,10 +592,7 @@ impl FilesParser {
         };
         pool.shared
             .count(|c| c.loader_started = Some(std::time::Instant::now()));
-        // Loader v2 L1: the workers read through the load's OS view.
-        if let Some(view) = crate::frontend::vfs::loadview::current() {
-            let _ = pool.shared.view.set(view);
-        }
+        pool.shared.take_load_view();
         if let Some(cache) = build_host_cache {
             cache.start_load();
             let _ = pool.shared.stats.host.set(cache);
@@ -3227,6 +3224,14 @@ impl PrefetchShared {
                     ..PrefetchStats::default()
                 })
             }),
+        }
+    }
+
+    /// Loader v2 L1: the workers read through the OS view of the load on
+    /// this thread, if it has one (`WorkerFiles::refresh`).
+    fn take_load_view(&self) {
+        if let Some(view) = crate::frontend::vfs::loadview::current() {
+            let _ = self.view.set(view);
         }
     }
 

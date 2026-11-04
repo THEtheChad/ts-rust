@@ -13,6 +13,9 @@
 //!   names each demand that a replayed view lacks;
 //! - test hooks (`set_enabled`).
 // PORT: not in Go (perf diagnostics).
+//
+// The whole module is under the feature (its `mod` item); the items that read
+// an environment variable repeat the `cfg` so that `quality.sh` sees it.
 
 use super::{Kind, LoadView, Shards, SharedText, Slot, Who};
 use crate::frontend::prelude::*;
@@ -64,6 +67,7 @@ pub fn note_os_call() {
 }
 
 /// Runs `load`, a view's OS call: not a bypass, and traced.
+#[cfg(feature = "diagnostics")]
 pub(super) fn os_call<V>(kind: Kind, who: Who, path: &str, load: impl FnOnce() -> V) -> V {
     struct Guard;
     impl Drop for Guard {
@@ -109,6 +113,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Flushes the trace and the miss log (at the end of each load).
+#[cfg(feature = "diagnostics")]
 pub fn flush_logs() {
     for (name, cell) in [
         ("GOPORT_LOAD_VIEW_TRACE", &TRACE),
@@ -120,6 +125,7 @@ pub fn flush_logs() {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 fn replay_log() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("GOPORT_LOAD_VIEW_REPLAY_LOG").is_ok_and(|v| v == "1"))
@@ -153,6 +159,7 @@ fn bump(counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
+#[cfg(feature = "diagnostics")]
 impl ViewDiag {
     pub(super) fn frozen(&self) -> bool {
         self.frozen
