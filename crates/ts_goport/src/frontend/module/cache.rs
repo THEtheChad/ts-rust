@@ -339,6 +339,10 @@ pub struct AheadLink {
     /// The package scope of each directory that the load asked for, by
     /// directory (`Caches::package_scope_ahead`).
     pub scopes: RefCell<FxHashMap<String, Option<PackageScope>>>,
+    /// The module keys that had no worker answer when the loader asked
+    /// (`AheadStats::missing`), for the debug log of the load's end
+    /// (compiler/resolve_ahead.rs `ResolveAhead::finish`).
+    pub missing: RefCell<Vec<(String, String, ResolutionMode)>>,
 }
 
 /// The keys of the previous load, which the resolve-ahead workers resolve
@@ -1623,6 +1627,13 @@ impl Caches {
         {
             None => {
                 stats.missing += 1;
+                if redirect_config_name.is_empty() {
+                    ahead.missing.borrow_mut().push((
+                        containing_directory.to_string(),
+                        module_name.to_string(),
+                        mode,
+                    ));
+                }
                 false
             }
             Some((found, calls)) => {

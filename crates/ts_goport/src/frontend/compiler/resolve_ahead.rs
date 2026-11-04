@@ -397,6 +397,7 @@ impl ResolveAhead {
             cursor: Cell::new(0),
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
+            missing: RefCell::default(),
         });
         if mode() == Mode::Force
             && let Some((job, workers)) = job.as_ref().zip(Workers::get())
@@ -436,6 +437,9 @@ impl ResolveAhead {
         let loader = link.stats.get();
         let known_files = self.job.as_ref().map_or(0, |job| job.known_files.len());
         let worker_panic = link.queue.as_ref().is_some_and(|queue| queue.failed());
+        if debug_log_enabled() {
+            log_missing(&link, self.job.as_deref());
+        }
         // A rejected answer can come from a kept package.json parse or a
         // known file that changed: the workers drop both now, so the next
         // job starts with neither, even when a load on another thread has
@@ -577,11 +581,63 @@ impl FirstLoadJob {
 /// `GOPORT_RESOLVE_AHEAD_STATS` is set: to stderr for `1`, else appended to
 /// the file that it names (`write_debug_line`).
 fn debug_log(line: std::fmt::Arguments<'_>) {
-    static TO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    let Some(to) = TO.get_or_init(|| std::env::var("GOPORT_RESOLVE_AHEAD_STATS").ok()) else {
+    let Some(to) = debug_log_to() else {
         return;
     };
     write_debug_line(to, line);
+}
+
+fn debug_log_to() -> Option<&'static str> {
+    static TO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TO.get_or_init(|| std::env::var("GOPORT_RESOLVE_AHEAD_STATS").ok())
+        .as_deref()
+}
+
+fn debug_log_enabled() -> bool {
+    debug_log_to().is_some()
+}
+
+/// The debug log of the keys that had no worker answer when the loader
+/// asked (`AheadLink::missing`), by why: `late` (a worker published a
+/// shareable answer after the loader asked), `unshareable` (the worker's
+/// resolution made a call that the check cannot make again: a directory
+/// listing, a stat, a read of an open file), `none` (no worker resolved
+/// the key: no worker parsed the file, or it resolved the name with
+/// another mode). A few keys of each with their mode.
+fn log_missing(link: &AheadLink, job: Option<&Job>) {
+    let missing = link.missing.borrow();
+    if missing.is_empty() {
+        return;
+    }
+    let mut kinds: [(&str, usize, Vec<String>); 3] = [
+        ("late", 0, Vec::new()),
+        ("unshareable", 0, Vec::new()),
+        ("none", 0, Vec::new()),
+    ];
+    for (directory, name, mode) in missing.iter() {
+        let found = job.and_then(|job| {
+            job.answers
+                .get_module(&(directory.as_str(), name.as_str(), *mode, ""))
+        });
+        let kind = match found {
+            Some(found) if found.ahead.is_some() => 0,
+            Some(_) => 1,
+            None => 2,
+        };
+        let entry = &mut kinds[kind];
+        entry.1 += 1;
+        if entry.2.len() < 4 {
+            entry.2.push(format!("{name:?} {mode:?} from {directory}"));
+        }
+    }
+    let parts: Vec<String> = kinds
+        .iter()
+        .map(|(kind, count, samples)| format!("{kind} {count} [{}]", samples.join("; ")))
+        .collect();
+    debug_log(format_args!(
+        "resolve-ahead: missing keys: {}",
+        parts.join(", ")
+    ));
 }
 
 /// Writes `line` and a newline to stderr (`to` is `1`) or to the end of
