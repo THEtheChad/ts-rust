@@ -24,6 +24,9 @@
 //                   (DIR/run-<n>.log), full mode the runs whose label is not "...data:"
 //                   (DIR/full-<n>.log; --logs-all: every run)
 //   --verbose       trace log verbosity (custom/setLogVerbosity): the logs list each project's files
+//   --items I,J     full mode: also print the sha of the answers at session indexes I, J (the
+//                   NNNN of lsp/hono-f12-p6/NNNN; the references items 178,232,335,595,635 share
+//                   the cause) as raw sha / sha with the entries sorted / entry count
 //   --ata           full mode: ATA on, as the session ran before ND1 (runSession turns it off)
 //   --full          print each whole answer as JSON
 //
@@ -52,6 +55,7 @@ const { values: opt } = parseArgs({
     "logs-all": { type: "boolean", default: false },
     "npm-delay": { type: "string" },
     ata: { type: "boolean", default: false },
+    items: { type: "string", default: "" },
   },
 });
 if (!opt.bin) {
@@ -102,9 +106,19 @@ function writeLog(client, name) {
   writeFileSync(join(opt.logs, name), lines.join("\n") + "\n");
 }
 
+const sha = (value) => createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex").slice(0, 12);
+// The sha of a list answer with its entries sorted (Go's references order varies run to run).
+const sortedSha = (list) => (Array.isArray(list) ? sha(list.map((e) => JSON.stringify(e)).sort()) : sha(list));
+const itemIndexes = opt.items ? opt.items.split(",").map(Number) : [];
+const itemText = new WeakMap(); // inlay hint result -> " items i:sha/count ..."
+
 async function fullSession() {
   const log = await runSession([opt.bin, "--lsp", "--stdio"], root, files, { positions: 6, env });
-  return log.find((e) => e.step === "runtime-tests/deno/ssg.test.tsx inlayHint").result;
+  const result = log.find((e) => e.step === "runtime-tests/deno/ssg.test.tsx inlayHint").result;
+  if (itemIndexes.length && result) {
+    itemText.set(result, ` items ${itemIndexes.map((i) => `${i}:${sha(log[i].result)}/${sortedSha(log[i].result)}/${log[i].result?.length ?? "-"}`).join(" ")}`);
+  }
+  return result;
 }
 
 async function shortSession(run) {
@@ -147,8 +161,7 @@ async function worker() {
     const client = opt.mode === "full" && result && clients.get(result);
     if (opt.logs && client && (answer !== "...data:" || opt["logs-all"])) writeLog(client, `full-${run}.log`);
     counts[answer] = (counts[answer] ?? 0) + 1;
-    const sha = createHash("sha256").update(JSON.stringify(result ?? null)).digest("hex").slice(0, 12);
-    console.log(`run ${run}: ${answer} answer ${sha}${result && probes.has(result) ? ` ${probes.get(result)}` : ""}`);
+    console.log(`run ${run}: ${answer} answer ${sha(result)}${(result && itemText.get(result)) ?? ""}${result && probes.has(result) ? ` ${probes.get(result)}` : ""}`);
   }
 }
 await Promise.all(Array.from({ length: Number(opt.jobs) }, worker));
