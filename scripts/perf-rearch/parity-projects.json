@@ -1,0 +1,72 @@
+{
+  "about": "Projects of the parity CLI tier (parity_cli.py). The first existing dir of each project is used (it must hold the marker file, default package.json). prepare-parity-projects.sh makes the parity-projects copies. label: item name part; cwd: relative to the project dir; config: relative to cwd; quick: in the quick tier; build: also run -b on it.",
+  "projects": [
+    {
+      "name": "ts-pattern",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/gvergnaud__ts-pattern"],
+      "configs": [
+        {"label": "src", "config": "tsconfig.json", "quick": true},
+        {"label": "tests", "config": "tests/tsconfig.json", "quick": true}
+      ]
+    },
+    {
+      "name": "query",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/TanStack__query"],
+      "configs": [
+        {"label": "core", "cwd": "packages/query-core", "config": "tsconfig.json", "quick": true},
+        {"label": "core-legacy", "cwd": "packages/query-core", "config": "tsconfig.legacy.json"},
+        {"label": "core-prod", "cwd": "packages/query-core", "config": "tsconfig.prod.json", "quick": true},
+        {"label": "react", "cwd": "packages/react-query", "config": "tsconfig.json"},
+        {"label": "sync-persister", "cwd": "packages/query-sync-storage-persister", "config": "tsconfig.json", "build": true}
+      ]
+    },
+    {
+      "name": "hono",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/honojs__hono"],
+      "configs": [
+        {"label": "spec", "config": "tsconfig.spec.json", "quick": true},
+        {"label": "build", "config": "tsconfig.build.json", "quick": true},
+        {"label": "solution", "config": "tsconfig.json", "build": true, "skipVariants": ["noemit", "emit", "decl", "incr", "listfiles", "extdiag", "pretty"]}
+      ]
+    },
+    {
+      "name": "zod",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/colinhacks__zod"],
+      "configs": [
+        {"label": "zod-build", "cwd": "packages/zod", "config": "tsconfig.build.json", "quick": true},
+        {"label": "zod", "cwd": "packages/zod", "config": "tsconfig.json"},
+        {"label": "resolution", "cwd": "packages/resolution", "config": "tsconfig.json"}
+      ]
+    },
+    {
+      "name": "umami",
+      "dirs": ["~/.cache/perf-rearch/projects/umami", "~/.cache/lspdiff/projects/umami"],
+      "configs": [
+        {"label": "root", "config": "tsconfig.json", "quick": true}
+      ]
+    },
+    {
+      "name": "effect",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/Effect-TS__effect"],
+      "configs": [
+        {"label": "effect", "cwd": "packages/effect", "config": "tsconfig.json"}
+      ]
+    },
+    {
+      "name": "react-hook-form",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/react-hook-form__react-hook-form"],
+      "configs": [
+        {"label": "root", "config": "tsconfig.json"},
+        {"label": "app", "cwd": "app", "config": "tsconfig.json"}
+      ]
+    },
+    {
+      "name": "svelte",
+      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/sveltejs__svelte"],
+      "configs": [
+        {"label": "svelte", "cwd": "packages/svelte", "config": "tsconfig.json"},
+        {"label": "runtime", "cwd": "packages/svelte", "config": "tsconfig.runtime.json"}
+      ]
+    }
+  ]
+}
