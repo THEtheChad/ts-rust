@@ -351,3 +351,12 @@ was the same as Go's.
     first-load cases) provides the proof.
 - **2026-11-04, LSP parity harness merged** (`b00e5c646`): watch registrations, server messages and fs-event sessions; tsc-rs runs 3× per LSP session. Full gate on the head: OK, 186,611 items. base-current moved to that run.
 - **2026-11-04, D1 design done** (`design/d1.md`), recommending go: exact output with refinements of Go's 4-way split cuts check wall 31–53% on large projects (vscode 0.30× Go). Astra review next.
+- **2026-11-04, S1a done** (branch `t3/speed-umami-lsp-ttfd`, in Astra
+  review): first-load worker answers go through `accept_ahead_answer`.
+  - **ttfd on umami:** about 410 → 332 ms; Go 283–289 ms (1.18×, from
+    1.46×). The loader takes 97.7–98.8% of the 9,393 keys and rejects none.
+  - **Proof:** `GOPORT_LOAD_DUMP` is identical on and off in 13 scenarios;
+    parity full OK.
+  - **The remaining 43–49 ms is serial loader work.** Next: bind in the
+    parse workers (S7, −25 to −30 ms), and skip checking or replaying calls
+    the load already checked (−15 to −25 ms).
