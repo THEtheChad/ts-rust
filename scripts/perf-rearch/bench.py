@@ -288,7 +288,10 @@ def run_measured(argv, cwd, timeout, env_extra=None):
     return {
         "wall": wall, "drain": drain, "user": cpu_u, "sys": cpu_s, "cpu": cpu, "instr": instr,
         "maxrss_mb": rss / 1024, "rc": rc, "timed_out": bool(killed),
-        "out_hash": hashlib.sha256(out).hexdigest()[:16],
+        # The build scenario runs each label in its own scratch copy (build-<project>-<label>), and paths in
+        # diagnostics name it: hash the output with the run's own directory masked, so equal output compares
+        # equal across labels.
+        "out_hash": hashlib.sha256(out.replace(str(cwd).encode(), b"<cwd>")).hexdigest()[:16],
         "out_lines": out.count(b"\n"), "other_cpu": max(0.0, (busy1 - busy0) - cpu),
         "launch": env.get("GOPORT_LAUNCH", "default"), "env": env_extra or {}, "_out": out,
     }

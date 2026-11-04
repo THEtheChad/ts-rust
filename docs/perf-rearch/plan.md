@@ -314,3 +314,30 @@ was the same as Go's.
     - optionally, only splits that refine Go's.
   - **Next:** a D1 production design note, then Astra's review, then the
     implementation. Chad's bar is still zero divergences at scale.
+
+## Timing window 1, complete (2026-11-04 01:43–05:19)
+
+**Head is slower than Go in only 2 cells:**
+- **LSP time to first diagnostics** (umami): 425 ms against 289 ms.
+- **`-b` warm no-op on query:** 8 ms against 7 ms (process startup on a
+  build with nothing to do).
+
+**Everything else is 0.14–0.76× Go:**
+
+| Area | Head vs Go |
+|---|---|
+| CLI check, emit, emit-js, emit-cjs | 0.37–0.67× |
+| single-threaded | 0.50–0.76× |
+| `-b` cold | 0.41–0.72× |
+| `-b` warm | 0.23–0.70× |
+| LSP concurrent | 0.28–0.67× |
+| per-edit probes | 0.14–0.28× |
+
+- **B1 on/off, same bin:** umami emit −4% (817 against 852 ms), emit-js
+  −4%, emit-cjs −3.5%; hono, vscode, t3-web and ts-pattern within 0–2%.
+- **THP guard off (E1):** no wall gain on zod, t3-server or vscode.
+  **E1 dropped.**
+- **vscode `-b` "DIFFERS" was a bench artifact:** each label builds in its
+  own scratch copy, and the copy's path appears in the diagnostics. The
+  outputs are identical after masking the path. `bench.py` now masks the
+  run's cwd before hashing.
