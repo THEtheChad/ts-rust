@@ -80,32 +80,79 @@ pub struct IncludeProcessor {
 // `map_for_tests` (Go `GetIncludeReasons`, "Testing only"). The test
 // `whole_include_reasons_map_readers` fails when a new reader in `src`
 // takes it.
+//
+// PERF (perf/first-principles A1): a reuse of the language server that
+// gives a changed file new synthetic specifiers changes the reasons of one
+// or two files (its JSX runtime's and tslib's). Those lists go to
+// `replaced`, which shadows `loaded`; the loaded map stays shared, so a
+// keystroke does not copy the reasons of every file.
 #[derive(Clone, Default)]
-pub struct FileIncludeReasons(FxHashMap<Path, Vec<Rc<FileIncludeReason>>>);
+pub struct FileIncludeReasons {
+    /// The reasons of the load.
+    loaded: FxHashMap<Path, Vec<Rc<FileIncludeReason>>>,
+    /// The lists that a reuse replaced (`with_synthetic_remapped`), by path.
+    replaced: Rc<FxHashMap<Path, Vec<Rc<FileIncludeReason>>>>,
+    /// The loaded map when a reuse made this map: `loaded` is then empty.
+    shared: Option<Rc<FileIncludeReasons>>,
+}
+
+/// The reasons of the files, as a `FileIncludeReasons` keeps them.
+type ReasonMap = FxHashMap<Path, Vec<Rc<FileIncludeReason>>>;
 
 impl FileIncludeReasons {
     /// An empty map with room for `capacity` files.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(FxHashMap::with_capacity_and_hasher(
-            capacity,
-            Default::default(),
-        ))
+        Self {
+            loaded: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            ..Self::default()
+        }
+    }
+
+    /// The map of the load (`loaded`, or the shared one).
+    fn loaded(&self) -> &ReasonMap {
+        match &self.shared {
+            Some(shared) => shared.loaded(),
+            None => &self.loaded,
+        }
     }
 
     /// The reasons of the file at `path`.
     pub fn get(&self, path: &Path) -> Option<&Vec<Rc<FileIncludeReason>>> {
-        self.0.get(path)
+        self.replaced.get(path).or_else(|| self.loaded().get(path))
     }
 
-    /// Sets the reasons of the file at `path`.
+    /// Sets the reasons of the file at `path`. Only the load sets them.
     pub fn insert(&mut self, path: Path, reasons: Vec<Rc<FileIncludeReason>>) {
-        self.0.insert(path, reasons);
+        assert!(
+            self.shared.is_none() && self.replaced.is_empty(),
+            "the reasons of a reused program are set by the load"
+        );
+        self.loaded.insert(path, reasons);
+    }
+
+    /// Calls `f` with each path and its reasons, in no particular order.
+    fn for_each(&self, f: &mut dyn FnMut(&Path, &Vec<Rc<FileIncludeReason>>)) {
+        for (path, reasons) in self.loaded() {
+            if !self.replaced.contains_key(path) {
+                f(path, reasons);
+            }
+        }
+        for (path, reasons) in self.replaced.iter() {
+            f(path, reasons);
+        }
     }
 
     /// The whole map. For tests only: program code must not depend on its
     /// order (see the type).
-    pub fn map_for_tests(&self) -> &FxHashMap<Path, Vec<Rc<FileIncludeReason>>> {
-        &self.0
+    pub fn map_for_tests(&self) -> std::borrow::Cow<'_, ReasonMap> {
+        if self.replaced.is_empty() {
+            return std::borrow::Cow::Borrowed(self.loaded());
+        }
+        let mut map = ReasonMap::default();
+        self.for_each(&mut |path, reasons| {
+            map.insert(path.clone(), reasons.clone());
+        });
+        std::borrow::Cow::Owned(map)
     }
 
     /// A copy of this map in which each import reason of a file in `files`
@@ -113,19 +160,21 @@ impl FileIncludeReasons {
     /// specifier, or None when no reason changes. `replaced` gets each old
     /// reason's address and its new reason, so that the processing
     /// diagnostics can keep pointer identity with the map
-    /// (`IncludeProcessor::with_reasons_replaced`). The map is not changed:
-    /// older programs share it.
+    /// (`IncludeProcessor::with_reasons_replaced`). This map is not
+    /// changed: older programs share it. `this` is this map's `Rc`, which
+    /// the copy shares when this map holds the load.
     // PORT: not in Go (perf/first-principles A1). Go rebuilds a program
     // whose changed file has a synthetic import. Each entry is visited and
     // changed on its own, so the map order is not observable.
     pub fn with_synthetic_remapped(
-        &self,
+        this: &Rc<Self>,
         files: &[Path],
         remap: &dyn Fn(Node) -> Option<Node>,
         replaced: &mut FxHashMap<*const FileIncludeReason, Rc<FileIncludeReason>>,
     ) -> Option<Self> {
-        let mut changes: Vec<(&Path, usize, Rc<FileIncludeReason>)> = Vec::new();
-        for (path, reasons) in &self.0 {
+        let mut changed: Vec<(Path, Vec<Rc<FileIncludeReason>>)> = Vec::new();
+        this.for_each(&mut |path, reasons| {
+            let mut list: Option<Vec<Rc<FileIncludeReason>>> = None;
             for (index, reason) in reasons.iter().enumerate() {
                 let FileIncludeData::ReferencedFile(data) = &reason.data else {
                     continue;
@@ -144,24 +193,32 @@ impl FileIncludeReasons {
                     }),
                 });
                 replaced.insert(Rc::as_ptr(reason), new_reason.clone());
-                changes.push((path, index, new_reason));
+                list.get_or_insert_with(|| reasons.clone())[index] = new_reason;
             }
-        }
-        if changes.is_empty() {
+            if let Some(list) = list {
+                changed.push((path.clone(), list));
+            }
+        });
+        if changed.is_empty() {
             return None;
         }
-        let mut map = self.clone();
-        for (path, index, new_reason) in changes {
-            map.0.get_mut(path).expect("the path was read above")[index] = new_reason;
-        }
-        Some(map)
+        let mut lists = (*this.replaced).clone();
+        lists.extend(changed);
+        Some(Self {
+            loaded: ReasonMap::default(),
+            replaced: Rc::new(lists),
+            shared: Some(match &this.shared {
+                Some(shared) => shared.clone(),
+                None => this.clone(),
+            }),
+        })
     }
 
     /// Calls `f` with each synthetic specifier that a reason keeps, with
     /// the path of the file the specifier belongs to. The verify mode of
     /// the reuse (`reuse_verify`) checks them; the order is not observable.
     pub fn for_each_synthetic(&self, f: &mut dyn FnMut(&Path, Node)) {
-        for reasons in self.0.values() {
+        self.for_each(&mut |_, reasons| {
             for reason in reasons {
                 if let FileIncludeData::ReferencedFile(data) = &reason.data
                     && !data.synthetic.is_nil()
@@ -169,7 +226,7 @@ impl FileIncludeReasons {
                     f(&data.file, data.synthetic);
                 }
             }
-        }
+        });
     }
 }
 

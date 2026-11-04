@@ -308,11 +308,12 @@ impl ProcessedFiles {
             })
         };
         let mut replaced = FxHashMap::default();
-        if let Some(reasons) = self
-            .include_processor
-            .file_include_reasons
-            .with_synthetic_remapped(&files, &remap, &mut replaced)
-        {
+        if let Some(reasons) = FileIncludeReasons::with_synthetic_remapped(
+            &self.include_processor.file_include_reasons,
+            &files,
+            &remap,
+            &mut replaced,
+        ) {
             self.include_processor = self
                 .include_processor
                 .with_reasons_replaced(Rc::new(reasons), &replaced);
