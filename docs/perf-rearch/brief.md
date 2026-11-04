@@ -81,6 +81,16 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   sudo). Repeat runs agree within 0.005% at any load. Use it with
   `--singleThreaded` for CPU-work claims while the machine is busy, and wall
   time on an idle machine for the final "≤ Go" claims.
+- **Instruction A/B traps** (lane E2):
+  - Editing the parser, store or binder makes the lib blobs stale (+0.4% on
+    its own): run `lib-blobs.sh write` on both sides, or compare against a
+    no-op edit of the same file.
+  - Release builds (16 CGUs) move counts by ±0.5–1%: decide on
+    `--profile goport`.
+  - hono's `tsconfig.build.json` is composite: pass a scratch
+    `--tsBuildInfoFile` and delete it before each run, or later runs are
+    no-ops.
+  - Trust deltas under 2% only with all three handled.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
   `systemd-run --user --collect -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.

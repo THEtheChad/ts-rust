@@ -221,3 +221,4 @@ until the baseline and parity lanes have released the machine.
   until an idle wall check. New candidate **E3b**: a shared package.json
   cache, about 15% of the default parse phase, to be designed with program
   audit candidate 3.
+- **2026-11-04, E2 spike done:** the race-free view alone saves 0.3–0.4% (no-go); combined with thin columns, about 1% (conditional). Queued as E2b, low priority. See `experiments/e2-registry.md`.
