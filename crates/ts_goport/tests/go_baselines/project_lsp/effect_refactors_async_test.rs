@@ -122,7 +122,7 @@ fn expected(range: lsproto::Range, texts: [&str; 4]) -> Vec<Action> {
     .collect()
 }
 
-child_test! {
+effect_child_test! {
     // A cursor in an async function declaration replaces the declaration; in
     // an async arrow, the variable statement around it (Go
     // replaceExpressionViaStatement). The failure variants put one exported

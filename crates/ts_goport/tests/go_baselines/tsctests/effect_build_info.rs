@@ -88,10 +88,22 @@ impl Project {
         modified == SystemTime::UNIX_EPOCH + OLD
     }
 
-    /// Runs `tsgo` with `args` and `--pretty false`: the exit code and
-    /// stdout without the `-b` time stamps and empty lines.
+    /// Runs `tsgo` with `args` and `--pretty false`, with the Effect
+    /// extension on (`TSC_RS_EFFECT=1`): the exit code and stdout without
+    /// the `-b` time stamps and empty lines.
     fn tsgo(&self, args: &[&str]) -> (Option<i32>, String) {
-        let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+        self.tsgo_with(Some("1"), args)
+    }
+
+    /// `tsgo` with `TSC_RS_EFFECT` set to `switch`, or unset for None (the
+    /// default: the extension off).
+    fn tsgo_with(&self, switch: Option<&str>, args: &[&str]) -> (Option<i32>, String) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tsgo"));
+        match switch {
+            Some(value) => command.env(ts_goport::effect::SWITCH_ENV, value),
+            None => command.env_remove(ts_goport::effect::SWITCH_ENV),
+        };
+        let output = command
             .args(args)
             .args(["--pretty", "false"])
             .current_dir(&self.0)
@@ -196,6 +208,50 @@ fn build_info_of_the_other_kind_is_built_again() {
     project.make_old("tsconfig.json");
     assert_eq!(
         project.tsgo(&["-b", "--verbose"]),
+        (Some(0), status_other_version(&effect, &plain))
+    );
+    assert_eq!(project.build_info_version(), plain);
+}
+
+// perf-rearch E0: the Effect extension is off by default, as Go loads no
+// plugin. A config with the plugin then checks, builds and records build
+// info as plain tsgo does. `TSC_RS_EFFECT=1` or `--effect` turns it on.
+#[test]
+fn effect_is_off_by_default() {
+    let plain = build_info_version(false);
+    let effect = build_info_version(true);
+    let project = Project::new("effect-off-by-default", true, DATE);
+    for switch in [None, Some("0"), Some("")] {
+        assert_eq!(
+            project.tsgo_with(switch, &["-p", "."]),
+            (Some(0), String::new())
+        );
+        assert_eq!(project.build_info_version(), plain);
+    }
+    assert_eq!(
+        project.tsgo_with(None, &["-p", ".", "--effect"]),
+        (Some(2), DATE_ERROR.to_string())
+    );
+    assert_eq!(project.build_info_version(), effect);
+
+    // Build info of the extension is of the other kind for the default.
+    let project = Project::new("effect-off-by-default-b", true, DATE);
+    assert_eq!(
+        project.tsgo_with(None, &["-b", "--verbose"]),
+        (Some(0), STATUS_BUILT.to_string())
+    );
+    assert_eq!(project.build_info_version(), plain);
+    project.make_old("tsconfig.json");
+    project.make_old("src/index.ts");
+    assert_eq!(
+        project.tsgo_with(None, &["-b", "--verbose", "--effect"]),
+        (
+            Some(2),
+            format!("{}\n{DATE_ERROR}", status_other_version(&plain, &effect))
+        )
+    );
+    assert_eq!(
+        project.tsgo_with(None, &["-b", "--verbose"]),
         (Some(0), status_other_version(&effect, &plain))
     );
     assert_eq!(project.build_info_version(), plain);

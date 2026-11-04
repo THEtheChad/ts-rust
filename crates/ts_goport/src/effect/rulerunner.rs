@@ -61,7 +61,8 @@ pub fn clear_api_process() {
 }
 
 /// The Effect plugin options of `options` when this process runs the rules:
-/// none in a standalone API process without `TSGO_EFFECT_API=1`
+/// none with the Effect extension off (`effect::switch_on`, the default),
+/// and none in a standalone API process without `TSGO_EFFECT_API=1`
 /// (`set_api_process`). The checker, the plugin option check and build info
 /// (its version suffix and `effect` options, written and checked) all read
 /// this. A standalone API build then writes and expects plain build info,
@@ -69,10 +70,9 @@ pub fn clear_api_process() {
 /// diagnostics.
 #[must_use]
 pub fn enabled_options(options: &CompilerOptions) -> Option<&EffectPluginOptions> {
-    options
-        .effect
-        .as_deref()
-        .filter(|_| !API_RULES_OFF.load(std::sync::atomic::Ordering::Relaxed))
+    options.effect.as_deref().filter(|_| {
+        crate::effect::switch_on() && !API_RULES_OFF.load(std::sync::atomic::Ordering::Relaxed)
+    })
 }
 
 // Go: rulerunner.Run

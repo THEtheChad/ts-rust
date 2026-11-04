@@ -492,8 +492,13 @@ fn parse_compiler_options_worker(
         "paths" => all_options.paths = parse_string_map(value),
         "plugins" => {
             // Effect-TS/tsgo patch 013: parse @effect/language-service plugin configuration.
-            all_options.effect =
-                crate::effect::etscore::parse_from_plugins(value).map(std::sync::Arc::new);
+            // PORT: only with the Effect extension on (`effect::switch_on`). Off, as in
+            // Go, the options carry no Effect configuration, so nothing Effect runs.
+            all_options.effect = if crate::effect::switch_on() {
+                crate::effect::etscore::parse_from_plugins(value).map(std::sync::Arc::new)
+            } else {
+                None
+            };
             // Native TypeScript does not load plugins; retain them only so tools can report the incompatibility.
             // PORT: Go `core.Map` keeps a nil `[]any` (`NilList`) nil.
             if let CompilerOptionsValue::NilList = value {

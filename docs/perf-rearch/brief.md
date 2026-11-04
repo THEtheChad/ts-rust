@@ -40,13 +40,15 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 
 ## Parity gate (mandatory for every change)
 
-`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main/`
+`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-current`
 prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **quick:** about 4 minutes, warm. Use it while iterating.
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
-- **Known diffs on main:** see `known.txt` in the base. The Effect items go
-  away with lane E0.
+- **Base:** `base-current` is a symlink to the latest accepted full run of
+  this branch (now E0 at 5852f249f; on main the Effect items were known
+  diffs). Root moves it after each merge. `base-main` stays as the main
+  record.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
   checkout's source, so run it from your own worktree.
 
@@ -63,6 +65,11 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **Timing builds:** every side of a timing is a stable build:
   `TS_CARGO_NIGHTLY=0 TS_CARGO_INCREMENTAL=0 RUSTUP_TOOLCHAIN=1.95.0 scripts/run-cargo-capped.sh build --release -p ts_goport --bin tsgo`,
   or `--profile goport` (fat LTO, the shipped profile) for final numbers.
+- **Same-built bins only:** build both sides of a comparison yourself, with
+  the same toolchain and profile. The shared
+  `bins/tsgo-main-91f3d021c-goport` uses about 1% fewer instructions than a
+  local `--profile goport` build of the same source (lane B1), so don't
+  compare it with your own builds.
   Edit-loop builds run 2 to 7% slower; never compare them with stable builds.
 - **Timing method:** a run starts only when the 1-minute load is under 1.5
   (`/proc/loadavg`). Interleave sides run by run. Record the load before and
@@ -74,10 +81,24 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   sudo). Repeat runs agree within 0.005% at any load. Use it with
   `--singleThreaded` for CPU-work claims while the machine is busy, and wall
   time on an idle machine for the final "≤ Go" claims.
+- **Instruction A/B traps** (lane E2):
+  - Editing the parser, store or binder makes the lib blobs stale (+0.4% on
+    its own): run `lib-blobs.sh write` on both sides, or compare against a
+    no-op edit of the same file.
+  - Release builds (16 CGUs) move counts by ±0.5–1%: decide on
+    `--profile goport`.
+  - hono's `tsconfig.build.json` is composite: pass a scratch
+    `--tsBuildInfoFile` and delete it before each run, or later runs are
+    no-ops.
+  - Trust deltas under 2% only with all three handled.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
   `systemd-run --user --collect -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
   So do your own scripts that read the whole tree or large logs.
+- **systemd environment:** units don't inherit your shell. Pass
+  `--setenv=PATH=$PATH --setenv=HOME=$HOME` (for cargo, rustup and node)
+  and any `TS_*`/`GOPORT_*` variables you rely on, or the job fails
+  (lanes E3 and the LSP audit lost runs to this).
 - **Long jobs:** longer than 10 minutes, run under `systemd-run --user --collect`,
   with a log that ends `DONE` or `FAIL rc=<N>`. You are a subagent: when you
   end your turn, your background jobs stop. Block in the foreground until a

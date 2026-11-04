@@ -110,9 +110,11 @@ fn code_fix_providers() -> [&'static CodeFixProvider; 3] {
 // externalCodeFixProviders holds providers registered by external packages (e.g., etslshooks).
 // These are appended to the built-in providers when iterating.
 // PORT: Go fills the list from `init()` (`RegisterCodeFixProvider`); the
-// port has one external provider, Effect's (`effect::ls`).
-fn external_code_fix_providers() -> [&'static CodeFixProvider; 1] {
-    [&*crate::effect::ls::EFFECT_FIX_PROVIDER]
+// port has one external provider, Effect's (`effect::ls`). It is listed only
+// when the Effect extension is on, so the default mode never builds its lazy
+// code list or scans its codes.
+fn external_code_fix_providers() -> Option<&'static CodeFixProvider> {
+    crate::effect::switch_on().then(|| &*crate::effect::ls::EFFECT_FIX_PROVIDER)
 }
 
 // Go: ls/codeactions.go (Effect-TS/tsgo patch 011) RefactorProvider
@@ -132,9 +134,10 @@ pub struct RefactorProvider {
 // Go: ls/codeactions.go (Effect-TS/tsgo patch 011) externalRefactorProviders
 // externalRefactorProviders holds providers registered by external packages (e.g., etslshooks).
 // PORT: Go fills the list from `init()` (`RegisterRefactorProvider`); the
-// port has one external provider, Effect's (`effect::ls`).
-fn external_refactor_providers() -> [&'static RefactorProvider; 1] {
-    [&crate::effect::ls::EFFECT_REFACTOR_PROVIDER]
+// port has one external provider, Effect's (`effect::ls`), listed only when
+// the Effect extension is on.
+fn external_refactor_providers() -> Option<&'static RefactorProvider> {
+    crate::effect::switch_on().then_some(&crate::effect::ls::EFFECT_REFACTOR_PROVIDER)
 }
 
 impl LanguageService {

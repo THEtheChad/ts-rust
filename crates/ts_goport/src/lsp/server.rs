@@ -738,15 +738,20 @@ const CONTENT_MAPPER_WILL_RENAME_FILES_REGISTRATION_ID: &str = "content-mapper-w
 // `initialize` answer and the content mapper code action registration use
 // this list. Plain Go has no `refactor.rewrite`: `scripts/goport/lsp_oracle.py`
 // drops it from the port's `initialize` answer before it compares with Go.
+// PORT: only with the Effect extension on (`effect::switch_on`, perf-rearch
+// E0). Off (the default), the list is Go's.
 pub fn supported_code_action_kinds() -> Vec<lsproto::CodeActionKind> {
-    vec![
-        lsproto::CodeActionKind::QUICK_FIX,
-        lsproto::CodeActionKind::REFACTOR_REWRITE,
+    let mut kinds = vec![lsproto::CodeActionKind::QUICK_FIX];
+    if crate::effect::switch_on() {
+        kinds.push(lsproto::CodeActionKind::REFACTOR_REWRITE);
+    }
+    kinds.extend([
         lsproto::CodeActionKind::SOURCE_ORGANIZE_IMPORTS_TS,
         lsproto::CodeActionKind::SOURCE_REMOVE_UNUSED_IMPORTS_TS,
         lsproto::CodeActionKind::SOURCE_SORT_IMPORTS_TS,
         lsproto::CodeActionKind::SOURCE_FIX_ALL_TS,
-    ]
+    ]);
+    kinds
 }
 
 impl Server {

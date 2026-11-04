@@ -43,7 +43,10 @@ unusable.
    - **Gate:** profile first, and drop it if store work is under 15% and
      rescans under 1.3×.
    - **Parity:** a dump of every store slot, compared byte for byte.
-2. **Remove the +13% worker parse overhead.** Suspects: cold identifier
+2. **Remove the +13% worker parse overhead.** *Corrected by the E3 spike
+   (`experiments/e3-parse-overhead.md`): it isn't parse work and isn't
+   fixed. It is duplicated resolution (a race, plus package.json parsed per
+   worker cache), +27% at default workers.* Suspects: cold identifier
    caches, `adopt_detached_store` rebuilding the JSDoc cache, diagnostics
    cloned twice, strings copied.
    - **Gain:** up to −11% of parse CPU in every multi-threaded run.

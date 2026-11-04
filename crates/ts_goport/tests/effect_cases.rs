@@ -16,7 +16,8 @@
 //!   links `node_modules/<package>` to it.
 //!
 //! A test writes its case into a new dir under the system temp dir and runs
-//! `tsgo -p <config> --pretty false` in it, and `--pretty true` when the case
+//! `TSC_RS_EFFECT=1 tsgo -p <config> --pretty false` in it (the Effect
+//! extension is off by default), and `--pretty true` when the case
 //! has a pretty output (related information). It compares stdout, and
 //! success or failure (not the exit code: with errors and `--noEmit` our pin
 //! exits 2 where TS 7.0 exits 1). In stdout, ANSI codes are removed, the case
@@ -219,6 +220,8 @@ fn tsgo(cwd: &Path, config: &str, pretty: bool) -> Output {
             if pretty { "true" } else { "false" },
         ])
         .current_dir(cwd)
+        // The Effect extension is off by default (Go parity); these cases test it.
+        .env("TSC_RS_EFFECT", "1")
         .output()
         .unwrap_or_else(|e| panic!("run tsgo in {}: {e}", cwd.display()));
     // 0: no errors; 1 and 2: diagnostics. Anything else is a crash.

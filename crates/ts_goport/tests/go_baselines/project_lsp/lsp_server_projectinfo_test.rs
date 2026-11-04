@@ -9,19 +9,23 @@ use super::projecttestutil::files;
 use super::util::uri;
 
 // Go: server_projectinfo_test.go:17 expectedCodeActionKinds (ts#63951)
-// PORT: plus `refactor.rewrite` after `quickfix`, as effect-tsgo 0.51.1
-// patch 017 adds it to Go's `supportedCodeActionKinds` (decision D1 option
-// B). The server lists it always, also without an Effect plugin: this test
-// and the content mapper test have none.
+// PORT: with the Effect extension on (`TSC_RS_EFFECT=1`), plus
+// `refactor.rewrite` after `quickfix`, as effect-tsgo 0.51.1 patch 017 adds
+// it to Go's `supportedCodeActionKinds` (decision D1 option B), also without
+// an Effect plugin: this test and the content mapper test have none. Off
+// (the default, perf-rearch E0), Go's list.
 pub(super) fn expected_code_action_kinds() -> Vec<lsproto::CodeActionKind> {
-    vec![
-        lsproto::CodeActionKind::QUICK_FIX,
-        lsproto::CodeActionKind("refactor.rewrite".into()),
+    let mut kinds = vec![lsproto::CodeActionKind::QUICK_FIX];
+    if ts_goport::effect::switch_on() {
+        kinds.push(lsproto::CodeActionKind("refactor.rewrite".into()));
+    }
+    kinds.extend([
         lsproto::CodeActionKind("source.organizeImports.ts".into()),
         lsproto::CodeActionKind("source.removeUnusedImports.ts".into()),
         lsproto::CodeActionKind("source.sortImports.ts".into()),
         lsproto::CodeActionKind("source.fixAll.ts".into()),
-    ]
+    ]);
+    kinds
 }
 
 // Go: server_projectinfo_test.go:26 initProjectInfoClient
@@ -58,32 +62,51 @@ pub(super) fn init_project_info_client(entries: &[(&str, &str)]) -> LspClient {
     client
 }
 
+/// The code action kinds of the `initialize` answer.
+fn initialize_code_action_kinds_answer() -> Vec<lsproto::CodeActionKind> {
+    let client = lsptestutil::new_lsp_client(
+        lsptestutil::server_setup("/home/projects", files(&[])),
+        None,
+        None,
+    );
+
+    let (message, result) = client.send_request(
+        &lsproto::INITIALIZE_INFO,
+        lsproto::InitializeParams {
+            capabilities: Some(lsproto::ClientCapabilities::default()),
+            ..Default::default()
+        },
+    );
+    assert!(message.error.is_none(), "Initialize failed");
+    // Go dereferences the `*InitializeResult`.
+    let result = result.flatten().expect("Initialize failed");
+    result
+        .capabilities
+        .and_then(|capabilities| capabilities.code_action_provider)
+        .and_then(|provider| provider.code_action_options)
+        .and_then(|options| options.code_action_kinds)
+        .expect("expected code action kinds")
+}
+
 child_test! {
     // Go: server_projectinfo_test.go:62 TestInitializeCodeActionKinds (ts#63951)
     fn initialize_code_action_kinds() {
-        let client = lsptestutil::new_lsp_client(
-            lsptestutil::server_setup("/home/projects", files(&[])),
-            None,
-            None,
-        );
-
-        let (message, result) = client.send_request(
-            &lsproto::INITIALIZE_INFO,
-            lsproto::InitializeParams {
-                capabilities: Some(lsproto::ClientCapabilities::default()),
-                ..Default::default()
-            },
-        );
-        assert!(message.error.is_none(), "Initialize failed");
-        // Go dereferences the `*InitializeResult`.
-        let result = result.flatten().expect("Initialize failed");
-        let kinds = result
-            .capabilities
-            .and_then(|capabilities| capabilities.code_action_provider)
-            .and_then(|provider| provider.code_action_options)
-            .and_then(|options| options.code_action_kinds)
-            .expect("expected code action kinds");
+        let kinds = initialize_code_action_kinds_answer();
         assert_eq!(kinds, expected_code_action_kinds());
+        // PORT: the default (no `TSC_RS_EFFECT`) is Go's list.
+        if std::env::var_os(ts_goport::effect::SWITCH_ENV).is_none() {
+            assert!(!kinds.contains(&lsproto::CodeActionKind::REFACTOR_REWRITE));
+        }
+    }
+}
+
+effect_child_test! {
+    // PORT: not in Go. With the Effect extension on, the list has
+    // `refactor.rewrite` (effect-tsgo 0.51.1 patch 017).
+    fn initialize_code_action_kinds_with_the_effect_extension() {
+        let kinds = initialize_code_action_kinds_answer();
+        assert_eq!(kinds, expected_code_action_kinds());
+        assert_eq!(kinds[1], lsproto::CodeActionKind::REFACTOR_REWRITE);
     }
 }
 

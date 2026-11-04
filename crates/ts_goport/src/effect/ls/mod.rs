@@ -17,7 +17,8 @@
 //! | 018, 027 | `ls/autoimport/view.rs` `new_view`, `ls/autoimport/fix.rs` `get_fixes` and `edits` | [`autoimportstyle::new_view_fix_transformer`] |
 //!
 //! Every hook returns its input at once when the program has no Effect
-//! plugin, as in Go. A standalone API process (`tsgo --api`) has the hooks
+//! plugin, as in Go, and so when the Effect extension is off (the default,
+//! `effect::switch_on`: the options then carry no Effect plugin). A standalone API process (`tsgo --api`) has the hooks
 //! off unless `TSGO_EFFECT_API=1` (`rulerunner::enabled_options`), as for
 //! the rules.
 //!
@@ -27,9 +28,10 @@
 //! E5b, E5c), the completions (E6), the Layer hover (E7), the document
 //! symbols (E8) and the refactor framework with all 21 refactors (E9a to
 //! E9d). Patch 017 (`refactor.rewrite` in the server's code action kinds) is
-//! in `lsp/server.rs` `supported_code_action_kinds`, always on (decision D1
-//! option B), so the lightbulb, the quick fix menu and the editor
-//! "Refactor..." menu show the Effect refactors.
+//! in `lsp/server.rs` `supported_code_action_kinds`, on whenever the Effect
+//! extension is on (decision D1 option B; off by default, perf-rearch E0),
+//! so the lightbulb, the quick fix menu and the editor "Refactor..." menu
+//! show the Effect refactors.
 
 use std::sync::LazyLock;
 

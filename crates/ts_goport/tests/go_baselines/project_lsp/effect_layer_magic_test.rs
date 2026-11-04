@@ -162,7 +162,7 @@ fn whole_line(title: &str, name: &str, line: u32, end: u32, text: &str) -> Vec<A
     )]
 }
 
-child_test! {
+effect_child_test! {
     // Prepare: on the name of `app` and on a layer inside its call, the
     // leaves become an array cast to the Layer of the new services, with the
     // services that `app` already provides in a comment. Build: on `built`,
@@ -205,7 +205,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Without the plugin the provider gives no refactor.
     fn no_layer_magic_without_the_plugin() {
         let (_session, service) = service("");
