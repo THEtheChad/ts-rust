@@ -216,3 +216,152 @@ A pre-existing extra hash is a separate 3 ms: `cache_source_file` hashes the tex
 | 28 | head | 7 | 0 | 0.34→0.40 (3.02) | 399.0 | 1.38 |
 
 bench.sh also made one unrecorded warm-up run per side; it excluded no run (all attempts 0).
+
+## Revision after Astra's S1a review (fixes at `265c262a2`, `98f94361a`)
+
+### Fixes
+- **1 (high): validate uncached lookups at demand.**
+  - **Check:** a first-load check makes every `file_exists`, `directory_exists` and `realpath` that the snapshot's lookup cache has no answer for through that cache, as the serial loader's own call would. The calls run in call order, and the check stops at the first difference, so an answer's reads happen only after every lookup before them agreed.
+  - **Rejection:** a rejected answer leaves only a serial prefix (the lookups it made, and at most the read the serial loader would make at that point).
+  - **Seeds removed:** the validating calls store the lookups themselves.
+  - **Package.json cache:** a taken first-load answer's package.json lookups go into the loader's real package.json cache as pending reads, with the text the check read on the snapshot. The `InfoCache` then holds a serial load's entries; each text is copied once per load (`98f94361a`).
+  - **Disk-change tests:** `resolveahead_test.rs` has three tests whose disk changes between the parse workers' answers and the loader's check. `Mode::Force` waits for the idle parse workers, then a hook mutates the disk: a nearby package appears while the ancestor package.json changes, a resolved file is deleted, a node_modules symlink is repointed. Each is compared with a serial load whose disk changes at the same point. The comparison covers the program, resolutions, seen files, missing directories, cached files with hashes, the lookup cache, cached directories and aliases, and the test requires rejections.
+  - **They pass, and catch the bug:** all 26 resolve-ahead tests pass. With validation removed (a mutant build), all three new tests fail.
+- **2 (medium): strict proof.**
+  - **Dump:** it now records full diagnostics (resolution and processing), type-reference resolved and original paths, include reasons and traces, and the resolver's own caches (module and type-reference answers, and the real `InfoCache` with pending reads parsed) apart from the `package_json_cache_entries` union.
+  - **Session recorder:** `load-dump-session.mjs` records every server request, notification and response payload in full (only `window/logMessage`, which carries timings, is left out).
+  - **New sessions:** auto-import completion plus `completionItem/resolve`, cancellation, and file-system mutation on a scratch copy.
+  - **Comparison:** `compare-requests.py` is byte for byte with no normalization. `dump-sections.py` compares dumps section by section and separates sections that vary without S1a too.
+- **3 (low):** missing keys are collected only when the debug log is on.
+
+### Dump equality (`dumps4`, bin `98f94361a` release)
+18 scenarios, each run with S1a on twice, off twice, and once with resolve ahead disabled entirely.
+- **Protocol:** byte-identical across all runs of every scenario, for all payloads.
+- **First-load sections:** identical in all 18, including against the serial loader.
+- **Sections that vary without S1a too:**
+  - the auto-import snapshot (t3-web: 4 different values in 5 S1a-off runs, and 4 in 5 S1a-on runs, with an overlap);
+  - keyed second loads (umami-fsmut, hono-edit), whose lookup cache and `InfoCache` vary run to run with S1a off as well;
+  - serial-only differences after keyed loads, which predate S1a (keyed loads attach the job's lookups).
+- **Earlier bin:** the run on `265c262a2` (`dumps3`) agrees.
+
+### Parity
+**PARITY OK** on bin `98f94361a`.
+
+| Tier | Result |
+|---|---|
+| cli | 170 MATCH |
+| tests | 139,893 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`) |
+| lsp | 2,548 MATCH, 53 GO-UNSTABLE |
+| fuzz | 29,955 MATCH, 1 known DIFF |
+| corpus | 12,727 MATCH |
+
+- **First run on `265c262a2` failed.** It printed PARITY FAIL on 8 `pkgjson-overlay` items, all `rs-nondet`: only tsc-rs's first of three runs differed, with an extra `workspace/diagnostic/refresh` at load 40–56. Re-running that session alone gave 34/34 MATCH all six times (three with S1a on, three off).
+- **Second run on `265c262a2`:** PARITY OK, with 1 rs-nondet `references` item that the base already has as GO-UNSTABLE.
+
+### What fix 1 costs
+**The exact validation takes back most of S1a's saving.**
+
+Loader-thread CPU in `process_all_program_files` (samply):
+
+| Build | Loader CPU | Of which `resolve_module_name` |
+|---|---|---|
+| S1a before fix 1 | 275 ms | 82 ms |
+| fixed bin, S1a on | 318–319 ms | 110–116 ms |
+| fixed bin, S1a off | 344 ms | 157 ms |
+
+- **What it costs:** the validating lookups are real OS calls (`OverlayFS::file_exists`, `directory_exists`, `realpath`) made on the loader thread, as the serial loader makes them. They are about 30 ms of the resolution, plus about 8 ms more in package scopes.
+- **What is left:** S1a still skips the resolver logic, and saves about 25 ms of loader CPU against off.
+- **Before the copy fix:** the copy of package.json texts took 29 ms more (`265c262a2`, fixed in `98f94361a`).
+
+ttfd (umami, s1a-ttfd.py, 9 rounds, runs repeated when load after > 2.0; the machine was busy with other agents, so the spread is wide):
+
+| side | n | ttfd median [range] | program update | loader (median, min) |
+|---|---|---|---|---|
+| Go | 9 | 295.5 [287.9–430.7] | 235.6 | – |
+| perf head | 9 | 433.0 [405.1–625.3] | 388.7 | – |
+| S1a before fix 1 (`a76811e51`) | 9 | 451.7 [334.2–526.3] | 383.5 | 318.9, 244.2 |
+| fixed bin, S1a off | 9 | 433.5 [410.3–719.0] | 388.2 | 327.5, 315.1 |
+| fixed bin, S1a on | 9 | 436.9 [395.3–685.0] | 396.4 | 331.5, 302.3 |
+
+- **Idle reference:** in the idle window of the first timing run, S1a before fix 1 was 331.7 against head 407.5.
+- **Today's medians:** they do not separate the tsc-rs sides beyond noise. The minimums, and the in-process loader times taken in the same runs, show the fixed S1a about 10–25 ms below off and about 60 ms above S1a before fix 1.
+- **Stopped runs:** `ttfd-ab2` (23 runs) and `ttfd-ab3-stopped` (15 runs). I stopped them to rebuild the bin or because of noise; one run in `ttfd-ab2` overlapped a profile I took. Their manifests are kept in `~/.cache/perf-rearch/s1a/`.
+
+### Acceptance (fixed bin, S1a on, 9 timed runs)
+- Taken: 9,273 (median) of 9,393. Rejected: 0. Missing: 120.
+- Why missing, unchanged: about 107–114 never resolved by a worker (synthetic `react/jsx-runtime`, CommonJS-mode keys), the rest late.
+
+### What it means for the next lanes
+Exact validation moves the cost from the resolver to the lookups themselves. Ways to win it back:
+- **Make the lookups cheaper:** a single `statx` per path, or asking the overlay directly.
+- **Move the loader off the critical path (S4).** The parse workers already make the same OS calls in parallel.
+- **Do fewer:** skip calls already checked, which root has planned.
+
+The answer-level design cannot beat the serial loader by much while each lookup must be made again on the loader thread.
+#### Sample manifest C: s1a-ttfd.py, REPEAT_LOAD=2, `/home/agent/.cache/perf-rearch/s1a/ttfd-ab4/manifest.jsonl`
+
+| # | label | round | attempt | load before→after | ttfd ms | program update ms | loader ms | taken/missing/rejected | kept |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | go | 0 | 0 | 1.40→1.93 | 299.3 | 240.8 | - | - | yes |
+| 2 | head | 0 | 0 | 1.38→1.75 | 625.3 | 567.9 | - | - | yes |
+| 3 | s1a-old | 0 | 0 | 1.41→1.46 | 498.0 | 437.3 | 370.35 | 9284/109/0 | yes |
+| 4 | fix-off | 0 | 0 | 1.46→2.22 | 516.7 | 471.3 | 411.65 | 0/0/0 | EXCLUDED: load after 2.22 > 2.0 |
+| 5 | fix-off | 0 | 1 | 1.40→2.25 | 667.1 | 595.8 | 511.50 | 0/0/0 | EXCLUDED: load after 2.25 > 2.0 |
+| 6 | fix-off | 0 | 2 | 1.49→1.48 | 476.1 | 434.6 | 370.00 | 0/0/0 | yes |
+| 7 | fix-on | 0 | 0 | 1.48→1.36 | 398.8 | 358.3 | 302.86 | 9237/156/0 | yes |
+| 8 | head | 1 | 0 | 1.36→2.54 | 592.8 | 527.0 | - | - | EXCLUDED: load after 2.54 > 2.0 |
+| 9 | head | 1 | 1 | 1.41→1.30 | 430.5 | 388.7 | - | - | yes |
+| 10 | s1a-old | 1 | 0 | 1.30→1.84 | 526.3 | 466.5 | 408.68 | 9249/144/0 | yes |
+| 11 | fix-off | 1 | 0 | 1.43→1.31 | 420.9 | 378.1 | 324.83 | 0/0/0 | yes |
+| 12 | fix-on | 1 | 0 | 1.31→2.57 | 479.8 | 438.3 | 375.89 | 9284/109/0 | EXCLUDED: load after 2.57 > 2.0 |
+| 13 | fix-on | 1 | 1 | 1.43→1.32 | 395.9 | 354.3 | 302.30 | 9266/127/0 | yes |
+| 14 | go | 1 | 0 | 1.32→2.17 | 389.6 | 314.5 | - | - | EXCLUDED: load after 2.17 > 2.0 |
+| 15 | go | 1 | 1 | 1.43→1.31 | 291.8 | 230.8 | - | - | yes |
+| 16 | s1a-old | 2 | 0 | 1.31→1.53 | 347.5 | 305.4 | 247.99 | 9235/158/0 | yes |
+| 17 | fix-off | 2 | 0 | 1.45→1.34 | 423.3 | 380.5 | 322.05 | 0/0/0 | yes |
+| 18 | fix-on | 2 | 0 | 1.34→1.55 | 685.0 | 589.2 | 543.72 | 9265/128/0 | yes |
+| 19 | go | 2 | 0 | 1.39→1.35 | 295.5 | 235.6 | - | - | yes |
+| 20 | head | 2 | 0 | 1.35→1.65 | 501.0 | 455.0 | - | - | yes |
+| 21 | fix-off | 3 | 0 | 1.49→3.29 | 417.0 | 375.5 | 328.44 | 0/0/0 | EXCLUDED: load after 3.29 > 2.0 |
+| 22 | fix-off | 3 | 1 | 1.39→1.28 | 410.3 | 368.9 | 315.14 | 0/0/0 | yes |
+| 23 | fix-on | 3 | 0 | 1.28→1.77 | 523.8 | 478.2 | 406.37 | 9285/108/0 | yes |
+| 24 | go | 3 | 0 | 1.38→1.27 | 312.6 | 251.1 | - | - | yes |
+| 25 | head | 3 | 0 | 1.27→1.81 | 421.3 | 377.3 | - | - | yes |
+| 26 | s1a-old | 3 | 0 | 1.47→2.00 | 435.2 | 385.1 | 301.91 | 9283/110/0 | yes |
+| 27 | fix-on | 4 | 0 | 1.38→1.27 | 436.9 | 396.4 | 331.51 | 9285/108/0 | yes |
+| 28 | go | 4 | 0 | 1.27→2.21 | 298.2 | 237.7 | - | - | EXCLUDED: load after 2.21 > 2.0 |
+| 29 | go | 4 | 1 | 1.46→1.34 | 290.5 | 230.6 | - | - | yes |
+| 30 | head | 4 | 0 | 1.34→2.83 | 703.0 | 644.0 | - | - | EXCLUDED: load after 2.83 > 2.0 |
+| 31 | head | 4 | 1 | 1.38→1.27 | 417.2 | 374.2 | - | - | yes |
+| 32 | s1a-old | 4 | 0 | 1.27→2.05 | 638.0 | 571.4 | 507.55 | 9282/111/0 | EXCLUDED: load after 2.05 > 2.0 |
+| 33 | s1a-old | 4 | 1 | 1.47→3.60 | 537.0 | 487.0 | 420.84 | 9210/183/0 | EXCLUDED: load after 3.6 > 2.0 |
+| 34 | s1a-old | 4 | 2 | 1.44→1.96 | 334.2 | 293.0 | 244.23 | 9248/145/0 | yes |
+| 35 | fix-off | 4 | 0 | 1.48→2.01 | 423.5 | 382.8 | 318.28 | 0/0/0 | EXCLUDED: load after 2.01 > 2.0 |
+| 36 | fix-off | 4 | 1 | 1.44→1.33 | 418.7 | 376.7 | 327.52 | 0/0/0 | yes |
+| 37 | go | 5 | 0 | 1.33→1.30 | 430.7 | 350.4 | - | - | yes |
+| 38 | head | 5 | 0 | 1.30→1.36 | 569.0 | 516.0 | - | - | yes |
+| 39 | s1a-old | 5 | 0 | 1.36→1.33 | 492.0 | 435.3 | 381.92 | 9198/195/0 | yes |
+| 40 | fix-off | 5 | 0 | 1.33→1.30 | 719.0 | 663.0 | 598.44 | 0/0/0 | yes |
+| 41 | fix-on | 5 | 0 | 1.30→1.39 | 497.5 | 455.6 | 392.91 | 9241/152/0 | yes |
+| 42 | head | 6 | 0 | 1.39→1.28 | 433.0 | 388.6 | - | - | yes |
+| 43 | s1a-old | 6 | 0 | 1.28→1.26 | 456.3 | 383.5 | 318.89 | 9284/109/0 | yes |
+| 44 | fix-off | 6 | 0 | 1.26→1.24 | 571.1 | 516.9 | 463.23 | 0/0/0 | yes |
+| 45 | fix-on | 6 | 0 | 1.24→1.22 | 517.9 | 451.6 | 411.71 | 9273/120/0 | yes |
+| 46 | go | 6 | 0 | 1.22→1.36 | 430.1 | 342.7 | - | - | yes |
+| 47 | s1a-old | 7 | 0 | 1.36→1.33 | 451.7 | 379.2 | 326.42 | 9285/108/0 | yes |
+| 48 | fix-off | 7 | 0 | 1.33→1.39 | 528.0 | 485.9 | 427.94 | 0/0/0 | yes |
+| 49 | fix-on | 7 | 0 | 1.39→1.60 | 398.8 | 356.3 | 303.60 | 9285/108/0 | yes |
+| 50 | go | 7 | 0 | 1.40→3.63 | 361.5 | 296.0 | - | - | EXCLUDED: load after 3.63 > 2.0 |
+| 51 | go | 7 | 1 | 1.45→1.33 | 287.9 | 228.4 | - | - | yes |
+| 52 | head | 7 | 0 | 1.33→1.62 | 508.4 | 455.5 | - | - | yes |
+| 53 | fix-off | 8 | 0 | 1.49→1.37 | 433.5 | 388.2 | 324.53 | 0/0/0 | yes |
+| 54 | fix-on | 8 | 0 | 1.37→2.79 | 442.2 | 385.4 | 315.98 | 9143/250/0 | EXCLUDED: load after 2.79 > 2.0 |
+| 55 | fix-on | 8 | 1 | 1.47→2.48 | 579.4 | 530.0 | 450.05 | 9283/110/0 | EXCLUDED: load after 2.48 > 2.0 |
+| 56 | fix-on | 8 | 2 | 1.38→1.27 | 395.3 | 352.6 | 304.17 | 9285/108/0 | yes |
+| 57 | go | 8 | 0 | 1.27→2.05 | 531.2 | 438.8 | - | - | EXCLUDED: load after 2.05 > 2.0 |
+| 58 | go | 8 | 1 | 1.48→1.37 | 288.2 | 226.6 | - | - | yes |
+| 59 | head | 8 | 0 | 1.37→2.92 | 738.5 | 679.8 | - | - | EXCLUDED: load after 2.92 > 2.0 |
+| 60 | head | 8 | 1 | 1.39→1.28 | 405.1 | 361.0 | - | - | yes |
+| 61 | s1a-old | 8 | 0 | 1.28→3.02 | 348.0 | 306.0 | 244.85 | 9260/133/0 | EXCLUDED: load after 3.02 > 2.0 |
+| 62 | s1a-old | 8 | 1 | 1.42→3.15 | 345.0 | 301.5 | 251.73 | 9223/170/0 | EXCLUDED: load after 3.15 > 2.0 |
+| 63 | s1a-old | 8 | 2 | 1.48→1.36 | 343.3 | 299.7 | 248.57 | 9269/124/0 | yes |
