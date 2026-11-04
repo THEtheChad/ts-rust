@@ -115,6 +115,10 @@ if (init.error) throw new Error(JSON.stringify(init.error));
 c.notify("initialized", {});
 const [a] = process.env.S1A_FILE ? [join(root, process.env.S1A_FILE)] : pickFiles(root, 6);
 const diags = {};
+// S1A_SETTLE_MS: wait this long before each scenario's later step (the completion of
+// autoimport, the edit of edit), so background work of the first load (the auto-import
+// registry) settles: timing then does not decide what a later snapshot holds.
+const settle = () => new Promise((r) => setTimeout(r, Number(process.env.S1A_SETTLE_MS ?? 0)));
 if (scenario === "open") {
   c.open(a); diags.a = await c.diag(a);
 } else if (scenario === "second") {
@@ -135,11 +139,13 @@ if (scenario === "open") {
   c.open(a); diags.a = await c.diag(a);
 } else if (scenario === "edit") {
   c.open(a); diags.a = await c.diag(a);
+  await settle();
   const text = readFileSync(a, "utf8");
   c.notify("textDocument/didChange", { textDocument: { uri: uri(a), version: 2 }, contentChanges: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, text: 'import "./__s1a_edit_missing";\n' }] });
   diags.a2 = await c.diag(a);
 } else if (scenario === "autoimport") {
   c.open(a); diags.a = await c.diag(a);
+  await settle();
   const text = readFileSync(a, "utf8") + "\nconst s1aProbe = use";
   c.notify("textDocument/didChange", { textDocument: { uri: uri(a), version: 2 }, contentChanges: [{ text }] });
   const lines = text.split("\n");
@@ -159,6 +165,7 @@ if (scenario === "open") {
   diags.a = await c.diag(a);
 } else if (scenario === "fsmut") {
   c.open(a); diags.a = await c.diag(a);
+  await settle();
   const dir = dirname(a);
   const created = join(dir, "__s1a_created.ts");
   writeFileSync(created, "export const s1aCreated = 1;\n");

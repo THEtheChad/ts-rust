@@ -6,7 +6,8 @@
 # section by section, and the whole message stream (every message in both directions, in
 # order, raw; load-dump-session.mjs <out>.stream). A record that varies between the two
 # S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
-# A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]".
+# A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]". S1A_ONLY=<regex> runs the
+# cases whose name matches.
 # usage: s1a-dumps.sh <tsgo bin> <out dir>
 set -u
 bin=$1; out=$2; mkdir -p "$out"
@@ -41,15 +42,19 @@ for c in "${cases[@]}"; do
   # More runs where the session has work that varies without S1a (background auto-import,
   # keyed second loads): a record that varies between the off runs is inconclusive, and
   # more off runs make fewer records so.
-  case $scen in autoimport|fsmut|edit) reps=6 ;; *) reps=${S1A_REPS:-3} ;; esac
+  # Their later step also waits 4 s (S1A_SETTLE_MS) so the first load's background work
+  # (the auto-import registry) settles: a faster first load otherwise moves that work into
+  # another snapshot, which is timing, not state (shown with and without the wait).
+  case $scen in autoimport|fsmut|edit) reps=6; settle=4000 ;; *) reps=${S1A_REPS:-3}; settle=0 ;; esac
+  [[ -n ${S1A_ONLY:-} && ! $name =~ $S1A_ONLY ]] && continue
   offs=(); ons=()
   for rep in $(seq 1 "$reps"); do
     for v in 1 0; do
-      S1A_FILE=$file S1A_FILE2=$file2 GOPORT_FIRST_LOAD_AHEAD=$v GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
+      S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_FIRST_LOAD_AHEAD=$v GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
       if [[ $v == 1 ]]; then ons+=("$out/$name-$v-$rep"); else offs+=("$out/$name-$v-$rep"); fi
     done
   done
-  S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
+  S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
   stats=$(python3 -I -c 'import json,re,sys
 for f in sys.argv[1:]:
     s=json.load(open(f))["stderr"]
