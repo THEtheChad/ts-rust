@@ -819,8 +819,9 @@ os_child_test! {
     /// took worker answers (debug builds also check each taken answer
     /// against a fresh resolution, `debug_check_answer`).
     fn a_first_load_takes_parse_worker_answers() {
+        // One load: the open file's unsaved text imports a file in a
+        // directory that is not on disk.
         let open_with_unsaved = |session: &Rc<Session>, root: &str| {
-            open(session, &file_uri(root, "src/newdir/z.ts"), "export const z = 5;");
             let text = format!("import {{ z }} from \"./newdir/z\";\n{INDEX}");
             open(session, &file_uri(root, "src/index.ts"), &text);
             program(session, &file_uri(root, "src/index.ts"));
@@ -831,12 +832,14 @@ os_child_test! {
         assert_eq!(off, serial);
         let off_stats = off_stats.expect("no resolve-ahead load");
         assert!(!off_stats.first_load, "{off_stats:?}");
+        assert_eq!(off_stats.keys, 0, "not a first load: {off_stats:?}");
         assert_eq!(off_stats.loader.taken, 0, "{off_stats:?}");
         let mut taken = 0;
         for attempt in 0..20 {
             let (on, stats) = run_first_load(&format!("first{attempt}"), true, &open_with_unsaved);
             assert_eq!(on, serial, "attempt {attempt}");
             let stats = stats.expect("no resolve-ahead load");
+            assert_eq!(stats.keys, 0, "not a first load: {stats:?}");
             assert_eq!(stats.loader.rejected, 0, "{stats:?}");
             if !stats.first_load {
                 // No parse workers here (one core): nothing to take.
