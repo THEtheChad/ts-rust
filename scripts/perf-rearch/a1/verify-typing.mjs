@@ -59,6 +59,10 @@ if (docs[1]) {
 }
 await client.shutdown();
 const lines = existsSync(opt.log) ? readFileSync(opt.log, "utf8").trim().split("\n").filter(Boolean) : [];
+if (lines.length === 0) {
+  console.error(`verify-typing.mjs: ${opt.bin} wrote no verify log (not a diagnostics feature build?)`);
+  process.exit(1);
+}
 const count = (kind) => lines.filter((l) => l.startsWith(`goport verify-reuse: ${kind}`)).length;
 const [ok, mismatch, error] = ["OK", "MISMATCH", "ERROR"].map(count);
 const ms = lines.map((l) => Number(/(\d+) ms\)/.exec(l)?.[1])).filter((n) => !Number.isNaN(n));

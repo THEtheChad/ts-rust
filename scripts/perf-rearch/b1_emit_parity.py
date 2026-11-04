@@ -404,6 +404,9 @@ def main() -> int:
                     "GOPORT_EMIT_PHASE_TIMES": "1",
                 })
                 err = ri["stderr"].decode("utf-8", "replace")
+                if REPORT_HEADER not in err and not (log.exists() and log.stat().st_size):
+                    sys.exit(f"b1_emit_parity.py: {binary} printed no phase report and wrote no call "
+                             f"log ({name}): not a diagnostics feature build?")
                 try:
                     rest, routes = split_report(err)
                     (case_dir / f"{label}.phases").write_text(err)

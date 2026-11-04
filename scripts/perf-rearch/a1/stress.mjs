@@ -91,6 +91,10 @@ for (let i = 0; i < n && !exited; i++) {
   }
 }
 const lines = stats();
+if (opt.stats !== "/dev/null" && lines.length === 0) {
+  console.error(`stress.mjs: ${opt.bin} wrote no GOPORT_REUSE_STATS lines (not a diagnostics feature build?)`);
+  process.exitCode = 1;
+}
 const count = (k) => lines.filter((l) => l.startsWith(`outcome=${k} `)).length;
 const died = exited;
 await client.shutdown();

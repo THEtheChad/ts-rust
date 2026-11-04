@@ -138,6 +138,9 @@ def main() -> int:
                 env2 = dict(env)
                 env2["GOPORT_EMIT_PHASE_TIMES"] = "1"
                 wall, *_rest, err = run(binary, env2, project, extra, rs)
+                if "emit phase times (GOPORT_EMIT_PHASE_TIMES)" not in err:
+                    sys.exit(f"b1_time.py: {binary} printed no phase report for {project} "
+                             "(not a diagnostics feature build?)")
                 emit(f"## phases {project} {label} wall={wall:.3f}\n{err.rstrip()}")
     return 0
 
