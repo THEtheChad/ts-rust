@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# L1 dump-equality proof (loader v2, the per-load OS view): each scenario runs with
-# GOPORT_LOAD_VIEW=1 and =0 (S1a on in both)
+# L1 dump-equality proof (loader v2, the per-load OS view): each scenario runs with the
+# view's bin ("on") and with the base commit's bin ("off": no view; the base is the other
+# side of the A/B, not a switch)
 # (3 times each, 6 for autoimport, fsmut and edit sessions; S1A_REPS sets the default;
 # interleaved) and once with GOPORT_RESOLVE_AHEAD=0 (the serial loader, no
 # resolve ahead at all), and compares record by record (dump-sections.py): the load dumps
@@ -9,9 +10,9 @@
 # S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
 # A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]". S1A_ONLY=<regex> runs the
 # cases whose name matches.
-# usage: l1-dumps.sh <tsgo bin> <out dir>  (S1A_ONLY=<regex> picks cases; L1_REPS (2), L1_REPS_VARY (3): runs per side)
+# usage: l1-dumps.sh <tsgo bin> <base tsgo bin> <out dir>  (S1A_ONLY=<regex> picks cases; L1_REPS (2), L1_REPS_VARY (3): runs per side)
 set -u
-bin=$(realpath "$1"); mkdir -p "$2"; out=$(realpath "$2")
+bin=$(realpath "$1"); base=$(realpath "$2"); mkdir -p "$3"; out=$(realpath "$3")
 here=$(cd "$(dirname "$0")" && pwd)
 P=~/.cache/perf-rearch/projects
 U=~/.cache/lspdiff/projects/umami
@@ -51,11 +52,11 @@ for c in "${cases[@]}"; do
   offs=(); ons=()
   for rep in $(seq 1 "$reps"); do
     for v in 1 0; do
-      S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_LOAD_VIEW=$v GOPORT_LOAD_TIMES=1 GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$bin" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
+      S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_LOAD_TIMES=1 GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$( [[ $v == 1 ]] && echo "$bin" || echo "$base" )" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
       if [[ $v == 1 ]]; then ons+=("$out/$name-$v-$rep"); else offs+=("$out/$name-$v-$rep"); fi
     done
   done
-  S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$bin" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
+  S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$base" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
   stats=$(python3 -I -c 'import json,re,sys
 for f in sys.argv[1:]:
     s=json.load(open(f))["stderr"]
