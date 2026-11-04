@@ -259,7 +259,13 @@ impl Request {
 
 /// Runs this binary as a verify child on `request` and returns its dump.
 fn run_child(request: &Request) -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    // On Linux `/proc/self/exe` runs this binary even when a build has
+    // replaced the file since the server started.
+    let exe = if cfg!(target_os = "linux") && std::path::Path::new("/proc/self/exe").exists() {
+        std::path::PathBuf::from("/proc/self/exe")
+    } else {
+        std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?
+    };
     let mut child = std::process::Command::new(exe)
         .env(CHILD_ENV, "1")
         .env_remove("GOPORT_VERIFY_REUSE")
