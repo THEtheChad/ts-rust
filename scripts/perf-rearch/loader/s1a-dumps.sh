@@ -55,13 +55,19 @@ for f in sys.argv[1:]:
   ds=$(h "$out/$name-serial.dump"); rs=$(req "$out/$name-serial.json")
   if [[ $ds == "$d0a" && $rs == "$r0a" ]]; then serial="serial=SAME"; else serial="serial=DIFF($ds)"; fi
   lines=$(wc -l < "$out/$name-1a.dump")
+  prev_fail=$fail
   if [[ $d1a == "$d0a" && $d1b == "$d0a" && $d0b == "$d0a" && $r1a == "$r0a" && $r1b == "$r0a" && $r0b == "$r0a" ]]; then
     echo "SAME $name dump=$d0a lines=$lines requests=$r0a $serial"
     rm -f "$out/$name"-{1a,1b,0b}.dump; gzip -f "$out/$name-0a.dump"
     [[ $serial == serial=SAME ]] && rm -f "$out/$name-serial.dump" || gzip -f "$out/$name-serial.dump"
   else
     echo "DIFF $name dump on=$d1a,$d1b off=$d0a,$d0b requests on=$r1a,$r1b off=$r0a,$r0b"; fail=1
-    python3 -I "$here/compare-requests.py" "$out/$name-0a.json" "$out/$name-0b.json" "$out/$name-1a.json" "$out/$name-1b.json" | sed 's/^/    /' 
+    python3 -I "$here/compare-requests.py" "$out/$name-0a.json" "$out/$name-0b.json" "$out/$name-1a.json" "$out/$name-1b.json" | sed 's/^/    /'
+    # Section by section: a section that the S1a-off runs do not agree on is
+    # UNSTABLE without S1a; only an S1A-DIFF section (off stable, on differs) fails.
+    python3 -I "$here/dump-sections.py" "$out/$name-0a.dump" "$out/$name-0b.dump" "$out/$name-1a.dump" "$out/$name-1b.dump" "$out/$name-serial.dump" | grep -v '^same' | sed 's/^/    /'
+    if python3 -I "$here/dump-sections.py" "$out/$name-0a.dump" "$out/$name-0b.dump" "$out/$name-1a.dump" "$out/$name-1b.dump" | grep -q '^SECTIONS OK' \
+      && [[ $r1a == "$r0a" && $r1b == "$r0a" && $r0b == "$r0a" ]]; then fail=$prev_fail; echo "  -> no S1a difference (only sections that differ without S1a too)"; fi
   fi
   echo "  stats(on, run a): $stats"
 done
