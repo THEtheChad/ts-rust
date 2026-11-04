@@ -102,3 +102,10 @@ items (load_times, LoadTimes, PhaseTimer, ThreadUsage, monotonic_ms, JobDiag, Vi
 hooks, loadview/load_view_scope `diag`, note_os_call, ViewCounts), 45 of the production
 reconciliation; no `goport load-*` or `GOPORT_LOAD_*` string; `GOPORT_LOAD_TIMES=1` prints
 nothing. The diagnostics build has 124 matches.
+
+ttfd after round 2 (umami, idle, `--profile goport` with 1.95.0, 7 runs per side, 0 excluded;
+manifest `~/.cache/perf-rearch/l1/ttfd-0de56c592/manifest.jsonl`): Go 306.1 [274.1–407.9],
+base `09ca99ee2` 406.6 [383.7–555.6], L1 `0de56c592` **287.4** [276.8–344.3]; program update
+246.5 / 365.9 / 243.6. Diagnostics build (counts only): loader 199.4 ms (stime 44.5), hit rate
+0.930, reconciliation 28.4 ms on the pool, 0 events. Parity full on `0de56c592` against the C1
+base: PARITY OK (0 lost of 187,119); the 20 L1 tests ran in its tests tier.
