@@ -106,14 +106,14 @@ fn standalone_codes() -> (Vec<i32>, Vec<i32>) {
     codes
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     fn standalone_api_answers_without_effect_rules() {
         assert_eq!(standalone_codes(), (vec![TS2322], vec![]));
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "1")];
     fn standalone_api_with_effect_api_answers_as_the_reference() {
         assert_eq!(
@@ -123,7 +123,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     fn language_server_keeps_effect_rules() {
         let (project_session, _) =
             projecttestutil::setup(files(&[(CONFIG, CONFIG_TEXT), (INDEX, INDEX_TEXT)]));
@@ -184,7 +184,7 @@ fn unused_parameter_suggestions() -> Vec<(i32, i32, Category)> {
 // queries mark a type-predicate parameter referenced, so before the fix a
 // later suggestion request lost its TS6133 (the reference does too). The
 // language server asks for the semantic diagnostics first.
-child_test! {
+effect_child_test! {
     fn language_server_reports_unused_type_predicate_parameters() {
         let (project_session, _) = projecttestutil::setup(files(&[
             (UNUSED_CONFIG, UNUSED_CONFIG_TEXT),
@@ -208,7 +208,7 @@ child_test! {
 
 // The same through the API, with the rules (`TSGO_EFFECT_API=1`):
 // getSemanticDiagnostics, then getSuggestionDiagnostics.
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "1")];
     fn standalone_api_with_effect_api_reports_unused_type_predicate_parameters() {
         let (init, _) = projecttestutil::get_session_init_options(
@@ -321,7 +321,7 @@ fn effect_build_info() -> (String, bool) {
     (build_info_version(true).into_owned(), true)
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     fn standalone_api_build_writes_plain_build_info() {
         let (session, utils) = build_session();
@@ -340,7 +340,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     fn standalone_api_build_checks_tsc_build_info_again() {
         let (session, utils) = build_session();
@@ -364,7 +364,7 @@ child_test! {
 // Effect diagnostics, but the plain version. effect-tsgo sees another
 // version there and builds again. The standalone API without the rules
 // does the same, and does not report the old Effect diagnostics.
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     fn standalone_api_build_checks_build_info_of_an_older_effect_build_again() {
         let (session, utils) = build_session();

@@ -157,7 +157,7 @@ fn quick_fixes(
         .collect()
 }
 
-child_test! {
+effect_child_test! {
     // The disable actions on an indented line: the line action inserts the
     // indented `@effect-diagnostics-next-line` comment at the start of the
     // line, the file action the `@effect-diagnostics` comment at 0:0. Two
@@ -192,7 +192,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Without the plugin the provider gives no action for an Effect code.
     fn no_effect_actions_without_the_plugin() {
         let (_session, service) = service("");
@@ -203,7 +203,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     // A standalone API process without TSGO_EFFECT_API=1 has the Effect
     // actions off, as it has the rules off (`rulerunner::enabled_options`).

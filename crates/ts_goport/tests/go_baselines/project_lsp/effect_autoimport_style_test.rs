@@ -249,7 +249,7 @@ const RUN_PROMISE_EXIT: &str = "runPromiseExit();\n";
 const RUN_PROMISE_EXIT_NAMESPACE: &str =
     "import * as Effect from \"effect/Effect\";\n\nEffect.runPromiseExit();\n";
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_namespace (with "EFFECT" in
     // upper case). The quick fix and the completion both import the module as
     // a namespace and qualify the name. The completion data holds the
@@ -283,7 +283,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_namespaceReexport. The
     // namespace reexport `Effect` of the package index becomes a namespace
     // import of its module, with no qualifier.
@@ -314,7 +314,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestApplySuppressesEffectInternalImport, through the server. The
     // `effect/internal/...` fixes are removed. Without the plugin they stay.
     fn effect_internal_fixes_are_removed() {
@@ -335,7 +335,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_barrel. The fix imports the
     // module from the package barrel, or from the group barrel for a nested
     // module (`effectNestedBarrel`), and qualifies the name.
@@ -363,7 +363,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_testClockWithNamespace.
     fn nested_module_namespace_rewrite() {
         let text = "testClockWith(() => 1);\n";
@@ -389,7 +389,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_testClockWithNamespaceAlongsideNamedImport.
     // The add-to-existing fix becomes a new namespace import line.
     fn add_to_existing_becomes_a_namespace_import() {
@@ -406,7 +406,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go: TestAutoImportEffectStyleConsistency_testClockWithUsesExistingNamespaceImport
     // and TestNewFixTransformerPrefersExistingNamespaceUse. The existing
     // namespace import wins: the only fix adds the qualifier.
@@ -473,7 +473,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // PORT: patch 018 sets the usage position on every AddNew and
     // AddToExisting fix. The port sets it only with the plugin on, so a
     // project without the plugin answers as plain tsgo. With the plugin and
@@ -497,7 +497,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     // A standalone API process without TSGO_EFFECT_API=1 has the Effect
     // hooks off, so the auto-import style does not apply.

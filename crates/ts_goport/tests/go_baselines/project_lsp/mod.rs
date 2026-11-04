@@ -50,6 +50,30 @@ macro_rules! child_test {
     };
 }
 
+/// `child_test!` with the Effect extension on in the child
+/// (`TSC_RS_EFFECT=1`, `ts_goport::effect::switch_on`): it is off by
+/// default (perf-rearch E0), and the Effect tests test it. `env` adds
+/// variables after it.
+macro_rules! effect_child_test {
+    ($(#[$meta:meta])* fn $name:ident() $body:block) => {
+        effect_child_test!(env &[]; $(#[$meta])* fn $name() $body);
+    };
+    (env $env:expr; $(#[$meta:meta])* fn $name:ident() $body:block) => {
+        $(#[$meta])*
+        #[test]
+        fn $name() {
+            let path = concat!(module_path!(), "::", stringify!($name));
+            let test = path.split_once("::").map_or(path, |(_, rest)| rest);
+            let mut env: Vec<(&str, &str)> = vec![(ts_goport::effect::SWITCH_ENV, "1")];
+            env.extend_from_slice($env);
+            crate::support::child::run_test_in_child_with_env(test, &env, || {
+                crate::project_lsp::projecttestutil::install_fs_override();
+                $body
+            });
+        }
+    };
+}
+
 pub(crate) mod api_util;
 pub(crate) mod autoimporttestutil;
 pub(crate) mod lsptestutil;

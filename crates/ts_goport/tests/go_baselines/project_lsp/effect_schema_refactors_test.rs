@@ -212,7 +212,7 @@ fn main_with(old: &str, new: &str) -> String {
 
 const INTERFACE: &str = "export interface User {";
 
-child_test! {
+effect_child_test! {
     // On an interface name: the 3 schemagen refactors come last, in Go's
     // `refactors.All` order. The AST refactors keep the declared types
     // (`name?: string` is `optional(String)`); the structural one reads the
@@ -265,7 +265,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // On a const whose initializer is a Schema: the two opaque refactors
     // rename the const to `UserSchema_` and add the v3 opaque types and the
     // typed const after its statement (the formatted nodes of the base
@@ -311,7 +311,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // A type that refers to itself: the structural schemagen hoists `Tree`
     // only after its members, so each `Array<Tree>` processes `Tree` again
     // until the depth limit (200), and the action inserts the error as the

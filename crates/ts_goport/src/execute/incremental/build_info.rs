@@ -1700,10 +1700,12 @@ impl BuildInfo {
             }
             parse_compiler_options(option, value.clone(), &mut options);
         }
-        // Effect-TS/tsgo patch 028.
+        // Effect-TS/tsgo patch 028. PORT: only with the Effect extension on
+        // (`effect::switch_on`), as for a tsconfig.
         options.effect = self
             .effect
             .as_ref()
+            .filter(|_| crate::effect::switch_on())
             .and_then(crate::effect::etscore::EffectPluginOptions::from_value)
             .map(std::sync::Arc::new);
         options

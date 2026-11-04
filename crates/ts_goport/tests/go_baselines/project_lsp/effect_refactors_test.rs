@@ -122,7 +122,7 @@ fn action(title: &str, name: &str, edits: &[(lsproto::Range, &str)]) -> Action {
     )
 }
 
-child_test! {
+effect_child_test! {
     // A selection of a const name gives wrapWithPipe, toggleTypeAnnotation
     // and toggleLazyConst, in Go's `refactors.All` order. A cursor on a
     // function name gives toggleReturnTypeAnnotation and functionToArrow.
@@ -168,7 +168,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Without the plugin, or with the plugin option `refactors: false`, the
     // provider gives no refactor.
     fn no_refactors_without_the_plugin_or_when_off() {
