@@ -592,6 +592,10 @@ impl FilesParser {
         };
         pool.shared
             .count(|c| c.loader_started = Some(std::time::Instant::now()));
+        // Loader v2 L1: the workers read through the load's OS view.
+        if let Some(view) = crate::frontend::vfs::loadview::current() {
+            let _ = pool.shared.view.set(view);
+        }
         if let Some(cache) = build_host_cache {
             cache.start_load();
             let _ = pool.shared.stats.host.set(cache);
@@ -2963,6 +2967,10 @@ struct PrefetchShared {
     /// Debug counts of `take_prefetched`, kept when `GOPORT_PREFETCH_STATS`
     /// is set and printed to stderr when the pool stops.
     counts: Option<Mutex<PrefetchStats>>,
+    /// Loader v2 L1: the per-load OS view of the loader's load
+    /// (`vfs::loadview`), set with the load. The workers read through it
+    /// from their next job on, and fill it.
+    view: OnceLock<Arc<crate::frontend::vfs::loadview::LoadView>>,
 }
 
 /// What `take_prefetched` gave the loader during one program load.
@@ -3212,6 +3220,7 @@ impl PrefetchShared {
             config,
             stats: Arc::new(SharedStatCache::default()),
             resolve: OnceLock::new(),
+            view: OnceLock::new(),
             counts: std::env::var_os("GOPORT_PREFETCH_STATS").map(|_| {
                 Mutex::new(PrefetchStats {
                     started: Some(std::time::Instant::now()),
@@ -4110,8 +4119,21 @@ pub(crate) static MAPPED_WAIT_FOR_WORKER: Mutex<Vec<String>> = Mutex::new(Vec::n
 fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
     // Go: sys.FS() is bundled.WrapFS(osvfs.FS()). The workers share one
     // stat cache, like the Go parse tasks share the host's cachedvfs.
-    let os_fs = crate::frontend::bundled::wrap_fs(crate::frontend::vfs::osvfs_fs());
-    let fs: Rc<dyn Fs> = Rc::new(WorkerFs {
+    // Loader v2 L1: with the load's OS view, the OS file system of the
+    // worker is the view's worker side (`loadview::ViewFs::worker`), from
+    // the first job after the loader set it.
+    let worker_os = || match shared.view.get() {
+        Some(view) => crate::frontend::bundled::wrap_fs(Rc::new(
+            crate::frontend::vfs::loadview::ViewFs::worker(
+                crate::frontend::vfs::osvfs_fs(),
+                view.clone(),
+            ),
+        )),
+        None => crate::frontend::bundled::wrap_fs(crate::frontend::vfs::osvfs_fs()),
+    };
+    let mut viewed = shared.view.get().is_some();
+    let mut os_fs = worker_os();
+    let mut fs: Rc<dyn Fs> = Rc::new(WorkerFs {
         fs: os_fs.clone(),
         stats: shared.stats.clone(),
         keep_package_jsons: None,
@@ -4174,6 +4196,15 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
                 continue;
             }
             *state = PrefetchState::Running;
+        }
+        if !viewed && shared.view.get().is_some() {
+            viewed = true;
+            os_fs = worker_os();
+            fs = Rc::new(WorkerFs {
+                fs: os_fs.clone(),
+                stats: shared.stats.clone(),
+                keep_package_jsons: None,
+            });
         }
         let started = timed.then(std::time::Instant::now);
         let running = RunningJob(&job);
@@ -4262,6 +4293,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
                     &job,
                     opts.as_ref().unwrap_or(&job.opts),
                     read_names,
+                    viewed,
                 ) {
                     Some((result, names)) => (Some(result), names),
                     None => (None, None),
@@ -5216,6 +5248,15 @@ impl Fs for WorkerFs {
         read
     }
 
+    // Loader v2 L1: a source text through the load's OS view.
+    fn read_file_shared(&self, path: &str) -> Option<crate::frontend::vfs::SharedText> {
+        if !path.ends_with("/package.json") {
+            return self.fs.read_file_shared(path);
+        }
+        let (text, ok) = self.read_file(path);
+        ok.then(|| crate::frontend::vfs::SharedText::new(text))
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), FsError> {
         self.fs.write_file(path, data)
     }
@@ -5654,12 +5695,19 @@ fn prefetch_parse(
     job: &PrefetchJob,
     opts: &SourceFileParseOptions,
     read_names: bool,
+    shared_read: bool,
 ) -> Option<(PrefetchResult, Option<Box<ImportNames>>)> {
     // A bundled lib text is embedded, so it needs no copy. Another text is
     // leaked, as the loader's is, except the text of a freeable file
     // version (`FileText::new`).
     let text: FileText = match crate::frontend::bundled::bundled_text(&job.opts.file_name) {
         Some(text) => text.into(),
+        // Loader v2 L1: through the load's OS view, the text is the view's
+        // `Arc`, which the loader's read gets too (no copy).
+        None if shared_read => {
+            let text = fs.read_file_shared(&job.opts.file_name)?;
+            FileText::from_shared(text.text, job.freeable)
+        }
         None => {
             let (text, ok) = fs.read_file(&job.opts.file_name);
             if !ok {
@@ -5918,7 +5966,11 @@ pub fn take_prefetched(
         return Prefetched::Nothing;
     };
     let unusable = || shared.count(|c| c.unusable.push(opts.file_name.clone()));
-    if text.is_some_and(|text| text != &*worker_text) {
+    // Loader v2 L1: a text read through the per-load OS view is the
+    // worker's `Arc`, so a pointer compare decides first.
+    if text
+        .is_some_and(|text| !FileText::same_allocation(text, &worker_text) && text != &*worker_text)
+    {
         unusable();
         return Prefetched::Nothing;
     }

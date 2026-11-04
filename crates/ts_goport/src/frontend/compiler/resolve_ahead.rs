@@ -381,6 +381,7 @@ impl ResolveAhead {
                     stats: Arc::default(),
                     config: config.clone(),
                     inject_panic: INJECT_PANIC.with(Cell::get),
+                    os_view: crate::frontend::vfs::loadview::current(),
                 })
             });
         let first_load = first_load && job.is_some();
@@ -565,7 +566,7 @@ impl FirstLoadJob {
         let job = &self.0;
         let view = &job.view;
         let fs = Rc::new(AheadFs {
-            os: wrap_fs(osvfs_fs()),
+            os: job.worker_os(),
             job: job.clone(),
         });
         let directory_exists = {
@@ -1071,6 +1072,23 @@ struct Job {
     /// `inject_worker_panic` (tests): each worker panics in the job,
     /// outside its resolutions, after it resolved its keys.
     inject_panic: bool,
+    /// Loader v2 L1: the per-load OS view of the job's load
+    /// (`vfs::loadview`), which the workers read through and fill.
+    os_view: Option<Arc<crate::frontend::vfs::loadview::LoadView>>,
+}
+
+impl Job {
+    /// A worker's OS file system for this job: the OS file system of its
+    /// thread, under the load's OS view when there is one.
+    fn worker_os(&self) -> Rc<dyn Fs> {
+        match &self.os_view {
+            Some(view) => wrap_fs(Rc::new(crate::frontend::vfs::loadview::ViewFs::worker(
+                osvfs_fs(),
+                view.clone(),
+            ))),
+            None => wrap_fs(osvfs_fs()),
+        }
+    }
 }
 
 /// A worker's part of `job`: resolves the next key until none is left, the
@@ -1083,7 +1101,7 @@ fn run_job(job: &Arc<Job>) {
     let view = &job.view;
     let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
     let fs = Rc::new(AheadFs {
-        os: wrap_fs(osvfs_fs()),
+        os: job.worker_os(),
         job: job.clone(),
     });
     let directory_exists = {
@@ -1674,6 +1692,7 @@ mod tests {
                 current_directory: root.to_string(),
             }),
             inject_panic,
+            os_view: None,
         })
     }
 

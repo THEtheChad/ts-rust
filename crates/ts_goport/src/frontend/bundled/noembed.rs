@@ -92,5 +92,8 @@ pub fn bundled_lib_name(path: &str) -> Option<&str> {
 /// which is `osvfs_fs()` here, with no OS override installed (see embed.rs).
 // PORT: not in Go.
 pub fn is_wrapped_os_fs(fs: &Rc<dyn Fs>) -> bool {
-    !os_override_installed() && Rc::ptr_eq(fs, &osvfs_fs())
+    !os_override_installed()
+        && (Rc::ptr_eq(fs, &osvfs_fs())
+            || crate::frontend::vfs::loadview::existing_os_view_fs()
+                .is_some_and(|view| Rc::ptr_eq(fs, &view)))
 }

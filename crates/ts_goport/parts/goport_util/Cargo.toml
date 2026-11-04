@@ -19,6 +19,8 @@ memchr = "=2.8.2"
 num-bigint = "=0.4.6"
 num-traits = "=0.2.19"
 ryu-js = "=1.0.2"
+# vfs/loadview.rs: the hash of a shared file text (as project/overlayfs.rs).
+xxhash-rust = { version = "=0.8.15", features = ["xxh3"] }
 
 # wasm only: frontend/bundled/embed.rs unpacks the libs that build.rs packs.
 # Its LZMA decoder is about twice as fast as lzma-rs's on wasm (lib.dom and

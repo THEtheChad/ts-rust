@@ -5,6 +5,7 @@ pub mod files_parser;
 pub mod host;
 pub mod include_processor;
 pub mod load_dump;
+pub mod load_view_scope;
 pub mod processing_diagnostic;
 pub mod program_lookup;
 pub mod program_new;

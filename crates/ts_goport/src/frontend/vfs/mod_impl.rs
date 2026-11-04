@@ -27,6 +27,16 @@ pub trait Fs {
     // If the file fails to be read, ok will be false.
     fn read_file(&self, path: &str) -> (String, bool);
 
+    /// `read_file` as a shared text with its xxh3-128 hash, `None` when the
+    /// read fails. The OS view (`loadview::ViewFs`) gives the text that its
+    /// workers read with no copy; every other file system makes it from
+    /// `read_file`.
+    // PORT: not in Go (perf, loader v2 L1).
+    fn read_file_shared(&self, path: &str) -> Option<super::SharedText> {
+        let (text, ok) = self.read_file(path);
+        ok.then(|| super::SharedText::new(text))
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), FsError>;
 
     // AppendFile appends data to the file at path, creating it if it does not exist.

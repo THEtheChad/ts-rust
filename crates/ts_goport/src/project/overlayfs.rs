@@ -124,6 +124,25 @@ pub fn new_cached_file(file_name: &str, content: impl Into<Arc<str>>) -> Rc<RefC
     }))
 }
 
+/// `new_cached_file` with the text's known hash (no hash, no copy).
+// PORT: not in Go (perf, loader v2 L1: the per-load OS view gives the text
+// that a worker read with its hash).
+pub fn new_cached_file_hashed(
+    file_name: &str,
+    content: Arc<str>,
+    hash: u128,
+) -> Rc<RefCell<CachedFile>> {
+    Rc::new(RefCell::new(CachedFile {
+        file_base: FileBase {
+            file_name: file_name.to_string(),
+            content,
+            hash: Cell::new(hash),
+            ..FileBase::default()
+        },
+        ..CachedFile::default()
+    }))
+}
+
 // Go: project/overlayfs.go:90 NewCachedFileHandle (ts#64291)
 pub fn new_cached_file_handle(file_name: &str, content: impl Into<Arc<str>>) -> Rc<dyn FileHandle> {
     new_cached_file(file_name, content)
@@ -517,6 +536,12 @@ impl OverlayFS {
 
         if let Some(source) = as_file_handle_source(&*self.host) {
             return source.get_file_by_path(file_name, path);
+        }
+        // Loader v2 L1: with the per-load OS view, the host gives the text
+        // that a worker read and its hash (no copy, no hash here).
+        if vfs::loadview::enabled() {
+            let text = self.host.read_file_shared(file_name)?;
+            return Some(new_cached_file_hashed(file_name, text.text, text.hash));
         }
         let (content, ok) = self.host.read_file(file_name);
         if !ok {

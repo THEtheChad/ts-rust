@@ -2566,7 +2566,13 @@ impl ProjectCollectionBuilder {
                     project.borrow_mut().host = Some(host);
                     // PORT: no mutable borrow is held while the program is
                     // built (the compiler host reads the project).
+                    // Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): the load runs over a
+                    // new per-load OS view under the session's host, which
+                    // its workers fill; it is detached when the load ends,
+                    // before any later load or auto-import work.
+                    let load_view = compiler::load_view_scope::begin();
                     let result = project.borrow().create_program();
+                    drop(load_view);
                     // tsgo#4712
                     let (new_host, content_mappers) = {
                         let p = project.borrow();
