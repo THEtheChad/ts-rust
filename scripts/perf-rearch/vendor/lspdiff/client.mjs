@@ -9,6 +9,10 @@ export class LspClient {
     this.nextId = 1;
     this.pending = new Map(); // id -> { resolve, reject, method, start }
     this.notifications = []; // { method, params, at }
+    // Every server-to-client request and notification, in arrival order: { kind, method, params, at }.
+    // The watch scenarios (scenario.mjs) read registrations and publishDiagnostics from it.
+    this.events = [];
+    this.lastMessageAt = performance.now();
     this.buf = Buffer.alloc(0);
     this.exited = new Promise((resolve) => this.proc.on("exit", (code, signal) => resolve({ code, signal })));
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
@@ -35,6 +39,7 @@ export class LspClient {
 
   #onMessage(msg) {
     const at = performance.now();
+    this.lastMessageAt = at;
     if (msg.id !== undefined && msg.method) return this.#onServerRequest(msg);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
@@ -44,12 +49,27 @@ export class LspClient {
       return;
     }
     this.notifications.push({ method: msg.method, params: msg.params, at });
+    this.events.push({ kind: "notification", method: msg.method, params: msg.params, at });
   }
 
   #onServerRequest(msg) {
     // workspace/configuration is never asked: initialize does not advertise it.
-    // registerCapability, workDoneProgress/create, refresh requests: accept with null.
+    // registerCapability, unregisterCapability, workDoneProgress/create, refresh requests: accept with
+    // null (the answer of a successful registration).
+    this.events.push({ kind: "request", method: msg.method, params: msg.params, at: performance.now() });
     this.#write({ jsonrpc: "2.0", id: msg.id, result: null });
+  }
+
+  // Resolves once no server message has arrived for `quietMs` and no request is pending (at most
+  // `maxMs`). Watch registrations and pushed diagnostics come from the servers' background queues
+  // after an answer, so a checkpoint waits for them with this.
+  async settle(quietMs = 1000, maxMs = 30000) {
+    const start = performance.now();
+    for (;;) {
+      const now = performance.now();
+      if ((this.pending.size === 0 && now - this.lastMessageAt >= quietMs) || now - start >= maxMs) return now - start;
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
   #write(msg) {
@@ -106,8 +126,13 @@ export const userPreferences = {
   },
 };
 
-export function initializeParams(rootDir) {
-  return {
+// watch: advertise dynamic registration of workspace/didChangeWatchedFiles with relative pattern
+// support, and refresh support for diagnostics, semantic tokens, inlay hints and code lenses, as
+// VS Code does. Both servers then register their watch globs with the client
+// (client/registerCapability) instead of logging "file watching: disabled", and send refresh
+// requests after file-system events.
+export function initializeParams(rootDir, { watch = false } = {}) {
+  const params = {
     processId: null,
     rootUri: fileUri(rootDir),
     workspaceFolders: [{ uri: fileUri(rootDir), name: "root" }],
@@ -154,4 +179,14 @@ export function initializeParams(rootDir) {
       window: { workDoneProgress: false },
     },
   };
+  if (watch) {
+    Object.assign(params.capabilities.workspace, {
+      didChangeWatchedFiles: { dynamicRegistration: true, relativePatternSupport: true },
+      diagnostics: { refreshSupport: true },
+      semanticTokens: { refreshSupport: true },
+      inlayHint: { refreshSupport: true },
+      codeLens: { refreshSupport: true },
+    });
+  }
+  return params;
 }
