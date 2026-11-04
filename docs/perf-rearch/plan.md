@@ -267,3 +267,4 @@ until the baseline and parity lanes have released the machine.
   - **Timing still pending:** the command is in lane B1's final report,
     bin `t3-de2c82a7/target/b1/bins/`.
 - **2026-11-04, parity full on the merged E0+A1+B1 head (`b22c2a3e6`): OK** (186,585 items, 0 lost). It is now base-current.
+- **2026-11-04, timing window 1 queued:** `perf-window1` (`scripts/perf-rearch/window1.sh`), comparing Go, main and head `b2febcd86`, plus the B1 and A1 same-bin A/Bs. Bins are `bins/*-goport-w1` (1.95.0, `--profile goport`). Results go to `~/.cache/perf-rearch/window1/gap.md`.
