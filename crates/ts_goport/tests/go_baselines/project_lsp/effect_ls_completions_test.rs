@@ -142,7 +142,7 @@ fn text_edit(item: &lsproto::CompletionItem) -> &lsproto::TextEdit {
         .expect("a text edit")
 }
 
-child_test! {
+effect_child_test! {
     // After `Effect.` the plugin appends `gen(function*(){})` (the
     // namespace has a callable `gen`) and the three fn items, the first one
     // named after the enclosing variable. Each is a snippet with sort text
@@ -186,7 +186,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // With `completions: false` the answer is the plain answer.
     fn completions_off_gives_the_plain_answer() {
         let (_session, off) = service("");
@@ -198,7 +198,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // In a Duration string (a union of template literals whose second text
     // is "nanos") the 8 units replace the string content.
     fn duration_units_in_a_duration_string() {
@@ -220,7 +220,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // After `// @` the diagnostics, codegens and JSDoc directives, from the
     // `@`. The plain answer there is null, so the list holds only them.
     fn directives_in_a_comment() {
@@ -260,7 +260,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // In `class Foo extends Data.` (Data not imported, so its module name is
     // the fallback "Data"): Data.TaggedError and Data.TaggedClass over the
     // whole `Data.` expression, filtered by `Data.<label>`.
@@ -280,7 +280,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     // A standalone API process without TSGO_EFFECT_API=1 has the hook off,
     // as it has the rules off (`rulerunner::enabled_options`).

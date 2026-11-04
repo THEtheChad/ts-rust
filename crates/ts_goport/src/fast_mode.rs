@@ -74,13 +74,14 @@ pub fn take_flag(args: &mut [String]) {
     {
         BUILD.store(true, Ordering::Relaxed);
     }
-    if blank_flags(args, BUILD.load(Ordering::Relaxed)) {
+    if blank_flag(args, BUILD.load(Ordering::Relaxed), FLAG) {
         STATE.store(2, Ordering::Relaxed);
     }
 }
 
-/// Makes each `--fast` of `args` that Go's parser reads as an option name
-/// an empty argument, and returns true when there was one. A `--fast` that
+/// Makes each `flag` (`--fast`, or `--effect` for `effect::take_flag`) of
+/// `args` that Go's parser reads as an option name an empty argument, and
+/// returns true when there was one. A `--fast` that
 /// an option before it takes as its value stays: Go sets
 /// `tsgo --outDir --fast` to outDir "--fast". `build`: the build command
 /// line (its options differ). Go's parser skips an empty argument, and an
@@ -93,8 +94,8 @@ pub fn take_flag(args: &mut [String]) {
 // PORT: not in Go (followups49). The walk is Go's `parseStrings` with the
 // port's `parse_option_value` on a scratch parser, so each option takes
 // the arguments it takes in Go.
-fn blank_flags(args: &mut [String], build: bool) -> bool {
-    if !args.iter().any(|arg| arg == FLAG) {
+pub fn blank_flag(args: &mut [String], build: bool, flag: &str) -> bool {
+    if !args.iter().any(|arg| arg == flag) {
         return false;
     }
     use crate::frontend::tsoptions::{
@@ -110,7 +111,7 @@ fn blank_flags(args: &mut [String], build: bool) -> bool {
     let mut taken = false;
     let mut i = 0;
     while i < args.len() {
-        if args[i] == FLAG {
+        if args[i] == flag {
             args[i].clear();
             taken = true;
             i += 1;
@@ -290,17 +291,17 @@ pub fn cost_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{blank_flags, cost_split};
+    use super::{FLAG, blank_flag, cost_split};
 
     fn owned(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| (*arg).to_string()).collect()
     }
 
-    /// `blank_flags` on `args`: the arguments after it, and whether it took
+    /// `blank_flag` on `args`: the arguments after it, and whether it took
     /// a `--fast`.
     fn blank(args: &[&str], build: bool) -> (Vec<String>, bool) {
         let mut args = owned(args);
-        let taken = blank_flags(&mut args, build);
+        let taken = blank_flag(&mut args, build, FLAG);
         (args, taken)
     }
 

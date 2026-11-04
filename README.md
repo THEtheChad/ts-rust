@@ -19,7 +19,8 @@ without Effect diagnostics.
 | `bun check` | 59.24s | ███████ | 0.72× |
 | `tsc` 6 | 191.00s | ████████████████████████ | 0.22× |
 
-\* `tsc-rs` is 0.6.0 with Effect diagnostics built in. `tsc` 7 is from `@effect/tsgo`. The
+\* `tsc-rs` is 0.6.0 with Effect diagnostics built in (now opt-in: `TSC_RS_EFFECT=1` or
+`--effect`, see [Effect diagnostics](#effect-diagnostics)). `tsc` 7 is from `@effect/tsgo`. The
 `bun check` time adds a separate `effect-tsgo diagnostics` run. `tsc` 6 uses the JavaScript
 Effect plugin.
 
@@ -99,12 +100,21 @@ To use it in VS Code, see [@tsc-rs/typescript](npm/typescript-readme.md#vs-code)
 
 `tsc-rs` has the [Effect](https://effect.website) language service diagnostics built in (codes
 377xxx), so an Effect project needs no second compiler. They come from the same check as the
-TypeScript diagnostics, and the language server shows them too. They run only when the tsconfig has
-the plugin, as with `@effect/language-service`:
+TypeScript diagnostics, and the language server shows them too.
+
+They are **off by default**: plain `tsc-rs` gives the output of Go `tsc` (which loads no plugin),
+byte for byte, also for a tsconfig with the Effect plugin. Turn them on with the environment
+variable `TSC_RS_EFFECT=1` (the CLI, `--lsp` and `--api`) or the `tsc-rs --effect` flag (the CLI
+only). A standalone `--api` process also needs `TSGO_EFFECT_API=1`. Once on, they run only when the
+tsconfig has the plugin, as with `@effect/language-service`:
 
 ```json
 { "compilerOptions": { "plugins": [{ "name": "@effect/language-service" }] } }
 ```
+
+Everything below describes the extension when it is on. Off, there are no Effect diagnostics, hover,
+inlay hints, auto-import style, quick fixes, refactors or completions, no `refactor.rewrite` code
+action kind, and no Effect data in `.tsbuildinfo`.
 
 The rules, options and `@effect-diagnostics` comments are a port of
 [Effect-TS/tsgo](https://github.com/Effect-TS/tsgo) 0.51.1. The language server also has its editor

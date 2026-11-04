@@ -174,3 +174,19 @@ until the baseline and parity lanes have released the machine.
     corpus at many partitions.
 - **Persistent disk caches: opt-in only,** and only after lib snapshot v2
   (E4) shows decoding beats parsing by a wide margin.
+
+## Merged
+
+- **2026-11-04, E0: Effect rules off by default** (`TSC_RS_EFFECT=1` or
+  `--effect` to turn them on).
+  - Astra: merge after fixes. Root fixed both (`5852f249f`).
+  - Parity full: OK, 0 lost, 7 recovered.
+  - The new base `base-current` is that run.
+
+## Parity backlog (pre-existing differences from Go, found by lanes)
+
+- **`--extendedDiagnostics` on main:** column padding differs on umami and
+  effect; the printed `Symbols` count differs on zod (203,529 against Go's
+  203,532) and on ts-pattern (off by one, and it varies between runs). Found
+  by lane B1. The parity gate's extdiag items didn't catch it; check what the
+  gate masks.

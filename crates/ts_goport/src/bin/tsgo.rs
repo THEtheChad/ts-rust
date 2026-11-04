@@ -976,6 +976,9 @@ fn run_main(start: Instant) -> i32 {
     // reads it as an option name, it becomes an empty argument, which Go's
     // option parsing skips (`take_flag`).
     ts_goport::fast_mode::take_flag(&mut args);
+    // PORT: not in Go (perf-rearch E0). `--effect` turns the Effect
+    // extension on, taken as `--fast` is (`effect::take_flag`).
+    ts_goport::effect::take_flag(&mut args);
 
     // Go: ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
     let (ctx, stop) = notify_context(&context::background());

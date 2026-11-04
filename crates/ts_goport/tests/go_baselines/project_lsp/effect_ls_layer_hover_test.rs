@@ -156,7 +156,7 @@ fn links(base: &str) -> String {
     )
 }
 
-child_test! {
+effect_child_test! {
     // A hover on a Layer declaration name puts the summary and the two
     // Mermaid links before the documentation. A reference to the Layer, and
     // the name without the plugin, keep the plain hover.
@@ -173,7 +173,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // `noExternal: true` drops the links; `mermaidProvider: "mermaid.com"`
     // changes their base URL.
     fn layer_hover_follows_link_options() {
@@ -193,7 +193,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // A Layer declaration with no initializer has no graph: Go writes only
     // "\n" before the documentation.
     fn layer_hover_without_initializer() {

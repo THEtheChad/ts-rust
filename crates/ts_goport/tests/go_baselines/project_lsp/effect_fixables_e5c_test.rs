@@ -24,7 +24,7 @@ fn position(line: u32, character: u32) -> lsproto::Position {
     lsproto::Position { line, character }
 }
 
-child_test! {
+effect_child_test! {
     // Go `unnecessary_arrow_block.go`: delete the block from its full start
     // (with the space after `=>`) and insert `(<returned expression>)` there,
     // so `=> {...}` becomes `=>(arg.trim())`, as in the Go baseline.

@@ -5,9 +5,11 @@
 //! Each patch site here names its patch. The rules run after the checker has
 //! checked a source file, with the same checker, and add their diagnostics
 //! to the checker's diagnostics (codes 377000 to 377999). Nothing runs unless
-//! the tsconfig has an `@effect/language-service` plugin entry with
-//! diagnostics enabled. A standalone API process (`tsgo --api`) runs nothing
-//! unless `TSGO_EFFECT_API=1` (`rulerunner::set_api_process`).
+//! the Effect extension is on (`TSC_RS_EFFECT=1` or `--effect`,
+//! [`switch_on`]; off by default, for Go parity) and the tsconfig has an
+//! `@effect/language-service` plugin entry with diagnostics enabled. A
+//! standalone API process (`tsgo --api`) runs nothing unless
+//! `TSGO_EFFECT_API=1` too (`rulerunner::set_api_process`).
 //!
 //! `effect::ls` ports the language service hooks of effect-tsgo 0.51.1
 //! (`etslshooks`): hover, the inlay hint filter and the hook sites that the
@@ -33,6 +35,53 @@ pub mod rule;
 pub mod rulerunner;
 pub mod rules;
 pub mod typeparser;
+
+// PORT: not in Go or Effect-TS/tsgo (perf-rearch lane E0). Go at the pin
+// loads no plugin, so the Effect extension is off by default, and the
+// output (diagnostics, counts, exit code, build info and LSP answers) is
+// Go's. `TSC_RS_EFFECT=1` (every bin of the process: tsc, the LSP and the
+// API server) or `tsgo --effect` (`take_flag`) turns it on.
+/// The environment variable that turns the Effect extension on.
+pub const SWITCH_ENV: &str = "TSC_RS_EFFECT";
+/// The tsc command line flag that turns the Effect extension on.
+pub const SWITCH_FLAG: &str = "--effect";
+
+/// `TSC_RS_EFFECT=1`, read once.
+static ENV_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// Set by `--effect` (`take_flag`) or `enable`. It only ever goes from off
+/// to on, so a concurrent first read of the environment cannot undo it.
+static FORCED_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when the Effect extension is on: `TSC_RS_EFFECT=1` (read once) or
+/// `--effect` (`take_flag`). Off, a tsconfig `@effect/language-service`
+/// plugin entry gives no Effect options (`etscore::parse_from_plugins` is
+/// not called), so no rule, hook, option check or build info field runs.
+#[must_use]
+pub fn switch_on() -> bool {
+    FORCED_ON.load(std::sync::atomic::Ordering::Acquire)
+        || *ENV_ON.get_or_init(|| std::env::var(SWITCH_ENV).as_deref() == Ok("1"))
+}
+
+/// Turns the Effect extension on for this process (`--effect`, and tests that
+/// check Effect behaviour in process; child-process tests set
+/// `TSC_RS_EFFECT=1` instead). There is no way to turn it off again.
+pub fn enable() {
+    FORCED_ON.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Takes `--effect` from the tsc command line `args` (without the program
+/// name) and turns the extension on when there was one. As for `--fast`
+/// (`fast_mode::take_flag`), a `--effect` that Go's parser reads as an
+/// option name becomes an empty argument, which Go's parser skips. The
+/// servers (`--lsp`, `--api`) take the switch only from `TSC_RS_EFFECT=1`.
+pub fn take_flag(args: &mut [String]) {
+    let build = args
+        .first()
+        .is_some_and(|arg| crate::execute::execute_tsc::is_build_flag(arg));
+    if crate::fast_mode::blank_flag(args, build, SWITCH_FLAG) {
+        enable();
+    }
+}
 
 /// Effect-TS/tsgo patch 005 `RelationError`: a type relation error that the
 /// relater reported, kept for Effect rules.

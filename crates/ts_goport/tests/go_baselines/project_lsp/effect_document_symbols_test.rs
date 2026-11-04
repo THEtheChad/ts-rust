@@ -120,7 +120,7 @@ fn symbol(
     }
 }
 
-child_test! {
+effect_child_test! {
     // Go document_symbols.go:20 afterDocumentSymbols: the Layer `live` goes
     // under Effect > Layers with its `<ROut, E, RIn>` detail and the range of
     // its declaration. The synthetic symbols have zero ranges. The plain
@@ -146,7 +146,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     // A standalone API process without TSGO_EFFECT_API=1 has the hook off,
     // as it has the rules off (`rulerunner::enabled_options`).

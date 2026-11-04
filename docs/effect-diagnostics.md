@@ -10,6 +10,18 @@ The code is `crates/ts_goport/src/effect`, a port of
 `@effect/tsgo@0.51.1` release commit `47cb1ed7`. Read
 `crates/ts_goport/src/effect/PORTING.md` before you change it.
 
+## Turning it on
+
+The Effect extension is off by default, so tsc-rs gives Go `tsc`'s output
+(Go at the pin loads no plugin). `TSC_RS_EFFECT=1` (every bin: `tsc`,
+`--lsp`, `--api`) or `tsgo --effect` (the `tsc` command line, taken before
+Go's option parsing as `--fast` is) turns it on (`effect::switch_on`). Off,
+the tsconfig's `@effect/language-service` entry gives no Effect options
+(`parsing_helpers.rs` `plugins`), so no rule, editor hook, config check,
+`refactor.rewrite` code action kind or build info field runs. A standalone
+API process needs `TSGO_EFFECT_API=1` as well. Everything below is with
+the extension on.
+
 ## What it does
 
 - Reads the `@effect/language-service` entry in `compilerOptions.plugins`,

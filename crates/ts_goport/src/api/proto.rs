@@ -5662,8 +5662,10 @@ mod unmarshal_error_tests {
         let options = tsoptions::finalize_raw_compiler_options(&raw.values, "/project");
         assert_eq!(options.plugins, Some(vec![PluginImport::default(); 2]));
         // Effect-TS/tsgo reads its plugin from a `map[string]any` too
-        // (`@effect/tsgo@0.46.1` etscore/options_parser.go:23).
-        assert!(options.effect.is_some());
+        // (`@effect/tsgo@0.46.1` etscore/options_parser.go:23). The options
+        // carry it only with the Effect extension on (`effect::switch_on`).
+        assert!(crate::effect::etscore::parse_from_plugins(&raw.values["plugins"]).is_some());
+        assert_eq!(options.effect.is_some(), crate::effect::switch_on());
 
         let raw = decode(r#"{"plugins":[{"name":"x"},"y",5,null,[]]}"#);
         let options = tsoptions::finalize_raw_compiler_options(&raw.values, "/project");

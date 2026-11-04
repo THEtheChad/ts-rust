@@ -40,13 +40,15 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 
 ## Parity gate (mandatory for every change)
 
-`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main/`
+`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-current`
 prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **quick:** about 4 minutes, warm. Use it while iterating.
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
-- **Known diffs on main:** see `known.txt` in the base. The Effect items go
-  away with lane E0.
+- **Base:** `base-current` is a symlink to the latest accepted full run of
+  this branch (now E0 at 5852f249f; on main the Effect items were known
+  diffs). Root moves it after each merge. `base-main` stays as the main
+  record.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
   checkout's source, so run it from your own worktree.
 
@@ -63,6 +65,11 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **Timing builds:** every side of a timing is a stable build:
   `TS_CARGO_NIGHTLY=0 TS_CARGO_INCREMENTAL=0 RUSTUP_TOOLCHAIN=1.95.0 scripts/run-cargo-capped.sh build --release -p ts_goport --bin tsgo`,
   or `--profile goport` (fat LTO, the shipped profile) for final numbers.
+- **Same-built bins only:** build both sides of a comparison yourself, with
+  the same toolchain and profile. The shared
+  `bins/tsgo-main-91f3d021c-goport` uses about 1% fewer instructions than a
+  local `--profile goport` build of the same source (lane B1), so don't
+  compare it with your own builds.
   Edit-loop builds run 2 to 7% slower; never compare them with stable builds.
 - **Timing method:** a run starts only when the 1-minute load is under 1.5
   (`/proc/loadavg`). Interleave sides run by run. Record the load before and

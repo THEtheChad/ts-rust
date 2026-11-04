@@ -146,7 +146,7 @@ fn inlay_preferences() -> lsutil::UserPreferences {
 const TYPE_PARAMETERS: &str =
     "Effect Type Parameters:\n  Success = string\n  Failure = Error\n  Requirements = never\n";
 
-child_test! {
+effect_child_test! {
     // Patch 012: hover on an Effect-typed name adds the Effect type
     // parameters (plain text client); a name of another type and a project
     // without the plugin keep the plain hover.
@@ -166,7 +166,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Patch 012 with `quickinfo: false`: the plain hover.
     fn hover_with_quickinfo_off_is_plain() {
         let (_session, service) =
@@ -176,7 +176,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Patch 012 on `yield*` in Effect.gen: the yielded type and its Effect
     // type parameters, with the yield expression as the range. Without the
     // plugin the keyword has no hover.
@@ -202,7 +202,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Patch 015 with `inlays: true`: the return type hint of the Effect.gen
     // generator is removed. With `inlays` off (the default) and without the
     // plugin it stays.
@@ -229,7 +229,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     // Patches 011 and 024: on this file the code action and document symbol
     // answers with the plugin are the answers without it, except for the
     // Effect refactors, which come after the other code actions. On
@@ -295,7 +295,7 @@ child_test! {
     }
 }
 
-child_test! {
+effect_child_test! {
     env &[("TSGO_EFFECT_API", "0")];
     // A standalone API process without TSGO_EFFECT_API=1 has the hooks off,
     // as it has the rules off (`rulerunner::enabled_options`).
