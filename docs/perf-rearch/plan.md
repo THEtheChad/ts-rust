@@ -341,3 +341,11 @@ was the same as Go's.
   own scratch copy, and the copy's path appears in the diagnostics. The
   outputs are identical after masking the path. `bench.py` now masks the
   run's cwd before hashing.
+- **2026-11-04, Astra reviewed the loader design:** S1 rework, S3–S4 rework
+  (`reviews/2026-11-04-astra-loader-design.md`).
+  - **Next:** spike **S1a**, Astra's narrower first step. First-load worker
+    answers go through the existing resolve-ahead acceptance path; the
+    snapshot's own reads are kept; nothing speculative is adopted. Then
+    measure how much of the ttfd gap it closes.
+  - The LSP parity harness lane (watch registrations, two-run LSP,
+    first-load cases) provides the proof.
