@@ -315,7 +315,11 @@ def cli(args):
         base = ["-p", proj["cfg"], "--pretty", "false"]
         for scen in scenarios:
             variants = []  # (variant name, labels, argv builder, pre-run hook, cwd)
-            noemit = base + ["--noEmit", "--incremental", "false", "--composite", "false"]
+            # --composite false: composite needs incremental build info, which would go into the input. A
+            # composite config keeps its declaration setting (composite implies it; a declarationMap without
+            # it is error TS5069, and the check would stop at the config).
+            comp = ["--composite", "false"] + (["--declaration", "true"] if opts.get("composite") else [])
+            noemit = base + ["--noEmit", "--incremental", "false"] + comp
             if scen == "noemit":
                 variants.append(("noemit", [l for l, _ in bins], lambda b, lab: [b] + noemit, None, repo))
             elif scen == "single":
@@ -324,7 +328,7 @@ def cli(args):
             elif scen == "emit":
                 def emit_argv(b, lab):
                     d = scratch / f"emit-{name}-{lab}"
-                    a = [b] + base + ["--noEmit", "false", "--incremental", "false", "--composite", "false",
+                    a = [b] + base + ["--noEmit", "false", "--incremental", "false"] + comp + [
                                       "--outDir", str(d / "out")]
                     if opts.get("declaration") or opts.get("composite") or opts.get("declarationDir"):
                         a += ["--declarationDir", str(d / "decl")]
@@ -339,7 +343,7 @@ def cli(args):
                 variants.append(("emit", [l for l, _ in bins], emit_argv, emit_pre, repo))
             elif scen == "incr":
                 def incr_argv(b, lab):
-                    return [b] + base + ["--noEmit", "--incremental", "--composite", "false",
+                    return [b] + base + ["--noEmit", "--incremental"] + comp + [
                                          "--tsBuildInfoFile", str(scratch / f"incr-{name}-{lab}.tsbuildinfo")]
                 variants.append(("incr-warm", [l for l, _ in bins], incr_argv, "incr", repo))
             elif scen == "build":

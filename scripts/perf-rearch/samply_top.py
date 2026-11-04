@@ -9,6 +9,8 @@ usage: python3 -I scripts/perf-rearch/samply_top.py PROFILE.json.gz [options]
   --thread REGEX     only threads whose name matches
   --json FILE        also write the tables as JSON
   --callers FUNC     the callers (inclusive CPU) of functions whose name contains FUNC
+  --timeline MS      CPU per phase in slices of MS ms (where the serial stretches are)
+  --raw-threads      keep thread numbers (checker-3) instead of merging threads by name
   --addr2line        resolve frames with `addr2line -i` from the binary instead of the .syms.json sidecar
                      (use when the sidecar is missing)
 
@@ -48,7 +50,6 @@ GO_PHASES = [
     ("emit", r"internal/(printer|transformers|declarations|sourcemap)\."),
     ("load/resolve", r"internal/(module|compiler|vfs|tspath|tsoptions|packagejson)\."),
     ("lsp", r"internal/(ls|lsp|project)\."),
-    ("gc/runtime", r"^runtime\."),
 ]
 # Frames left out of the inclusive table (thread entry, closures, iterator plumbing).
 GENERIC = re.compile(r"^(<?(std|core|alloc)::|start_thread|clone3|__libc_start|_start$|main$|rayon|crossbeam|"
@@ -113,12 +114,23 @@ def addr2line(binary, addr):
         return None
 
 
-def classify(stack, rules):
+GO_RUNTIME = re.compile(r"^(runtime\.|internal/runtime/|memeqbody|aeshash|sync\.|sync/atomic\.|indexbytebody|gogo$|"
+                        r"cmpbody|internal/bytealg|github\.com/zeebo/xxh3)")
+GO_GC = re.compile(r"^runtime\.(gcBgMarkWorker|gcDrain|bgsweep|bgscavenge|gcAssist|mallocgc|growslice|newobject|"
+                   r"makeslice|makemap|mapassign|sweepone|scanobject|markroot)|^internal/runtime/gc/")
+
+
+def classify(stack, rules, go=False):
+    """The phase of the innermost frame that names one. Go: runtime frames (maps, hashing, atomics) belong to
+    the package frame that calls them; a stack with no package frame is gc/runtime. Stacks with a GC or
+    allocation frame are split out as gc/alloc (under any phase) by analyze()."""
     for name in reversed(stack):  # innermost first
+        if go and GO_RUNTIME.search(name):
+            continue
         for phase, rx in rules:
             if rx.search(name):
                 return phase
-    return "other"
+    return "gc/runtime" if go else "other"
 
 
 def strip_hash(name):
@@ -141,12 +153,19 @@ def analyze(profile, syms, args):
     self_t, incl_t = Counter(), Counter()
     func_phase = {}
     leaf_phase = defaultdict(Counter)
+    gc_ms = Counter()
+    timeline = defaultdict(Counter)
+    t_first = min((t["samples"]["time"][0] for t in profile["threads"] if t["samples"]["length"]), default=0)
+    if lo is not None:
+        t_first = max(t_first, lo)
     by_thread, by_phase, phase_thread = Counter(), Counter(), defaultdict(Counter)
     alloc_self = 0.0
     callers = defaultdict(Counter)
     total = 0.0
     for t in profile["threads"]:
-        name = re.sub(r"[-_ ]?\d+$", "", t.get("name") or "?") or t.get("name")
+        name = t.get("name") or "?"
+        if not args.raw_threads:
+            name = re.sub(r"[-_ ]?\d+$", "", name) or name
         if thread_rx and not thread_rx.search(t.get("name") or ""):
             continue
         S, ST, FT, FN, RT = t["samples"], t["stackTable"], t["frameTable"], t["funcTable"], t["resourceTable"]
@@ -191,8 +210,12 @@ def analyze(profile, syms, args):
                 continue
             stack = resolve(si)
             go = any("internal/" in f or f.startswith("runtime.") for f in stack[-6:])
-            phase = classify(stack, rules_go if go else rules_rs)
+            phase = classify(stack, rules_go if go else rules_rs, go)
+            if go and any(GO_GC.search(f) for f in stack):
+                gc_ms[phase] += w
             total += w
+            if args.timeline:
+                timeline[int((tm - t_first) // args.timeline)][phase] += w
             by_thread[name] += w
             by_phase[phase] += w
             phase_thread[phase][name] += w
@@ -206,8 +229,8 @@ def analyze(profile, syms, args):
                     continue
                 incl_t[f] += w
                 if f not in leaf_phase:
-                    func_phase.setdefault(f, classify([f], rules_go if go else rules_rs))
-            if args.callers:
+                    func_phase.setdefault(f, classify([f], rules_go if go else rules_rs, go))
+            if args.callers:  # noqa
                 for j, f in enumerate(stack):
                     if args.callers in f and j > 0:
                         callers[f][stack[j - 1]] += w
@@ -215,7 +238,7 @@ def analyze(profile, syms, args):
         func_phase[f] = c.most_common(1)[0][0]
     return {"total_ms": total, "by_thread": by_thread, "by_phase": by_phase, "phase_thread": phase_thread,
             "self": self_t, "incl": incl_t, "func_phase": func_phase, "alloc_self_ms": alloc_self,
-            "callers": callers}
+            "callers": callers, "gc_ms": gc_ms, "timeline": timeline}
 
 
 def short(name, n=110):
@@ -229,14 +252,24 @@ def report(r, top):
            f"({100 * r['alloc_self_ms'] / tot:.1f}%)", "", "| thread | CPU ms | % |", "|---|---|---|"]
     for k, v in r["by_thread"].most_common(top):
         out.append(f"| {k} | {v:.0f} | {100 * v / tot:.1f} |")
-    out += ["", "| phase | CPU ms | % | top threads |", "|---|---|---|---|"]
+    gc = r.get("gc_ms") or {}
+    out += ["", "| phase | CPU ms | % | top threads |" + (" of it Go GC/alloc ms |" if gc else ""),
+            "|---|---|---|---|" + ("---|" if gc else "")]
     for k, v in r["by_phase"].most_common():
         th = ", ".join(f"{n} {ms:.0f}" for n, ms in r["phase_thread"][k].most_common(3))
-        out.append(f"| {k} | {v:.0f} | {100 * v / tot:.1f} | {th} |")
+        out.append(f"| {k} | {v:.0f} | {100 * v / tot:.1f} | {th} |" + (f" {gc.get(k, 0):.0f} |" if gc else ""))
     for title, c in (("self", r["self"]), ("inclusive", r["incl"])):
         out += ["", f"| top {title} | phase | CPU ms | % |", "|---|---|---|---|"]
         for k, v in c.most_common(top):
             out.append(f"| `{short(k)}` | {r['func_phase'].get(k, '')} | {v:.0f} | {100 * v / tot:.1f} |")
+    if r.get("timeline"):
+        phases = [k for k, _ in r["by_phase"].most_common()]
+        out += ["", "timeline: CPU ms per phase in each slice (slice start, ms since the first sample)", "",
+                "| from | " + " | ".join(phases) + " |", "|---|" + "---|" * len(phases)]
+        step = r["timeline_step"]
+        for b in sorted(r["timeline"]):
+            c = r["timeline"][b]
+            out.append(f"| {b * step:.0f} | " + " | ".join(f"{c.get(k, 0):.0f}" for k in phases) + " |")
     for f, cs in r["callers"].items():
         out += ["", f"callers of `{short(f)}`:"] + [f"  {v:8.0f} ms  {short(k)}" for k, v in cs.most_common(10)]
     return "\n".join(out)
@@ -253,14 +286,18 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--callers")
     ap.add_argument("--addr2line", action="store_true")
+    ap.add_argument("--raw-threads", action="store_true")
+    ap.add_argument("--timeline", type=float, help="slice width in ms")
     args = ap.parse_args()
     profile, syms = load(args.profile)
     r = analyze(profile, syms, args)
+    r["timeline_step"] = args.timeline
     print(report(r, args.top))
     if args.json:
         j = {k: (dict(v.most_common(200)) if isinstance(v, Counter) else v) for k, v in r.items()
-             if k not in ("phase_thread", "callers", "func_phase")}
+             if k not in ("phase_thread", "callers", "func_phase", "timeline", "timeline_step")}
         j["phase_thread"] = {k: dict(v) for k, v in r["phase_thread"].items()}
+        j["gc_ms"] = dict(r["gc_ms"])
         Path(args.json).write_text(json.dumps(j, indent=1))
 
 
