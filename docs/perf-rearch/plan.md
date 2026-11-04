@@ -406,3 +406,4 @@ once a **reconciliation step** is built and tested.
   permanently.
 - **Until then** L1 stays opt-in. The reconciliation step needs its own Astra
   review.
+- **2026-11-04, S1a merged** (`b60c04700`): first-load worker answers go through exact validation at demand. The gain is small; the main value is the S0 proof tools (`GOPORT_LOAD_DUMP`, `GOPORT_LOAD_TIMES`, strict `dump-sections.py`, `load-dump-session.mjs`). Pre-existing: keyed loads don't adopt accepted package.json lookups into `InfoCache`, so it varies with timing (not observable); this is handed to the L1 lane.
