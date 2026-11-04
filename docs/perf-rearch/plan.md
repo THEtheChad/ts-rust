@@ -156,3 +156,21 @@ accepts every finding.
 
 **First wave started:** A1 and B1 (implementation lanes). The spikes wait
 until the baseline and parity lanes have released the machine.
+
+## Chad's decisions (2026-11-03)
+
+- **Effect rules: off by default.** The Go-parity mode skips Effect
+  diagnostics; an explicit switch turns them on as an extension. Lane E0
+  implements it, before the final baseline comparisons.
+- **Certified fast checking (D1): default if tests pass.** Chad accepts a
+  guarantee backed by large-scale testing rather than proof. D0 therefore
+  becomes the gate for D1. The monitor and test design must answer Astra's
+  blocker:
+  - adversarial cases where the fast run skips work that would make Go hit
+    a limit (cache-warming, omitted instantiations);
+  - ordered-id recursion tests;
+  - fresh state for the fallback, and buffered output.
+  - **Bar:** zero divergences across the project corpus and the compiler
+    corpus at many partitions.
+- **Persistent disk caches: opt-in only,** and only after lib snapshot v2
+  (E4) shows decoding beats parsing by a wide margin.
