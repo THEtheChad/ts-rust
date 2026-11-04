@@ -5,9 +5,10 @@ with a result per test name.
 usage: parity_tests.py --out DIR [--checkout DIR] [--tier quick|full] [--jobs N] [--shards N]
                        [--runner-jobs N] [--no-build]
 
-It builds (scripts/run-cargo-capped.sh, the edit-loop release build of the checkout):
-  cargo test --release --locked --workspace --no-run
-  cargo test --release --locked -p ts_goport --test go_baselines --no-run
+It builds (scripts/run-cargo-capped.sh, the edit-loop release build of the checkout), with the
+`diagnostics` feature, so the tests of the diagnostic and verify code run too (FEATURES):
+  cargo test --release --locked --workspace --features ts_goport/diagnostics --no-run
+  cargo test --release --locked -p ts_goport --features diagnostics --test go_baselines --no-run
 and runs the test binaries as ci.yml's test and test-local jobs do: in the crate dir, with
 RUST_TEST_THREADS=1, TS_GO_REPO at the pinned Go checkout (tsc/ of microsoft__TypeScript@3e9236361fa9)
 and its own TSCTEST_TMP and COMPILER_RUNNER_TMP per binary:
@@ -37,6 +38,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# The test builds have the diagnostics feature (crates/ts_goport/Cargo.toml): tests/plain_early_emit.rs
+# needs it, and the reuse verify, call log and phase report tests run only with it.
+FEATURES = 'ts_goport/diagnostics'
 GO_REPO = Path.home() / '.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc'
 
 
@@ -112,8 +116,8 @@ def main():
     head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=checkout, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=checkout,
                            capture_output=True, text=True).stdout.strip() != ''
-    suites = [] if args.tier == 'quick' else build(checkout, ['--workspace'])
-    gb = build(checkout, ['-p', 'ts_goport', '--test', 'go_baselines'])
+    suites = [] if args.tier == 'quick' else build(checkout, ['--workspace', '--features', FEATURES])
+    gb = build(checkout, ['-p', 'ts_goport', '--features', FEATURES, '--test', 'go_baselines'])
     gb = [s for s in gb if s[0] == 'go_baselines']
     assert len(gb) == 1, gb
     _, gb_exe, gb_crate = gb[0]

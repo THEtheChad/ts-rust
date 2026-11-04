@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs verify-typing.mjs over the react-jsx projects (perf/first-principles A1). Writes one
 # verify log per session to $OUT and prints a summary line per session.
-#   scripts/perf-rearch/a1/verify-all.sh <tsgo> [out dir]
+#   scripts/perf-rearch/a1/verify-all.sh <tsgo> [out dir]   (<tsgo>: a `diagnostics` feature build)
 set -u
 BIN=$1
 OUT=${2:-$HOME/.cache/perf-rearch/a1/verify}

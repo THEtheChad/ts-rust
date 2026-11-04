@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Drives a typing session in one file of a project against tsc-rs with the reuse verify mode on
-// (GOPORT_VERIFY_REUSE, see crates/ts_goport/src/program/reuse_verify.rs): every keystroke is a
+// (GOPORT_VERIFY_REUSE in a `diagnostics` feature build, see
+// crates/ts_goport/src/program/reuse_verify.rs): every keystroke is a
 // didChange, then a completion and a diagnostic pull, so the server updates its program on
 // each one and the verify mode checks each reuse against a full build in a child process.
 //

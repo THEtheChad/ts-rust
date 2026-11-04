@@ -4,7 +4,8 @@
 # per file), which do not depend on load, so no load gate.
 #
 # Usage: run-calllog.sh [OUT_DIR]   default OUT_DIR: ~/.cache/perf-rearch/scratch/d1/calllog
-#   TSGO=<bin>   the tsc-rs bin (default: the window-1 head bin)
+#   TSGO=<bin>   the tsc-rs bin (default: the window-1 head bin); since C1 it must be a `diagnostics` feature
+#                build (`scripts/run-cargo-capped.sh build --release -p ts_goport --features diagnostics --bin tsgo`)
 # Then: refine_sim.py OUT_DIR/<project>-c4.log OUT_DIR/<project>-c16.log 4   (METRIC=types for the types proxy)
 set -u
 H=${TSGO:-$HOME/.cache/perf-rearch/bins/tsgo-head-b2febcd86-goport-w1}

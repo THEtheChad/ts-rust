@@ -1,6 +1,7 @@
 //! PORT: not in Go (perf). Emit phase timers and emit routing counts.
 //!
-//! `GOPORT_EMIT_PHASE_TIMES=1` turns them on. Each emit phase (the JS
+//! `GOPORT_EMIT_PHASE_TIMES=1` turns them on in a `diagnostics` feature
+//! build. Each emit phase (the JS
 //! transforms, the declaration transforms, the print, the source map text
 //! and the writes) adds its wall time in nanoseconds to an atomic counter
 //! of its phase and of the kind of thread that ran it (the loading thread,
@@ -8,8 +9,8 @@
 //! each file's JS part ran (the emit pool or its checker thread), and why,
 //! and when the emit started (behind each checker's check or after the
 //! whole check). `report` prints them to stderr at the end of the process.
-//! Off (the default), each timer is one load of a `OnceLock`, and nothing
-//! is printed.
+//! Off, each timer is a constant false test (one relaxed load in a
+//! diagnostics build), and nothing is printed.
 //!
 //! The print time is the printer's walk of the tree (`write_exported`),
 //! which adds the source map mappings as it goes. The source map time is
@@ -17,7 +18,9 @@
 //! `sourceMappingURL` comment and the map's JSON text.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+#[cfg(feature = "diagnostics")]
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// One emit phase.
@@ -126,8 +129,16 @@ static FLUSH_NANOS: AtomicU64 = ZERO;
 static FLUSHES: AtomicU64 = ZERO;
 static ROUTES: [AtomicU64; 15] = [ZERO; 15];
 
-/// True when `GOPORT_EMIT_PHASE_TIMES` is `1`. Read once; then one relaxed
-/// load and one predictable branch per call.
+/// True when `GOPORT_EMIT_PHASE_TIMES` is `1` in a `diagnostics` feature
+/// build. Read once; then one relaxed load and one predictable branch per
+/// call.
+#[cfg(not(feature = "diagnostics"))]
+#[inline(always)]
+pub fn enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "diagnostics")]
 #[inline]
 pub fn enabled() -> bool {
     match STATE.load(Ordering::Relaxed) {
@@ -137,10 +148,14 @@ pub fn enabled() -> bool {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 const OFF: u8 = 1;
+#[cfg(feature = "diagnostics")]
 const ON: u8 = 2;
+#[cfg(feature = "diagnostics")]
 static STATE: AtomicU8 = AtomicU8::new(0);
 
+#[cfg(feature = "diagnostics")]
 #[cold]
 fn init_enabled() -> bool {
     let on = std::env::var("GOPORT_EMIT_PHASE_TIMES").as_deref() == Ok("1");

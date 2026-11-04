@@ -4968,7 +4968,15 @@ pub fn with_checker_at<R>(index: usize, f: impl FnOnce(&mut Checker) -> R) -> R 
 /// calls in the same order on each checker give the same file; the early
 /// emit of plain `tsc -p` (`program_emit::start_plain_emit`) must not change
 /// it. `write_checker_call_log` writes it, sorted by checker, at the end of
-/// the run. Off, each site is one load of a `OnceLock`.
+/// the run. Only in a `diagnostics` feature build; off, each site is one
+/// relaxed load and one predictable branch.
+#[cfg(not(feature = "diagnostics"))]
+#[inline(always)]
+pub fn checker_call_log_enabled() -> bool {
+    false
+}
+
+#[cfg(feature = "diagnostics")]
 #[inline]
 pub fn checker_call_log_enabled() -> bool {
     // One relaxed load and one predictable branch once the variable is read.
@@ -4984,6 +4992,7 @@ pub fn checker_call_log_enabled() -> bool {
 }
 
 /// 0 before `GOPORT_CHECKER_CALL_LOG` is read, 1 off, 2 on.
+#[cfg(feature = "diagnostics")]
 static CALL_LOG_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// PORT: not in Go (tests, feature `test-hooks`).
@@ -5049,6 +5058,12 @@ fn test_check_hook_slow(source_file: Node) {
     }
 }
 
+#[cfg(not(feature = "diagnostics"))]
+fn checker_call_log_path() -> Option<&'static str> {
+    None
+}
+
+#[cfg(feature = "diagnostics")]
 fn checker_call_log_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| {
