@@ -12,8 +12,8 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { LspClient, initializeParams } from "../../lspdiff/client.mjs";
-import { append, openFiles, removeTail } from "../../lspdiff/session.mjs";
+import { LspClient, initializeParams } from "../vendor/lspdiff/client.mjs";
+import { append, openFiles, removeTail } from "../vendor/lspdiff/session.mjs";
 
 const { values: opt } = parseArgs({
   options: {

@@ -16,7 +16,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { append, openFiles, startServer } from "../../lspdiff/session.mjs";
+import { append, openFiles, startServer } from "../vendor/lspdiff/session.mjs";
 
 const { values: opt } = parseArgs({
   options: {
