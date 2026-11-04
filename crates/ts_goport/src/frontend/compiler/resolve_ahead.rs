@@ -416,6 +416,7 @@ impl ResolveAhead {
             missing: RefCell::default(),
             log_missing: debug_log_enabled(),
             package_json_text: first_load.then_some(host.package_json_text),
+            adopted: RefCell::default(),
         });
         // A first-load job has no keys: its parse workers make the answers,
         // and `FilesParser::parse` waits for them (`after_first_load_workers`).

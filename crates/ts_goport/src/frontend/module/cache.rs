@@ -351,6 +351,10 @@ pub struct AheadLink {
     /// package.json cache as the read that the loader's own lookup would
     /// have made (`adopt_ahead_package_jsons`). `None` for other loads.
     pub package_json_text: Option<AheadText>,
+    /// The package.json files that `adopt_ahead_package_jsons` gave the
+    /// loader's cache in this load: each is copied once, and the first read
+    /// wins in the cache anyway (`InfoCache::add_pending`).
+    pub adopted: RefCell<FxHashSet<String>>,
 }
 
 /// The text of a package.json that a resolve-ahead check read in the load
@@ -372,8 +376,12 @@ fn adopt_ahead_package_jsons(
     let Some(text_of) = &ahead.package_json_text else {
         return;
     };
+    let mut adopted = ahead.adopted.borrow_mut();
     for lookup in package_jsons {
         let file_name = combine_paths(&lookup.package_directory, &["package.json"]);
+        if adopted.contains(&file_name) {
+            continue;
+        }
         let text = if lookup.exists {
             match text_of(&file_name) {
                 Some(text) => Some(Box::from(&*text)),
@@ -390,6 +398,7 @@ fn adopt_ahead_package_jsons(
                 text,
             },
         );
+        adopted.insert(file_name);
     }
 }
 
