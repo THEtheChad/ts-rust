@@ -180,6 +180,9 @@ def cases(kind: str, fx: dict) -> list:
         for n in (4, 8, 16):
             proj(name, ["--checkers", str(n), "--declaration", "--sourceMap"], f"checkers{n}")
         proj(name, ["--listEmittedFiles"])
+    # The incremental path (tsbuildinfo), which this lane does not change.
+    for name in ("hono", "ts-pattern-rootdir"):
+        proj(name, ["--incremental", "--tsBuildInfoFile", "OUT/tsconfig.tsbuildinfo", "--declaration"], "incremental")
     if kind == "full":
         for name in ("umami", "effect"):
             proj(name, ["--verbatimModuleSyntax"])
@@ -263,7 +266,7 @@ def run_side(binary: str, cwd: Path, args: list, out: Path, setup, env_extra: di
         if cwd.exists():
             shutil.rmtree(cwd)
         shutil.copytree(source, cwd)
-    argv = [binary] + [str(out) if a == "OUT" else a for a in args]
+    argv = [binary] + [str(out) + a[3:] if a.startswith("OUT") else a for a in args]
     env = dict(os.environ)
     env.update(env_extra)
     p = subprocess.run(argv, cwd=cwd, capture_output=True, env=env, timeout=900)
