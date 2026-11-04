@@ -791,6 +791,66 @@ os_child_test! {
     }
 }
 
+/// `run` of `steps` with the first loads resolving ahead (S1a,
+/// `resolve_ahead::FirstLoadJob`) or not, in the default mode.
+fn run_first_load(
+    label: &str,
+    on: bool,
+    steps: &dyn Fn(&Rc<Session>, &str),
+) -> (Observed, Option<LoadStats>) {
+    let root = make_project(&format!("{label}_first_{on}"));
+    resolve_ahead::set_first_load(Some(on));
+    let session = os_session(&root);
+    steps(&session, &root);
+    let observed = observe(&session, &root);
+    let stats = resolve_ahead::last_stats();
+    resolve_ahead::set_first_load(None);
+    drop(session);
+    std::fs::remove_dir_all(&root).unwrap();
+    (observed, stats)
+}
+
+os_child_test! {
+    /// S1a: a first load whose parse workers resolve for a first-load job
+    /// gives the same program, resolutions, metadata, seen files, missing
+    /// directories and cached files as a first load whose loader resolves
+    /// every key itself, and as a load with no resolve ahead at all. The
+    /// parse workers race the loader, so the test repeats until the loader
+    /// took worker answers (debug builds also check each taken answer
+    /// against a fresh resolution, `debug_check_answer`).
+    fn a_first_load_takes_parse_worker_answers() {
+        let open_with_unsaved = |session: &Rc<Session>, root: &str| {
+            open(session, &file_uri(root, "src/newdir/z.ts"), "export const z = 5;");
+            let text = format!("import {{ z }} from \"./newdir/z\";\n{INDEX}");
+            open(session, &file_uri(root, "src/index.ts"), &text);
+            program(session, &file_uri(root, "src/index.ts"));
+        };
+        let (serial, serial_stats) = run("firstserial", Mode::Off, &open_with_unsaved);
+        assert_eq!(serial_stats, None, "resolve ahead ran in mode 0");
+        let (off, off_stats) = run_first_load("first", false, &open_with_unsaved);
+        assert_eq!(off, serial);
+        let off_stats = off_stats.expect("no resolve-ahead load");
+        assert!(!off_stats.first_load, "{off_stats:?}");
+        assert_eq!(off_stats.loader.taken, 0, "{off_stats:?}");
+        let mut taken = 0;
+        for attempt in 0..20 {
+            let (on, stats) = run_first_load(&format!("first{attempt}"), true, &open_with_unsaved);
+            assert_eq!(on, serial, "attempt {attempt}");
+            let stats = stats.expect("no resolve-ahead load");
+            assert_eq!(stats.loader.rejected, 0, "{stats:?}");
+            if !stats.first_load {
+                // No parse workers here (one core): nothing to take.
+                return;
+            }
+            taken = stats.loader.taken;
+            if taken > 0 {
+                break;
+            }
+        }
+        assert!(taken > 0, "the loader never took a parse worker answer");
+    }
+}
+
 os_child_test! {
     /// A rejected answer makes the workers drop what they keep (the known
     /// files and the package.json parses). When a load on another thread

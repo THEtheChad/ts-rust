@@ -89,7 +89,21 @@ pub fn mode() -> Mode {
 #[must_use]
 pub fn first_load_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("GOPORT_FIRST_LOAD_AHEAD").as_deref() != Ok("0"))
+    FIRST_LOAD.with(Cell::get).unwrap_or_else(|| {
+        *ON.get_or_init(|| std::env::var("GOPORT_FIRST_LOAD_AHEAD").as_deref() != Ok("0"))
+    })
+}
+
+thread_local! {
+    /// `set_first_load` on this thread.
+    static FIRST_LOAD: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Sets whether the first loads on this thread resolve ahead, in place of
+/// `GOPORT_FIRST_LOAD_AHEAD` (`None`: the variable again). For tests.
+#[doc(hidden)]
+pub fn set_first_load(on: Option<bool>) {
+    FIRST_LOAD.with(|first| first.set(on));
 }
 
 /// The counts of one resolve-ahead load.
