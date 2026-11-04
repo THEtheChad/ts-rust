@@ -453,3 +453,12 @@ once a **reconciliation step** is built and tested.
     - **C3 (after D1 decides):** `GOPORT_FAST*`.
   - **Gate later:** once C1 to C3 land, `quality.sh` fails on any new
     behavior switch.
+- **2026-11-04, C1 round 1 rejected by Astra** (`reviews/2026-11-04-astra-c1.md`).
+  - Missing goldens.
+  - Verifiers gated only at the env read.
+  - Pure `--noEmit` incremental build info differs from Go: an existing
+    divergence, which C1 locked in by deleting the Go d.ts-walk path.
+  - New brief rules: keep the Go-matching path, not just the one that ships;
+    gate verifiers whole.
+  - **Round 2** restores Go-identical `--noEmit` build info and measures its
+    cost.
