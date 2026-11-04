@@ -140,6 +140,12 @@
           "label": "effect",
           "cwd": "packages/effect",
           "config": "tsconfig.json"
+        },
+        {
+          "label": "noeffect",
+          "cwd": "packages/effect",
+          "config": "tsconfig.noeffect.json",
+          "marker": "tsconfig.noeffect.json"
         }
       ]
     },

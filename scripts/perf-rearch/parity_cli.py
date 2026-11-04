@@ -29,7 +29,8 @@ are the project's real paths, the project never changes, and the written files a
 upper dir (sha256 each; a file the second run of incr or build rewrites or touches counts again).
 
 Go's result is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/cli), keyed
-by the Go binary, project path, config and arguments. When the cache is made Go runs twice; an item
+by the Go binary, project path, project fingerprint (commit and node_modules mtimes), config and
+arguments. When the cache is made Go runs twice; an item
 where Go's two runs differ is GO-UNSTABLE (not compared). tsc-rs runs --rs-runs times (default 1 for
 quick, 2 for full); two tsc-rs runs that differ are a DIFF (rs-nondet) even when one matches Go.
 
@@ -109,8 +110,17 @@ def load_projects(path):
     out = []
     for p in spec['projects']:
         root = next((expand(d) for d in p['dirs'] if (expand(d) / p.get('marker', 'package.json')).exists()), None)
-        out.append({**p, 'root': root})
+        out.append({**p, 'root': root, 'fingerprint': fingerprint(root) if root else None})
     return out
+
+
+def fingerprint(root):
+    """The project's commit and the mtime of its node_modules dirs (top level, and one level down for
+    workspaces): a new install or checkout makes a new Go cache key instead of a stale Go result."""
+    head = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+    nm = sorted(str(p.stat().st_mtime_ns) for p in [root / 'node_modules', *root.glob('*/node_modules'),
+                                                   *root.glob('*/*/node_modules')] if p.is_dir())
+    return hashlib.sha256(f'{head}|{"|".join(nm)}'.encode()).hexdigest()[:16]
 
 
 class Run:
@@ -271,6 +281,8 @@ def main():
                     continue
                 if p['root'] is None:
                     skipped[name] = {'status': 'SKIP', 'detail': 'project not prepared'}
+                elif not (p['root'] / c.get('cwd', '.') / c['config']).exists():
+                    skipped[name] = {'status': 'SKIP', 'detail': 'config not in this project dir'}
                 else:
                     items.append(Item(p, c, v))
     if args.list:
@@ -297,7 +309,8 @@ def main():
                   f'(go {row.get("goSecs", "-")}s, rs {row.get("rsSecs", "-")}s)', flush=True)
 
     def run_item(it):
-        key = hashlib.sha256(json.dumps([CACHE_VERSION, go_sha, str(it.project['root']), it.config, it.variant,
+        key = hashlib.sha256(json.dumps([CACHE_VERSION, go_sha, str(it.project['root']), it.project['fingerprint'],
+                                         it.config, it.variant,
                                          it.args()]).encode()).hexdigest()[:24]
         cfile = cache / f'{key}.json'
         if cfile.exists():

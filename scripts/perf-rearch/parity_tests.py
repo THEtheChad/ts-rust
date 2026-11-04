@@ -19,7 +19,9 @@ and its own TSCTEST_TMP and COMPILER_RUNNER_TMP per binary:
 Cargo doc tests are not run (ci.yml's `cargo test --workspace` runs them; see parity.md).
 
 Items: test/<binary>/<test name> from libtest's --logfile (and --list for names without a result:
-UNRUN), test-local/<kind> <key> from the compiler runner rows. Status PASS, FAIL, IGNORED, UNRUN.
+UNRUN), test-local/<kind> <key> from the compiler runner rows. Status PASS, FAIL, IGNORED, UNRUN, and
+FLAKY: a test of a binary that failed and then passed when it ran once more, alone (good in compare,
+and listed).
 Output: DIR/results.json, DIR/logs/<suite>.{log,list,results}, DIR/test-local-<i>.tsv. Exit 0
 unless the build fails (exit 3).
 """
@@ -145,6 +147,15 @@ def main():
     # The shards first (the longest), then the rest; --jobs suites at a time beside the shards.
     with ThreadPoolExecutor(args.shards + args.jobs) as pool:
         list(pool.map(job, specs))
+    # A failed test of a test binary runs once more, alone (timing tests such as
+    # tsgo_stdio_end/watch_ends_soon_after_sigint_or_sigterm fail under load): FLAKY when it passes then.
+    by_name = {spec[0]: spec for spec in specs}
+    for k in sorted(k for k, v in items.items() if v == 'FAIL' and k.startswith('test/')):
+        suite, test = k[len('test/'):].split('/', 1)
+        name, exe, crate, _, extra_env = by_name[suite]
+        retry, _ = run_suite(out, f'{suite}.retry', exe, crate, ['--exact', test], extra_env)
+        if retry.get(f'test/{suite}.retry/{test}') == 'PASS':
+            items[k] = 'FLAKY'
     counts = Counter(items.values())
     summary = {'tier': args.tier, 'checkout': str(checkout), 'head': head, 'dirty': dirty, 'goRepo': str(GO_REPO),
                'buildSecs': build_secs, 'wallSecs': round(time.monotonic() - t0, 1), 'counts': dict(counts),

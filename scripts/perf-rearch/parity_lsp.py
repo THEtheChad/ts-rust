@@ -6,7 +6,7 @@ usage: parity_lsp.py --rs BIN --out DIR [--go BIN] [--tier quick|full] [--only R
 Sessions (project, files, positions): quick runs umami and ts-pattern with lspdiff's defaults (6
 files, 4 positions per file); full runs them with 12 files and 6 positions, and hono's too. Go's
 two sessions per item set (go.jsonl, go2.jsonl) are kept in ~/.cache/perf-rearch/parity/go-cache/
-<go sha>/lsp/<session>/ and reused, so a run starts only tsc-rs. An answer on which Go's two
+<go sha>/lsp/<session>-<project fingerprint>/ (parity_cli.fingerprint: commit, node_modules mtimes) and reused, so a run starts only tsc-rs. An answer on which Go's two
 sessions differ is GO-UNSTABLE. Items: lsp/<session>/<index> <step> (index: the answer's place in the
 session). Status MATCH, DIFF, GO-UNSTABLE; a session that fails is one ERROR item. Output:
 DIR/results.json and DIR/<session>/ (lspdiff's files: mismatches.json, summary.json, rs.jsonl).
@@ -20,6 +20,8 @@ import subprocess
 import time
 from collections import Counter
 from pathlib import Path
+
+from parity_cli import fingerprint
 
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
@@ -63,7 +65,7 @@ def main():
         if root is None:
             items[f'lsp/{name}'] = {'status': 'SKIP', 'detail': 'project not prepared'}
             continue
-        cache = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{name}'
+        cache = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{name}-{fingerprint(root)}'
         sout = out / name
         start = time.monotonic()
         r = subprocess.run(['node', str(HERE / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root),

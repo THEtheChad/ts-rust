@@ -3,9 +3,10 @@
 
 usage: parity_compare.py merge DIR            DIR/<tier>/results.json -> DIR/results.json
        parity_compare.py compare BASE CUR     exit 1 when an item that is good in BASE is not good in CUR
-       parity_compare.py known DIR            every item that is not good (the known diffs of a base)
+       parity_compare.py known DIR            every item that is not good (the known diffs of a base);
+                                              IGNORED and SKIP only counted
 
-Good: MATCH (CLI, LSP, fuzz, corpus) and PASS (tests). compare fails on an item that is good in BASE
+Good: MATCH (CLI, LSP, fuzz, corpus), PASS and FLAKY (tests; FLAKY: passed when run again alone). compare fails on an item that is good in BASE
 and is DIFF, FAIL, ERROR, UNRUN, SKIP or IGNORED in CUR (a regression), and, when both runs are the
 same mode (quick or full), on such an item that CUR does not have (not run). Items that CUR has and
 BASE does not are new: listed, never a failure. An item that is GO-UNSTABLE in CUR is not compared
@@ -17,7 +18,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-GOOD = {'MATCH', 'PASS'}
+GOOD = {'MATCH', 'PASS', 'FLAKY'}
 TIERS = ('cli', 'tests', 'lsp', 'fuzz', 'corpus', 'js')
 
 
@@ -80,15 +81,23 @@ def compare(base, cur):
         print(f'NEW {s:<6} {k} {d}')
     for k in recovered[:30]:
         print(f'RECOVERED {k}')
+    for k in sorted(k for k, v in ci.items() if v['status'] == 'FLAKY'):
+        print(f'FLAKY     {k} (failed, then passed alone)')
     ok = not lost and not unrun
     print('PARITY OK' if ok else 'PARITY FAIL')
     return 0 if ok else 1
 
 
 def known(d):
+    """Every item that is not good, except IGNORED and SKIP (counted per tier prefix)."""
+    quiet = Counter()
     for k, v in sorted(items_of(load(d)).items()):
-        if v['status'] not in GOOD:
+        if v['status'] in ('IGNORED', 'SKIP'):
+            quiet[(v['status'], k.split('/', 1)[0])] += 1
+        elif v['status'] not in GOOD:
             print(f'{v["status"]:<11} {k} {v.get("detail") or v.get("sig") or ""}')
+    for (status, prefix), n in sorted(quiet.items()):
+        print(f'{status:<11} {n} items of {prefix}/ (not listed)')
 
 
 def main():

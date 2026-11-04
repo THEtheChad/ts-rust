@@ -16,7 +16,7 @@
 #           as ci.yml runs them, per test name and per TestLocal case. It builds the checkout
 #           (--checkout, default this worktree): the tier tests the source, not <tsgo bin>
 #   lsp     parity_lsp.py: lspdiff sessions (umami, ts-pattern; full adds hono and more positions)
-#   fuzz    parity_fuzz.py: difffuzz cases 0..N-1 of seed 1 (quick 1,500, full 10,000)
+#   fuzz    parity_fuzz.py: difffuzz cases 0..N-1 of seed 1 (quick 1,500, full 30,000)
 #   corpus  parity_fuzz.py --corpus: every pin test case (about 12,700) through the CLI (full only)
 # quick: cli (quick configs and variants, tsc-rs once), tests (go_baselines only), lsp, fuzz.
 # full: all tiers, tsc-rs twice on cli and fuzz (a difference between its own runs is a DIFF).
@@ -64,7 +64,7 @@ while (($#)); do
 done
 case $mode in
 quick) : "${tiers:=cli tests lsp fuzz}"; rs_runs=1; fuzz_count=1500 ;;
-full) : "${tiers:=cli tests lsp fuzz corpus}"; rs_runs=2; fuzz_count=10000 ;;
+full) : "${tiers:=cli tests lsp fuzz corpus}"; rs_runs=2; fuzz_count=30000 ;;
 js) tiers=js ;;
 esac
 sha=$(sha256sum "$bin" | cut -c1-64)
