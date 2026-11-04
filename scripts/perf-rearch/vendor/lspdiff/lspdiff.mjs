@@ -5,9 +5,20 @@
 // Vendored for the parity gate (scripts/perf-rearch/parity.sh) from perf/lsp-concurrency 931fad409,
 // with two additions: --go-cache <dir> keeps Go's two sessions (go.jsonl, go2.jsonl) there and reuses
 // them when present, so a gate run starts only tsc-rs; and items.json in the out dir lists every
-// answer as {i, step, method, status: MATCH | DIFF | GO-UNSTABLE}.
+// answer as {i, step, method, status: MATCH | DIFF | GO-UNSTABLE}. The parity gate's later additions:
+// --scenario <name> runs a watch scenario of scenario.mjs instead of the standard session (the
+// client then advertises dynamic watch registration, and registrations and pushed diagnostics are
+// compared at checkpoints), and --rs-runs N runs tsc-rs N times: an answer on which two tsc-rs runs
+// differ is a DIFF with detail "rs-nondet", even when one of them matches Go; --rs-env K=V
+// (repeatable) adds one more tsc-rs run with that environment (a worker schedule such as
+// GOPORT_PARSE_THREADS=1): an answer on which it differs from the first run is "rs-schedule".
+// --go-runs N (default 2) runs Go N times when it fills the cache: an answer on which any Go run
+// differs from the first is GO-UNSTABLE (the watch scenarios use 4: Go's background tasks run as
+// concurrent goroutines, so its registrations can race).
+// --server-logs writes each scenario run's window/logMessage stream to <out>/<run>.server.log.
 //
 //   node scripts/lspdiff/lspdiff.mjs diff  --project <dir> [--files 6] [--positions 4] [--file <rel>...]
+//                                          [--scenario <name>] [--rs-runs 1] [--rs-env K=V...] [--go-cache <dir>]
 //   node scripts/lspdiff/lspdiff.mjs bench --project <dir> [--files 6] [--runs 3] [--interval 120]
 //
 // Options: --go <bin> (default ~/.local/bin/tsgo-lsp-oracle-3e9236361fa9), --rs <bin>
@@ -20,6 +31,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
+import { SCENARIOS, runScenario } from "./scenario.mjs";
 import { runSession } from "./session.mjs";
 
 const { positionals, values: opt } = parseArgs({
@@ -37,6 +49,11 @@ const { positionals, values: opt } = parseArgs({
     only: { type: "string" },
     reuse: { type: "boolean", default: false },
     "go-cache": { type: "string" },
+    scenario: { type: "string" },
+    "rs-runs": { type: "string", default: "1" },
+    "go-runs": { type: "string", default: "2" },
+    "rs-env": { type: "string", multiple: true },
+    "server-logs": { type: "boolean", default: false },
     pulls: { type: "string", default: "all" },
     modes: { type: "string", default: "concurrent,one-at-a-time" },
     verbose: { type: "boolean", default: false },
@@ -48,10 +65,16 @@ if (!["diff", "bench"].includes(mode) || !opt.project) {
   process.exit(2);
 }
 const root = resolve(opt.project);
-const files = pickFiles(root, Number(opt.files), opt.file);
+const scenario = opt.scenario;
+if (scenario && !SCENARIOS[scenario]) {
+  console.error(`unknown scenario ${scenario}; known: ${Object.keys(SCENARIOS).join(", ")}`);
+  process.exit(2);
+}
+// A fixture scenario writes its project into --project itself, so there is nothing to pick yet.
+const files = scenario && SCENARIOS[scenario].fixture ? [] : pickFiles(root, Number(opt.files), opt.file);
 const servers = { go: [opt.go, "--lsp", "--stdio"], rs: [opt.rs, "--lsp", "--stdio"] };
 const stderr = opt.verbose ? process.stderr : undefined;
-const outDir = join(opt.out, `${root.split("/").pop()}-${mode}${mode === "bench" && opt.pulls !== "all" ? `-${opt.pulls}` : ""}`);
+const outDir = join(opt.out, `${root.split("/").pop()}-${mode}${mode === "bench" && opt.pulls !== "all" ? `-${opt.pulls}` : ""}${scenario ? `-${scenario}` : ""}`);
 mkdirSync(outDir, { recursive: true });
 console.log(`project ${root}\nfiles: ${files.map((f) => rel(root, f)).join(", ")}`);
 
@@ -68,11 +91,25 @@ function normalize(value, method) {
 
 if (mode === "diff") {
   // Go runs twice: an answer on which Go disagrees with itself is "Go-unstable", not a mismatch.
-  const runs = { go: servers.go, go2: servers.go, rs: servers.rs };
+  const goRuns = Number(opt["go-runs"]);
+  const runs = { go: servers.go };
+  for (let k = 2; k <= goRuns; k++) runs[`go${k}`] = servers.go;
+  runs.rs = servers.rs;
+  const rsRuns = Number(opt["rs-runs"]);
+  for (let k = 2; k <= rsRuns; k++) runs[`rs${k}`] = servers.rs;
+  // Extra tsc-rs runs, each with its own environment: name -> env.
+  const envs = {};
+  for (const [k, kv] of (opt["rs-env"] ?? []).entries()) {
+    const eq = kv.indexOf("=");
+    if (eq < 1) throw new Error(`--rs-env wants K=V, got ${kv}`);
+    envs[`rs-env${k + 1}`] = { [kv.slice(0, eq)]: kv.slice(eq + 1) };
+    runs[`rs-env${k + 1}`] = servers.rs;
+  }
   const logs = {};
   const goCache = opt["go-cache"];
   for (const [name, cmd] of Object.entries(runs)) {
-    if (goCache && name !== "rs") {
+    const isGo = name.startsWith("go");
+    if (goCache && isGo) {
       const f = join(goCache, `${name}.jsonl`);
       if (existsSync(f)) {
         logs[name] = readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -85,10 +122,13 @@ if (mode === "diff") {
       continue;
     }
     const start = performance.now();
-    logs[name] = await runSession(cmd, root, files, { positions: Number(opt.positions), stderr });
-    console.log(`${name}: ${logs[name].length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s`);
+    const env = envs[name];
+    logs[name] = scenario
+      ? await runScenario(cmd, scenario, root, { files, stderr, env, serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
+      : await runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
+    console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${logs[name].length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s`);
     writeFileSync(join(outDir, `${name}.jsonl`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    if (goCache && name !== "rs") {
+    if (goCache && isGo) {
       mkdirSync(goCache, { recursive: true });
       writeFileSync(join(goCache, `${name}.jsonl.tmp`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
       renameSync(join(goCache, `${name}.jsonl.tmp`), join(goCache, `${name}.jsonl`));
@@ -99,12 +139,30 @@ if (mode === "diff") {
   const mismatches = [];
   const unstable = [];
   const items = [];
-  const n = Math.max(logs.go.length, logs.rs.length);
+  const n = Math.max(...Object.values(logs).map((l) => l.length));
   for (let i = 0; i < n; i++) {
-    const method = (logs.go[i] ?? logs.rs[i]).method;
+    const first = Object.values(logs).map((l) => l[i]).find(Boolean);
+    const method = first.method;
     const row = (byMethod[method] ??= { equal: 0, differ: 0, goUnstable: 0 });
-    const [g, g2, r] = [logs.go[i], logs.go2[i], logs.rs[i]].map((e) => answer(e, method));
-    const entry = { step: (logs.go[i] ?? logs.rs[i]).step, method, go: JSON.parse(g), rs: JSON.parse(r) };
+    const [g, r] = [logs.go[i], logs.rs[i]].map((e) => answer(e, method));
+    // g2: the first Go run that differs from the first one (or the second run when all agree).
+    let g2 = goRuns > 1 ? answer(logs.go2[i], method) : g;
+    for (let k = 3; k <= goRuns && g2 === g; k++) g2 = answer(logs[`go${k}`][i], method);
+    const entry = { step: first.step, method, go: JSON.parse(g), rs: JSON.parse(r) };
+    // Later tsc-rs runs: one that differs from the first makes the answer rs-nondet.
+    const nondet = [];
+    for (let k = 2; k <= rsRuns; k++) if (answer(logs[`rs${k}`][i], method) !== r) nondet.push(`rs${k}`);
+    const schedule = Object.keys(envs).filter((k) => answer(logs[k][i], method) !== r);
+    if (nondet.length || schedule.length) {
+      const detail = [
+        nondet.length && `rs-nondet: run 1 differs from ${nondet.join(", ")}`,
+        schedule.length && `rs-schedule: run 1 differs from ${schedule.map((k) => JSON.stringify(envs[k])).join(", ")}`,
+      ].filter(Boolean).join("; ");
+      items.push({ i, step: entry.step, method, status: "DIFF", detail });
+      mismatches.push({ ...entry, detail, others: Object.fromEntries([...nondet, ...schedule].map((k) => [k, JSON.parse(answer(logs[k][i], method))])) });
+      row.differ++;
+      continue;
+    }
     items.push({ i, step: entry.step, method, status: g !== g2 ? "GO-UNSTABLE" : g === r ? "MATCH" : "DIFF" });
     if (g !== g2) {
       row.goUnstable++;

@@ -7,9 +7,9 @@ import { endPosition, languageId, pickPositions, readText, rel } from "./project
 // a completion after each; bench.mjs types it at a fixed speed).
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
-export async function startServer(cmd, root, { stderr } = {}) {
-  const client = new LspClient(cmd, { cwd: root, stderr });
-  const init = await client.request("initialize", initializeParams(root));
+export async function startServer(cmd, root, { stderr, watch = false, env } = {}) {
+  const client = new LspClient(cmd, { cwd: root, stderr, env });
+  const init = await client.request("initialize", initializeParams(root, { watch }));
   if (init.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
   client.notify("initialized", {});
   return client;
@@ -49,8 +49,8 @@ export function removeTail(client, doc, length) {
 }
 
 // Runs the session and returns [{ step, method, params, result, error }].
-export async function runSession(cmd, root, files, { positions = 4, stderr } = {}) {
-  const client = await startServer(cmd, root, { stderr });
+export async function runSession(cmd, root, files, { positions = 4, stderr, env } = {}) {
+  const client = await startServer(cmd, root, { stderr, env });
   const log = [];
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
