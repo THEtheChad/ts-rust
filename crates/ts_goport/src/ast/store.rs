@@ -62,14 +62,12 @@
 //! - A freeable file version (an edited file in a language server or API
 //!   process): its `FileVersion` owns its store and `GoFile`
 //!   (`VersionStore`), and the block of its id is its node shell, with only
-//!   its node columns leaked (`node_shell`). With owned nodes on
-//!   (the default there, `owned_nodes_enabled`) its parse is a freeable
-//!   parse (`enter_freeable_parse`, lsshells M3c), so its store also owns
-//!   its astdata nodes, its pending lists and its parse lists (`OwnedAst`):
-//!   the shell has no node column, and a node data read of the file is a
-//!   scoped read (`read_store_node_miss`). With `GOPORT_OWNED_NODES=0` the
-//!   parse is a static parse, whose node column is in the shell, as before
-//!   M3c.
+//!   its node columns leaked (`node_shell`). Its parse is a freeable
+//!   parse with owned nodes (`enter_freeable_parse`, `owned_nodes_enabled`,
+//!   lsshells M3c), so its store also owns its astdata nodes, its pending
+//!   lists and its parse lists (`OwnedAst`): the shell has no node column,
+//!   and a node data read of the file is a scoped read
+//!   (`read_store_node_miss`).
 //! - Every read of a published store goes through one inline lookup
 //!   (`file_block`). An id below `LOW_BLOCKS` reads with no call; a higher
 //!   id reads in a cold block that calls the empty `high_block_path`. So
@@ -3203,35 +3201,24 @@ pub fn enter_freeable_parse() -> FreeableParseScope {
     }
 }
 
-/// True when a freeable parse owns its nodes (lsshells M3c). Off, it is a
+/// True when a freeable parse owns its nodes (lsshells M3c): in a process
+/// that frees its file versions (`ast::free_file_versions`: a language
+/// server, API or `tsc --watch` process). Elsewhere a freeable parse is a
 /// static parse (its nodes stay in the leaked AST arena, and its node shell
-/// has a node column), as before M3c. `GOPORT_OWNED_NODES` is read once:
-/// `0` is off, `1` is on; else it is on in a language server, API or
-/// `tsc --watch` process only (`ast::frees_file_versions_by_default`),
-/// where the freeable versions are. Another CLI process makes freeable
-/// parses only with `GOPORT_FREE_FILE_VERSIONS=1` (`goport_multiprog`), and
-/// they stay static there by default.
-// PERF: on by default since lsshells M3g (root decision
-// m3-owned-default-2026-09-29). Only with it on do 1000-edit sessions pass
-// memory (M3f, mini-abf9: effect 0.46 MiB/edit and +480 MiB, off 1.23 and
-// +1216, limits 1.02 and 686). It costs edit time: every node data and list
-// read of the edited file is a pinned read (about 150,000 per edit on
-// effect). M3g against R139 (pin B): session instructions +6.40% on effect
-// and +4.68% on query-core with it on, +2.2% with it off; edit median +0.5
-// to +2.1 ms on effect and +0.8 to +1.7 ms on query-core in 200-edit
-// sessions, +0.9 ms (query-core) and +1.0 to +1.2 ms (effect) in 1000-edit
-// sessions. The CLI costs (instructions: query +1.38%, hono +0.48%, zod
-// +0.18%, effect +0.19%) come from the M3 merge, not from this switch. The
-// planned fix of the read cost is the AST node records plan
+/// has a node column).
+// PERF: on since lsshells M3g (root decision m3-owned-default-2026-09-29).
+// Only with it on do 1000-edit sessions pass memory (M3f, mini-abf9: effect
+// 0.46 MiB/edit and +480 MiB, off 1.23 and +1216, limits 1.02 and 686). It
+// costs edit time: every node data and list read of the edited file is a
+// pinned read (about 150,000 per edit on effect). M3g against R139 (pin B):
+// session instructions +6.40% on effect and +4.68% on query-core with it
+// on, +2.2% with it off; edit median +0.5 to +2.1 ms on effect and +0.8 to
+// +1.7 ms on query-core in 200-edit sessions, +0.9 ms (query-core) and +1.0
+// to +1.2 ms (effect) in 1000-edit sessions. The planned fix of the read
+// cost is the AST node records plan
 // (`target/continuation-r97-goport/ast-design/study.md`).
 fn owned_nodes_enabled() -> bool {
-    static FLAG: OnceLock<Option<bool>> = OnceLock::new();
-    let flag = *FLAG.get_or_init(|| match std::env::var("GOPORT_OWNED_NODES").as_deref() {
-        Ok("0") => Some(false),
-        Ok("1") => Some(true),
-        _ => None,
-    });
-    flag.unwrap_or_else(crate::ast::frees_file_versions_by_default)
+    crate::ast::free_file_versions()
 }
 
 /// `enter_freeable_parse` with owned nodes on, whatever the flag, for the

@@ -28,8 +28,8 @@
 //! it dies; after two more pin releases (`pin_epoch`: program releases, and
 //! lease releases that free a parse) a later node shell can take it
 //! (`ast::store::BlockPool`).
-//! M3c (owned nodes; on by default in a language server or API process,
-//! see `owned_nodes_enabled`): its parse was a freeable parse
+//! M3c (owned nodes; on wherever file versions are freed, see
+//! `owned_nodes_enabled`): its parse was a freeable parse
 //! (`ast::enter_freeable_parse`), so its store owns its astdata nodes (node
 //! structs and data boxes), its
 //! pending lists and its parse lists (`ast::store::OwnedAst`), and they go
@@ -76,10 +76,9 @@
 //! leased path gets one. So the first publish, the first version of each
 //! file (but a leased one) and every other CLI publish never get a
 //! `FileVersion`.
-//! `GOPORT_FREE_FILE_VERSIONS=0` turns it off (the behavior before M3a);
-//! `=1` turns it on in any process, and then
-//! `program::update_program_version` (`goport_multiprog`) applies the same
-//! rule to its new parses (the compiler host opens the freeable parse scope
+//! `goport_multiprog --free-file-versions` turns it on in a CLI process
+//! (`set_editor_process`), and then `program::update_program_version`
+//! applies the same rule to its new parses (the compiler host opens the freeable parse scope
 //! for them, M3c). A parse that a parse worker made (prefetch) keeps its
 //! nodes in the leaked AST arena; its version still frees its store and
 //! `GoFile`. Watch mode parses ahead in its first build and after a config
@@ -255,15 +254,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Marks this process as a language server or API process, where
-/// `free_file_versions` and owned nodes are on by default.
+/// `free_file_versions` and owned nodes are on.
 /// `project::new_session` and `api::new_standalone_session` call it.
 pub fn set_editor_process() {
     EDITOR_PROCESS.store(true, Ordering::Relaxed);
 }
 
 /// Marks this process as a `tsc --watch` process (with or without
-/// `--build`), where `free_file_versions` and owned nodes are on by
-/// default, as in a language server. `Watcher::start` and
+/// `--build`), where `free_file_versions` and owned nodes are on, as in a
+/// language server. `Watcher::start` and
 /// `Orchestrator::start` call it before the first build.
 // PORT: not in Go. Go frees an old `*ast.SourceFile` of a watch rebuild
 // with its GC (execute/watcher.go:482, :567). Every tsc command of the
@@ -273,27 +272,11 @@ pub fn set_watch_process() {
     WATCH_PROCESS.store(true, Ordering::Relaxed);
 }
 
-/// True in a process where `free_file_versions` and owned nodes are on by
-/// default: a language server or API process (`set_editor_process`) or a
-/// `tsc --watch` process (`set_watch_process`).
-pub(crate) fn frees_file_versions_by_default() -> bool {
-    EDITOR_PROCESS.load(Ordering::Relaxed) || WATCH_PROCESS.load(Ordering::Relaxed)
-}
-
-/// True when this process frees the file versions that it publishes again.
-/// `GOPORT_FREE_FILE_VERSIONS` is read once: `0` is off, `1` is on; else it
-/// is on in a language server, API or `tsc --watch` process only
-/// (`frees_file_versions_by_default`).
+/// True when this process frees the file versions that it publishes again,
+/// and their parses own their nodes: a language server or API process
+/// (`set_editor_process`) or a `tsc --watch` process (`set_watch_process`).
 pub fn free_file_versions() -> bool {
-    static FLAG: OnceLock<Option<bool>> = OnceLock::new();
-    let flag = *FLAG.get_or_init(
-        || match std::env::var("GOPORT_FREE_FILE_VERSIONS").as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        },
-    );
-    flag.unwrap_or_else(frees_file_versions_by_default)
+    EDITOR_PROCESS.load(Ordering::Relaxed) || WATCH_PROCESS.load(Ordering::Relaxed)
 }
 
 thread_local! {

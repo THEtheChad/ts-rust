@@ -675,27 +675,19 @@ impl Checker {
 // life of the checker, but no Go code reads them for a node of an ended
 // call. The one later reader is the serialized type cache under an
 // enclosing declaration, and a store there pins the call
-// (`visit_and_transform_type`). `GOPORT_N1=0` turns print scopes off (an A/B
-// switch).
-struct PrintScope(Option<Rc<RefCell<NodeBuilder>>>);
+// (`visit_and_transform_type`).
+struct PrintScope(Rc<RefCell<NodeBuilder>>);
 
 impl PrintScope {
     fn open(nb: &Rc<RefCell<NodeBuilder>>) -> Self {
-        static ON: std::sync::LazyLock<bool> =
-            std::sync::LazyLock::new(|| std::env::var("GOPORT_N1").as_deref() != Ok("0"));
-        if !*ON {
-            return Self(None);
-        }
         crate::ast::synthetic::enter_print_scope();
-        Self(Some(nb.clone()))
+        Self(nb.clone())
     }
 }
 
 impl Drop for PrintScope {
     fn drop(&mut self) {
-        let Some(nb) = self.0.take() else {
-            return;
-        };
+        let nb = &self.0;
         // `None` for a nested scope, a pinned call and a panic.
         let Some(ranges) = crate::ast::synthetic::exit_print_scope() else {
             return;

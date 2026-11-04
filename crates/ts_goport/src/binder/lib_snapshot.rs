@@ -38,8 +38,8 @@
 //! A snapshot lib must have no private class member: a private name holds
 //! a hash of the lib's file name (`private_name_key`), and the key does not
 //! hold the file name. `generate_lib_bind_snapshot` fails on one.
-//! `GOPORT_LIB_SNAPSHOT=0` turns the snapshot off (for A/B timing), and
-//! `GOPORT_LIB_SNAPSHOT=trace` writes one line per lib file to stderr.
+//! In a `diagnostics` feature build `GOPORT_LIB_SNAPSHOT=trace` writes one
+//! line per lib file to stderr.
 //!
 //! Blob layout, all integers little-endian: `MAGIC`, the lib count (u32),
 //! then per lib its base name (`lib.dom.d.ts`) and its section, each as a
@@ -313,32 +313,17 @@ fn local_flow(file: usize, flow: FlowNodeId) -> Option<u32> {
 // Load
 // ──────────────────────────────────────────────────────────────────────
 
-/// A snapshot switch (`GOPORT_LIB_SNAPSHOT`, and
-/// `GOPORT_LIB_PARSE_SNAPSHOT` for the lib parse snapshot).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
-    Off,
-    On,
-    /// On, with one stderr line per lib file.
-    Trace,
+/// True when each snapshot load writes one line to stderr:
+/// `GOPORT_LIB_SNAPSHOT=trace` in a `diagnostics` feature build. Read once.
+#[cfg(feature = "diagnostics")]
+fn trace() -> bool {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var("GOPORT_LIB_SNAPSHOT").as_deref() == Ok("trace"))
 }
 
-impl Mode {
-    /// Environment variable `var`: "0" turns the snapshot off, "trace"
-    /// traces it.
-    pub(crate) fn from_env(var: &str) -> Mode {
-        match std::env::var(var).as_deref() {
-            Ok("0") => Mode::Off,
-            Ok("trace") => Mode::Trace,
-            _ => Mode::On,
-        }
-    }
-}
-
-/// `GOPORT_LIB_SNAPSHOT`: "0" turns the snapshot off, "trace" traces it.
-fn mode() -> Mode {
-    static MODE: OnceLock<Mode> = OnceLock::new();
-    *MODE.get_or_init(|| Mode::from_env("GOPORT_LIB_SNAPSHOT"))
+#[cfg(not(feature = "diagnostics"))]
+fn trace() -> bool {
+    false
 }
 
 /// One lib file in a snapshot blob.
@@ -379,14 +364,13 @@ pub(crate) fn read_entries(blob: &'static [u8], magic: &[u8; 8]) -> Option<Vec<S
 /// lineage arena (`SymbolArena::new`, a serial bind) gets the file arena
 /// joined, with its ids moved (`SymbolArena::append_file_arena`).
 pub fn load(file: Node, symbols: &mut SymbolArena) -> Option<BoundFile> {
-    let mode = mode();
-    if mode == Mode::Off || !symbols.is_new() {
+    if !symbols.is_new() {
         return None;
     }
     let info = source_file_info(file);
     let lib = bundled::bundled_lib_name(&info.file_name)?;
     let entry = entries().iter().find(|entry| entry.name == lib)?;
-    let start = (mode == Mode::Trace).then(std::time::Instant::now);
+    let start = trace().then(std::time::Instant::now);
     let result = load_section(file, entry.section);
     if let Some(start) = start {
         let status = match &result {

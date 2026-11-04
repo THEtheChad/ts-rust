@@ -156,15 +156,17 @@ child_test! {
 }
 
 // ---------------------------------------------------------------------------
-// The verify mode (`GOPORT_VERIFY_REUSE`) across processes: the session runs
+// The verify mode (`GOPORT_VERIFY_REUSE`, a `diagnostics` feature build) across processes: the session runs
 // on real files, and the verify child is this test binary, running
 // `verify_child_entry` with the in-process content mapper spawner.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "diagnostics")]
 const VERIFY_CHILD_TEST: &str = "project_lsp::synthetic_reuse_test::verify_child_entry";
 
 /// The verify child of the tests below: a no-op unless the verify mode runs
 /// this binary as its child (`project::reuse_verify::CHILD_ENV`).
+#[cfg(feature = "diagnostics")]
 #[test]
 fn verify_child_entry() {
     if std::env::var_os(ts_goport::project::reuse_verify::CHILD_ENV).is_none() {
@@ -184,11 +186,14 @@ fn verify_child_entry() {
 }
 
 /// A temp directory with `files`, removed at the end.
+#[cfg(feature = "diagnostics")]
 struct TempProject(std::path::PathBuf);
 
+#[cfg(feature = "diagnostics")]
 impl TempProject {
     fn new(label: &str, files: &[(&str, &str)]) -> Self {
-        let dir = std::env::temp_dir().join(format!("ts_goport_verify_{label}_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ts_goport_verify_{label}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         for (name, text) in files {
             let path = dir.join(name);
@@ -205,6 +210,7 @@ impl TempProject {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl Drop for TempProject {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -212,6 +218,7 @@ impl Drop for TempProject {
 }
 
 /// A session on the OS file system in `dir`, with content mappers on.
+#[cfg(feature = "diagnostics")]
 fn os_session(dir: &str) -> Rc<Session> {
     ts_goport::project::new_session(&ts_goport::project::SessionInit {
         background_ctx: bg(),
@@ -233,11 +240,13 @@ fn os_session(dir: &str) -> Rc<Session> {
 
 /// Runs `body` in a child test process with the verify mode on (a
 /// difference or an error panics), and returns the verify log.
+#[cfg(feature = "diagnostics")]
 fn with_verify(test: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> {
     with_verify_mode(test, "all-panic", body)
 }
 
 /// `with_verify` with the verify mode `mode`.
+#[cfg(feature = "diagnostics")]
 fn with_verify_mode(test: &str, mode: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> {
     let log = std::env::temp_dir().join(format!(
         "ts_goport_verify_log_{}_{}",
@@ -246,7 +255,13 @@ fn with_verify_mode(test: &str, mode: &str, body: impl FnOnce() + Send + 'static
     ));
     let _ = std::fs::remove_file(&log);
     let log_name = log.to_string_lossy().to_string();
-    let args = ["--exact", VERIFY_CHILD_TEST, "--nocapture", "--test-threads=1"].join("\u{1f}");
+    let args = [
+        "--exact",
+        VERIFY_CHILD_TEST,
+        "--nocapture",
+        "--test-threads=1",
+    ]
+    .join("\u{1f}");
     crate::support::child::run_test_in_child_with_env(
         test,
         &[
@@ -263,10 +278,12 @@ fn with_verify_mode(test: &str, mode: &str, body: impl FnOnce() + Send + 'static
 
 /// The parent side of the tests below runs here (`with_verify` re-runs the
 /// test in a child, and only there is the variable set).
+#[cfg(feature = "diagnostics")]
 fn in_verify_child() -> bool {
     std::env::var_os("GOPORT_VERIFY_REUSE").is_some()
 }
 
+#[cfg(feature = "diagnostics")]
 #[test]
 fn verify_mode_checks_a_mapped_project_in_a_child_process() {
     let lines = with_verify(
@@ -286,22 +303,41 @@ fn verify_mode_checks_a_mapped_project_in_a_child_process() {
                         r#"{ "compilerOptions": { "strict": true, "importHelpers": true, "isolatedModules": true, "types": [] }, "contentMappers": [{ "package": "mapper", "extensions": [".box"] }] }"#,
                     ),
                     ("node_modules/mapper/package.json", &mapper),
-                    ("node_modules/tslib/package.json", r#"{"name":"tslib","version":"2.8.0","types":"tslib.d.ts"}"#),
-                    ("node_modules/tslib/tslib.d.ts", "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n"),
+                    (
+                        "node_modules/tslib/package.json",
+                        r#"{"name":"tslib","version":"2.8.0","types":"tslib.d.ts"}"#,
+                    ),
+                    (
+                        "node_modules/tslib/tslib.d.ts",
+                        "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n",
+                    ),
                     ("app.box", "declare const supplementalValue: number;\n"),
                     ("main.ts", "const value: number = supplementalValue;\n"),
                 ],
             );
             let session = os_session(&p.dir());
-            open(&session, &p.uri("main.ts"), "const value: number = supplementalValue;\n");
+            open(
+                &session,
+                &p.uri("main.ts"),
+                "const value: number = supplementalValue;\n",
+            );
             let _ = program(&session, &p.uri("main.ts"));
             // A closed mapped file changes on disk (the child maps the disk text).
-            std::fs::write(p.0.join("app.box"), "declare const supplementalValue: string;\n").unwrap();
+            std::fs::write(
+                p.0.join("app.box"),
+                "declare const supplementalValue: string;\n",
+            )
+            .unwrap();
             watch(&session, &[(CHANGED, &p.uri("app.box"))]);
             let _ = program(&session, &p.uri("main.ts"));
             // An open mapped file is edited (the child maps the editor text).
             let box_uri = p.uri("app.box");
-            open_kind(&session, &box_uri, "declare const supplementalValue: string;\n", lsproto::LanguageKind("box".into()));
+            open_kind(
+                &session,
+                &box_uri,
+                "declare const supplementalValue: string;\n",
+                lsproto::LanguageKind("box".into()),
+            );
             let _ = program(&session, &p.uri("main.ts"));
             edit(&session, &box_uri, 2, (0, 0), (0, 0), "// edited\n");
             let _ = program(&session, &p.uri("main.ts"));
@@ -311,11 +347,20 @@ fn verify_mode_checks_a_mapped_project_in_a_child_process() {
     if in_verify_child() {
         return;
     }
-    let ok = lines.iter().filter(|l| l.starts_with("goport verify-reuse: OK")).count();
+    let ok = lines
+        .iter()
+        .filter(|l| l.starts_with("goport verify-reuse: OK"))
+        .count();
     assert!(ok >= 2, "{lines:?}");
-    assert!(lines.iter().all(|l| l.starts_with("goport verify-reuse: OK")), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.starts_with("goport verify-reuse: OK")),
+        "{lines:?}"
+    );
 }
 
+#[cfg(feature = "diagnostics")]
 #[test]
 fn verify_mode_checks_the_inferred_project_in_a_child_process() {
     let lines = with_verify(
@@ -327,7 +372,10 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
             let p = TempProject::new(
                 "inferred",
                 &[
-                    ("node_modules/react/package.json", r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#),
+                    (
+                        "node_modules/react/package.json",
+                        r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#,
+                    ),
                     ("node_modules/react/index.d.ts", "export {};\n"),
                     (
                         "node_modules/react/jsx-runtime.d.ts",
@@ -342,9 +390,15 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
             options.jsx = ts_goport::flags::JsxEmit::REACT_JSX;
             options.module = ts_goport::flags::ModuleKind::ES_NEXT;
             options.module_resolution = ts_goport::flags::ModuleResolutionKind::BUNDLER;
-            session.did_change_compiler_options_for_inferred_projects(&bg(), Some(Rc::new(options)));
+            session
+                .did_change_compiler_options_for_inferred_projects(&bg(), Some(Rc::new(options)));
             let a = p.uri("a.tsx");
-            open_kind(&session, &a, "export const A = () => <div />;\n", lsproto::LanguageKind::TYPE_SCRIPT_REACT);
+            open_kind(
+                &session,
+                &a,
+                "export const A = () => <div />;\n",
+                lsproto::LanguageKind::TYPE_SCRIPT_REACT,
+            );
             open(&session, &p.uri("b.ts"), "export const b = 1;\n");
             let old = program(&session, &a);
             assert!(old.processed_files.jsx_runtime_import_specifiers.is_some());
@@ -360,9 +414,17 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
     if in_verify_child() {
         return;
     }
-    let ok = lines.iter().filter(|l| l.starts_with("goport verify-reuse: OK")).count();
+    let ok = lines
+        .iter()
+        .filter(|l| l.starts_with("goport verify-reuse: OK"))
+        .count();
     assert!(ok >= 3, "{lines:?}");
-    assert!(lines.iter().all(|l| l.starts_with("goport verify-reuse: OK")), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.starts_with("goport verify-reuse: OK")),
+        "{lines:?}"
+    );
 }
 
 // Review follow-up (Astra, A1 at 7972cba71): when the disk changes with no
@@ -372,6 +434,7 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
 // the include glob changes the child's own config parse (the server keeps
 // its root files, as Go's rebuild does): the child cannot rebuild the
 // server's inputs, which is an ERROR, not a MISMATCH.
+#[cfg(feature = "diagnostics")]
 #[test]
 fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
     let lines = with_verify_mode(
@@ -384,8 +447,14 @@ fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
             let p = TempProject::new(
                 "no_events",
                 &[
-                    ("tsconfig.json", r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[]},"include":["src"]}"#),
-                    ("node_modules/react/package.json", r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#),
+                    (
+                        "tsconfig.json",
+                        r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[]},"include":["src"]}"#,
+                    ),
+                    (
+                        "node_modules/react/package.json",
+                        r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#,
+                    ),
                     ("node_modules/react/index.d.ts", "export {};\n"),
                     (
                         "node_modules/react/jsx-runtime.d.ts",
@@ -398,7 +467,12 @@ fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
             );
             let session = os_session(&p.dir());
             let a = p.uri("src/a.tsx");
-            open_kind(&session, &a, "export const A = () => <div />;\n", lsproto::LanguageKind::TYPE_SCRIPT_REACT);
+            open_kind(
+                &session,
+                &a,
+                "export const A = () => <div />;\n",
+                lsproto::LanguageKind::TYPE_SCRIPT_REACT,
+            );
             let _ = program(&session, &a);
             let mut version = 1;
             let mut edit_a = |session: &Rc<Session>| {
@@ -409,9 +483,15 @@ fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
             let write = |name: &str, text: &str| std::fs::write(p.0.join(name), text).unwrap();
             // The config, react's package.json, and a closed source file
             // change; a closed source file goes. No event for any of them.
-            write("tsconfig.json", r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[],"strict":true,"noImplicitAny":true},"include":["src"]}"#);
+            write(
+                "tsconfig.json",
+                r#"{"compilerOptions":{"jsx":"react-jsx","module":"esnext","moduleResolution":"bundler","types":[],"strict":true,"noImplicitAny":true},"include":["src"]}"#,
+            );
             edit_a(&session);
-            write("node_modules/react/package.json", r#"{"name":"react","version":"20.0.0","types":"index.d.ts","type":"module"}"#);
+            write(
+                "node_modules/react/package.json",
+                r#"{"name":"react","version":"20.0.0","types":"index.d.ts","type":"module"}"#,
+            );
             edit_a(&session);
             write("src/b.ts", "export const b: string = 1;\n");
             edit_a(&session);
@@ -431,5 +511,9 @@ fn verify_mode_uses_the_snapshot_when_the_disk_changes_without_events() {
         .map(|l| l.split_whitespace().nth(2).unwrap_or(""))
         .collect();
     assert_eq!(kinds, ["OK", "OK", "OK", "OK", "ERROR"], "{lines:#?}");
-    assert!(lines[4].contains("inputs not reconstructed"), "{}", lines[4]);
+    assert!(
+        lines[4].contains("inputs not reconstructed"),
+        "{}",
+        lines[4]
+    );
 }

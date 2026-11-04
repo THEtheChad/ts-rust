@@ -73,6 +73,14 @@ default = []
 # `GOPORT_TEST_WRITE_PANIC`) for tests/plain_early_emit.rs. Off in every
 # shipped build; ts_goport's `test-hooks` turns it on.
 test-hooks = []
+# Diagnostic and verification output read from the environment: the reuse
+# verifier (`GOPORT_VERIFY_REUSE`, `_LOG`, `_DIR`, `_CHILD*`,
+# `project::reuse_verify`), `GOPORT_REUSE_STATS`, `GOPORT_CHECKER_CALL_LOG`,
+# `GOPORT_EMIT_PHASE_TIMES`, `GOPORT_DTS_TWIN_CHECK`,
+# `GOPORT_FLOWSKIP=verify` and `GOPORT_LIB_SNAPSHOT=trace` /
+# `GOPORT_LIB_PARSE_SNAPSHOT=trace`. Without it none of these is read. Off
+# in every shipped build; ts_goport's `diagnostics` turns it on.
+diagnostics = []
 # The binaries' global allocator is jemalloc: thread arenas
 # (`tikv-jemalloc-ctl`), `jemalloc_layout`, and the jemalloc thread budget
 # and glibc tunables in program.rs. Only ts_goport's `jemalloc` turns it on.

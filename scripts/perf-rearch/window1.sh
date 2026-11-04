@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Timing window 1 (2026-11-04): Go vs main vs the merged perf head (E0+A1+B1) on an idle machine, plus the
-# same-binary A/Bs of B1 (GOPORT_PLAIN_EARLY_EMIT=0) and A1 (GOPORT_REUSE_SYNTHETIC=0). Every wall run waits for
-# load < 1.5 (bench.sh). Parts run in priority order and resume.
+# Timing window 1 (2026-11-04): Go vs main vs the merged perf head (E0+A1+B1) on an idle machine. Every wall run
+# waits for load < 1.5 (bench.sh). Parts run in priority order and resume. (Its same-binary A/Bs of B1 and A1 used
+# env switches that C1 removed; for an A/B, build the base commit as the other side.)
 # usage: scripts/perf-rearch/window1.sh <main bin> <head bin> <out dir> [part...]
-#   parts: cli-core lsp cli-emit-ab icount cli-rest thp   (default: all, in that order)
+#   parts: cli-core lsp icount cli-rest thp   (default: all, in that order)
 # The last output line is DONE or FAIL rc=N.
 set -uo pipefail
 [[ ${1:-help} == help || $# -lt 3 ]] && { sed -n '2,7p' "$0"; exit 0; }
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 main=$(realpath "$1"); head=$(realpath "$2"); out=$3; shift 3
-parts=${*:-cli-core lsp cli-emit-ab icount cli-rest thp}
+parts=${*:-cli-core lsp icount cli-rest thp}
 go=$HOME/.local/bin/tsgo-oracle-3e9236361fa9
 golsp=$HOME/.local/bin/tsgo-lsp-oracle-3e9236361fa9
 projects=ts-pattern,query,hono,zod,effect,umami,t3-web,t3-server,vscode
@@ -20,16 +20,9 @@ for part in $parts; do
     # The "<= Go" question first: CLI check and emit, Go / main / head.
     cli-core) "$here/bench.sh" cli --bin go="$go" --bin main="$main" --bin head="$head" --projects $projects \
                 --runs 3 --scenarios noemit,emit,emit-js --out "$out/cli-core" >"$out/cli-core.log" 2>&1 || rc=1 ;;
-    # LSP: Go / main / head / head with A1 off.
-    # bench.sh lsp has no --env: head-noreuse is a wrapper that sets GOPORT_REUSE_SYNTHETIC=0 and execs head.
-    lsp) noreuse="$out/tsgo-head-noreuse"
-         printf '#!/bin/sh\nGOPORT_REUSE_SYNTHETIC=0 exec %q "$@"\n' "$head" >"$noreuse"; chmod +x "$noreuse"
-         "$here/bench.sh" lsp --bin go="$golsp" --bin main="$main" --bin head="$head" --bin head-noreuse="$noreuse" \
+    # LSP: Go / main / head.
+    lsp) "$here/bench.sh" lsp --bin go="$golsp" --bin main="$main" --bin head="$head" \
            --runs 3 --out "$out/lsp" >"$out/lsp.log" 2>&1 || rc=1 ;;
-    # B1 same-binary A/B on the emit scenarios.
-    cli-emit-ab) "$here/bench.sh" cli --bin head="$head" --bin head-barrier="$head" \
-                   --env head-barrier:GOPORT_PLAIN_EARLY_EMIT=0 --bin go="$go" --projects umami,hono,ts-pattern,vscode,t3-web \
-                   --runs 5 --scenarios emit,emit-js,emit-cjs --out "$out/cli-emit-ab" >"$out/cli-emit-ab.log" 2>&1 || rc=1 ;;
     icount) "$here/bench.sh" cli --bin go="$go" --bin main="$main" --bin head="$head" --projects $projects \
               --scenarios icount --icount-runs 2 --out "$out/icount" >"$out/icount.log" 2>&1 || rc=1 ;;
     cli-rest) "$here/bench.sh" cli --bin go="$go" --bin main="$main" --bin head="$head" --projects $projects \

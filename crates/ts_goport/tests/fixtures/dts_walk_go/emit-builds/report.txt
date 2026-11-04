@@ -1,0 +1,479 @@
+== build: exit 2
+tsconfig.json(1,59): error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.
+  Visit https://aka.ms/ts6 for migration information.
+TSFILE: <project>/out/src/a.js
+TSFILE: <project>/out/src/a.d.ts
+TSFILE: <project>/out/src/b0.js
+TSFILE: <project>/out/src/b0.d.ts
+TSFILE: <project>/out/src/b1.js
+TSFILE: <project>/out/src/b1.d.ts
+TSFILE: <project>/out/src/b10.js
+TSFILE: <project>/out/src/b10.d.ts
+TSFILE: <project>/out/src/b11.js
+TSFILE: <project>/out/src/b11.d.ts
+TSFILE: <project>/out/src/b12.js
+TSFILE: <project>/out/src/b12.d.ts
+TSFILE: <project>/out/src/b13.js
+TSFILE: <project>/out/src/b13.d.ts
+TSFILE: <project>/out/src/b14.js
+TSFILE: <project>/out/src/b14.d.ts
+TSFILE: <project>/out/src/b15.js
+TSFILE: <project>/out/src/b15.d.ts
+TSFILE: <project>/out/src/b16.js
+TSFILE: <project>/out/src/b16.d.ts
+TSFILE: <project>/out/src/b17.js
+TSFILE: <project>/out/src/b17.d.ts
+TSFILE: <project>/out/src/b18.js
+TSFILE: <project>/out/src/b18.d.ts
+TSFILE: <project>/out/src/b19.js
+TSFILE: <project>/out/src/b19.d.ts
+TSFILE: <project>/out/src/b2.js
+TSFILE: <project>/out/src/b2.d.ts
+TSFILE: <project>/out/src/b20.js
+TSFILE: <project>/out/src/b20.d.ts
+TSFILE: <project>/out/src/b21.js
+TSFILE: <project>/out/src/b21.d.ts
+TSFILE: <project>/out/src/b22.js
+TSFILE: <project>/out/src/b22.d.ts
+TSFILE: <project>/out/src/b23.js
+TSFILE: <project>/out/src/b23.d.ts
+TSFILE: <project>/out/src/b24.js
+TSFILE: <project>/out/src/b24.d.ts
+TSFILE: <project>/out/src/b25.js
+TSFILE: <project>/out/src/b25.d.ts
+TSFILE: <project>/out/src/b26.js
+TSFILE: <project>/out/src/b26.d.ts
+TSFILE: <project>/out/src/b27.js
+TSFILE: <project>/out/src/b27.d.ts
+TSFILE: <project>/out/src/b28.js
+TSFILE: <project>/out/src/b28.d.ts
+TSFILE: <project>/out/src/b29.js
+TSFILE: <project>/out/src/b29.d.ts
+TSFILE: <project>/out/src/b3.js
+TSFILE: <project>/out/src/b3.d.ts
+TSFILE: <project>/out/src/b30.js
+TSFILE: <project>/out/src/b30.d.ts
+TSFILE: <project>/out/src/b31.js
+TSFILE: <project>/out/src/b31.d.ts
+TSFILE: <project>/out/src/b32.js
+TSFILE: <project>/out/src/b32.d.ts
+TSFILE: <project>/out/src/b33.js
+TSFILE: <project>/out/src/b33.d.ts
+TSFILE: <project>/out/src/b34.js
+TSFILE: <project>/out/src/b34.d.ts
+TSFILE: <project>/out/src/b35.js
+TSFILE: <project>/out/src/b35.d.ts
+TSFILE: <project>/out/src/b36.js
+TSFILE: <project>/out/src/b36.d.ts
+TSFILE: <project>/out/src/b37.js
+TSFILE: <project>/out/src/b37.d.ts
+TSFILE: <project>/out/src/b38.js
+TSFILE: <project>/out/src/b38.d.ts
+TSFILE: <project>/out/src/b39.js
+TSFILE: <project>/out/src/b39.d.ts
+TSFILE: <project>/out/src/b4.js
+TSFILE: <project>/out/src/b4.d.ts
+TSFILE: <project>/out/src/b5.js
+TSFILE: <project>/out/src/b5.d.ts
+TSFILE: <project>/out/src/b6.js
+TSFILE: <project>/out/src/b6.d.ts
+TSFILE: <project>/out/src/b7.js
+TSFILE: <project>/out/src/b7.d.ts
+TSFILE: <project>/out/src/b8.js
+TSFILE: <project>/out/src/b8.d.ts
+TSFILE: <project>/out/src/b9.js
+TSFILE: <project>/out/src/b9.d.ts
+TSFILE: <project>/out/src/c0.js
+TSFILE: <project>/out/src/c0.d.ts
+TSFILE: <project>/out/src/c1.js
+TSFILE: <project>/out/src/c1.d.ts
+TSFILE: <project>/out/src/c10.js
+TSFILE: <project>/out/src/c10.d.ts
+TSFILE: <project>/out/src/c11.js
+TSFILE: <project>/out/src/c11.d.ts
+TSFILE: <project>/out/src/c12.js
+TSFILE: <project>/out/src/c12.d.ts
+TSFILE: <project>/out/src/c13.js
+TSFILE: <project>/out/src/c13.d.ts
+TSFILE: <project>/out/src/c14.js
+TSFILE: <project>/out/src/c14.d.ts
+TSFILE: <project>/out/src/c15.js
+TSFILE: <project>/out/src/c15.d.ts
+TSFILE: <project>/out/src/c16.js
+TSFILE: <project>/out/src/c16.d.ts
+TSFILE: <project>/out/src/c17.js
+TSFILE: <project>/out/src/c17.d.ts
+TSFILE: <project>/out/src/c18.js
+TSFILE: <project>/out/src/c18.d.ts
+TSFILE: <project>/out/src/c19.js
+TSFILE: <project>/out/src/c19.d.ts
+TSFILE: <project>/out/src/c2.js
+TSFILE: <project>/out/src/c2.d.ts
+TSFILE: <project>/out/src/c20.js
+TSFILE: <project>/out/src/c20.d.ts
+TSFILE: <project>/out/src/c21.js
+TSFILE: <project>/out/src/c21.d.ts
+TSFILE: <project>/out/src/c22.js
+TSFILE: <project>/out/src/c22.d.ts
+TSFILE: <project>/out/src/c23.js
+TSFILE: <project>/out/src/c23.d.ts
+TSFILE: <project>/out/src/c24.js
+TSFILE: <project>/out/src/c24.d.ts
+TSFILE: <project>/out/src/c25.js
+TSFILE: <project>/out/src/c25.d.ts
+TSFILE: <project>/out/src/c26.js
+TSFILE: <project>/out/src/c26.d.ts
+TSFILE: <project>/out/src/c27.js
+TSFILE: <project>/out/src/c27.d.ts
+TSFILE: <project>/out/src/c28.js
+TSFILE: <project>/out/src/c28.d.ts
+TSFILE: <project>/out/src/c29.js
+TSFILE: <project>/out/src/c29.d.ts
+TSFILE: <project>/out/src/c3.js
+TSFILE: <project>/out/src/c3.d.ts
+TSFILE: <project>/out/src/c30.js
+TSFILE: <project>/out/src/c30.d.ts
+TSFILE: <project>/out/src/c31.js
+TSFILE: <project>/out/src/c31.d.ts
+TSFILE: <project>/out/src/c32.js
+TSFILE: <project>/out/src/c32.d.ts
+TSFILE: <project>/out/src/c33.js
+TSFILE: <project>/out/src/c33.d.ts
+TSFILE: <project>/out/src/c34.js
+TSFILE: <project>/out/src/c34.d.ts
+TSFILE: <project>/out/src/c35.js
+TSFILE: <project>/out/src/c35.d.ts
+TSFILE: <project>/out/src/c36.js
+TSFILE: <project>/out/src/c36.d.ts
+TSFILE: <project>/out/src/c37.js
+TSFILE: <project>/out/src/c37.d.ts
+TSFILE: <project>/out/src/c38.js
+TSFILE: <project>/out/src/c38.d.ts
+TSFILE: <project>/out/src/c39.js
+TSFILE: <project>/out/src/c39.d.ts
+TSFILE: <project>/out/src/c4.js
+TSFILE: <project>/out/src/c4.d.ts
+TSFILE: <project>/out/src/c5.js
+TSFILE: <project>/out/src/c5.d.ts
+TSFILE: <project>/out/src/c6.js
+TSFILE: <project>/out/src/c6.d.ts
+TSFILE: <project>/out/src/c7.js
+TSFILE: <project>/out/src/c7.d.ts
+TSFILE: <project>/out/src/c8.js
+TSFILE: <project>/out/src/c8.d.ts
+TSFILE: <project>/out/src/c9.js
+TSFILE: <project>/out/src/c9.d.ts
+TSFILE: <project>/out/src/g.js
+TSFILE: <project>/out/src/g.d.ts
+TSFILE: <project>/out/src/u.js
+TSFILE: <project>/out/src/u.d.ts
+TSFILE: <project>/out/src/ug.js
+TSFILE: <project>/out/src/ug.d.ts
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
+== wide change, --noEmit: exit 2
+src/c0.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c1.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c10.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c11.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c12.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c13.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c14.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c15.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c16.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c17.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c18.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c19.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c2.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c20.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c21.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c22.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c23.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c24.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c25.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c26.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c27.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c28.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c29.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c3.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c30.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c31.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c32.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c33.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c34.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c35.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c36.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c37.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c38.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c39.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c4.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c5.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c6.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c7.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c8.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/c9.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
+== build after the wide change: exit 2
+tsconfig.json(1,59): error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.
+  Visit https://aka.ms/ts6 for migration information.
+TSFILE: <project>/out/src/a.js
+TSFILE: <project>/out/src/a.d.ts
+TSFILE: <project>/out/src/b0.js
+TSFILE: <project>/out/src/b0.d.ts
+TSFILE: <project>/out/src/b1.js
+TSFILE: <project>/out/src/b1.d.ts
+TSFILE: <project>/out/src/b10.js
+TSFILE: <project>/out/src/b10.d.ts
+TSFILE: <project>/out/src/b11.js
+TSFILE: <project>/out/src/b11.d.ts
+TSFILE: <project>/out/src/b12.js
+TSFILE: <project>/out/src/b12.d.ts
+TSFILE: <project>/out/src/b13.js
+TSFILE: <project>/out/src/b13.d.ts
+TSFILE: <project>/out/src/b14.js
+TSFILE: <project>/out/src/b14.d.ts
+TSFILE: <project>/out/src/b15.js
+TSFILE: <project>/out/src/b15.d.ts
+TSFILE: <project>/out/src/b16.js
+TSFILE: <project>/out/src/b16.d.ts
+TSFILE: <project>/out/src/b17.js
+TSFILE: <project>/out/src/b17.d.ts
+TSFILE: <project>/out/src/b18.js
+TSFILE: <project>/out/src/b18.d.ts
+TSFILE: <project>/out/src/b19.js
+TSFILE: <project>/out/src/b19.d.ts
+TSFILE: <project>/out/src/b2.js
+TSFILE: <project>/out/src/b2.d.ts
+TSFILE: <project>/out/src/b20.js
+TSFILE: <project>/out/src/b20.d.ts
+TSFILE: <project>/out/src/b21.js
+TSFILE: <project>/out/src/b21.d.ts
+TSFILE: <project>/out/src/b22.js
+TSFILE: <project>/out/src/b22.d.ts
+TSFILE: <project>/out/src/b23.js
+TSFILE: <project>/out/src/b23.d.ts
+TSFILE: <project>/out/src/b24.js
+TSFILE: <project>/out/src/b24.d.ts
+TSFILE: <project>/out/src/b25.js
+TSFILE: <project>/out/src/b25.d.ts
+TSFILE: <project>/out/src/b26.js
+TSFILE: <project>/out/src/b26.d.ts
+TSFILE: <project>/out/src/b27.js
+TSFILE: <project>/out/src/b27.d.ts
+TSFILE: <project>/out/src/b28.js
+TSFILE: <project>/out/src/b28.d.ts
+TSFILE: <project>/out/src/b29.js
+TSFILE: <project>/out/src/b29.d.ts
+TSFILE: <project>/out/src/b3.js
+TSFILE: <project>/out/src/b3.d.ts
+TSFILE: <project>/out/src/b30.js
+TSFILE: <project>/out/src/b30.d.ts
+TSFILE: <project>/out/src/b31.js
+TSFILE: <project>/out/src/b31.d.ts
+TSFILE: <project>/out/src/b32.js
+TSFILE: <project>/out/src/b32.d.ts
+TSFILE: <project>/out/src/b33.js
+TSFILE: <project>/out/src/b33.d.ts
+TSFILE: <project>/out/src/b34.js
+TSFILE: <project>/out/src/b34.d.ts
+TSFILE: <project>/out/src/b35.js
+TSFILE: <project>/out/src/b35.d.ts
+TSFILE: <project>/out/src/b36.js
+TSFILE: <project>/out/src/b36.d.ts
+TSFILE: <project>/out/src/b37.js
+TSFILE: <project>/out/src/b37.d.ts
+TSFILE: <project>/out/src/b38.js
+TSFILE: <project>/out/src/b38.d.ts
+TSFILE: <project>/out/src/b39.js
+TSFILE: <project>/out/src/b39.d.ts
+TSFILE: <project>/out/src/b4.js
+TSFILE: <project>/out/src/b4.d.ts
+TSFILE: <project>/out/src/b5.js
+TSFILE: <project>/out/src/b5.d.ts
+TSFILE: <project>/out/src/b6.js
+TSFILE: <project>/out/src/b6.d.ts
+TSFILE: <project>/out/src/b7.js
+TSFILE: <project>/out/src/b7.d.ts
+TSFILE: <project>/out/src/b8.js
+TSFILE: <project>/out/src/b8.d.ts
+TSFILE: <project>/out/src/b9.js
+TSFILE: <project>/out/src/b9.d.ts
+TSFILE: <project>/out/src/c0.d.ts
+TSFILE: <project>/out/src/c1.d.ts
+TSFILE: <project>/out/src/c10.d.ts
+TSFILE: <project>/out/src/c11.d.ts
+TSFILE: <project>/out/src/c12.d.ts
+TSFILE: <project>/out/src/c13.d.ts
+TSFILE: <project>/out/src/c14.d.ts
+TSFILE: <project>/out/src/c15.d.ts
+TSFILE: <project>/out/src/c16.d.ts
+TSFILE: <project>/out/src/c17.d.ts
+TSFILE: <project>/out/src/c18.d.ts
+TSFILE: <project>/out/src/c19.d.ts
+TSFILE: <project>/out/src/c2.d.ts
+TSFILE: <project>/out/src/c20.d.ts
+TSFILE: <project>/out/src/c21.d.ts
+TSFILE: <project>/out/src/c22.d.ts
+TSFILE: <project>/out/src/c23.d.ts
+TSFILE: <project>/out/src/c24.d.ts
+TSFILE: <project>/out/src/c25.d.ts
+TSFILE: <project>/out/src/c26.d.ts
+TSFILE: <project>/out/src/c27.d.ts
+TSFILE: <project>/out/src/c28.d.ts
+TSFILE: <project>/out/src/c29.d.ts
+TSFILE: <project>/out/src/c3.d.ts
+TSFILE: <project>/out/src/c30.d.ts
+TSFILE: <project>/out/src/c31.d.ts
+TSFILE: <project>/out/src/c32.d.ts
+TSFILE: <project>/out/src/c33.d.ts
+TSFILE: <project>/out/src/c34.d.ts
+TSFILE: <project>/out/src/c35.d.ts
+TSFILE: <project>/out/src/c36.d.ts
+TSFILE: <project>/out/src/c37.d.ts
+TSFILE: <project>/out/src/c38.d.ts
+TSFILE: <project>/out/src/c39.d.ts
+TSFILE: <project>/out/src/c4.d.ts
+TSFILE: <project>/out/src/c5.d.ts
+TSFILE: <project>/out/src/c6.d.ts
+TSFILE: <project>/out/src/c7.d.ts
+TSFILE: <project>/out/src/c8.d.ts
+TSFILE: <project>/out/src/c9.d.ts
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
+== revert, --noEmit: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
+== b0.ts body, --noEmit: exit 2
+src/u.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr
+== build after both: exit 2
+tsconfig.json(1,59): error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout.
+  Visit https://aka.ms/ts6 for migration information.
+TSFILE: <project>/out/src/a.js
+TSFILE: <project>/out/src/a.d.ts
+TSFILE: <project>/out/src/b0.js
+TSFILE: <project>/out/src/b0.d.ts
+TSFILE: <project>/out/src/b1.js
+TSFILE: <project>/out/src/b1.d.ts
+TSFILE: <project>/out/src/b10.js
+TSFILE: <project>/out/src/b10.d.ts
+TSFILE: <project>/out/src/b11.js
+TSFILE: <project>/out/src/b11.d.ts
+TSFILE: <project>/out/src/b12.js
+TSFILE: <project>/out/src/b12.d.ts
+TSFILE: <project>/out/src/b13.js
+TSFILE: <project>/out/src/b13.d.ts
+TSFILE: <project>/out/src/b14.js
+TSFILE: <project>/out/src/b14.d.ts
+TSFILE: <project>/out/src/b15.js
+TSFILE: <project>/out/src/b15.d.ts
+TSFILE: <project>/out/src/b16.js
+TSFILE: <project>/out/src/b16.d.ts
+TSFILE: <project>/out/src/b17.js
+TSFILE: <project>/out/src/b17.d.ts
+TSFILE: <project>/out/src/b18.js
+TSFILE: <project>/out/src/b18.d.ts
+TSFILE: <project>/out/src/b19.js
+TSFILE: <project>/out/src/b19.d.ts
+TSFILE: <project>/out/src/b2.js
+TSFILE: <project>/out/src/b2.d.ts
+TSFILE: <project>/out/src/b20.js
+TSFILE: <project>/out/src/b20.d.ts
+TSFILE: <project>/out/src/b21.js
+TSFILE: <project>/out/src/b21.d.ts
+TSFILE: <project>/out/src/b22.js
+TSFILE: <project>/out/src/b22.d.ts
+TSFILE: <project>/out/src/b23.js
+TSFILE: <project>/out/src/b23.d.ts
+TSFILE: <project>/out/src/b24.js
+TSFILE: <project>/out/src/b24.d.ts
+TSFILE: <project>/out/src/b25.js
+TSFILE: <project>/out/src/b25.d.ts
+TSFILE: <project>/out/src/b26.js
+TSFILE: <project>/out/src/b26.d.ts
+TSFILE: <project>/out/src/b27.js
+TSFILE: <project>/out/src/b27.d.ts
+TSFILE: <project>/out/src/b28.js
+TSFILE: <project>/out/src/b28.d.ts
+TSFILE: <project>/out/src/b29.js
+TSFILE: <project>/out/src/b29.d.ts
+TSFILE: <project>/out/src/b3.js
+TSFILE: <project>/out/src/b3.d.ts
+TSFILE: <project>/out/src/b30.js
+TSFILE: <project>/out/src/b30.d.ts
+TSFILE: <project>/out/src/b31.js
+TSFILE: <project>/out/src/b31.d.ts
+TSFILE: <project>/out/src/b32.js
+TSFILE: <project>/out/src/b32.d.ts
+TSFILE: <project>/out/src/b33.js
+TSFILE: <project>/out/src/b33.d.ts
+TSFILE: <project>/out/src/b34.js
+TSFILE: <project>/out/src/b34.d.ts
+TSFILE: <project>/out/src/b35.js
+TSFILE: <project>/out/src/b35.d.ts
+TSFILE: <project>/out/src/b36.js
+TSFILE: <project>/out/src/b36.d.ts
+TSFILE: <project>/out/src/b37.js
+TSFILE: <project>/out/src/b37.d.ts
+TSFILE: <project>/out/src/b38.js
+TSFILE: <project>/out/src/b38.d.ts
+TSFILE: <project>/out/src/b39.js
+TSFILE: <project>/out/src/b39.d.ts
+TSFILE: <project>/out/src/b4.js
+TSFILE: <project>/out/src/b4.d.ts
+TSFILE: <project>/out/src/b5.js
+TSFILE: <project>/out/src/b5.d.ts
+TSFILE: <project>/out/src/b6.js
+TSFILE: <project>/out/src/b6.d.ts
+TSFILE: <project>/out/src/b7.js
+TSFILE: <project>/out/src/b7.d.ts
+TSFILE: <project>/out/src/b8.js
+TSFILE: <project>/out/src/b8.d.ts
+TSFILE: <project>/out/src/b9.js
+TSFILE: <project>/out/src/b9.d.ts
+TSFILE: <project>/out/src/c0.d.ts
+TSFILE: <project>/out/src/c1.d.ts
+TSFILE: <project>/out/src/c10.d.ts
+TSFILE: <project>/out/src/c11.d.ts
+TSFILE: <project>/out/src/c12.d.ts
+TSFILE: <project>/out/src/c13.d.ts
+TSFILE: <project>/out/src/c14.d.ts
+TSFILE: <project>/out/src/c15.d.ts
+TSFILE: <project>/out/src/c16.d.ts
+TSFILE: <project>/out/src/c17.d.ts
+TSFILE: <project>/out/src/c18.d.ts
+TSFILE: <project>/out/src/c19.d.ts
+TSFILE: <project>/out/src/c2.d.ts
+TSFILE: <project>/out/src/c20.d.ts
+TSFILE: <project>/out/src/c21.d.ts
+TSFILE: <project>/out/src/c22.d.ts
+TSFILE: <project>/out/src/c23.d.ts
+TSFILE: <project>/out/src/c24.d.ts
+TSFILE: <project>/out/src/c25.d.ts
+TSFILE: <project>/out/src/c26.d.ts
+TSFILE: <project>/out/src/c27.d.ts
+TSFILE: <project>/out/src/c28.d.ts
+TSFILE: <project>/out/src/c29.d.ts
+TSFILE: <project>/out/src/c3.d.ts
+TSFILE: <project>/out/src/c30.d.ts
+TSFILE: <project>/out/src/c31.d.ts
+TSFILE: <project>/out/src/c32.d.ts
+TSFILE: <project>/out/src/c33.d.ts
+TSFILE: <project>/out/src/c34.d.ts
+TSFILE: <project>/out/src/c35.d.ts
+TSFILE: <project>/out/src/c36.d.ts
+TSFILE: <project>/out/src/c37.d.ts
+TSFILE: <project>/out/src/c38.d.ts
+TSFILE: <project>/out/src/c39.d.ts
+TSFILE: <project>/out/src/c4.d.ts
+TSFILE: <project>/out/src/c5.d.ts
+TSFILE: <project>/out/src/c6.d.ts
+TSFILE: <project>/out/src/c7.d.ts
+TSFILE: <project>/out/src/c8.d.ts
+TSFILE: <project>/out/src/c9.d.ts
+TSFILE: <project>/out/tsconfig.tsbuildinfo
+-- stderr

@@ -213,19 +213,26 @@ impl Checker {
         // flowskip1: a walk that can only return the declared type and
         // makes nothing is skipped (flow_skip.rs). P1: no explicit flow node.
         // P3: declared == initial, not auto (go-model.md 2.4).
-        let evolved_type = if self.flow_skip.mode != FlowSkipMode::Off
-            && !explicit_flow_node
+        let evolved_type = if !explicit_flow_node
             && (initial_type.is_nil() || initial_type == declared_type)
             && declared_type != self.auto_type
             && declared_type != self.auto_array_type
             && let Some(nest) =
                 self.flow_skip_test(reference, declared_type, flow_container, flow_node)
         {
-            if self.flow_skip.mode == FlowSkipMode::Verify {
+            // Verify mode runs Go's walk anyway (a `diagnostics` build).
+            #[cfg(feature = "diagnostics")]
+            let skipped = if self.flow_skip.verify {
                 self.flow_skip_verify(reference, declared_type, flow_container, flow_node, nest)
             } else {
                 declared_type
-            }
+            };
+            #[cfg(not(feature = "diagnostics"))]
+            let skipped = {
+                let _ = nest;
+                declared_type
+            };
+            skipped
         } else {
             self.flow_walk(
                 reference,
@@ -325,8 +332,10 @@ impl Checker {
         let mut flow_data_guard = None;
         // flowskip1 verify mode: record each loop turn (read once per call;
         // a nested verify restores the recording before it returns).
+        #[cfg(feature = "diagnostics")]
         let recording = self.flow_skip.recording.is_some();
         loop {
+            #[cfg(feature = "diagnostics")]
             if recording {
                 let depth = f.depth;
                 self.flow_skip_record(flow, depth);

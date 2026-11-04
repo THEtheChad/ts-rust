@@ -134,6 +134,11 @@ jobs:
           cargo test --release --locked -p ts_goport --test go_baselines --no-run
       - name: Unit and integration tests
         run: cargo test --release --locked --workspace --no-fail-fast
+      # The diagnostic and verify code (flow skip, reuse verify, d.ts twin check, the plain early
+      # emit tests) and the test hooks compile only with these features; shipped builds have neither.
+      - name: Tests with the diagnostics and test-hooks features
+        if: ${{ !cancelled() }}
+        run: cargo test --release --locked -p goport_core -p ts_goport --features ts_goport/diagnostics,ts_goport/test-hooks --no-fail-fast
       # go_baselines has `test = false`, so --workspace skips it. TestLocal (about 12,700 compiler
       # cases) runs in 4 shards in goport-tests.sh, in the revision pipeline; the rest of the default
       # go_baselines set runs here, also after a failed unit test.

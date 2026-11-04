@@ -6,7 +6,6 @@
 //! paths from failed module resolution.
 
 use crate::frontend::prelude::*;
-use std::time::SystemTime;
 
 // Go: trackingvfs.go:18 FS
 /// FS wraps a vfs.FS and records every path accessed via read-like operations.
@@ -40,30 +39,9 @@ impl Fs for FS {
         self.inner.read_file(path)
     }
 
-    // Go: trackingvfs.go:37 (*FS).WriteFile
-    fn write_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.write_file(path, data)
-    }
-
-    // Go: trackingvfs.go:41 (*FS).AppendFile
-    fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.append_file(path, data)
-    }
-
-    // Go: trackingvfs.go:45 (*FS).Remove
-    fn remove(&self, path: &str) -> Result<(), FsError> {
-        self.inner.remove(path)
-    }
-
-    // Go: trackingvfs.go:47 (*FS).Chtimes
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<SystemTime>,
-        m_time: Option<SystemTime>,
-    ) -> Result<(), FsError> {
-        self.inner.chtimes(path, a_time, m_time)
-    }
+    // Go: trackingvfs.go:37 to :50 (*FS).WriteFile, AppendFile, Remove and
+    // Chtimes: not tracked.
+    crate::frontend::vfs::fs_write_through!(inner);
 
     // Go: trackingvfs.go:51 (*FS).DirectoryExists
     fn directory_exists(&self, path: &str) -> bool {

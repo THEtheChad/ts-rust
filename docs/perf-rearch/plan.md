@@ -462,3 +462,28 @@ once a **reconciliation step** is built and tested.
     gate verifiers whole.
   - **Round 2** restores Go-identical `--noEmit` build info and measures its
     cost.
+- **2026-11-04, C1 round 2 done** (`0a57fcb3d`, plus `5c3037699` for results). All Astra items fixed.
+  - **`--noEmit` build info:** Go's d.ts walk is now the only path; the
+    version skip is deleted. 12-step `--noEmit` goldens from the pinned Go
+    oracle are in git.
+  - **Cost:** +5.5% instructions on warm `--noEmit` rebuilds that reach wide
+    closures (85-file project and hono); query and umami are flat.
+  - **Backlog W1:** a faster Go-identical d.ts walk. Add warm `--noEmit` edit
+    sequences to timing window 2, against Go.
+  - **Parity:** 0 lost, apart from 4 deleted skip unit tests.
+  - **Nondeterminism:** 5 hono LSP `references` items vary between tsc-rs
+    runs; they went to ND1.
+  - Astra re-review running.
+- **2026-11-04, C1 merged** (`a518e3088`).
+  - Astra's re-review: ACCEPT WITH FIXES, saved in the thread. Root fixed both
+    items in `d50854483`:
+    - the emit phase timers are zero-sized without `diagnostics`; `nm`
+      finds no `phase_times` symbols in the release binary;
+    - CI runs the diagnostics and test-hooks feature tests.
+  - `base-current` now points to `runs/20261104-165110-full-a49fbd8059`,
+    without the 7 deleted test names.
+  - Astra's W1 ideas (no measured gain yet):
+    - a single-file builder-signature entry that reuses the emitter but skips
+      emit scheduling;
+    - hash the declaration-text slice directly when there are no declaration
+      diagnostics.

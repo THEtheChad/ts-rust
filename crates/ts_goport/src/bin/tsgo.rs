@@ -958,7 +958,9 @@ fn send_code(worker: Worker, code: i32) {
 // of the output (`GoOutput`).
 fn run_main(start: Instant) -> i32 {
     // Not in Go (perf/first-principles A1): the child of the language
-    // server's reuse verify mode (`program::reuse_verify`).
+    // server's reuse verify mode (`program::reuse_verify`), in a
+    // `diagnostics` feature build.
+    #[cfg(feature = "diagnostics")]
     if std::env::var_os(ts_goport::project::reuse_verify::CHILD_ENV).is_some() {
         return ts_goport::project::reuse_verify::child_main();
     }
