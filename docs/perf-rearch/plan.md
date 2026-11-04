@@ -135,3 +135,24 @@ The CLI check, parse, bind, d.ts emit and incremental emit are already
 4. The A2 coroutine spike.
 5. D0 (no code) once the baseline timings are done, because it is
    CPU-heavy.
+
+## Phase 2 after Astra's review (2026-11-03)
+
+The review is in `reviews/2026-11-03-astra-plan.md` (go with changes). Root
+accepts every finding.
+- **A1** carries the reason-remap, update-kind and isolated-verify
+  requirements.
+- **B1** keeps the global-diagnostics boundary.
+- **E2** is redesigned as an acquired registry view.
+- **E1** gets a full wall/sys/RSS protocol.
+- **B4** is dropped.
+- **A2** waits for a remeasure after A1, and needs coroutine-local state and
+  leases.
+- **D1** is not an exact default; D0 is research only.
+- **New items:** measure the shipped PGO+BOLT pipeline (S1), and reclaim
+  emitter-only synthetic nodes per file (E8).
+- **Gap claims** require successful commands, binary provenance and unloaded
+  paired medians.
+
+**First wave started:** A1 and B1 (implementation lanes). The spikes wait
+until the baseline and parity lanes have released the machine.
