@@ -335,6 +335,9 @@ pub struct ResolveAhead {
     job: Option<Arc<Job>>,
     /// The job is a first-load job (`FirstLoadJob`).
     first_load: bool,
+    /// The loader checks every lookup of an answer through the snapshot's
+    /// lookup cache (a first load, or any load under the OS view).
+    validated: bool,
     keep_keys: Option<Box<dyn FnOnce(Arc<KeyList>)>>,
     /// The module keys and the package scope keys of the previous load.
     previous_keys: (usize, usize),
@@ -385,8 +388,15 @@ impl ResolveAhead {
                 })
             });
         let first_load = first_load && job.is_some();
+        // Loader v2 L1: under the load's OS view, a keyed load checks its
+        // answers as a first load does: every lookup that the snapshot's
+        // lookup cache has no answer for is made through it (a view hit),
+        // and the job's lookups are not attached. The cache then holds a
+        // serial load's lookups, whichever answers arrived in time.
+        let validated =
+            job.is_some() && (first_load || crate::frontend::vfs::loadview::current().is_some());
         if let Some(job) = &job {
-            if first_load {
+            if validated {
                 (host.first_load)();
             } else {
                 (host.attach)(job.stats.clone());
@@ -437,6 +447,7 @@ impl ResolveAhead {
         ResolveAhead {
             job,
             first_load,
+            validated,
             keep_keys: Some(host.keep_keys),
             previous_keys,
         }
@@ -484,7 +495,7 @@ impl ResolveAhead {
         // it would after a first load with no job.
         self.end_job(
             Some(Box::new((link.answers.take(), link.queue.take()))),
-            rejected || self.first_load,
+            rejected || self.validated,
         );
         if worker_panic {
             debug_log(format_args!(

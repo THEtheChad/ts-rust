@@ -1760,20 +1760,23 @@ os_child_test! {
 
 os_child_test! {
     /// L1: a keyed second load (an edit, whose workers resolve the keys of
-    /// the first load) through the view leaves the same state as without
-    /// the view, both with the loader taking every worker answer
-    /// (`Mode::Force`).
-    fn a_keyed_second_load_through_the_view_equals_the_load_without() {
+    /// the first load) through the view, with the loader taking every
+    /// worker answer (`Mode::Force`), leaves the same state as the serial
+    /// loader (no resolve ahead), lookup cache included: under the view a
+    /// keyed load checks every lookup through the snapshot's cache.
+    fn a_keyed_second_load_through_the_view_equals_the_serial_load() {
         let steps = |session: &Rc<Session>, root: &str| {
             open_index(session, root);
             add_import(session, root);
             program(session, &file_uri(root, "src/index.ts"));
         };
         let root = fresh_project("viewsecond");
-        let (off, _) = run_view(&root, false, Some(Mode::Force), &steps);
+        let (serial, _) = run_view(&root, false, Some(Mode::Off), &steps);
         let (on, counts) = run_view(&root, true, Some(Mode::Force), &steps);
-        assert_eq!(on.0, off.0);
-        assert_eq!(on.1, off.1);
+        assert_eq!(on.0, serial.0);
+        assert_eq!(on.1, serial.1);
+        let stats = resolve_ahead::last_stats().expect("no resolve-ahead load");
+        assert!(stats.keys > 0 && stats.loader.taken > 0, "{stats:?}");
         let (_, bypass) = counts.expect("no view attached");
         assert_eq!(bypass, 0);
         std::fs::remove_dir_all(&root).unwrap();

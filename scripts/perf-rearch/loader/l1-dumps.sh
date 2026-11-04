@@ -64,6 +64,13 @@ for f in sys.argv[1:]:
   # and for the whole message stream (every message in order, raw).
   python3 -I "$here/dump-sections.py" dumps --off "${offs[@]/%/.dump}" --on "${ons[@]/%/.dump}" --serial "$out/$name-serial.dump" > "$out/$name.dump-verdict"
   python3 -I "$here/dump-sections.py" stream --off "${offs[@]/%/.stream}" --on "${ons[@]/%/.stream}" --serial "$out/$name-serial.stream" > "$out/$name.stream-verdict"
+  # Also every view-on run against the serial loader alone (the serial run given as both
+  # reference runs, so every record must match it exactly). Under the view a keyed load checks
+  # every lookup through the snapshot's cache, so it equals the serial loader, where the
+  # view-off keyed loads differ from it (pre-existing).
+  python3 -I "$here/dump-sections.py" dumps --off "$out/$name-serial.dump" "$out/$name-serial.dump" --on "${ons[@]/%/.dump}" > "$out/$name.dump-vs-serial"
+  python3 -I "$here/dump-sections.py" stream --off "$out/$name-serial.stream" "$out/$name-serial.stream" --on "${ons[@]/%/.stream}" > "$out/$name.stream-vs-serial"
+  echo "  on vs serial: dump $(tail -1 "$out/$name.dump-vs-serial") ($(grep -c '^  FAIL' "$out/$name.dump-vs-serial") fail records), stream $(tail -1 "$out/$name.stream-vs-serial")"
   dv=$(tail -1 "$out/$name.dump-verdict"); sv=$(tail -1 "$out/$name.stream-verdict")
   inc=$(grep -c 'INCONCLUSIVE' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | awk -F: '{s+=$2} END {print s}')
   exc=$(grep -c 'EXCLUDED' "$out/$name.dump-verdict" | awk -F: '{s+=$NF} END {print s}')
