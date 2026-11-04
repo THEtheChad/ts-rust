@@ -15,8 +15,9 @@ marked quick):
   decl        emit + --declaration --declarationMap --sourceMap
   incr        emit + --incremental, run twice (cold, then no-op)
   listfiles   --noEmit --listFiles
-  extdiag     --noEmit --extendedDiagnostics; the Memory and time values are masked and the
-              padding of the statistics (it follows the widest value) is one space
+  extdiag     --noEmit --extendedDiagnostics; the Memory values are masked, the time lines are
+              dropped (a time line shows only when its duration is not zero), and the padding
+              of the statistics (it follows the widest value) is one space
   pretty      --noEmit --pretty true (colors and code frames)
   showconfig  --showConfig
   build       -b CFG --verbose --pretty false, run twice (cold, then up to date); only configs
@@ -89,8 +90,13 @@ MASK_RE = re.compile(rb'^((?:Memory used|Memory allocs|[A-Za-z /]* time)):[ \t]*
 STAT_RE = re.compile(rb'^([A-Za-z][A-Za-z /()]*):[ \t]+(\S+)[ \t]*$', re.M)
 
 
+# A time line is printed only when its duration is not zero (Go's statistics.go, and tsc-rs's), so
+# whether "Emit time" or "Bind time" shows depends on the clock: the time lines are dropped.
+TIME_LINE_RE = re.compile(rb'^[A-Za-z /]* time:[^\n]*\n', re.M)
+
+
 def mask_stats(out):
-    return STAT_RE.sub(rb'\1: \2', MASK_RE.sub(rb'\1: <masked>', out))
+    return STAT_RE.sub(rb'\1: \2', TIME_LINE_RE.sub(b'', MASK_RE.sub(rb'\1: <masked>', out)))
 
 
 def sha256_file(path):
