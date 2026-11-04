@@ -190,3 +190,29 @@ until the baseline and parity lanes have released the machine.
   203,532) and on ts-pattern (off by one, and it varies between runs). Found
   by lane B1. The parity gate's extdiag items didn't catch it; check what the
   gate masks.
+- **2026-11-04, baseline lane merged:** `scripts/perf-rearch/bench*`,
+  `docs/perf-rearch/baseline.md`, and the user-space samply at
+  `~/.local/bin/samply-user`.
+
+## Baseline findings that change the plan (2026-11-04)
+
+- **One thread of tsc-rs does 24–62% less work than one thread of Go**
+  (user instructions, every project and mode). Wall losses come from how
+  work is spread over threads and from serial phases, never from the amount
+  of work.
+- **New target: the VS Code CLI check.** One quiet run took 12.9 s against
+  Go's 11.3 s; it has the smallest instruction margin (0.65).
+  - Its 4 checkers run 16.0–19.5 s of CPU each.
+  - Parse, bind and check never overlap.
+  - **Levers:** D1 (more checkers, certified), a better partition (checker
+    #3), and a **new candidate P1**: pipeline the phases, so checking starts
+    on files whose dependencies are bound and parse and bind overlap the
+    check. This needs its own audit and design note, because checker order
+    and binder merges must stay Go's.
+- **Wall timings are still unmeasured.** The load gate never opened between
+  16:36 and 22:35, because our own lanes keep the load at 6–125. The full
+  wall suite is queued (`perf-rearch-baseline-wall4`, 1.5–2.5 h, starts at
+  idle).
+  - **Plan:** after the current fix rounds, root holds new CPU-heavy lanes so
+    the suite and the B1/A1 timing jobs (`b1-time2`) can run in one idle
+    window.
