@@ -252,7 +252,79 @@ def norm_stats(text: str, stats: bool) -> str:
     return "".join(out)
 
 
-def run_side(binary: str, cwd: Path, args: list, out: Path, setup, env_extra: dict) -> dict:
+# Every GOPORT_* variable is removed from the inherited environment, then
+# each side sets what it depends on (so an inherited GOPORT_EARLY_EMIT=0 or
+# GOPORT_PLAIN_EARLY_EMIT=0 cannot turn the early emit off unnoticed).
+BASE_ENV = {"GOPORT_EARLY_EMIT": "1", "GOPORT_PLAIN_EARLY_EMIT": "1"}
+
+REPORT_HEADER = "emit phase times (GOPORT_EMIT_PHASE_TIMES)"
+REPORT_ROUTING = "emit routing (files)"
+
+
+def clean_env(extra: dict) -> dict:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GOPORT_")}
+    env.update(BASE_ENV)
+    env.update(extra)
+    return env
+
+
+def split_report(err: str):
+    """(stderr without the phase report, routes) or raises ValueError.
+
+    The report must be there once, in its known form: the header, indented
+    table lines, the routing header and indented `<name> <count>` lines.
+    Every other line stays.
+    """
+    lines = err.splitlines(keepends=True)
+    at = [i for i, l in enumerate(lines) if l.rstrip("\n") == REPORT_HEADER]
+    if len(at) != 1:
+        raise ValueError(f"{len(at)} phase reports")
+    i = at[0] + 1
+    while i < len(lines) and lines[i].startswith("  "):
+        if not re.match(r"^  (thread|loading|checker|pool|twin|flush|other|total|deferred writes)\b", lines[i]):
+            raise ValueError(f"unknown report line {lines[i]!r}")
+        i += 1
+    if i >= len(lines) or lines[i].rstrip("\n") != REPORT_ROUTING:
+        raise ValueError("no routing part")
+    i += 1
+    routes = {}
+    while i < len(lines) and lines[i].startswith("  "):
+        m = re.match(r"^  (.+?)\s+(\d+)\n?$", lines[i])
+        if not m:
+            raise ValueError(f"unknown routing line {lines[i]!r}")
+        routes[m.group(1)] = int(m.group(2))
+        i += 1
+    return "".join(lines[: at[0]] + lines[i:]), routes
+
+
+def expected_start(name: str, args: list) -> str:
+    """How the early side (B) must send its emit: early, late or none."""
+    if name.endswith(":incremental"):
+        return "none"  # the incremental program (its own early emit)
+    if "--noEmitOnError" in args:
+        return "late|none"  # none: errors, so nothing is emitted
+    if "--singleThreaded" in args:
+        return "late"
+    if name.startswith(("zod:", "effect:default", "effect:--verbatimModuleSyntax", "ts-pattern:")):
+        return "late"  # zod fails F1 (nodenext); TS5069 / TS5011 option errors
+    if name.startswith("effect:") and "--declaration" not in args:
+        return "late"  # composite off leaves declarationMap without declaration: TS5069
+    if ":commonjs-node10" in name:
+        return "late"  # TS5107 option error
+    if name.startswith(("fx-syntax:", "fx-option:", "fx-collision:", "fx-overwrite-input:")):
+        return "late"
+    return "early"
+
+
+def start_of(routes: dict) -> str:
+    early = routes.get("emit sent with check (plain tsc -p)", 0)
+    late = routes.get("emit sent after check", 0)
+    if early and late:
+        return "both"
+    return "early" if early else "late" if late else "none"
+
+
+def run_side(binary: str, cwd, args: list, out: Path, setup, env_extra: dict) -> dict:
     if out.exists() or out.is_symlink():
         if out.is_dir():
             shutil.rmtree(out)
@@ -267,9 +339,7 @@ def run_side(binary: str, cwd: Path, args: list, out: Path, setup, env_extra: di
             shutil.rmtree(cwd)
         shutil.copytree(source, cwd)
     argv = [binary] + [str(out) + a[3:] if a.startswith("OUT") else a for a in args]
-    env = dict(os.environ)
-    env.update(env_extra)
-    p = subprocess.run(argv, cwd=cwd, capture_output=True, env=env, timeout=900)
+    p = subprocess.run(argv, cwd=cwd, capture_output=True, env=clean_env(env_extra), timeout=900)
     return {"rc": p.returncode, "stdout": p.stdout, "stderr": p.stderr, "cwd": cwd}
 
 
@@ -277,7 +347,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--go", required=True)
-    ap.add_argument("--rs", action="append", required=True)
+    ap.add_argument("--rs", action="append", required=True,
+                    help="LABEL=BIN; the last one is the early side whose routing is checked")
     ap.add_argument("--cases", default="quick")
     ap.add_argument("--only", default="")
     ap.add_argument("--fixtures", default="")
@@ -288,9 +359,12 @@ def main() -> int:
     fx = make_fixtures(Path(a.fixtures) if a.fixtures else root / "fixtures")
     sides = [("go", a.go)] + [tuple(s.split("=", 1)) for s in a.rs]
     rs_labels = [label for label, _ in sides[1:]]
+    early_label = rs_labels[-1]
     out = root / "run" / "out"
     bad = 0
     total = 0
+    early_cases = 0
+    known = 0
     for name, cwd, args, setup in cases(a.cases, fx):
         if a.only and a.only not in name:
             continue
@@ -299,25 +373,14 @@ def main() -> int:
         case_dir = root / "cases" / re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
         case_dir.mkdir(parents=True, exist_ok=True)
         results = {}
+        diffs = []
+        fresh = isinstance(cwd, str) and cwd.startswith("FRESH:")
         for label, binary in sides:
-            env = {}
-            if label != "go":
-                env["GOPORT_CHECKER_CALL_LOG"] = str(case_dir / f"{label}.calllog")
-                env["GOPORT_EMIT_PHASE_TIMES"] = "1"
-            r = run_side(binary, cwd, args, out, setup, env)
-            fresh = isinstance(cwd, str) and cwd.startswith("FRESH:")
+            # The compared run: no instrumentation.
+            r = run_side(binary, cwd, args, out, setup, {})
             r["tree"] = tree_digest(r["cwd"] if fresh else out)
             r["stdout_n"] = norm_stats(r["stdout"].decode("utf-8", "replace"), stats)
-            err = r["stderr"].decode("utf-8", "replace")
-            marker = "emit phase times (GOPORT_EMIT_PHASE_TIMES)\n"
-            r["route"] = "-"
-            if label != "go" and marker in err:
-                err, report = err.split(marker, 1)
-                (case_dir / f"{label}.phases").write_text(report)
-                m = re.search(r"emit sent with check \(plain tsc -p\)\s+(\d+)", report)
-                n = re.search(r"emit sent after check\s+(\d+)", report)
-                r["route"] = f"early={m.group(1) if m else 0},late={n.group(1) if n else 0}"
-            r["stderr_n"] = err
+            r["stderr_n"] = r["stderr"].decode("utf-8", "replace")
             (case_dir / f"{label}.stdout").write_bytes(r["stdout"])
             (case_dir / f"{label}.stderr").write_bytes(r["stderr"])
             (case_dir / f"{label}.rc").write_text(f"{r['rc']}\n")
@@ -328,30 +391,74 @@ def main() -> int:
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.move(str(out), dest)
+            r["route"] = "-"
+            if label != "go":
+                # The instrumented run: routing and a fresh call log.
+                log = case_dir / f"{label}.calllog"
+                if log.exists():
+                    log.unlink()
+                ri = run_side(binary, cwd, args, out, setup, {
+                    "GOPORT_CHECKER_CALL_LOG": str(log),
+                    "GOPORT_EMIT_PHASE_TIMES": "1",
+                })
+                err = ri["stderr"].decode("utf-8", "replace")
+                try:
+                    rest, routes = split_report(err)
+                    (case_dir / f"{label}.phases").write_text(err)
+                    r["route"] = start_of(routes)
+                    if rest != r["stderr_n"]:
+                        diffs.append(f"{label}:instrumented-stderr")
+                    if ri["rc"] != r["rc"]:
+                        diffs.append(f"{label}:instrumented-rc")
+                except ValueError as e:
+                    diffs.append(f"{label}:report({e})")
+                if not log.exists():
+                    diffs.append(f"{label}:no-calllog")
+                    r["log"] = None
+                else:
+                    r["log"] = log.read_bytes()
             results[label] = r
-        diffs = []
         go = results["go"]
         for label in rs_labels:
             r = results[label]
             for key, what in (("rc", "rc"), ("stdout_n", "stdout"), ("stderr_n", "stderr"), ("tree", "tree")):
                 if r[key] != go[key]:
                     diffs.append(f"{label}!=go:{what}")
-        logs = {}
-        for label in rs_labels:
-            p = case_dir / f"{label}.calllog"
-            logs[label] = p.read_bytes() if p.exists() else b""
         first = rs_labels[0]
         for label in rs_labels[1:]:
-            if logs[label] != logs[first]:
+            if results[label].get("log") != results[first].get("log"):
                 diffs.append(f"calllog:{label}!={first}")
+        expect = expected_start(name, args)
+        got = results[early_label]["route"]
+        if got not in expect.split("|"):
+            diffs.append(f"{early_label}:start={got}!={expect}")
+        for label in rs_labels[:-1]:
+            if results[label]["route"] == "early":
+                diffs.append(f"{label}:started-early")
+        if got == "early":
+            early_cases += 1
         nfiles = len(go["tree"])
-        nlog = logs[first].count(b"\n")
-        status = "MATCH" if not diffs else "DIFF " + ",".join(diffs)
-        if diffs:
+        nlog = (results[first].get("log") or b"").count(b"\n")
+        # A difference with Go that every rs side has, byte for byte (the
+        # pre-change side too), is main's, not this lane's.
+        same_rs = all(
+            results[l][k] == results[first][k]
+            for l in rs_labels for k in ("rc", "stdout_n", "stderr_n", "tree"))
+        if diffs and same_rs and all("!=go:" in d for d in diffs):
+            status = "KNOWN(main) " + ",".join(diffs)
+            known += 1
+        elif diffs:
+            status = "DIFF " + ",".join(diffs)
             bad += 1
+        else:
+            status = "MATCH"
         routes = " ".join(f"{label}:{results[label]['route']}" for label in rs_labels)
         print(f"{status:<8} {name:<58} rc={go['rc']} files={nfiles} log={nlog} {routes}", flush=True)
-    print(f"summary: {total - bad}/{total} cases match", flush=True)
+    print(f"summary: {total - bad - known}/{total} cases match, {known} known differences of main, "
+          f"{bad} differences; {early_cases} cases emitted early on {early_label}", flush=True)
+    if early_cases == 0:
+        print("FAIL: no case took the early path", flush=True)
+        return 1
     return 1 if bad else 0
 
 
