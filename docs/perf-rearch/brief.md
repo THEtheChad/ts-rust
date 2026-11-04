@@ -57,6 +57,11 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
   after each run, and repeat runs that end above 3. Report the median and
   spread of at least 3 runs. Set `GOPORT_LAUNCH=0` when measuring RSS or CPU
   through wait4. Use `scripts/perf-rearch/` tools once they exist.
+- **Load-independent metric:** `scripts/perf-rearch/icount.py <cmd>` counts
+  user-space instructions (perf_event_open, works here without perf or
+  sudo). Repeat runs agree within 0.005% at any load. Use it with
+  `--singleThreaded` for CPU-work claims while the machine is busy, and wall
+  time on an idle machine for the final "≤ Go" claims.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
   `systemd-run --user --collect -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
