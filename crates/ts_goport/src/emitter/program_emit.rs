@@ -10,7 +10,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use super::emitter::{DeclarationPrint, EmitOnly, Emitter, JsPrint, js_emit_needs_checker};
+use super::emitter::{DeclarationPrint, EmitOnly, Emitter, JsPrint, js_emit_checker_reason};
+use super::phase_times::{self, Route};
 use crate::frontend::outputpaths::{ForceEmitPaths, OutputPaths};
 use crate::frontend::tspath::{Path, has_extension, path_is_relative, to_path};
 use crate::printer::emit_context::{ParseEmitNodes, PrintTables};
@@ -163,14 +164,28 @@ fn emit_results_with(
         target.force_dts_emit(),
         target.force_js_emit(),
     );
+    phase_times::route(Route::StartAfterCheck, source_files.len());
     let pooled = start_emit_files_with_pool(&source_files, |_| target.clone(), wrap)
         .map(PendingPoolEmit::wait);
     match pooled {
         Some(results) => results,
         None => run_emit_jobs(source_files, move |source_file| {
-            wrap(&|| emit_source_file(source_file, &target))
+            let result = wrap(&|| emit_source_file(source_file, &target));
+            log_checker_emit(source_file);
+            result
         }),
     }
+}
+
+/// Adds the emit of `source_file` to the checker call log
+/// (`program::checker_call_log_event_here`), after its checker part.
+fn log_checker_emit(source_file: Node) {
+    crate::program::checker_call_log_event_here(|| {
+        format!(
+            "emit {}",
+            crate::program::checker_call_log_file(source_file)
+        )
+    });
 }
 
 /// PORT: not in Go. The API emit (`handle_emit`) writes the outputs after
@@ -356,6 +371,7 @@ pub fn start_emit_batch_with(
     // batch replaces, so each checker does the same work in the same order.
     // With the pool, no trace is written (`emit_pool_enabled`), so there is
     // no trace event per target.
+    phase_times::route(Route::StartBatch, files.len());
     let pooled = start_emit_files_with_pool(&files, |file| file_targets[&file].clone(), wrap);
     let jobs = match pooled {
         Some(pool) => PendingFiles::Pool(pool),
@@ -368,7 +384,9 @@ pub fn start_emit_batch_with(
                     // One Go `Program.Emit` trace event per target, on the emit thread.
                     let _trace = trace_emit();
                     let target = &file_targets[&source_file];
-                    wrap(&|| emit_source_file(source_file, target))
+                    let result = wrap(&|| emit_source_file(source_file, target));
+                    log_checker_emit(source_file);
+                    result
                 },
             ))
         }
@@ -574,8 +592,13 @@ enum FileEmit {
 /// emit never has `force_emit` and its parts get the paths of the whole
 /// emit.
 fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
+    file_route(source_file, target).0
+}
+
+/// `file_emit` with the reason (`phase_times::Route`).
+fn file_route(source_file: Node, target: &EmitterOptions) -> (FileEmit, Route) {
     if target.force_emit {
-        return FileEmit::OnChecker;
+        return (FileEmit::OnChecker, Route::CheckerForced);
     }
     let emit_only = target.emit_only;
     let options = options();
@@ -586,8 +609,11 @@ fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
         && !options.emit_declaration_only.is_true()
         && !options.no_emit.is_true()
         && source_file_content_mapper(source_file).is_empty();
-    if !has_js || js_emit_needs_checker(source_file) {
-        return FileEmit::OnChecker;
+    if !has_js {
+        return (FileEmit::OnChecker, Route::CheckerNoJsPart);
+    }
+    if let Some(reason) = js_emit_checker_reason(source_file) {
+        return (FileEmit::OnChecker, reason);
     }
     // `get_output_paths_for_file` gives a d.ts path only with declarations
     // on, and never to a JSON file.
@@ -595,9 +621,9 @@ fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
         && options.get_emit_declarations()
         && !is_json_source_file(source_file);
     if has_dts {
-        FileEmit::Split
+        (FileEmit::Split, Route::PoolSplit)
     } else {
-        FileEmit::OnPool
+        (FileEmit::OnPool, Route::PoolWhole)
     }
 }
 
@@ -653,6 +679,8 @@ fn start_emit_files_with_pool(
     wrap: Wrap,
 ) -> Option<PendingPoolEmit> {
     if files.is_empty() || !emit_pool_enabled() {
+        phase_times::route(Route::CheckerPoolOff, files.len());
+        phase_times::route(Route::PrintOnChecker, files.len());
         return None;
     }
     // The rule reads the binder data. Sending a job binds too, but the rule
@@ -660,10 +688,18 @@ fn start_emit_files_with_pool(
     bind_all();
     let ways: Vec<FileEmit> = files
         .iter()
-        .map(|&file| file_emit(file, &target(file)))
+        .map(|&file| {
+            if !phase_times::enabled() {
+                return file_emit(file, &target(file));
+            }
+            let (way, route) = file_route(file, &target(file));
+            phase_times::route(route, 1);
+            way
+        })
         .collect();
     let twin_mode = dts_twin_mode();
     if twin_mode == DtsTwinMode::Off && ways.iter().all(|&way| way == FileEmit::OnChecker) {
+        phase_times::route(Route::PrintOnChecker, files.len());
         return None;
     }
 
@@ -718,13 +754,25 @@ fn start_emit_files_with_pool(
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(&source_file)
                 .expect("one checker part per file");
-            match part.js_part {
+            let on_twin = twin_mode != DtsTwinMode::Off
+                && (part.js_part.is_some() || twin_can_print(&part.target));
+            phase_times::route(
+                if on_twin {
+                    Route::PrintOnTwin
+                } else {
+                    Route::PrintOnChecker
+                },
+                1,
+            );
+            let output = match part.js_part {
                 Some(js_part) => emit_declaration_part(source_file, part.target, js_part, wrap),
                 None if twin_mode != DtsTwinMode::Off && twin_can_print(&part.target) => {
                     emit_on_twin(source_file, &part.target, wrap, twin_mode)
                 }
                 None => CheckerOutput::Done(wrap(&|| emit_source_file(source_file, &part.target))),
-            }
+            };
+            log_checker_emit(source_file);
+            output
         })
     }));
     Some(PendingPoolEmit {

@@ -239,6 +239,7 @@ impl Emitter {
                 false,
             )
         });
+        let _timer = super::phase_times::start(super::phase_times::Phase::TransformJs);
         for mut transformer in
             get_script_transformers(emit_resolver, self.host.as_ref(), source_file)
         {
@@ -264,6 +265,7 @@ impl Emitter {
                 false,
             )
         });
+        let _timer = super::phase_times::start(super::phase_times::Phase::TransformDts);
         let mut diags = Vec::new();
         for mut transformer in self.get_declaration_transformers(
             emit_resolver,
@@ -671,12 +673,14 @@ impl Emitter {
         }
 
         let writer = self.writer.clone().expect("nil writer");
+        let print_timer = super::phase_times::start(super::phase_times::Phase::Print);
         printer.write_exported(
             source_file,
             source_file,
             writer,
             source_map_generator.clone(),
         );
+        drop(print_timer);
         // PORT: Go N' (ts#64649) calls `emitContext.Factory.ReleaseArenas()`
         // here (emitter.go:331), after each file, on the file's own emit
         // context. It only lets the GC take nodes that nothing reaches. Here
@@ -689,6 +693,7 @@ impl Emitter {
 
         let mut source_map_url_pos = -1;
         if let Some(generator) = &source_map_generator {
+            let map_timer = super::phase_times::start(super::phase_times::Phase::SourceMap);
             if map_options.source_map.is_true() || map_options.inline_source_map.is_true() {
                 let mut generator = generator.borrow_mut();
                 let input_source_file_names = generator.sources();
@@ -725,6 +730,7 @@ impl Emitter {
             // Write the source map
             if !source_map_file_path.is_empty() {
                 let source_map = generator.borrow_mut().string();
+                drop(map_timer);
                 // #4699: the source map write gets the source file too.
                 let result = self.write_text(
                     source_map_file_path,
@@ -822,6 +828,7 @@ impl Emitter {
         text: &str,
         data: &mut WriteFileData,
     ) -> Result<(), String> {
+        let _timer = super::phase_times::start(super::phase_times::Phase::Write);
         if let Some(write_file) = &self.write_file {
             return write_file(file_name, text, data);
         }
@@ -1033,8 +1040,28 @@ fn script_transform_choice(options: &CompilerOptions, source_file: Node) -> Scri
 /// resolver that panics on every call, so a use this rule misses crashes the
 /// run and cannot change an output.
 pub fn js_emit_needs_checker(source_file: Node) -> bool {
-    script_transform_choice(options(), source_file).emit_resolver_references
-        || may_have_enum_declaration(source_file)
+    js_emit_checker_reason(source_file).is_some()
+}
+
+/// PORT: not in Go (perf). Why `js_emit_needs_checker` is true for
+/// `source_file`: the first reason in the order of
+/// `script_transform_choice`, then the enum scan. None when it is false.
+pub fn js_emit_checker_reason(source_file: Node) -> Option<super::phase_times::Route> {
+    use super::phase_times::Route;
+    let options = options();
+    let choice = script_transform_choice(options, source_file);
+    if choice.emit_resolver_references {
+        return Some(if choice.import_elision_enabled {
+            Route::CheckerImportElision
+        } else if choice.jsx_transform_enabled {
+            Route::CheckerJsx
+        } else if !options.get_isolated_modules() {
+            Route::CheckerNotIsolatedModules
+        } else {
+            Route::CheckerDecoratorMetadata
+        });
+    }
+    may_have_enum_declaration(source_file).then_some(Route::CheckerEnum)
 }
 
 /// PORT: not in Go. True when `source_file` may have an `EnumDeclaration`.
