@@ -1,71 +1,227 @@
 {
-  "about": "Projects of the parity CLI tier (parity_cli.py). The first existing dir of each project is used (it must hold the marker file, default package.json). prepare-parity-projects.sh makes the parity-projects copies. label: item name part; cwd: relative to the project dir; config: relative to cwd; quick: in the quick tier; build: also run -b on it.",
+  "about": "Projects of the parity CLI tier (parity_cli.py). The first existing dir of each project is used (it must hold package.json): the baseline lane's ~/.cache/perf-rearch/projects/<name> (scripts/perf-rearch/setup-projects.sh there), else the parity lane's dirs (scripts/perf-rearch/prepare-parity-projects.sh); both are at the same pinned commits. label: item name part; cwd: relative to the project dir; config: relative to cwd; quick: in the quick tier; build: also run -b on it; skipVariants: variants not run on the config.",
   "projects": [
     {
       "name": "ts-pattern",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/gvergnaud__ts-pattern"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/ts-pattern",
+        "~/.cache/perf-rearch/parity-projects/repos/gvergnaud__ts-pattern"
+      ],
       "configs": [
-        {"label": "src", "config": "tsconfig.json", "quick": true},
-        {"label": "tests", "config": "tests/tsconfig.json", "quick": true}
+        {
+          "label": "src",
+          "config": "tsconfig.json",
+          "quick": true
+        },
+        {
+          "label": "tests",
+          "config": "tests/tsconfig.json",
+          "quick": true
+        }
       ]
     },
     {
       "name": "query",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/TanStack__query"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/query",
+        "~/.cache/perf-rearch/parity-projects/repos/TanStack__query"
+      ],
       "configs": [
-        {"label": "core", "cwd": "packages/query-core", "config": "tsconfig.json", "quick": true},
-        {"label": "core-legacy", "cwd": "packages/query-core", "config": "tsconfig.legacy.json"},
-        {"label": "core-prod", "cwd": "packages/query-core", "config": "tsconfig.prod.json", "quick": true},
-        {"label": "react", "cwd": "packages/react-query", "config": "tsconfig.json"},
-        {"label": "sync-persister", "cwd": "packages/query-sync-storage-persister", "config": "tsconfig.json", "build": true}
+        {
+          "label": "core",
+          "cwd": "packages/query-core",
+          "config": "tsconfig.json",
+          "quick": true
+        },
+        {
+          "label": "core-legacy",
+          "cwd": "packages/query-core",
+          "config": "tsconfig.legacy.json"
+        },
+        {
+          "label": "core-prod",
+          "cwd": "packages/query-core",
+          "config": "tsconfig.prod.json",
+          "quick": true
+        },
+        {
+          "label": "react",
+          "cwd": "packages/react-query",
+          "config": "tsconfig.json"
+        },
+        {
+          "label": "sync-persister",
+          "cwd": "packages/query-sync-storage-persister",
+          "config": "tsconfig.json",
+          "build": true
+        }
       ]
     },
     {
       "name": "hono",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/honojs__hono"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/hono",
+        "~/.cache/perf-rearch/parity-projects/repos/honojs__hono"
+      ],
       "configs": [
-        {"label": "spec", "config": "tsconfig.spec.json", "quick": true},
-        {"label": "build", "config": "tsconfig.build.json", "quick": true},
-        {"label": "solution", "config": "tsconfig.json", "build": true, "skipVariants": ["noemit", "emit", "decl", "incr", "listfiles", "extdiag", "pretty"]}
+        {
+          "label": "spec",
+          "config": "tsconfig.spec.json",
+          "quick": true
+        },
+        {
+          "label": "build",
+          "config": "tsconfig.build.json",
+          "quick": true
+        },
+        {
+          "label": "solution",
+          "config": "tsconfig.json",
+          "build": true,
+          "skipVariants": [
+            "noemit",
+            "emit",
+            "decl",
+            "incr",
+            "listfiles",
+            "extdiag",
+            "pretty"
+          ]
+        }
       ]
     },
     {
       "name": "zod",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/colinhacks__zod"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/zod",
+        "~/.cache/perf-rearch/parity-projects/repos/colinhacks__zod"
+      ],
       "configs": [
-        {"label": "zod-build", "cwd": "packages/zod", "config": "tsconfig.build.json", "quick": true},
-        {"label": "zod", "cwd": "packages/zod", "config": "tsconfig.json"},
-        {"label": "resolution", "cwd": "packages/resolution", "config": "tsconfig.json"}
+        {
+          "label": "zod-build",
+          "cwd": "packages/zod",
+          "config": "tsconfig.build.json",
+          "quick": true
+        },
+        {
+          "label": "zod",
+          "cwd": "packages/zod",
+          "config": "tsconfig.json"
+        },
+        {
+          "label": "resolution",
+          "cwd": "packages/resolution",
+          "config": "tsconfig.json"
+        }
       ]
     },
     {
       "name": "umami",
-      "dirs": ["~/.cache/perf-rearch/projects/umami", "~/.cache/lspdiff/projects/umami"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/umami",
+        "~/.cache/lspdiff/projects/umami"
+      ],
       "configs": [
-        {"label": "root", "config": "tsconfig.json", "quick": true}
+        {
+          "label": "root",
+          "config": "tsconfig.json",
+          "quick": true
+        }
       ]
     },
     {
       "name": "effect",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/Effect-TS__effect"],
+      "dirs": [
+        "~/.cache/perf-rearch/projects/effect",
+        "~/.cache/perf-rearch/parity-projects/repos/Effect-TS__effect"
+      ],
       "configs": [
-        {"label": "effect", "cwd": "packages/effect", "config": "tsconfig.json"}
+        {
+          "label": "effect",
+          "cwd": "packages/effect",
+          "config": "tsconfig.json"
+        }
+      ]
+    },
+    {
+      "name": "t3code",
+      "dirs": [
+        "~/.cache/perf-rearch/projects/t3code"
+      ],
+      "configs": [
+        {
+          "label": "web",
+          "cwd": "apps/web",
+          "config": "tsconfig.noeffect.json",
+          "skipVariants": [
+            "incr",
+            "pretty"
+          ]
+        },
+        {
+          "label": "server",
+          "cwd": "apps/server",
+          "config": "tsconfig.noeffect.json",
+          "skipVariants": [
+            "incr",
+            "pretty"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vscode",
+      "dirs": [
+        "~/.cache/perf-rearch/projects/vscode"
+      ],
+      "configs": [
+        {
+          "label": "src",
+          "cwd": "src",
+          "config": "tsconfig.json",
+          "skipVariants": [
+            "decl",
+            "incr",
+            "listfiles",
+            "pretty",
+            "showconfig"
+          ]
+        }
       ]
     },
     {
       "name": "react-hook-form",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/react-hook-form__react-hook-form"],
+      "dirs": [
+        "~/.cache/perf-rearch/parity-projects/repos/react-hook-form__react-hook-form"
+      ],
       "configs": [
-        {"label": "root", "config": "tsconfig.json"},
-        {"label": "app", "cwd": "app", "config": "tsconfig.json"}
+        {
+          "label": "root",
+          "config": "tsconfig.json"
+        },
+        {
+          "label": "app",
+          "cwd": "app",
+          "config": "tsconfig.json"
+        }
       ]
     },
     {
       "name": "svelte",
-      "dirs": ["~/.cache/perf-rearch/parity-projects/repos/sveltejs__svelte"],
+      "dirs": [
+        "~/.cache/perf-rearch/parity-projects/repos/sveltejs__svelte"
+      ],
       "configs": [
-        {"label": "svelte", "cwd": "packages/svelte", "config": "tsconfig.json"},
-        {"label": "runtime", "cwd": "packages/svelte", "config": "tsconfig.runtime.json"}
+        {
+          "label": "svelte",
+          "cwd": "packages/svelte",
+          "config": "tsconfig.json"
+        },
+        {
+          "label": "runtime",
+          "cwd": "packages/svelte",
+          "config": "tsconfig.runtime.json"
+        }
       ]
     }
   ]
