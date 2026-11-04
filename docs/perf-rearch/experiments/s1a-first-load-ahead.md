@@ -366,7 +366,7 @@ The answer-level design cannot beat the serial loader by much while each lookup 
 | 62 | s1a-old | 8 | 1 | 1.42→3.15 | 345.0 | 301.5 | 251.73 | 9223/170/0 | EXCLUDED: load after 3.15 > 2.0 |
 | 63 | s1a-old | 8 | 2 | 1.48→1.36 | 343.3 | 299.7 | 248.57 | 9269/124/0 | yes |
 
-## Second re-review: strict proof tools (`84a8d1936`, `a7`)
+## Second re-review: strict proof tools (`84a8d1936`, `c5527122f`)
 
 All four review fixes are in `84a8d1936`. The settle wait for background-heavy sessions is in the next commit.
 
