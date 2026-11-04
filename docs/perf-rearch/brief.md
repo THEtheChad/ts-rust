@@ -40,13 +40,15 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 
 ## Parity gate (mandatory for every change)
 
-`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main/`
+`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-current`
 prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **quick:** about 4 minutes, warm. Use it while iterating.
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
-- **Known diffs on main:** see `known.txt` in the base. The Effect items go
-  away with lane E0.
+- **Base:** `base-current` is a symlink to the latest accepted full run of
+  this branch (now E0 at 5852f249f; on main the Effect items were known
+  diffs). Root moves it after each merge. `base-main` stays as the main
+  record.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
   checkout's source, so run it from your own worktree.
 
