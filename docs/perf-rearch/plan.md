@@ -370,3 +370,18 @@ was the same as Go's.
     real wall against the default and Go-N, and how often the output differs
     from the default across the corpus (as D0-1A did).
   - Certification waits on that data.
+- **2026-11-04, S1a after Astra's fixes:** exact validation at demand costs
+  most of the gain. Loader CPU is 344 ms off, 318 ms on, and was 275 ms
+  before the fix.
+  - **ttfd:** not separable from S1a off in noisy medians; loader-time
+    minimums show about 10–25 ms.
+  - **Correctness:** parity full OK; protocol byte-identical in 18
+    scenarios; disk-change tests fail without the fix.
+  - **Lesson:** while every uncached lookup must be made again serially,
+    answer-level reuse can't win. The gap needs the loader off the critical
+    path.
+  - **Next:**
+    - Astra re-review, then merge (mainly for the S0 proof tools);
+    - **loader design v2**: parallel discovery with a transactional
+      snapshot, answering Astra's findings 1–7, plus binding in the parse
+      workers.
