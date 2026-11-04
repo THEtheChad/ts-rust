@@ -1628,3 +1628,177 @@ fn with_box(owned: &[(String, String)]) -> Vec<(&str, &str)> {
         .map(|(name, text)| (name.as_str(), text.as_str()))
         .collect()
 }
+
+/// Not a Go port (perf/first-principles A1): the reuse dump
+/// (`reuse_verify::dump`) of the program of `MAIN_URI` in a new session on
+/// `owned`, a full build of those inputs.
+fn fresh_session_dump(owned: &[(String, String)], main_text: &str) -> String {
+    let (session, _utils) = new_session(
+        files(&with_box(owned)),
+        options("/home/project", true),
+        contentmappertest::new_spawner(),
+    );
+    open(&session, MAIN_URI, main_text);
+    let dump = ts_goport::program::reuse_verify::dump(&program(&session, MAIN_URI));
+    session.close();
+    dump
+}
+
+fn assert_same_dump(reused: &str, full: &str) {
+    if reused != full {
+        let line = reused.lines().zip(full.lines()).position(|(a, b)| a != b);
+        let at = |text: &str| line.and_then(|l| text.lines().nth(l)).unwrap_or("<end>").to_string();
+        panic!(
+            "the new program differs from a full build at line {line:?}:\n  new  {}\n  full {}",
+            at(reused),
+            at(full)
+        );
+    }
+}
+
+/// The files of the A1 mapped-reuse tests: the switching mapper on `.box`
+/// files, tslib, `options` as compiler options and `more` files.
+fn switching_files(options_json: &str, more: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut owned = vec![
+        (
+            "/home/project/tsconfig.json".to_string(),
+            format!(
+                r#"{{ "compilerOptions": {options_json}, "contentMappers": [{{ "package": "mapper", "extensions": [".box"] }}] }}"#
+            ),
+        ),
+        (
+            "/home/project/node_modules/mapper/package.json".to_string(),
+            contentmappertest::package_json(contentmappertest::SWITCHING_MAPPER),
+        ),
+        (
+            "/home/project/node_modules/tslib/package.json".to_string(),
+            r#"{"name":"tslib","version":"2.8.0","types":"tslib.d.ts"}"#.to_string(),
+        ),
+        (
+            "/home/project/node_modules/tslib/tslib.d.ts".to_string(),
+            "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n".to_string(),
+        ),
+        ("/home/project/main.ts".to_string(), "export const m = 1;\n".to_string()),
+    ];
+    owned.extend(more.iter().map(|(name, text)| (name.to_string(), text.to_string())));
+    owned
+}
+
+child_test! {
+    // Not a Go port (perf/first-principles A1, review finding 1): a mapped
+    // file with a tslib import whose output changes from `.mts` to `.cts`
+    // keeps its parse options, but its implied format and so the mode of
+    // its imports change. Go builds a new program (program.go:399), which
+    // resolves `dual` with `require`; the language server must too.
+    fn content_mapper_synthetic_reuse_rebuilds_when_the_output_extension_changes() {
+        const OPTIONS: &str = r#"{ "module": "nodenext", "moduleResolution": "nodenext", "moduleDetection": "force", "importHelpers": true, "isolatedModules": true, "strict": true, "types": [] }"#;
+        const ESM: &str = "// @mts\nimport { esm } from \"dual\";\nexport const v = esm;\n";
+        const CJS: &str = "// @cts\nimport { esm } from \"dual\";\nexport const v = esm;\n";
+        let more = |box_text: &'static str| {
+            switching_files(
+                OPTIONS,
+                &[
+                    (
+                        "/home/project/node_modules/dual/package.json",
+                        r#"{"name":"dual","version":"1.0.0","exports":{".":{"import":"./esm.d.mts","require":"./cjs.d.cts"}}}"#,
+                    ),
+                    ("/home/project/node_modules/dual/esm.d.mts", "export declare const esm: number;\n"),
+                    ("/home/project/node_modules/dual/cjs.d.cts", "export declare const cjs: number;\n"),
+                    (BOX_PATH, box_text),
+                ],
+            )
+        };
+        let dual_target = |program: &NewProgram| -> String {
+            program
+                .processed_files
+                .resolved_modules
+                .get(&path(BOX_PATH))
+                .and_then(|cache| {
+                    cache
+                        .iter()
+                        .find(|(key, _)| key.name == "dual")
+                        .map(|(_, resolved)| resolved.resolved_file_name.clone())
+                })
+                .unwrap_or_default()
+        };
+        let (session, utils) = new_session(
+            files(&with_box(&more(ESM))),
+            options("/home/project", true),
+            contentmappertest::new_spawner(),
+        );
+        open(&session, MAIN_URI, "export const m = 1;\n");
+        let old_program = program(&session, MAIN_URI);
+        assert!(dual_target(&old_program).ends_with("/esm.d.mts"));
+        assert!(
+            old_program
+                .processed_files
+                .import_helpers_import_specifiers
+                .as_ref()
+                .is_some_and(|map| map.contains_key(&path(BOX_PATH))),
+            "app.box has a tslib import"
+        );
+
+        write_file(&utils, BOX_PATH, CJS);
+        watch(&session, &[(CHANGED, BOX_URI)]);
+        let new_program = program(&session, MAIN_URI);
+        assert!(!std::sync::Arc::ptr_eq(
+            &old_program.processed_files.resolved_modules,
+            &new_program.processed_files.resolved_modules
+        ), "a new implied format builds again");
+        assert!(dual_target(&new_program).ends_with("/cjs.d.cts"), "{}", dual_target(&new_program));
+        assert_same_dump(
+            &ts_goport::program::reuse_verify::dump(&new_program),
+            &fresh_session_dump(&more(CJS), "export const m = 1;\n"),
+        );
+        session.close();
+    }
+}
+
+child_test! {
+    // Not a Go port (perf/first-principles A1, review finding 2): five
+    // failed transforms turn the mapper off for the rest of the load, with
+    // a program diagnostic, and later files get empty placeholders. A fix
+    // of a failed file (a placeholder with a tslib import, as its new
+    // version) builds again, as Go does: four failures, no diagnostic.
+    fn content_mapper_synthetic_reuse_rebuilds_after_mapper_failures() {
+        const OPTIONS: &str = r#"{ "moduleDetection": "force", "importHelpers": true, "isolatedModules": true, "strict": true, "types": [] }"#;
+        let boxes = |first: &'static str| {
+            switching_files(
+                OPTIONS,
+                &[
+                    ("/home/project/a1.box", first),
+                    ("/home/project/a2.box", "// @fail\nexport const a2 = 2;\n"),
+                    ("/home/project/a3.box", "// @fail\nexport const a3 = 3;\n"),
+                    ("/home/project/a4.box", "// @fail\nexport const a4 = 4;\n"),
+                    ("/home/project/a5.box", "// @fail\nexport const a5 = 5;\n"),
+                    ("/home/project/a6.box", "export const a6 = 6;\n"),
+                ],
+            )
+        };
+        const FAILED: &str = "// @fail\nexport const a1 = 1;\n";
+        const FIXED: &str = "export const a1 = 1;\n";
+        let (session, utils) = new_session(
+            files(&with_box(&boxes(FAILED))),
+            options("/home/project", true),
+            contentmappertest::new_spawner(),
+        );
+        open(&session, MAIN_URI, "export const m = 1;\n");
+        let old_program = program(&session, MAIN_URI);
+        assert_eq!(old_program.processed_files.content_mapper_diagnostics.len(), 1);
+        assert!(source_file(&old_program, "/home/project/a1.box").is_content_mapper_failure_stub());
+
+        write_file(&utils, "/home/project/a1.box", FIXED);
+        watch(&session, &[(CHANGED, "file:///home/project/a1.box")]);
+        let new_program = program(&session, MAIN_URI);
+        assert!(!std::sync::Arc::ptr_eq(
+            &old_program.processed_files.resolved_modules,
+            &new_program.processed_files.resolved_modules
+        ), "a load with mapper failures builds again");
+        assert!(new_program.processed_files.content_mapper_diagnostics.is_empty());
+        assert_same_dump(
+            &ts_goport::program::reuse_verify::dump(&new_program),
+            &fresh_session_dump(&boxes(FIXED), "export const m = 1;\n"),
+        );
+        session.close();
+    }
+}

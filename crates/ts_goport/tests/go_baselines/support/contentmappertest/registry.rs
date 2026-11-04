@@ -14,6 +14,7 @@ use super::supplemental::SupplementalHandler;
 use super::supplemental_diagnostics::SupplementalDiagnosticsHandler;
 use super::supplemental_globals::SupplementalGlobalsHandler;
 use super::supplemental_module::SupplementalModuleHandler;
+use super::switching::SwitchingHandler;
 use super::synthesizing::SynthesizingHandler;
 use super::transforming::Handler;
 use super::verbatim::{ModuleVerbatimHandler, VerbatimHandler};
@@ -37,6 +38,8 @@ pub const PREFIXED_SUPPLEMENTAL_MAPPER: &str = "prefixed-supplemental-mapper";
 pub const UNMAPPED_FOLDING_MAPPER: &str = "unmapped-folding-mapper";
 pub const HOISTING_MAPPER: &str = "hoisting-mapper";
 pub const DUPLICATE_PROJECTION_MAPPER: &str = "duplicate-projection-mapper";
+// Not in Go (perf/first-principles A1, `switching.rs`).
+pub const SWITCHING_MAPPER: &str = "switching-mapper";
 
 // Go: registry.go:31 handlerConstructor, registry.go:33 mapperHandlers
 // PORT: the Go map of constructors is a match on the command name. `None`
@@ -67,6 +70,7 @@ fn new_mapper_handler(
         UNMAPPED_FOLDING_MAPPER => Box::new(UnmappedFoldingHandler),
         HOISTING_MAPPER => Box::new(HoistingHandler),
         DUPLICATE_PROJECTION_MAPPER => Box::new(DuplicateProjectionHandler),
+        SWITCHING_MAPPER => Box::new(SwitchingHandler),
         _ => return None,
     };
     Some(handler)

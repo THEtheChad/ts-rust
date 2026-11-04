@@ -853,6 +853,16 @@ impl NewProgram {
                 Err(()) => return (None, Some(new_file), ReuseOutcome::Rebuilt),
             }
         }
+        // Go builds a new program here; reuse it only when the build would
+        // keep what the old program read from its loads.
+        if !swaps.is_empty()
+            && !self.synthetic_reuse_keeps_loads(
+                std::iter::once((&old_file, &new_file))
+                    .chain(old_supplemental_files.iter().zip(&new_supplemental_files)),
+            )
+        {
+            return (None, Some(new_file), ReuseOutcome::Rebuilt);
+        }
         // TODO: reverify compiler options when config has changed?
         // PORT: Go copies the `processedFiles` struct and shares its maps.
         // Rust clones it.
@@ -918,6 +928,39 @@ impl NewProgram {
         // caches empty.
         result.init_checker_pool();
         (Some(result), Some(new_file), outcome)
+    }
+
+    /// For a reuse beyond Go (`ReuseOutcome::ReusedSynthetic`), whether
+    /// the full build that Go makes would keep the load data that the reuse
+    /// keeps (perf/first-principles A1):
+    /// - each replaced file keeps its virtual file name: a content mapper
+    ///   whose output changes from `.mts` to `.cts` changes the file's
+    ///   implied format, so its metadata and its resolution modes
+    ///   (`get_mode_for_usage_location` reads the old metadata by path);
+    /// - no content mapper failed in the old load. A failed transform leaves
+    ///   an empty placeholder file and a count; at five failures the mapper
+    ///   is off for the rest of the load and gets a program diagnostic
+    ///   (`record_content_mapper_failure`). A new build counts again, so a
+    ///   fixed file changes what later files get.
+    fn synthetic_reuse_keeps_loads<'a>(
+        &self,
+        mut replaced: impl Iterator<Item = (&'a Rc<ParsedSourceFile>, &'a Rc<ParsedSourceFile>)>,
+    ) -> bool {
+        if !replaced.all(|(old, new)| old.virtual_file_name() == new.virtual_file_name()) {
+            return false;
+        }
+        if self.opts.config.content_mappers().is_empty() {
+            return true;
+        }
+        self.content_mapper_diagnostics.is_empty()
+            && !self
+                .files
+                .iter()
+                .any(|file| file.is_content_mapper_failure_stub())
+            && !self
+                .duplicate_source_files
+                .iter()
+                .any(|file| file.is_content_mapper_failure_stub)
     }
 
     /// The synthetic imports of `old_file`, a file of this program, and of
