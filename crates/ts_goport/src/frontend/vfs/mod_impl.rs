@@ -37,6 +37,19 @@ pub trait Fs {
         ok.then(|| super::SharedText::new(text))
     }
 
+    /// `read_file_shared` that never blocks on a file that is not a regular
+    /// file (a FIFO, a device): the OS file system opens with `O_NONBLOCK`
+    /// and checks the open file's type (`fstat`) before it reads, and gives
+    /// `NotRegular` for such a file. The load view's reconciliation reads
+    /// with it. Other file systems read as `read_file_shared`.
+    // PORT: not in Go (perf, loader v2 L1).
+    fn read_regular_file_shared(&self, path: &str) -> RegularRead {
+        match self.read_file_shared(path) {
+            Some(text) => RegularRead::Text(text),
+            None => RegularRead::Failed,
+        }
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), FsError>;
 
     // AppendFile appends data to the file at path, creating it if it does not exist.
@@ -81,6 +94,17 @@ pub trait Fs {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
+}
+
+/// The result of `Fs::read_regular_file_shared`.
+#[derive(Clone, Debug)]
+pub enum RegularRead {
+    /// The text, as `read_file_shared` gives it.
+    Text(super::SharedText),
+    /// The read failed, as `read_file_shared`'s `None`.
+    Failed,
+    /// The path is not a regular file: it was not read.
+    NotRegular,
 }
 
 // Go: vfs.go:50 Entries
@@ -313,6 +337,13 @@ pub trait IoFs {
     // Go os.ReadDir returns the entries sorted by file name.
     fn read_dir(&self, name: &str) -> Result<Vec<DirEntry>, FsError>;
     fn read_file(&self, name: &str) -> Result<Vec<u8>, FsError>;
+    /// `read_file`, or `Ok(None)` with no read when `name` is not a regular
+    /// file. Opening must not block on a FIFO (see
+    /// `Fs::read_regular_file_shared`).
+    // PORT: not in Go (perf, loader v2 L1).
+    fn read_file_if_regular(&self, name: &str) -> Result<Option<Vec<u8>>, FsError> {
+        self.read_file(name).map(Some)
+    }
 }
 
 // Go: internal.go:15 Common
@@ -472,15 +503,35 @@ impl Common {
 
     // Go: internal.go:132 ReadFile
     pub fn read_file(&self, path: &str) -> (String, bool) {
+        // PORT: Go `fs.ReadFile` calls the `ReadFileFS` method directly.
+        match self.read_with(path, |fsys, rest| fsys.read_file(rest).map(Some)) {
+            Some(read) => read,
+            None => (String::new(), false),
+        }
+    }
+
+    /// `read_file` with no read of a path that is not a regular file
+    /// (`IoFs::read_file_if_regular`): `None` for such a path.
+    // PORT: not in Go (perf, loader v2 L1).
+    pub fn read_regular_file(&self, path: &str) -> Option<(String, bool)> {
+        self.read_with(path, |fsys, rest| fsys.read_file_if_regular(rest))
+    }
+
+    /// The text of `path` from `read` (Go `ReadFile`'s read, then
+    /// `decodeBytes`); `None` when `read` gives no bytes and no error.
+    fn read_with(
+        &self,
+        path: &str,
+        read: impl FnOnce(&dyn IoFs, &str) -> Result<Option<Vec<u8>>, FsError>,
+    ) -> Option<(String, bool)> {
         let (fsys, _, rest) = self.root_and_path(path);
         let Some(fsys) = fsys else {
-            return (String::new(), false);
+            return Some((String::new(), false));
         };
-
-        // PORT: Go `fs.ReadFile` calls the `ReadFileFS` method directly.
-        let b = match fsys.read_file(&rest) {
-            Ok(b) => b,
-            Err(_) => return (String::new(), false),
+        let b = match read(&*fsys, &rest) {
+            Ok(Some(b)) => b,
+            Ok(None) => return None,
+            Err(_) => return Some((String::new(), false)),
         };
 
         // An invariant of any underlying filesystem is that the bytes returned
@@ -490,10 +541,10 @@ impl Common {
         // This means that we can safely convert the bytes to a string directly,
         // saving a copy.
         if b.is_empty() {
-            return (String::new(), true);
+            return Some((String::new(), true));
         }
 
-        decode_bytes(b)
+        Some(decode_bytes(b))
     }
 }
 
