@@ -1286,6 +1286,44 @@ impl InfoCache {
         }
     }
 
+    /// PORT: not in Go (perf diagnostics, `GOPORT_LOAD_DUMP`). One line per
+    /// entry as `get` would give it, sorted: the entries, and each pending
+    /// read parsed (a copy; the pending read stays). The contents are the
+    /// parsed fields and whether they parsed; the lazily found version paths
+    /// are left out.
+    #[must_use]
+    pub fn dump_lines(&self) -> Vec<String> {
+        let describe = |key: &Path, entry: &InfoCacheEntry| {
+            format!(
+                "{} dir={:?} dir_exists={} contents={}",
+                key.as_str(),
+                entry.package_directory,
+                entry.directory_exists,
+                entry.contents.as_ref().map_or_else(
+                    || "none".to_string(),
+                    |contents| format!(
+                        "parseable={} fields={:?}",
+                        contents.parseable, contents.fields
+                    )
+                )
+            )
+        };
+        let mut lines: Vec<String> = self
+            .cache
+            .borrow()
+            .iter()
+            .map(|(key, entry)| describe(key, entry))
+            .collect();
+        lines.extend(
+            self.pending
+                .borrow()
+                .iter()
+                .map(|(key, pending)| describe(key, &pending.clone().into_entry())),
+        );
+        lines.sort_unstable();
+        lines
+    }
+
     /// Drops every entry (`module::Caches::release`).
     // PORT: not in Go. Go's GC frees the cache with its last resolver.
     pub fn clear(&self) {

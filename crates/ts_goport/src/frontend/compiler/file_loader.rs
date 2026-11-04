@@ -586,7 +586,7 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
             let task = task.borrow();
             let _ = writeln!(
                 out,
-                "  task {name} loaded={} started={} lib={} auto_types={} failed_lookup={} redirected={} file={} pkg={:?} diags={}/{}",
+                "  task {name} loaded={} started={} lib={} auto_types={} failed_lookup={} redirected={} file={} pkg={:?}",
                 task.loaded,
                 task.started_sub_tasks,
                 task.lib_file.is_some(),
@@ -595,9 +595,32 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
                 task.redirected_parse_task.is_some(),
                 task.file.is_some(),
                 task.package_id.string(),
-                task.resolution_diagnostics.len(),
-                task.processing_diagnostics.len(),
             );
+            for diagnostic in &task.resolution_diagnostics {
+                let _ = writeln!(
+                    out,
+                    "    resolution_diagnostic {}",
+                    super::load_dump::describe_diagnostic(diagnostic)
+                );
+            }
+            for diagnostic in &task.processing_diagnostics {
+                let _ = writeln!(
+                    out,
+                    "    processing_diagnostic {}",
+                    describe_processing_diagnostic(diagnostic)
+                );
+            }
+            let _ = writeln!(out, "    include_reason {:?}", task.include_reason);
+            for reason in &task.all_include_reasons {
+                let _ = writeln!(out, "    all_include_reason {reason:?}");
+            }
+            for trace in task
+                .resolutions_trace
+                .iter()
+                .chain(&task.type_resolutions_trace)
+            {
+                let _ = writeln!(out, "    trace {:?} {:?}", trace.message.key(), trace.args);
+            }
             let _ = writeln!(out, "    meta {:?}", task.metadata);
             let mut resolutions: Vec<String> = task
                 .resolutions_in_file
@@ -621,13 +644,10 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
                 .iter()
                 .map(|(key, resolved)| {
                     format!(
-                        "    type {:?} {:?} file={:?} primary={} pkg={:?} external={}",
+                        "    type {:?} {:?} {}",
                         key.name,
                         key.mode,
-                        resolved.resolved_file_name,
-                        resolved.primary,
-                        resolved.package_id.string(),
-                        resolved.is_external_library_import
+                        describe_type_reference(resolved)
                     )
                 })
                 .collect();
@@ -651,6 +671,56 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
         .as_ref()
         .and_then(|resolver| resolver.as_default_resolver())
     {
+        // The resolver's own caches: module and type reference answers,
+        // and the package.json cache as `get` gives it (its pending reads
+        // parsed).
+        let mut modules: Vec<String> = resolver
+            .caches
+            .module_resolution_cache
+            .cache
+            .borrow()
+            .iter()
+            .map(|(key, module)| {
+                format!(
+                    "resolver_module {:?} {:?} {:?} redirect={:?} {}",
+                    key.containing_directory,
+                    key.module_name,
+                    key.resolution_mode,
+                    key.redirect_config_name,
+                    super::load_dump::describe_module(module)
+                )
+            })
+            .collect();
+        modules.sort_unstable();
+        let mut types: Vec<String> = resolver
+            .caches
+            .type_ref_directive_resolution_cache
+            .cache
+            .borrow()
+            .iter()
+            .map(|(key, resolved)| {
+                format!(
+                    "resolver_type {:?} {:?} {:?} redirect={:?} inferred={} {}",
+                    key.containing_directory,
+                    key.type_reference_name,
+                    key.resolution_mode,
+                    key.redirect_config_name,
+                    key.from_inferred_types_containing_file,
+                    describe_type_reference(resolved)
+                )
+            })
+            .collect();
+        types.sort_unstable();
+        for line in modules.into_iter().chain(types).chain(
+            resolver
+                .package_json_info_cache
+                .dump_lines()
+                .into_iter()
+                .map(|line| format!("info_cache {line}")),
+        ) {
+            out.push_str(&line);
+            out.push('\n');
+        }
         let mut entries = Vec::new();
         resolver.package_json_cache_entries(|path, entry| {
             entries.push(format!(
@@ -667,6 +737,45 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
             out.push_str(&line);
             out.push('\n');
         }
+    }
+}
+
+/// The canonical text of a type reference resolution (`GOPORT_LOAD_DUMP`).
+fn describe_type_reference(resolved: &ResolvedTypeReferenceDirective) -> String {
+    format!(
+        "file={:?} path={:?} original={:?} primary={} pkg={:?} external={} diags=[{}]",
+        resolved.resolved_file_name,
+        resolved.resolved_path.as_str(),
+        resolved.original_path,
+        resolved.primary,
+        resolved.package_id.string(),
+        resolved.is_external_library_import,
+        resolved
+            .resolution_diagnostics
+            .iter()
+            .map(super::load_dump::describe_diagnostic)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The canonical text of a processing diagnostic (`GOPORT_LOAD_DUMP`).
+fn describe_processing_diagnostic(
+    diagnostic: &super::processing_diagnostic::ProcessingDiagnostic,
+) -> String {
+    use super::processing_diagnostic::ProcessingDiagnosticData;
+    match &diagnostic.data {
+        ProcessingDiagnosticData::FileIncludeReason(reason) => {
+            format!("kind={} reason={reason:?}", diagnostic.kind.0)
+        }
+        ProcessingDiagnosticData::IncludeExplaining(explaining) => format!(
+            "kind={} file={:?} reason={:?} message={:?} args={:?}",
+            diagnostic.kind.0,
+            explaining.file.as_str(),
+            explaining.diagnostic_reason,
+            explaining.message.key(),
+            explaining.args
+        ),
     }
 }
 
@@ -2542,7 +2651,11 @@ pub(crate) fn source_file_meta_data(
     let find = || PackageScope::of(resolver.get_package_scope_for_path(&directory).as_deref());
     let package_json_scope = resolver
         .as_default_resolver()
-        .and_then(|default| default.caches.package_scope_ahead(&directory, find))
+        .and_then(|default| {
+            default
+                .caches
+                .package_scope_ahead(&directory, &default.package_json_info_cache, find)
+        })
         .unwrap_or_else(find);
     meta_of_package_scope(package_json_scope, options, file_name)
 }

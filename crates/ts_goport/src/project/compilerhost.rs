@@ -616,18 +616,26 @@ impl compiler::CompilerHost for CompilerHost {
                 }
             }) as Box<dyn FnOnce(Arc<dyn compiler::resolve_ahead::AheadLookups>)>
         };
-        let seed = Rc::new(Cell::new(false));
+        let validate = Rc::new(Cell::new(false));
         let first_load = {
-            let seed = seed.clone();
-            Box::new(move || seed.set(true)) as Box<dyn FnOnce()>
+            let validate = validate.clone();
+            Box::new(move || validate.set(true)) as Box<dyn FnOnce()>
         };
-        let load = AheadCheck {
+        let load = Rc::new(AheadCheck {
             lookups,
             job,
             reads: RefCell::new(FxHashMap::default()),
             groups: RefCell::new(FxHashSet::default()),
-            seed,
-            seeds: RefCell::new(Vec::new()),
+            validate,
+        });
+        let package_json_text = {
+            let load = load.clone();
+            Rc::new(move |file_name: &str| {
+                load.reads
+                    .borrow()
+                    .get(file_name)
+                    .and_then(|read| read.as_ref().map(|(_, text)| text.clone()))
+            }) as crate::frontend::module::AheadText
         };
         let accept = {
             let source_fs = self.source_fs.clone();
@@ -671,6 +679,7 @@ impl compiler::CompilerHost for CompilerHost {
             accept,
             attach,
             first_load,
+            package_json_text,
             keep_keys: Box::new(move |new_keys| *keys.borrow_mut() = Some(new_keys)),
             share: self.kept_share.borrow().clone()?,
             scratch,
@@ -717,28 +726,22 @@ struct AheadCheck {
     /// (`AheadLookupLayer`; `usize::MAX` until the load gives the workers a
     /// job).
     job: Rc<Cell<usize>>,
-    /// The hash of each file that the check read, by name.
-    reads: RefCell<FxHashMap<String, Option<u128>>>,
+    /// The hash and the text of each file that the check read, by name
+    /// (`None`: the read failed).
+    reads: RefCell<FxHashMap<String, Option<(u128, Arc<str>)>>>,
     /// The shared calls (`AheadCall::PackageJson`, `AheadCall::Shared`)
     /// that passed the check and were replayed, by address (the answers
     /// keep them for the whole load).
     groups: RefCell<FxHashSet<usize>>,
-    /// S1a: the load's job is a first-load job, whose lookups the snapshot
-    /// does not keep (`ResolveAheadHost::first_load`). The check then
-    /// notes in `seeds` each lookup of the answer that the loader's own
-    /// call would store in the snapshot's lookup cache at that point (the
-    /// cache has no answer for it, and for `file_exists` the snapshot has
-    /// no cached file of the path), and stores them when the answer passes.
-    seed: Rc<Cell<bool>>,
-    seeds: RefCell<Vec<AheadSeed>>,
-}
-
-/// A lookup that a taken first-load answer stores in the snapshot's
-/// lookup cache (`AheadCheck::seeds`).
-enum AheadSeed {
-    FileExists(String, bool),
-    DirectoryExists(String, bool),
-    Realpath(String, String),
+    /// S1a: the load's job is a first-load job (`ResolveAheadHost::first_load`),
+    /// whose lookups the snapshot does not keep. The check then makes each
+    /// lookup that the snapshot's cache has no answer for through the cache,
+    /// as the loader's own call would make it at that point: in call order,
+    /// before any later call of the answer, so a read of the answer happens
+    /// only after every lookup before it gave the worker's answer on the
+    /// snapshot's file system. A rejected answer leaves only what a serial
+    /// load makes before its resolution meets the first difference.
+    validate: Rc<Cell<bool>>,
 }
 
 impl AheadCheck {
@@ -763,25 +766,11 @@ fn accept_ahead_answer(
     load: &AheadCheck,
     calls: &[AheadCall],
 ) -> bool {
-    load.seeds.borrow_mut().clear();
     if !calls
         .iter()
         .all(|call| check_ahead_call(source_fs, files, load, call))
     {
-        load.seeds.borrow_mut().clear();
         return false;
-    }
-    // S1a: the lookups go into the cache in the order of the calls, as the
-    // loader's own calls would store them; a lookup that the cache has by
-    // now keeps its answer (the first answer wins, as in the cache).
-    for seed in load.seeds.borrow_mut().drain(..) {
-        match seed {
-            AheadSeed::FileExists(path, exists) => load.lookups.seed_file_exists(&path, exists),
-            AheadSeed::DirectoryExists(path, exists) => {
-                load.lookups.seed_directory_exists(&path, exists);
-            }
-            AheadSeed::Realpath(name, real) => load.lookups.seed_realpath(&name, &real),
-        }
     }
     for call in calls {
         replay_ahead_call(source_fs, load, call);
@@ -803,65 +792,40 @@ fn check_ahead_call(
             exists,
             known,
         } => match files.cached_file_state(path) {
-            // S1a: a first-load check makes no call that stores a lookup
-            // before the answer passes (`AheadCheck::seed`). A known answer
-            // is asked of the layer under the cache when the cache has
-            // none, and stored when the answer passes.
-            CachedFileState::Absent if *known && load.seed.get() => {
-                let snapshot = load
-                    .lookups
-                    .cached_file_exists(path.as_str())
-                    .unwrap_or_else(|| {
-                        let answer = vfs::Fs::file_exists(&**load.lookups.wrapped(), path.as_str());
-                        load.seeds
-                            .borrow_mut()
-                            .push(AheadSeed::FileExists(path.as_str().to_string(), answer));
-                        answer
-                    });
-                snapshot == *exists
-            }
             // The worker asked the OS through the open files, as the
             // layered file system does; a known answer is checked here
-            // (the same call as the loader's own lookup).
-            CachedFileState::Absent if *known => {
+            // (the same call as the loader's own lookup). S1a: so is every
+            // answer of a first-load check (`AheadCheck::validate`).
+            CachedFileState::Absent if *known || load.validate.get() => {
                 vfs::Fs::file_exists(&*load.lookups, path.as_str()) == *exists
             }
-            CachedFileState::Absent => {
-                let cached = load.lookups.cached_file_exists(path.as_str());
-                if cached.is_none() && load.seed.get() {
-                    load.seeds
-                        .borrow_mut()
-                        .push(AheadSeed::FileExists(path.as_str().to_string(), *exists));
-                }
-                load.agrees(cached, |lookups| lookups.file_exists(path.as_str()), exists)
-            }
+            CachedFileState::Absent => load.agrees(
+                load.lookups.cached_file_exists(path.as_str()),
+                |lookups| lookups.file_exists(path.as_str()),
+                exists,
+            ),
             CachedFileState::Live => *exists,
             CachedFileState::NoValue => !*exists,
             CachedFileState::NeedsReload => false,
         },
-        AheadCall::DirectoryExists { path, exists } => {
-            let cached = load.lookups.cached_directory_exists(path.as_str());
-            if cached.is_none() && load.seed.get() {
-                load.seeds.borrow_mut().push(AheadSeed::DirectoryExists(
-                    path.as_str().to_string(),
-                    *exists,
-                ));
-            }
-            load.agrees(
-                cached,
-                |lookups| lookups.directory_exists(path.as_str()),
-                exists,
-            )
+        // S1a: a first-load check asks the snapshot's cache, which asks
+        // the file system when it has no answer (`AheadCheck::validate`).
+        AheadCall::DirectoryExists { path, exists } if load.validate.get() => {
+            vfs::Fs::directory_exists(&*load.lookups, path.as_str()) == *exists
         }
-        AheadCall::Realpath { name, real } => {
-            let cached = load.lookups.cached_realpath(name);
-            if cached.is_none() && load.seed.get() {
-                load.seeds
-                    .borrow_mut()
-                    .push(AheadSeed::Realpath(name.clone(), real.clone()));
-            }
-            load.agrees(cached, |lookups| lookups.realpath(name), real)
+        AheadCall::Realpath { name, real } if load.validate.get() => {
+            vfs::Fs::realpath(&*load.lookups, name) == *real
         }
+        AheadCall::DirectoryExists { path, exists } => load.agrees(
+            load.lookups.cached_directory_exists(path.as_str()),
+            |lookups| lookups.directory_exists(path.as_str()),
+            exists,
+        ),
+        AheadCall::Realpath { name, real } => load.agrees(
+            load.lookups.cached_realpath(name),
+            |lookups| lookups.realpath(name),
+            real,
+        ),
         // A read that failed is not taken: the disk changed during the load
         // (a package.json that `file_exists` found was gone), or the file
         // cannot be read. The snapshot does not cache a failed read, so a
@@ -876,11 +840,18 @@ fn check_ahead_call(
             file_name,
             hash: Some(hash),
         } => {
-            let known = load.reads.borrow().get(file_name).copied();
+            let known = load
+                .reads
+                .borrow()
+                .get(file_name)
+                .map(|read| read.as_ref().map(|(hash, _)| *hash));
             let read = known.unwrap_or_else(|| {
-                let read = source_fs.get_file(file_name).map(|file| file.hash());
+                let read = source_fs
+                    .get_file(file_name)
+                    .map(|file| (file.hash(), file.shared_content()));
+                let hash = read.as_ref().map(|(hash, _)| *hash);
                 load.reads.borrow_mut().insert(file_name.clone(), read);
-                read
+                hash
             });
             read == Some(*hash)
         }

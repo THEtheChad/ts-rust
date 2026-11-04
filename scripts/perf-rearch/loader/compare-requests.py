@@ -1,52 +1,39 @@
 #!/usr/bin/env python3
-"""Compares the server-to-client requests (client/registerCapability, unregisterCapability, ...)
-and the pulled diagnostics of load-dump-session.mjs runs: tsc-rs (S1a on/off) against Go.
-usage: python3 -I compare-requests.py GO.json RS.json [RS.json ...]
-Prints, per RS file, EXACT (same requests in the same order), SAME-NET (the same
-registrations in force at the end, with the same watcher globs; ids compared without their
-counters, transient register/unregister pairs dropped) or DIFF with the first difference."""
-import json, re, sys
+"""Compares the recorded protocol of load-dump-session.mjs runs byte for byte: every
+server-to-client request and notification with its payload, every response, and the
+pulled diagnostics in full. No normalization.
+usage: python3 -I compare-requests.py REF.json OTHER.json [OTHER.json ...]
+Prints, per OTHER file, EXACT or DIFF with the path and the two values of the first
+difference."""
+import json, sys
 
-def load(p):
-    return json.load(open(p))
+KEYS = ("serverRequests", "notifications", "responses", "diags")
 
-def net_registrations(reqs):
-    """The registrations still in force at the end (a register later unregistered is
-    dropped), keyed by method and id with the watcher counter ("watcher 9.0") removed,
-    each with its sorted watcher globs (or its options)."""
-    live = {}
-    for r in reqs:
-        if r["method"] == "client/registerCapability":
-            for reg in r["params"]["registrations"]:
-                live[reg["id"]] = reg
-        elif r["method"] == "client/unregisterCapability":
-            for reg in r["params"].get("unregisterations") or r["params"].get("unregistrations") or []:
-                live.pop(reg["id"], None)
-    out = {}
-    for rid, reg in live.items():
-        key = (reg["method"], re.sub(r" watcher \d+\.\d+$", "", rid))
-        ws = (reg.get("registerOptions") or {}).get("watchers")
-        out[key] = sorted(json.dumps(w, sort_keys=True) for w in ws) if ws is not None else json.dumps(reg.get("registerOptions"), sort_keys=True)
-    return out
+def first_diff(a, b, path="$"):
+    if type(a) is not type(b):
+        return path, a, b
+    if isinstance(a, dict):
+        for k in sorted(set(a) | set(b)):
+            if k not in a or k not in b:
+                return f"{path}.{k}", a.get(k, "<absent>"), b.get(k, "<absent>")
+            d = first_diff(a[k], b[k], f"{path}.{k}")
+            if d: return d
+        return None
+    if isinstance(a, list):
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = first_diff(x, y, f"{path}[{i}]")
+            if d: return d
+        if len(a) != len(b):
+            return f"{path}.length", len(a), len(b)
+        return None
+    return None if a == b else (path, a, b)
 
-watchers = net_registrations
-
-go = load(sys.argv[1])
-gw = watchers(go["serverRequests"])
-print(f"go: {len(go['serverRequests'])} requests, {sum(len(v) if isinstance(v, list) else 1 for v in gw.values())} watchers")
+ref = json.load(open(sys.argv[1]))
 for p in sys.argv[2:]:
-    rs = load(p)
-    diag = "diags-same" if rs["diags"] == go["diags"] else "DIAGS-DIFF"
-    if rs["serverRequests"] == go["serverRequests"]:
-        print(f"EXACT {p} ({diag})"); continue
-    rw = watchers(rs["serverRequests"])
-    if rw == gw:
-        print(f"SAME-NET {p} ({diag})"); continue
-    for k in sorted(set(gw) | set(rw), key=str):
-        if gw.get(k) != rw.get(k):
-            a, b = gw.get(k), rw.get(k)
-            if isinstance(a, list) and isinstance(b, list):
-                print(f"DIFF {p} {k}: only go {sorted(set(a)-set(b))[:5]} only rs {sorted(set(b)-set(a))[:5]} ({diag})")
-            else:
-                print(f"DIFF {p} {k}: go {str(a)[:300]} rs {str(b)[:300]} ({diag})")
-            break
+    other = json.load(open(p))
+    d = first_diff({k: ref.get(k) for k in KEYS}, {k: other.get(k) for k in KEYS})
+    if d is None:
+        print(f"EXACT {p}")
+    else:
+        path, a, b = d
+        print(f"DIFF {p} at {path}: {json.dumps(a)[:300]} vs {json.dumps(b)[:300]}")

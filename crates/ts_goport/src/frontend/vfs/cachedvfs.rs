@@ -81,41 +81,6 @@ impl CachedFs {
         self.cached(&self.realpath_cache, path)
     }
 
-    /// Seeds the cached `file_exists` answer of `path` when the cache has
-    /// none (and is on), as the cache's own call would store it. A
-    /// language server load stores so the lookups of the resolve-ahead
-    /// answers that it took on its first load (project/compilerhost.rs).
-    pub fn seed_file_exists(&self, path: &str, exists: bool) {
-        Self::seed(&self.enabled, &self.file_exists_cache, path, || exists);
-    }
-
-    /// `seed_file_exists` for `directory_exists`.
-    pub fn seed_directory_exists(&self, path: &str, exists: bool) {
-        Self::seed(&self.enabled, &self.directory_exists_cache, path, || exists);
-    }
-
-    /// `seed_file_exists` for `realpath`.
-    pub fn seed_realpath(&self, path: &str, real: &str) {
-        Self::seed(&self.enabled, &self.realpath_cache, path, || {
-            real.to_string()
-        });
-    }
-
-    fn seed<V>(
-        enabled: &Cell<bool>,
-        cache: &RefCell<FxHashMap<String, V>>,
-        path: &str,
-        value: impl FnOnce() -> V,
-    ) {
-        if !enabled.get() {
-            return;
-        }
-        let mut cache = cache.borrow_mut();
-        if !cache.contains_key(path) {
-            cache.insert(path.to_string(), value());
-        }
-    }
-
     /// The cached answers, sorted, as text lines (`GOPORT_LOAD_DUMP`,
     /// compiler/load_dump.rs).
     pub fn dump(&self, out: &mut String) {

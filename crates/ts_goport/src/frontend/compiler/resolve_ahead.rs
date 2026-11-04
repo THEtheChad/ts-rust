@@ -199,6 +199,19 @@ pub fn set_after_workers(hook: Option<Rc<dyn Fn()>>) {
     AFTER_WORKERS.with(|after| *after.borrow_mut() = hook);
 }
 
+/// Tests: runs the `set_after_workers` hook of this thread before the
+/// loader of a load starts (`FilesParser::parse`): in `Mode::Force`, in a
+/// first-load load after its parse workers have parsed and resolved all
+/// they could; in `Mode::Off`, at the same point of any load. A test changes
+/// the disk there, between the workers' answers and the loader's check of
+/// them, and compares with a serial load whose disk changed at that point.
+#[doc(hidden)]
+pub fn after_first_load_workers() {
+    if let Some(hook) = AFTER_WORKERS.with(|after| after.borrow().clone()) {
+        hook();
+    }
+}
+
 /// The workers' view of a host's file system: the OS file system with the
 /// open files of the host over it, as the language server's overlay file
 /// system shows it (project/overlayfs.rs).
@@ -233,6 +246,9 @@ pub struct ResolveAheadHost {
     /// snapshot's lookup cache, as the loader's own calls would, so the
     /// lookups of answers that the loader did not take leave no trace.
     pub first_load: Box<dyn FnOnce()>,
+    /// The text of a package.json that the check read in this load, for a
+    /// first-load link (`AheadLink::package_json_text`).
+    pub package_json_text: AheadText,
     /// Keeps the keys of this load for the next load.
     pub keep_keys: Box<dyn FnOnce(Arc<KeyList>)>,
     /// The project's share in what the workers keep from job to job.
@@ -398,8 +414,13 @@ impl ResolveAhead {
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
             missing: RefCell::default(),
+            log_missing: debug_log_enabled(),
+            package_json_text: first_load.then_some(host.package_json_text),
         });
+        // A first-load job has no keys: its parse workers make the answers,
+        // and `FilesParser::parse` waits for them (`after_first_load_workers`).
         if mode() == Mode::Force
+            && !first_load
             && let Some((job, workers)) = job.as_ref().zip(Workers::get())
         {
             workers.wait_left(job);

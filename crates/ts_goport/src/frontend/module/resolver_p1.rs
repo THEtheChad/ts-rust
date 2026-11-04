@@ -759,7 +759,10 @@ impl DefaultResolver {
             // PERF: a resolve-ahead worker may have resolved this key
             // (compiler/resolve_ahead.rs). The loader takes the answer only
             // after it checked it on its own file system.
-            if let Some(found) = self.caches.take_resolved_ahead(key_parts) {
+            if let Some(found) = self
+                .caches
+                .take_resolved_ahead(key_parts, &self.package_json_info_cache)
+            {
                 self.caches.module_resolution_cache.set(
                     ModuleResolutionCacheKey::from_parts(key_parts),
                     found.clone(),

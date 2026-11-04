@@ -341,8 +341,56 @@ pub struct AheadLink {
     pub scopes: RefCell<FxHashMap<String, Option<PackageScope>>>,
     /// The module keys that had no worker answer when the loader asked
     /// (`AheadStats::missing`), for the debug log of the load's end
-    /// (compiler/resolve_ahead.rs `ResolveAhead::finish`).
+    /// (compiler/resolve_ahead.rs `ResolveAhead::finish`). Kept only when
+    /// that log is on (`log_missing`).
     pub missing: RefCell<Vec<(String, String, ResolutionMode)>>,
+    pub log_missing: bool,
+    /// S1a: a first-load link (compiler/resolve_ahead.rs `FirstLoadJob`):
+    /// the text of a package.json that the check read in this load. Each
+    /// package.json lookup of a taken answer then goes into the loader's
+    /// package.json cache as the read that the loader's own lookup would
+    /// have made (`adopt_ahead_package_jsons`). `None` for other loads.
+    pub package_json_text: Option<AheadText>,
+}
+
+/// The text of a package.json that a resolve-ahead check read in the load
+/// (`AheadLink::package_json_text`).
+pub type AheadText = Rc<dyn Fn(&str) -> Option<Arc<str>>>;
+
+/// S1a: puts each package.json lookup of a taken first-load answer in the
+/// loader's package.json cache `cache` as a pending read (Go `InfoCache.Set`
+/// of the loader's own `getPackageJsonInfo`: the first entry wins), with the
+/// text that the check read on the snapshot (`AheadLink::package_json_text`),
+/// so the cache has the entries of a serial load. A lookup of a file whose
+/// text the check did not read stays out.
+// PORT: not in Go (perf).
+fn adopt_ahead_package_jsons(
+    ahead: &AheadLink,
+    package_jsons: &[PackageJsonLookup],
+    cache: &InfoCache,
+) {
+    let Some(text_of) = &ahead.package_json_text else {
+        return;
+    };
+    for lookup in package_jsons {
+        let file_name = combine_paths(&lookup.package_directory, &["package.json"]);
+        let text = if lookup.exists {
+            match text_of(&file_name) {
+                Some(text) => Some(Box::from(&*text)),
+                None => continue,
+            }
+        } else {
+            None
+        };
+        cache.add_pending(
+            &file_name,
+            crate::frontend::packagejson::PendingInfo {
+                package_directory: lookup.package_directory.clone(),
+                directory_exists: lookup.directory_exists,
+                text,
+            },
+        );
+    }
 }
 
 /// The keys of the previous load, which the resolve-ahead workers resolve
@@ -1586,7 +1634,11 @@ impl Caches {
     /// the next load (`AheadLink::keys`), and gives the worker answer for
     /// `key` when there is one and it passes the check
     /// (`AheadLink::accept`). `None`: the loader resolves the key itself.
-    pub fn take_resolved_ahead(&self, key: ModuleKeyParts<'_>) -> Option<Arc<ResolvedModule>> {
+    pub fn take_resolved_ahead(
+        &self,
+        key: ModuleKeyParts<'_>,
+        package_json_cache: &InfoCache,
+    ) -> Option<Arc<ResolvedModule>> {
         let ahead = self.ahead.borrow();
         let ahead = ahead.as_ref()?;
         let (containing_directory, module_name, mode, redirect_config_name) = key;
@@ -1627,7 +1679,7 @@ impl Caches {
         {
             None => {
                 stats.missing += 1;
-                if redirect_config_name.is_empty() {
+                if ahead.log_missing && redirect_config_name.is_empty() {
                     ahead.missing.borrow_mut().push((
                         containing_directory.to_string(),
                         module_name.to_string(),
@@ -1649,6 +1701,7 @@ impl Caches {
         ahead.stats.set(stats);
         let found = found.filter(|_| accepted)?;
         self.note_worker_package_jsons(&found.package_jsons);
+        adopt_ahead_package_jsons(ahead, &found.package_jsons, package_json_cache);
         Some(found.value)
     }
 
@@ -1667,6 +1720,7 @@ impl Caches {
     pub fn package_scope_ahead(
         &self,
         directory: &str,
+        package_json_cache: &InfoCache,
         find: impl FnOnce() -> Option<PackageScope>,
     ) -> Option<Option<PackageScope>> {
         let ahead = self.ahead.borrow();
@@ -1675,7 +1729,9 @@ impl Caches {
             return Some(scope.clone());
         }
         ahead.keys.borrow_mut().push_scope(directory);
-        let scope = self.take_scope_ahead(ahead, directory).unwrap_or_else(find);
+        let scope = self
+            .take_scope_ahead(ahead, directory, package_json_cache)
+            .unwrap_or_else(find);
         ahead
             .scopes
             .borrow_mut()
@@ -1685,7 +1741,12 @@ impl Caches {
 
     /// The workers' package scope of `directory`, when there is one and it
     /// passes the check (`package_scope_ahead`).
-    fn take_scope_ahead(&self, ahead: &AheadLink, directory: &str) -> Option<Option<PackageScope>> {
+    fn take_scope_ahead(
+        &self,
+        ahead: &AheadLink,
+        directory: &str,
+        package_json_cache: &InfoCache,
+    ) -> Option<Option<PackageScope>> {
         let answers = ahead.answers.as_ref()?;
         let mut stats = ahead.stats.get();
         let mut found = None;
@@ -1722,6 +1783,7 @@ impl Caches {
         ahead.stats.set(stats);
         let found = found.filter(|_| taken)?;
         self.note_worker_package_jsons(&found.package_jsons);
+        adopt_ahead_package_jsons(ahead, &found.package_jsons, package_json_cache);
         Some(found.value)
     }
 

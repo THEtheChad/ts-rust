@@ -549,6 +549,10 @@ impl FilesParser {
             if let Some(early) = early {
                 early.discard();
             }
+            // Tests: see the hook below.
+            if super::resolve_ahead::mode() == super::resolve_ahead::Mode::Off {
+                super::resolve_ahead::after_first_load_workers();
+            }
             self.run(loader, tasks);
             return;
         }
@@ -626,6 +630,19 @@ impl FilesParser {
             .rank_roots(tasks, ROOT_RANK_PER_WORKER * pool.threads.len());
         // The root jobs are queued now, so the added workers start at once.
         pool.add_workers(extra_worker_count(large));
+        // Tests: with `resolve_ahead::Mode::Force`, the parse workers of a
+        // first-load job parse and resolve all they can before the loader
+        // starts, and a test hook runs then. With `Mode::Off` the hook runs
+        // at the same point of the load (after the root tasks), so a test
+        // compares with a serial load whose disk changed there.
+        match super::resolve_ahead::mode() {
+            super::resolve_ahead::Mode::Force if loader.first_load_ahead.is_some() => {
+                pool.wait_idle();
+                super::resolve_ahead::after_first_load_workers();
+            }
+            super::resolve_ahead::Mode::Off => super::resolve_ahead::after_first_load_workers(),
+            _ => {}
+        }
         self.run_queue(loader, Some(&mut pool));
         // Closes the queue, then waits for the workers.
         drop(prefetch);
@@ -3642,6 +3659,29 @@ impl PrefetchPool {
     }
 
     /// Starts `workers` more parse workers on the queue of this pool.
+    /// Waits until no job is queued and every worker sleeps (tests,
+    /// `resolve_ahead::Mode::Force`), at most 60 seconds.
+    fn wait_idle(&self) {
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let queue = lock(&self.shared.queue);
+                if queue.pending.is_empty()
+                    && queue.first.is_none()
+                    && queue.rank.is_none()
+                    && queue.roots.is_none()
+                    && queue.sleepers >= self.threads.len()
+                {
+                    return;
+                }
+            }
+            if start.elapsed() > std::time::Duration::from_secs(60) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     fn add_workers(&mut self, workers: usize) {
         self.spawn_workers(workers, false);
     }

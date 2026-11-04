@@ -854,6 +854,188 @@ os_child_test! {
     }
 }
 
+/// The snapshot's file system after a load, relative to the project root:
+/// its lookup cache (every `file_exists`, `directory_exists`, `realpath` and
+/// entries answer), its cached files with their hash, reload state and real
+/// path, its cached directories in order and its node_modules realpath
+/// aliases.
+fn observe_snapshot_fs(session: &Rc<Session>, root: &str) -> Vec<String> {
+    let snapshot = session.snapshot();
+    let fs = &snapshot.fs;
+    let mut lines = Vec::new();
+    if let Some(cached) = ts_goport::frontend::vfs::Fs::as_any(&*fs.fs)
+        .and_then(|fs| fs.downcast_ref::<project::snapshotfs::CachedLayeredFileSystem>())
+    {
+        let mut text = String::new();
+        cached.fs.dump(&mut text);
+        lines.extend(text.lines().map(str::to_string));
+    }
+    for (path, file) in fs.cache_files.iter() {
+        let file = file.borrow();
+        lines.push(format!(
+            "cached_file {} {:032x} reload={} real={}",
+            path.as_str(),
+            file.file_base.hash(),
+            file.needs_reload,
+            file.realpath_path.as_str()
+        ));
+    }
+    for (path, children) in fs.cache_directories.iter() {
+        let children: Vec<String> = children.borrow().values().cloned().collect();
+        lines.push(format!("cached_dir {} {children:?}", path.as_str()));
+    }
+    for (path, aliases) in fs.node_modules_realpath_aliases.iter() {
+        let mut aliases: Vec<String> = aliases
+            .borrow()
+            .paths
+            .iter()
+            .map(|(alias, name)| format!("{}={name}", alias.as_str()))
+            .collect();
+        aliases.sort();
+        lines.push(format!("alias {} {aliases:?}", path.as_str()));
+    }
+    let name = std::path::Path::new(root)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let mut lines: Vec<String> = lines
+        .into_iter()
+        .map(|line| line.replace(root, "<root>").replace(&name, "<root name>"))
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// S1a: a first load whose disk changes after its parse workers resolved
+/// (`Mode::Force`: the hook runs when the workers are idle, before the
+/// loader starts) against a serial load (`Mode::Off`) of the changed disk.
+/// The program, resolutions, seen files, missing directories, cached files,
+/// lookup cache and aliases must be the same, and the check must reject
+/// answers. `prepare` makes the disk before the load, `change` changes it.
+fn first_load_with_a_change(
+    label: &str,
+    prepare: &dyn Fn(&str),
+    change: &'static dyn Fn(&str),
+) -> LoadStats {
+    let steps = |session: &Rc<Session>, root: &str| open_index(session, root);
+    // The serial load whose disk changes at the same point: after the
+    // load's root tasks (their lookups are made), before its loader starts
+    // (`resolve_ahead::after_first_load_workers`).
+    let serial_root = make_project(&format!("{label}_serial"));
+    prepare(&serial_root);
+    let hook_serial_root = serial_root.clone();
+    let serial_changed = Rc::new(std::cell::Cell::new(false));
+    let hook_serial_changed = serial_changed.clone();
+    resolve_ahead::set_mode(Some(Mode::Off));
+    resolve_ahead::set_after_workers(Some(Rc::new(move || {
+        change(&hook_serial_root);
+        hook_serial_changed.set(true);
+    })));
+    let session = os_session(&serial_root);
+    steps(&session, &serial_root);
+    resolve_ahead::set_after_workers(None);
+    assert!(serial_changed.get(), "the serial hook did not run");
+    let serial = observe(&session, &serial_root);
+    let serial_fs = observe_snapshot_fs(&session, &serial_root);
+    resolve_ahead::set_mode(None);
+    drop(session);
+    // The first load that resolves ahead, with the change after its workers.
+    let root = make_project(&format!("{label}_ahead"));
+    prepare(&root);
+    let hook_root = root.clone();
+    let changed = Rc::new(std::cell::Cell::new(false));
+    let hook_changed = changed.clone();
+    resolve_ahead::set_mode(Some(Mode::Force));
+    resolve_ahead::set_first_load(Some(true));
+    resolve_ahead::set_after_workers(Some(Rc::new(move || {
+        change(&hook_root);
+        hook_changed.set(true);
+    })));
+    let session = os_session(&root);
+    steps(&session, &root);
+    resolve_ahead::set_after_workers(None);
+    let ahead = observe(&session, &root);
+    let ahead_fs = observe_snapshot_fs(&session, &root);
+    let stats = resolve_ahead::last_stats().expect("no resolve-ahead load");
+    resolve_ahead::set_first_load(None);
+    resolve_ahead::set_mode(None);
+    drop(session);
+    std::fs::remove_dir_all(&serial_root).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(changed.get(), "the hook did not run: {stats:?}");
+    assert!(stats.first_load, "{stats:?}");
+    assert_eq!(ahead, serial);
+    assert_eq!(ahead_fs, serial_fs);
+    stats
+}
+
+os_child_test! {
+    /// S1a: a nearby package that appears after the workers resolved an
+    /// ancestor package, whose package.json also changed. The check finds
+    /// the nearby directory before any read of the ancestor's package.json,
+    /// so the rejected answer leaves no read, tracking or alias behind.
+    fn a_first_load_rejects_an_answer_when_a_nearby_package_appears() {
+        let stats = first_load_with_a_change(
+            "firstnear",
+            &|_| {},
+            &|root| {
+                write(
+                    root,
+                    "src/node_modules/pkg/package.json",
+                    r#"{ "name": "pkg", "version": "3.0.0", "types": "index.d.ts" }"#,
+                );
+                write(root, "src/node_modules/pkg/index.d.ts", "export declare const p: string;");
+                write(
+                    root,
+                    "node_modules/pkg/package.json",
+                    r#"{ "name": "pkg", "version": "1.0.1", "types": "index.d.ts" }"#,
+                );
+            },
+        );
+        assert!(stats.loader.rejected > 0, "{stats:?}");
+        assert!(stats.loader.taken > 0, "{stats:?}");
+    }
+}
+
+os_child_test! {
+    /// S1a: a file that a worker found is deleted before the loader checks
+    /// the answer.
+    fn a_first_load_rejects_an_answer_when_its_file_is_deleted() {
+        // `lib/c.ts` is outside `include`: only the resolution of "../lib/c"
+        // looks it up (the lookups of the root files are made before the
+        // change).
+        let stats = first_load_with_a_change("firstdel", &|_| {}, &|root| {
+            std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
+        });
+        assert!(stats.loader.rejected > 0, "{stats:?}");
+    }
+}
+
+os_child_test! {
+    /// S1a: a node_modules package that is a symlink is pointed at another
+    /// directory after the workers resolved through it.
+    fn a_first_load_rejects_an_answer_when_a_symlink_changes() {
+        let prepare = |root: &str| {
+            let lib = std::path::Path::new(root).join("node_modules/@scope/lib");
+            std::fs::rename(&lib, std::path::Path::new(root).join("store-a")).unwrap();
+            write(
+                root,
+                "store-b/package.json",
+                r#"{ "name": "@scope/lib", "version": "2.1.0", "exports": { ".": { "types": "./dist/other.d.ts" } } }"#,
+            );
+            write(root, "store-b/dist/other.d.ts", "export declare const m: boolean;");
+            std::os::unix::fs::symlink(std::path::Path::new(root).join("store-a"), &lib).unwrap();
+        };
+        let stats = first_load_with_a_change("firstlink", &prepare, &|root| {
+            let lib = std::path::Path::new(root).join("node_modules/@scope/lib");
+            std::fs::remove_file(&lib).unwrap();
+            std::os::unix::fs::symlink(std::path::Path::new(root).join("store-b"), &lib).unwrap();
+        });
+        assert!(stats.loader.rejected > 0, "{stats:?}");
+    }
+}
+
 os_child_test! {
     /// A rejected answer makes the workers drop what they keep (the known
     /// files and the package.json parses). When a load on another thread

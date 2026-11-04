@@ -10,11 +10,21 @@
 //     pkgjson   open the root package.json as an edited overlay ("type" flipped), then
 //               the first file, pull diagnostics
 //     edit      open, pull, then add an import to the file (a second load, resolve ahead)
-// Writes <out prefix>.dump (the load dump) and <out prefix>.json (server requests with
-// their params, diagnostics). Server env passes through (GOPORT_FIRST_LOAD_AHEAD).
+//     autoimport open, pull, ask for completions at the end of the file after typing an
+//               identifier prefix, then completionItem/resolve the first auto-import item
+//     cancel    open, then a diagnostic request and a completion request that are
+//               cancelled at once, then pull diagnostics
+//     fsmut     on a scratch copy of the root (<out dir>/scratch-fsmut, node_modules linked;
+//               the root is not changed): open, pull, then
+//               create a file the open file imports, delete another one, send
+//               didChangeWatchedFiles for both and pull again
+// Writes <out prefix>.dump (the load dump) and <out prefix>.json: every server-to-client
+// request and notification with its full payload (window/logMessage, which carries
+// timings, is left out), and every response to the client's requests in full.
+// Server env passes through (GOPORT_FIRST_LOAD_AHEAD).
 // S1A_FILE / S1A_FILE2: the file to open (relative to root / second root), else the first
 // of lspdiff's pickFiles.
-import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, existsSync, cpSync, mkdirSync, unlinkSync, readdirSync, symlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,7 +32,20 @@ const lsp = new URL("../../lspdiff/", import.meta.url).pathname;
 const { pickFiles, languageId } = await import(`${lsp}/project.mjs`);
 const { initializeParams } = await import(`${lsp}/client.mjs`);
 
-const [bin, out, scenario, root, root2] = process.argv.slice(2);
+const [bin, out, scenario, rootArg, root2] = process.argv.slice(2);
+// fsmut runs on a scratch copy (node_modules linked), so the project input is not changed.
+let root = rootArg;
+if (scenario === "fsmut") {
+  // One fixed path for every run of the scenario, so the paths in the output agree.
+  root = join(dirname(out), "scratch-fsmut");
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(root, { recursive: true });
+  for (const name of readdirSync(rootArg)) {
+    if (name === ".git") continue;
+    if (name === "node_modules") symlinkSync(join(rootArg, name), join(root, name));
+    else cpSync(join(rootArg, name), join(root, name), { recursive: true, verbatimSymlinks: true });
+  }
+}
 const dump = `${out}.dump`;
 if (existsSync(dump)) rmSync(dump);
 const uri = (p) => pathToFileURL(p).href;
@@ -31,6 +54,7 @@ class Client {
   constructor(cmd, cwd, env) {
     this.proc = spawn(cmd[0], cmd.slice(1), { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
     this.next = 1; this.pending = new Map(); this.buf = Buffer.alloc(0); this.serverRequests = []; this.notes = [];
+    this.responses = []; this.methods = new Map();
     this.stderr = "";
     this.proc.stdout.on("data", (c) => this.onData(c));
     this.proc.stderr.on("data", (c) => { this.stderr += c; });
@@ -48,17 +72,19 @@ class Client {
         this.serverRequests.push({ method: msg.method, params: msg.params });
         this.write({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.id !== undefined) {
-        const p = this.pending.get(msg.id); this.pending.delete(msg.id); p?.(msg);
+        const p = this.pending.get(msg.id); this.pending.delete(msg.id);
+        this.responses.push({ id: msg.id, method: this.methods.get(msg.id), result: msg.result, error: msg.error });
+        p?.(msg);
       } else if (msg.method !== "window/logMessage") this.notes.push({ method: msg.method, params: msg.params });
     }
   }
   write(m) { const b = Buffer.from(JSON.stringify(m)); this.proc.stdin.write(`Content-Length: ${b.length}\r\n\r\n`); this.proc.stdin.write(b); }
-  request(method, params) { const id = this.next++; const p = new Promise((r) => this.pending.set(id, r)); this.write({ jsonrpc: "2.0", id, method, params }); return p; }
+  request(method, params) { const id = this.next++; this.methods.set(id, method); const p = new Promise((r) => this.pending.set(id, r)); this.write({ jsonrpc: "2.0", id, method, params }); p.id = id; return p; }
   notify(method, params) { this.write({ jsonrpc: "2.0", method, params }); }
   open(path, text, version = 1) {
     this.notify("textDocument/didOpen", { textDocument: { uri: uri(path), languageId: languageId(path), version, text: text ?? readFileSync(path, "utf8") } });
   }
-  async diag(path) { const r = await this.request("textDocument/diagnostic", { textDocument: { uri: uri(path) } }); return r.result?.items?.map((d) => [d.code, d.range.start.line, d.range.start.character, d.message]) ?? r.error; }
+  async diag(path) { const r = await this.request("textDocument/diagnostic", { textDocument: { uri: uri(path) } }); return r.result ?? r.error; }
 }
 
 const c = new Client([bin, "--lsp", "--stdio"], root, { GOPORT_LOAD_DUMP: dump, GOPORT_LAUNCH: "0" });
@@ -95,8 +121,40 @@ if (scenario === "open") {
   const text = readFileSync(a, "utf8");
   c.notify("textDocument/didChange", { textDocument: { uri: uri(a), version: 2 }, contentChanges: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, text: 'import "./__s1a_edit_missing";\n' }] });
   diags.a2 = await c.diag(a);
+} else if (scenario === "autoimport") {
+  c.open(a); diags.a = await c.diag(a);
+  const text = readFileSync(a, "utf8") + "\nconst s1aProbe = use";
+  c.notify("textDocument/didChange", { textDocument: { uri: uri(a), version: 2 }, contentChanges: [{ text }] });
+  const lines = text.split("\n");
+  const position = { line: lines.length - 1, character: lines[lines.length - 1].length };
+  const r = await c.request("textDocument/completion", { textDocument: { uri: uri(a) }, position, context: { triggerKind: 1 } });
+  const items = r.result?.items ?? r.result ?? [];
+  const autoImport = items.find((i) => i.data?.autoImport || i.source || i.labelDetails?.description) ?? items[0];
+  diags.completionCount = items.length;
+  if (autoImport) diags.resolved = (await c.request("completionItem/resolve", autoImport)).result;
+} else if (scenario === "cancel") {
+  c.open(a);
+  const d = c.request("textDocument/diagnostic", { textDocument: { uri: uri(a) } });
+  c.notify("$/cancelRequest", { id: d.id });
+  const comp = c.request("textDocument/completion", { textDocument: { uri: uri(a) }, position: { line: 0, character: 0 } });
+  c.notify("$/cancelRequest", { id: comp.id });
+  await d; await comp;
+  diags.a = await c.diag(a);
+} else if (scenario === "fsmut") {
+  c.open(a); diags.a = await c.diag(a);
+  const dir = dirname(a);
+  const created = join(dir, "__s1a_created.ts");
+  writeFileSync(created, "export const s1aCreated = 1;\n");
+  const text = `import { s1aCreated } from "./__s1a_created";\n` + readFileSync(a, "utf8");
+  c.notify("textDocument/didChange", { textDocument: { uri: uri(a), version: 2 }, contentChanges: [{ text }] });
+  const others = readdirSync(dir).filter((n) => /\.tsx?$/.test(n) && join(dir, n) !== a && !n.startsWith("__s1a"));
+  const deleted = others.length ? join(dir, others[0]) : null;
+  if (deleted) unlinkSync(deleted);
+  c.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: uri(created), type: 1 }, ...(deleted ? [{ uri: uri(deleted), type: 3 }] : [])] });
+  diags.a2 = await c.diag(a);
 } else throw new Error(`unknown scenario ${scenario}`);
 await Promise.race([c.request("shutdown", null), new Promise((r) => setTimeout(r, 5000))]);
 c.notify("exit", null); c.proc.stdin.end();
 const t = setTimeout(() => c.proc.kill("SIGKILL"), 5000); await c.exited; clearTimeout(t);
-writeFileSync(`${out}.json`, JSON.stringify({ scenario, root, root2, file: a, serverRequests: c.serverRequests, notifications: c.notes.map((n) => n.method), diags, stderr: c.stderr.slice(0, 4000) }, null, 1));
+writeFileSync(`${out}.json`, JSON.stringify({ scenario, root: rootArg, root2, file: a.replace(root, rootArg), serverRequests: c.serverRequests, notifications: c.notes, responses: c.responses, diags, stderr: c.stderr.slice(0, 4000) }, null, 1));
+if (scenario === "fsmut") rmSync(root, { recursive: true, force: true });

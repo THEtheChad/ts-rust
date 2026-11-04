@@ -143,11 +143,40 @@ pub fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
     }
 }
 
+/// The canonical text of a diagnostic: span, code, category, source,
+/// message, arguments, flags, and the chain and related information in
+/// full (the file is the dump's file; its node is left out).
+#[must_use]
+pub fn describe_diagnostic(diagnostic: &crate::core::Diagnostic) -> String {
+    let nested = |list: &[crate::core::Diagnostic]| {
+        list.iter()
+            .map(describe_diagnostic)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "{{{}..{} TS{} {:?} source={:?} message={:?} text={:?} args={:?} unnecessary={} deprecated={} skipped_on_no_emit={} chain=[{}] related=[{}]}}",
+        diagnostic.pos,
+        diagnostic.end,
+        diagnostic.code,
+        diagnostic.category,
+        diagnostic.source,
+        diagnostic.message.key(),
+        diagnostic.message_text,
+        diagnostic.message_args,
+        diagnostic.reports_unnecessary,
+        diagnostic.reports_deprecated,
+        diagnostic.skipped_on_no_emit,
+        nested(&diagnostic.message_chain),
+        nested(&diagnostic.related_information),
+    )
+}
+
 /// The canonical text of a resolved module.
 #[must_use]
 pub fn describe_module(module: &crate::program::ResolvedModule) -> String {
     format!(
-        "file={:?} path={:?} original={:?} ext={:?} ts_ext={} extra_ext={} pkg={:?} external={} custom={} alternate={:?} diags={}",
+        "file={:?} path={:?} original={:?} ext={:?} ts_ext={} extra_ext={} pkg={:?} external={} custom={} alternate={:?} diags=[{}]",
         module.resolved_file_name,
         module.resolved_path.as_str(),
         module.original_path,
@@ -158,7 +187,12 @@ pub fn describe_module(module: &crate::program::ResolvedModule) -> String {
         module.is_external_library_import,
         module.is_custom_resolution,
         module.alternate_result,
-        module.resolution_diagnostics.len(),
+        module
+            .resolution_diagnostics
+            .iter()
+            .map(describe_diagnostic)
+            .collect::<Vec<_>>()
+            .join(", "),
     )
 }
 
