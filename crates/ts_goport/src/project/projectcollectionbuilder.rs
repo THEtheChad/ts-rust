@@ -2581,6 +2581,9 @@ impl ProjectCollectionBuilder {
                                 .map_or_else(Vec::new, |c| c.content_mappers().to_vec()),
                         )
                     };
+                    if crate::frontend::compiler::load_dump::dump_enabled() {
+                        dump_program_load(project, &new_host);
+                    }
                     let mut watched_files: Vec<String> = Vec::new();
                     for mapper in &content_mappers {
                         if !mapper.definition.package.is_empty()
@@ -2989,4 +2992,41 @@ pub struct SearchNodeKey {
 pub struct SearchResult {
     pub project: Option<Rc<dirty::SyncMapEntry<ConfiguredProjectID, Rc<RefCell<Project>>>>>,
     pub retain: FxHashSet<tspath::Path>,
+}
+
+/// Writes the `load` section of `GOPORT_LOAD_DUMP` for the program that
+/// `host` just loaded for `project`: the loader's part
+/// (`load_dump::take_last_load`), then the seen files with their names and
+/// the missing directories of the host, sorted (compiler/load_dump.rs).
+// PORT: not in Go (perf diagnostics).
+fn dump_program_load(project: &Rc<RefCell<Project>>, host: &CompilerHost) {
+    use crate::frontend::compiler::load_dump;
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "project {}",
+        project.borrow().config_file_path.as_str()
+    );
+    text.push_str(&load_dump::take_last_load().unwrap_or_default());
+    if let Some(seen) = host.source_fs.seen_files.borrow().as_ref() {
+        load_dump::sorted_lines(
+            &mut text,
+            "seen",
+            seen.borrow()
+                .iter()
+                .map(|(path, name)| (path.as_str().to_string(), name.clone())),
+        );
+    }
+    if let Some(missing) = &host.source_fs.missing_directories {
+        load_dump::sorted_lines(
+            &mut text,
+            "missing_dir",
+            missing
+                .borrow()
+                .iter()
+                .map(|path| (path.as_str().to_string(), ())),
+        );
+    }
+    load_dump::write_section("load", &text);
 }

@@ -549,6 +549,10 @@ impl FilesParser {
             if let Some(early) = early {
                 early.discard();
             }
+            // Tests: see the hook below.
+            if super::resolve_ahead::mode() == super::resolve_ahead::Mode::Off {
+                super::resolve_ahead::after_first_load_workers();
+            }
             self.run(loader, tasks);
             return;
         }
@@ -626,6 +630,19 @@ impl FilesParser {
             .rank_roots(tasks, ROOT_RANK_PER_WORKER * pool.threads.len());
         // The root jobs are queued now, so the added workers start at once.
         pool.add_workers(extra_worker_count(large));
+        // Tests: with `resolve_ahead::Mode::Force`, the parse workers of a
+        // first-load job parse and resolve all they can before the loader
+        // starts, and a test hook runs then. With `Mode::Off` the hook runs
+        // at the same point of the load (after the root tasks), so a test
+        // compares with a serial load whose disk changed there.
+        match super::resolve_ahead::mode() {
+            super::resolve_ahead::Mode::Force if loader.first_load_ahead.is_some() => {
+                pool.wait_idle();
+                super::resolve_ahead::after_first_load_workers();
+            }
+            super::resolve_ahead::Mode::Off => super::resolve_ahead::after_first_load_workers(),
+            _ => {}
+        }
         self.run_queue(loader, Some(&mut pool));
         // Closes the queue, then waits for the workers.
         drop(prefetch);
@@ -876,6 +893,20 @@ impl FilesParser {
             loaded,
             depth,
         } = queued;
+        if super::load_dump::loading() {
+            let task = task.borrow();
+            super::load_dump::note(|out| {
+                use std::fmt::Write as _;
+                let _ = write!(
+                    out,
+                    "arrive {} {} loaded={loaded} depth={depth} depth+={} elide={}",
+                    task.path.as_str(),
+                    task.normalized_file_path,
+                    task.increase_depth,
+                    task.elide_on_depth
+                );
+            });
+        }
 
         let mut start_subtasks = false;
         if loaded {
@@ -940,6 +971,13 @@ impl FilesParser {
             let task_by_file_name = data.borrow().tasks[index].clone();
             let mut load_sub_tasks = start_subtasks;
             if !task_by_file_name.borrow().loaded {
+                if super::load_dump::loading() {
+                    let name = task_by_file_name.borrow().normalized_file_path.clone();
+                    super::load_dump::note(|out| {
+                        out.push_str("load ");
+                        out.push_str(&name);
+                    });
+                }
                 task_by_file_name.borrow_mut().load(loader);
                 if task_by_file_name.borrow().redirected_parse_task.is_some() {
                     // Always load redirected task
@@ -2780,6 +2818,11 @@ struct WorkerResolveConfig {
     /// True when, with `names`, the workers make the commit of the
     /// answers (`FilePrep::commit`): `GOPORT_LOAD_COMMIT` is not `0`.
     commit: bool,
+    /// S1a: the resolve-ahead job of a language server's first load
+    /// (`FileLoader::first_load_ahead`). The workers resolve with a
+    /// resolver of the job and publish their answers to it
+    /// (`FirstLoadJob::worker_resolver`); the loader checks each one.
+    ahead: Option<super::resolve_ahead::FirstLoadJob>,
 }
 
 impl WorkerResolveConfig {
@@ -2839,6 +2882,7 @@ impl WorkerResolveConfig {
             redirects,
             names: load_names_enabled(),
             commit: load_commit_enabled(),
+            ahead: loader.first_load_ahead.clone(),
         })
     }
 
@@ -2866,6 +2910,7 @@ impl WorkerResolveConfig {
             prep: load_prep_enabled(),
             names: load_names_enabled(),
             commit: load_commit_enabled(),
+            ahead: None,
         })
     }
 
@@ -2886,6 +2931,10 @@ impl WorkerResolveConfig {
             && self.prep == other.prep
             && self.names == other.names
             && self.commit == other.commit
+            && match (&self.ahead, &other.ahead) {
+                (Some(a), Some(b)) => a.same(b),
+                (a, b) => a.is_none() && b.is_none(),
+            }
     }
 }
 
@@ -3610,6 +3659,32 @@ impl PrefetchPool {
     }
 
     /// Starts `workers` more parse workers on the queue of this pool.
+    /// Waits until no job is queued and every worker sleeps (tests,
+    /// `resolve_ahead::Mode::Force`). Panics after 60 seconds.
+    fn wait_idle(&self) {
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let queue = lock(&self.shared.queue);
+                if queue.pending.is_empty()
+                    && queue.first.is_none()
+                    && queue.rank.is_none()
+                    && queue.roots.is_none()
+                    && queue.sleepers >= self.threads.len()
+                {
+                    return;
+                }
+            }
+            // A test that waits longer would compare a load whose workers
+            // did not finish: it fails here.
+            assert!(
+                start.elapsed() <= std::time::Duration::from_secs(60),
+                "wait_idle: the parse workers were not idle after 60 seconds"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     fn add_workers(&mut self, workers: usize) {
         self.spawn_workers(workers, false);
     }
@@ -4043,6 +4118,17 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
     });
     let mut resolver: Option<WorkerResolver> = None;
     let mut resolver_failed = false;
+    // S1a: a worker that resolves for a first-load job ends its
+    // resolve-ahead thread state when it ends (`FirstLoadJob::end_worker`).
+    struct EndAhead(Cell<bool>);
+    impl Drop for EndAhead {
+        fn drop(&mut self) {
+            if self.0.get() {
+                super::resolve_ahead::FirstLoadJob::end_worker();
+            }
+        }
+    }
+    let ahead_thread = EndAhead(Cell::new(false));
     let timed = shared.counts.is_some();
     loop {
         let job = {
@@ -4111,12 +4197,18 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
                 stats: shared.stats.clone(),
                 keep_package_jsons: config.shared.clone(),
             });
-            resolver = Some(WorkerResolver::new(
-                config,
-                resolver_fs,
-                &shared.config.current_directory,
-                shared.stats.host.get().is_some(),
-            ));
+            resolver = Some(match &config.ahead {
+                Some(job) => {
+                    ahead_thread.0.set(true);
+                    WorkerResolver::first_load(config, job)
+                }
+                None => WorkerResolver::new(
+                    config,
+                    resolver_fs,
+                    &shared.config.current_directory,
+                    shared.stats.host.get().is_some(),
+                ),
+            });
         }
         // PERF (loadpar1): for a loader that takes worker answers, the
         // worker finds the file's metadata first, as Go `load` does, and
@@ -4241,6 +4333,9 @@ struct WorkerResolver {
     /// The project reference redirects of `WorkerResolveConfig::references`,
     /// made on first use.
     redirects: RefCell<Vec<Option<Rc<WorkerRedirect>>>>,
+    /// S1a: the directories whose package scope this worker published for
+    /// a first-load job (`publish_package_scope`). `None` for other loads.
+    first_load_scopes: Option<RefCell<FxHashSet<String>>>,
 }
 
 /// Go `module.ResolvedProjectReference` of a project reference, for a
@@ -4323,6 +4418,20 @@ impl WorkerResolver {
             resolver,
             options,
             redirects: RefCell::new(vec![None; config.references.len()]),
+            first_load_scopes: None,
+        }
+    }
+
+    /// S1a: the resolver of a worker of a first-load job: the job's
+    /// resolver (`FirstLoadJob::worker_resolver`), whose answers go to the
+    /// job with the calls that made them. Such a load has no project
+    /// references (`process_all_program_files`), so no redirects.
+    fn first_load(config: &WorkerResolveConfig, job: &super::resolve_ahead::FirstLoadJob) -> Self {
+        WorkerResolver {
+            resolver: job.worker_resolver(),
+            options: worker_options(&config.options),
+            redirects: RefCell::new(vec![None; config.references.len()]),
+            first_load_scopes: Some(RefCell::default()),
         }
     }
 
@@ -4432,6 +4541,16 @@ impl WorkerResolver {
         prep: Option<PrepInput>,
         names: &mut Vec<String>,
     ) -> Option<FilePrep> {
+        // S1a: the package scope of the file's directory, once per worker,
+        // for the loader's metadata of its first file there
+        // (`Caches::package_scope_ahead`).
+        if let Some(scopes) = &self.first_load_scopes {
+            let directory = get_directory_path(&refs.file_name);
+            if !scopes.borrow().contains(&directory) && !shared.is_closed() {
+                self.resolver.publish_package_scope(&directory);
+                scopes.borrow_mut().insert(directory);
+            }
+        }
         if prep.is_none()
             && refs.type_reference_directives.is_empty()
             && refs.import_specifiers.is_empty()

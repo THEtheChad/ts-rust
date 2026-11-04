@@ -1286,6 +1286,60 @@ impl InfoCache {
         }
     }
 
+    /// PORT: not in Go (perf diagnostics, `GOPORT_LOAD_DUMP`). The two
+    /// stores apart, then what `get` gives, sorted within each part:
+    /// - `entry <key> ...`: the entries (what `range` and `contains_key` see);
+    /// - `pending <key> ...`: the pending reads, parsed (a copy; they stay
+    ///   pending), which `range` and `contains_key` do not see;
+    /// - `get <key> ...`: for each key of either store, the entry that `get`
+    ///   would give (the entry, else the pending read parsed), with no change.
+    /// The contents are the parsed fields and whether they parsed; the lazily
+    /// found version paths are left out.
+    #[must_use]
+    pub fn dump_lines(&self) -> Vec<String> {
+        let describe = |key: &Path, entry: &InfoCacheEntry| {
+            format!(
+                "{} dir={:?} dir_exists={} contents={}",
+                key.as_str(),
+                entry.package_directory,
+                entry.directory_exists,
+                entry.contents.as_ref().map_or_else(
+                    || "none".to_string(),
+                    |contents| format!(
+                        "parseable={} fields={:?}",
+                        contents.parseable, contents.fields
+                    )
+                )
+            )
+        };
+        let cache = self.cache.borrow();
+        let pending = self.pending.borrow();
+        let mut entries: Vec<String> = cache
+            .iter()
+            .map(|(key, entry)| format!("entry {}", describe(key, entry)))
+            .collect();
+        entries.sort_unstable();
+        let mut pendings: Vec<String> = pending
+            .iter()
+            .map(|(key, read)| format!("pending {}", describe(key, &read.clone().into_entry())))
+            .collect();
+        pendings.sort_unstable();
+        let mut gets: Vec<String> = cache
+            .iter()
+            .map(|(key, entry)| format!("get {}", describe(key, entry)))
+            .chain(
+                pending
+                    .iter()
+                    .filter(|(key, _)| !cache.contains_key(*key))
+                    .map(|(key, read)| {
+                        format!("get {}", describe(key, &read.clone().into_entry()))
+                    }),
+            )
+            .collect();
+        gets.sort_unstable();
+        entries.into_iter().chain(pendings).chain(gets).collect()
+    }
+
     /// Drops every entry (`module::Caches::release`).
     // PORT: not in Go. Go's GC frees the cache with its last resolver.
     pub fn clear(&self) {
