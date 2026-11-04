@@ -77,6 +77,36 @@ pub fn verify(project: &Project, host: &CompilerHost, program: &NewProgram) {
     }
 }
 
+/// Appends one line to `file` after a program update (`GOPORT_REUSE_STATS`):
+/// the outcome, the program's files, its per-path owners of reused
+/// synthetic specifiers, the live synthetic slots of this thread and the
+/// registered program versions.
+pub fn append_stats(
+    file: &str,
+    outcome: Option<crate::frontend::compiler::ReuseOutcome>,
+    program: &NewProgram,
+) {
+    let owners = program
+        .processed_files
+        .reused_synthetic_owners
+        .as_ref()
+        .map_or(0, |owners| owners.len());
+    let line = format!(
+        "outcome={} files={} owners={owners} live_slots={} programs={}\n",
+        outcome.map_or_else(|| "New".to_string(), |o| format!("{o:?}")),
+        program.source_files().len(),
+        crate::ast::synthetic_live_slot_count(),
+        crate::program::ls_program::registered_programs(),
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 /// An open file of the session.
 #[derive(Clone, Debug, PartialEq)]
 struct OpenFile {

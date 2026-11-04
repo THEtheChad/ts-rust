@@ -932,6 +932,11 @@ impl Project {
         {
             super::reuse_verify::verify(self, &host, &new_program);
         }
+        // Not in Go (perf/first-principles A1): `GOPORT_REUSE_STATS=<file>`
+        // appends, after each program update, what reuses keep alive.
+        if let Some(stats) = reuse_stats_file() {
+            super::reuse_verify::append_stats(stats, reuse_outcome, &new_program);
+        }
 
         // Go: defer cleanupModuleResolver() (ts#64299)
         let cleanup = cleanup_module_resolver.borrow_mut().take();
@@ -1136,6 +1141,17 @@ impl ls::Project for RefCell<Project> {
     fn has_file(&self, file_name: &str) -> bool {
         ls::Project::has_file(&*self.borrow(), file_name)
     }
+}
+
+/// `GOPORT_REUSE_STATS`, read once (perf/first-principles A1).
+fn reuse_stats_file() -> Option<&'static str> {
+    static FILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
+        std::env::var("GOPORT_REUSE_STATS")
+            .ok()
+            .filter(|f| !f.is_empty())
+    })
+    .as_deref()
 }
 
 // Go: project/project.go:511 CreateProgramResult

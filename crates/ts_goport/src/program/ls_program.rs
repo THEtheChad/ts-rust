@@ -504,7 +504,18 @@ pub fn update_program(
     // builds a new one; `ReuseOutcome` tells the two apart.
     let (result, new_file, outcome) = {
         let _scope = crate::core::enter_program(None);
-        p.update_program_reusing_synthetic(changed_file_path, new_host, create_module_resolver)
+        if reuse_synthetic() {
+            p.update_program_reusing_synthetic(changed_file_path, new_host, create_module_resolver)
+        } else {
+            let (program, new_file, reused) =
+                p.update_program(changed_file_path, new_host, create_module_resolver);
+            let outcome = if reused {
+                ReuseOutcome::Reused
+            } else {
+                ReuseOutcome::Rebuilt
+            };
+            (program, new_file, outcome)
+        }
     };
     let result = Rc::new(result);
     // A clone shares the old program's processed files (Go `UpdateProgram`),
@@ -518,6 +529,14 @@ pub fn update_program(
     let version = new_program_version(&result, old.map(|old| old.version));
     init_checker_pool(&result, version, create_checker_pool, load_host);
     (result, new_file, outcome)
+}
+
+/// False when `GOPORT_REUSE_SYNTHETIC=0`: then the language server builds
+/// a new program where Go does (perf/first-principles A1, for A/B runs and
+/// as a fallback). Read once.
+fn reuse_synthetic() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !matches!(std::env::var("GOPORT_REUSE_SYNTHETIC").as_deref(), Ok("0")))
 }
 
 /// Not in Go: the number of programs that `new_program` or
