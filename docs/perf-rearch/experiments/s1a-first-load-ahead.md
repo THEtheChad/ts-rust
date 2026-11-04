@@ -365,3 +365,34 @@ The answer-level design cannot beat the serial loader by much while each lookup 
 | 61 | s1a-old | 8 | 0 | 1.28→3.02 | 348.0 | 306.0 | 244.85 | 9260/133/0 | EXCLUDED: load after 3.02 > 2.0 |
 | 62 | s1a-old | 8 | 1 | 1.42→3.15 | 345.0 | 301.5 | 251.73 | 9223/170/0 | EXCLUDED: load after 3.15 > 2.0 |
 | 63 | s1a-old | 8 | 2 | 1.48→1.36 | 343.3 | 299.7 | 248.57 | 9269/124/0 | yes |
+
+## Second re-review: strict proof tools (`84a8d1936`, `c5527122f`)
+
+All four review fixes are in `84a8d1936`. The settle wait for background-heavy sessions is in the next commit.
+
+- **Record-level comparison** (`dump-sections.py`):
+  - **Fail:** a record that every S1a-off run has and an on run lacks; a record an on run has more often than any off run; the same records in another order when all the off runs agree on the order.
+  - **Inconclusive:** a record whose count varies between the off runs. Each one is listed.
+  - **Excluded:** two documented kinds, the raw `InfoCache` stores. They are listed with the reason, and their behavior is compared through the `info_cache_get` and `package_json` records.
+  - **Self-test:** `selftest` reproduces Astra's case (off-run noise plus a wrong resolution in both on runs) as a FAIL, and a refresh moved across a response as a FAIL.
+- **Message stream** (`load-dump-session.mjs`): every message in both directions, raw and in order, ids and `window/logMessage` included. Only durations and clock times inside log text are normalized.
+  - The two directions are compared as two ordered streams. Their interleaving is a race in the client: it sends its next request when it gets a response, while the server may still be writing the log line for that response.
+  - The client now sends `exit` without params.
+- **`InfoCache` dump:** `info_cache_entry` and `info_cache_pending` are listed apart, and `info_cache_get` gives what `get()` returns. A goport_core test checks adopted first-load lookups against a serial cache, through enumeration and through `get()`.
+- **`wait_idle`:** it panics after 60 seconds.
+- **Parity:** `parity.sh quick` (bin `tsgo-s1a-fix4`, source `84a8d1936`) printed PARITY OK.
+  - cli 24 MATCH; tests 137,765 PASS; lsp 1,686 MATCH, 28 GO-UNSTABLE; fuzz 1,498 MATCH.
+
+### Strict dump results (`dumps6`; background-heavy cases rerun with the settle wait in `dumps7`)
+- **Pass, 13 scenarios:**
+  - 12 scenarios with 3 on and 3 off runs, all with 0 inconclusive records: the umami, ts-pattern, hono, query and t3-web first loads; second projects; unsaved buffers; package.json overlays; cancel.
+  - umami-autoimport, 6 on and 6 off.
+- **Pass in `dumps7`, after the settle wait:** umami-edit and hono-edit, 6 on and 6 off.
+- **Timing, not state:** without the wait, umami-edit and t3web-autoimport failed in the snapshot taken while the first load's background auto-import work runs. A faster first load moves that work into another snapshot. With a 4-second wait before the later step, 4 on and 4 off runs match record for record (`settle/`). `s1a-dumps.sh` now waits for autoimport, fsmut and edit sessions.
+- **Remaining FAILs, all in parts that vary without S1a:**
+  - **t3web-autoimport, the auto-import snapshot:** one of 6 on runs has 74 lookup records (the `jose` package) that no off run has. The off runs vary in the same section: records seen in 1 or 2 of 6 off runs. This is background registry timing.
+  - **tspattern-fsmut, the server stream:** one of 6 on runs has one extra snapshot clone ("Cloning snapshot 3", "Adopted snapshot 4"). This is the batching of watch events.
+  - **umami-fsmut, the keyed second load:** 3 of 6 on runs lack `info_cache_get` records under `packages/mcp/` that all 6 off runs have. The off runs vary in the same section too.
+    - **Pre-existing cause:** a keyed (second) resolve-ahead load does not adopt its taken answers' package.json lookups into the real `InfoCache` (only first loads do). Its cache therefore depends on which answers were taken in time. Enumeration and the answers themselves are unaffected.
+    - **What S1a changes:** it leaves the resolve-ahead workers started at the second load, which shifts which keys are taken.
+    - **Next step:** make keyed loads adopt too. That is a one-line behavior change to the keyed path (`package_json_text` for every load), so it is left for review.
