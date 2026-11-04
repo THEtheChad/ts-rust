@@ -307,6 +307,8 @@ def expected_start(name: str, args: list) -> str:
         return "late"
     if name.startswith(("zod:", "effect:default", "effect:--verbatimModuleSyntax", "ts-pattern:")):
         return "late"  # zod fails F1 (nodenext); TS5069 / TS5011 option errors
+    if name.endswith(":dir-at-output"):
+        return "late"  # an output path that is not a regular file keeps the barrier
     if name.startswith("effect:") and "--declaration" not in args:
         return "late"  # composite off leaves declarationMap without declaration: TS5069
     if ":commonjs-node10" in name:
