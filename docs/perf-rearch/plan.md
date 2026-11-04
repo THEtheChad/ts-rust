@@ -293,3 +293,24 @@ was the same as Go's.
   applies.
 - **B1's gain is small** (umami emit −3%, emit-js −4%, vscode flat).
   `cli-emit-ab` is measuring it exactly.
+- **2026-11-04, D0-1B done:** a conditional go for D1
+  (`experiments/d0-1b.md`). The spike is on branch
+  `t3/partition-sensitivity-monitor` (`161b7bc1e`); its hooks are not
+  merged, because they cost instructions even when off.
+  - **Caught:** limits plus the new cold-depth shadow caught all 27 real
+    divergent runs, and the adversarial cache-warming case that the limit
+    class alone misses (Astra finding 8).
+  - **Not certifiable as triggers:** cycles, cross-file diagnostics and id
+    ties fire far too often. They never coincided with a divergence.
+  - **Fallback rate:** at margin 50, 37% of large configs (the kill line is
+    30%); at the hard limits, 1 of 8 (zod), which needs count and
+    relation-depth shadows.
+  - **Production needs:**
+    - shadows for the per-statement count, relation depth and lazy links;
+    - narrower cycle, cross-file and id-tie triggers;
+    - fresh fallback state and buffered output;
+    - exact mode for counts, traces and stealing;
+    - near-zero off-mode cost (compile-time switch);
+    - optionally, only splits that refine Go's.
+  - **Next:** a D1 production design note, then Astra's review, then the
+    implementation. Chad's bar is still zero divergences at scale.
