@@ -78,3 +78,27 @@ wall on its own thread, 0 events.
 ## fsbench (real trace of the final bin, 28,244 calls, idle)
 One thread: 90–95 ms wall, utime 4 ms, stime 88–92 ms (stat 1.95 µs, read 5.2–5.6 µs,
 realpath 6.3–6.8 µs). 15 threads: 10.4–11.3 ms wall, summed stime 92–93 ms.
+
+## Round 2 (Astra's L1 review, `docs/perf-rearch/reviews/2026-11-04-astra-l1.md`)
+
+| finding | fix | commit |
+|---|---|---|
+| 1. replacement events cancel | one `Transition` per path (merged over its checks); `Replaced` is Deleted then Created, in that order (no derived `Ord`, no sort of events) | `caaf8a994` |
+| 2. FIFO hang | reader: `Fs::read_regular_file_shared` opens with `O_NONBLOCK`, `fstat`s the open file, reads only a regular file (`NotRegular` is a replaced path); shutdown: `Session::close` cancels the job (no `TaskHold`), its checks stop, its result is dropped | `4e60f7a4b`, `caaf8a994` |
+| 3. failure = no change | `Outcome::Failed`; views leave the `Reconciler` only on a final result; one retry, then every observation of the views is reported possibly changed (the session's flood-of-watch-events path) | `caaf8a994` |
+| 4. diagnostic state ships | `GOPORT_LOAD_TIMES` (S0 line, L0 phases, publish/bind) in `load_times.rs` as on/off modules (C1's pattern), reconcile timing/counts (`JobDiag`), `Slot::by_worker`, test hooks: all under `diagnostics`; one `diagnostics` feature after C1 | `caaf8a994`, `0de56c592` |
+| 5. unbounded threads | one process-wide pool (cores, at most 8 threads); per session one job in flight; later loads' views wait and go into the next job | `caaf8a994` |
+
+Tests (`--features diagnostics`, which CI and `parity_tests.py` build with since C1; they need
+Linux and `mkfifo`): repointed node_modules symlink (TS2322, Go's answer), realpath-only change,
+file→directory, directory→file, each at four points and equal to a fresh serial session; FIFO
+before the watch registration (no hang, bounded close); close during a slow reconciliation (no
+wait, no delivery); one and two injected failures; twelve loads on a slow file system (bounded,
+nothing lost). goport_core unit tests of the transition order. A Created-before-Deleted mutant
+fails the symlink and file→directory tests.
+
+`nm` of a plain `--profile goport` build (`0de56c592`): 40,028 symbols, 0 of the diagnostics
+items (load_times, LoadTimes, PhaseTimer, ThreadUsage, monotonic_ms, JobDiag, ViewDiag, the
+hooks, loadview/load_view_scope `diag`, note_os_call, ViewCounts), 45 of the production
+reconciliation; no `goport load-*` or `GOPORT_LOAD_*` string; `GOPORT_LOAD_TIMES=1` prints
+nothing. The diagnostics build has 124 matches.
