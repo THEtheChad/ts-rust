@@ -1185,6 +1185,9 @@ impl Snapshot {
         };
 
         let (snapshot_fs, _) = fs.finalize();
+        if crate::frontend::compiler::load_dump::dump_enabled() {
+            dump_snapshot_fs(new_snapshot_id, &fs, &snapshot_fs);
+        }
         // PORT: Go passes nil for the config file registry and assigns it
         // right after; the port passes the final registry here.
         let mut new_snapshot = store.new_snapshot(
@@ -1422,4 +1425,69 @@ impl Snapshot {
             }
         }
     }
+}
+
+/// Writes the `snapshot` section of `GOPORT_LOAD_DUMP` for a snapshot
+/// build: the lookup cache of its builder, then its cached files (name,
+/// hash, reload state, realpath path), cached directories (children in
+/// their order) and node_modules realpath aliases (compiler/load_dump.rs).
+// PORT: not in Go (perf diagnostics).
+fn dump_snapshot_fs(id: u64, builder: &SnapshotFSBuilder, snapshot_fs: &SnapshotFS) {
+    use crate::frontend::compiler::load_dump;
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let _ = writeln!(text, "snapshot {id}");
+    if let Some(cached) = builder.cached_fs() {
+        cached.dump(&mut text);
+    }
+    load_dump::sorted_lines(
+        &mut text,
+        "cached_file",
+        snapshot_fs.cache_files.iter().map(|(path, file)| {
+            let file = file.borrow();
+            (
+                path.as_str().to_string(),
+                format!(
+                    "name={:?} hash={:032x} needs_reload={} realpath={:?}",
+                    file.file_base.file_name,
+                    file.file_base.hash(),
+                    file.needs_reload,
+                    file.realpath_path.as_str()
+                ),
+            )
+        }),
+    );
+    load_dump::sorted_lines(
+        &mut text,
+        "cached_dir",
+        snapshot_fs
+            .cache_directories
+            .iter()
+            .map(|(path, children)| {
+                let children: Vec<(String, String)> = children
+                    .borrow()
+                    .iter()
+                    .map(|(child, name)| (child.as_str().to_string(), name.clone()))
+                    .collect();
+                (path.as_str().to_string(), children)
+            }),
+    );
+    load_dump::sorted_lines(
+        &mut text,
+        "alias",
+        snapshot_fs
+            .node_modules_realpath_aliases
+            .iter()
+            .map(|(path, aliases)| {
+                let mut aliases: Vec<(String, String)> = aliases
+                    .borrow()
+                    .paths
+                    .iter()
+                    .map(|(alias, name)| (alias.as_str().to_string(), name.clone()))
+                    .collect();
+                aliases.sort_unstable();
+                (path.as_str().to_string(), aliases)
+            }),
+    );
+    load_dump::write_section("snapshot", &text);
 }

@@ -118,6 +118,9 @@ impl SnapshotHost {
     ) -> Rc<SourceFileLease> {
         let file_handle = new_cached_file_handle(&options.file_name, text.to_string());
         let key = new_parse_cache_key(&options, file_handle.hash(), script_kind);
+        crate::frontend::compiler::load_dump::note(|out| {
+            out.push_str(&format!("acquire {key:?}"));
+        });
         // Not in Go: a new parse of a leased text is a freeable file version
         // also for a path that no publish published yet (the freeable rule,
         // `ast::freeable_path`, keeps the first version of a path static), so
@@ -146,6 +149,9 @@ impl SnapshotHost {
     // `new_parse_cache`), so the file is bound here, as `acquire_bound` does
     // for `acquire_source_file`. A bound file is not bound again.
     pub fn acquire_existing_source_file(&self, key: ParseCacheKey) -> Option<Rc<SourceFileLease>> {
+        crate::frontend::compiler::load_dump::note(|out| {
+            out.push_str(&format!("acquire_existing {key:?}"));
+        });
         let source_file = self.parse_cache.acquire_existing(&key)?.file;
         crate::program::publish_parsed_files(&self.options.current_directory);
         crate::program::bind_file_outside_program(source_file.root);

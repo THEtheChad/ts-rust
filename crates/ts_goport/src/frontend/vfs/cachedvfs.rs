@@ -81,6 +81,62 @@ impl CachedFs {
         self.cached(&self.realpath_cache, path)
     }
 
+    /// Seeds the cached `file_exists` answer of `path` when the cache has
+    /// none (and is on), as the cache's own call would store it. A
+    /// language server load stores so the lookups of the resolve-ahead
+    /// answers that it took on its first load (project/compilerhost.rs).
+    pub fn seed_file_exists(&self, path: &str, exists: bool) {
+        Self::seed(&self.enabled, &self.file_exists_cache, path, || exists);
+    }
+
+    /// `seed_file_exists` for `directory_exists`.
+    pub fn seed_directory_exists(&self, path: &str, exists: bool) {
+        Self::seed(&self.enabled, &self.directory_exists_cache, path, || exists);
+    }
+
+    /// `seed_file_exists` for `realpath`.
+    pub fn seed_realpath(&self, path: &str, real: &str) {
+        Self::seed(&self.enabled, &self.realpath_cache, path, || {
+            real.to_string()
+        });
+    }
+
+    fn seed<V>(
+        enabled: &Cell<bool>,
+        cache: &RefCell<FxHashMap<String, V>>,
+        path: &str,
+        value: impl FnOnce() -> V,
+    ) {
+        if !enabled.get() {
+            return;
+        }
+        let mut cache = cache.borrow_mut();
+        if !cache.contains_key(path) {
+            cache.insert(path.to_string(), value());
+        }
+    }
+
+    /// The cached answers, sorted, as text lines (`GOPORT_LOAD_DUMP`,
+    /// compiler/load_dump.rs).
+    pub fn dump(&self, out: &mut String) {
+        let _ = writeln_enabled(out, self.enabled.get());
+        sorted_lines(out, "file_exists", self.file_exists_cache.borrow().iter());
+        sorted_lines(
+            out,
+            "directory_exists",
+            self.directory_exists_cache.borrow().iter(),
+        );
+        sorted_lines(out, "realpath", self.realpath_cache.borrow().iter());
+        sorted_lines(
+            out,
+            "entries",
+            self.get_accessible_entries_cache
+                .borrow()
+                .iter()
+                .map(|(path, entries)| (path, (&entries.files, &entries.directories))),
+        );
+    }
+
     /// The file system that the cache asks.
     pub fn wrapped(&self) -> &Rc<dyn Fs> {
         &self.fs
@@ -224,4 +280,27 @@ impl Fs for CachedFs {
     fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
         self.fs.append_file(path, data)
     }
+}
+
+/// Appends `label key value` lines for `entries`, sorted.
+fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
+    out: &mut String,
+    label: &str,
+    entries: impl IntoIterator<Item = (K, V)>,
+) {
+    let mut lines: Vec<String> = entries
+        .into_iter()
+        .map(|(key, value)| format!("{label} {} {value:?}", key.as_ref()))
+        .collect();
+    lines.sort_unstable();
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+}
+
+/// The first line of `CachedFs::dump`.
+fn writeln_enabled(out: &mut String, enabled: bool) -> std::fmt::Result {
+    use std::fmt::Write as _;
+    writeln!(out, "lookup_cache enabled={enabled}")
 }

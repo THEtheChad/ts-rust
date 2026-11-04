@@ -593,8 +593,13 @@ impl DefaultResolver {
             }
             // PERF: a parse worker may have resolved this key already (Go
             // shares one cache between all parse tasks). The answer is the
-            // same, so it goes into this resolver's cache as its own.
+            // same, so it goes into this resolver's cache as its own. A
+            // first-load parse worker (compiler/resolve_ahead.rs
+            // `FirstLoadJob`) does not look: an answer that it takes from
+            // another worker would bring package.json entries that it did
+            // not read, which make its later answers unshareable.
             if let Some(shared) = &self.caches.shared
+                && !(shared.publish && on_ahead_thread())
                 && let Some(found) = shared.cache.get_type_ref_directive(&cache_key)
             {
                 self.caches.note_worker_package_jsons(&found.package_jsons);

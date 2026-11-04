@@ -81,6 +81,17 @@ pub fn mode() -> Mode {
     })
 }
 
+/// Whether a language server's first program load resolves ahead
+/// (`GOPORT_FIRST_LOAD_AHEAD`, on unless `0`): its parse workers resolve
+/// through the view of a resolve-ahead job as they parse, and the loader
+/// checks each of their answers as it checks a resolve-ahead answer
+/// (`FirstLoadJob`, stage S1a of docs/perf-rearch/design/loader.md).
+#[must_use]
+pub fn first_load_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("GOPORT_FIRST_LOAD_AHEAD").as_deref() != Ok("0"))
+}
+
 /// The counts of one resolve-ahead load.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LoadStats {
@@ -100,6 +111,9 @@ pub struct LoadStats {
     /// A worker panicked outside a resolution during this load, and the
     /// loader resolved the rest of the keys itself (`run_task`).
     pub worker_panic: bool,
+    /// The load had no keys of a previous load, and its parse workers made
+    /// the answers (`FirstLoadJob`).
+    pub first_load: bool,
 }
 
 /// The counts of the last resolve-ahead load on this thread. For tests.
@@ -199,6 +213,12 @@ pub struct ResolveAheadHost {
     /// system, which takes an answer from them before it asks the OS
     /// (`AheadLookups`). Called when the load gives the workers a job.
     pub attach: Box<dyn FnOnce(Arc<dyn AheadLookups>)>,
+    /// Called in place of `attach` when the load's job is a first-load job
+    /// (`FirstLoadJob`): the snapshot does not keep the job's lookups. Its
+    /// check stores the lookups of each answer that it takes in the
+    /// snapshot's lookup cache, as the loader's own calls would, so the
+    /// lookups of answers that the loader did not take leave no trace.
+    pub first_load: Box<dyn FnOnce()>,
     /// Keeps the keys of this load for the next load.
     pub keep_keys: Box<dyn FnOnce(Arc<KeyList>)>,
     /// The project's share in what the workers keep from job to job.
@@ -283,6 +303,8 @@ impl ResolverConfig {
 pub struct ResolveAhead {
     /// The workers' job of this load, until `finish`.
     job: Option<Arc<Job>>,
+    /// The job is a first-load job (`FirstLoadJob`).
+    first_load: bool,
     keep_keys: Option<Box<dyn FnOnce(Arc<KeyList>)>>,
     /// The module keys and the package scope keys of the previous load.
     previous_keys: (usize, usize),
@@ -291,8 +313,11 @@ pub struct ResolveAhead {
 impl ResolveAhead {
     /// Starts resolve ahead for the load of `resolver`, the loader's
     /// resolver, with `host`. The caller checked the conditions of the load
-    /// (`process_all_program_files`).
-    pub fn start(host: ResolveAheadHost, resolver: &DefaultResolver) -> Self {
+    /// (`process_all_program_files`). With `first_load` (the load's parse
+    /// workers run), a load with no keys of a previous load gives the
+    /// workers a job with no keys, whose answers the parse workers make
+    /// (`first_load_job`).
+    pub fn start(host: ResolveAheadHost, resolver: &DefaultResolver, first_load: bool) -> Self {
         let config = Arc::new(ResolverConfig {
             options: resolver.compiler_options.as_ref().clone(),
             typings_location: resolver.typings_location.clone(),
@@ -309,9 +334,10 @@ impl ResolveAhead {
             .as_deref()
             .map(KeyList::with_capacity_of)
             .unwrap_or_default();
-        let job = host
-            .previous_keys
-            .filter(|keys| !keys.is_empty())
+        let previous = host.previous_keys.filter(|keys| !keys.is_empty());
+        let first_load = first_load && previous.is_none();
+        let job = previous
+            .or_else(|| first_load.then(|| Arc::new(KeyList::default())))
             .and_then(|keys| {
                 Workers::get()?.post(Job {
                     queue: Arc::new(AheadQueue::new(keys)),
@@ -327,8 +353,13 @@ impl ResolveAhead {
                     inject_panic: INJECT_PANIC.with(Cell::get),
                 })
             });
+        let first_load = first_load && job.is_some();
         if let Some(job) = &job {
-            (host.attach)(job.stats.clone());
+            if first_load {
+                (host.first_load)();
+            } else {
+                (host.attach)(job.stats.clone());
+            }
             host.share.epoch.set(Some(job.epoch));
         }
         let accept = match host.scratch.filter(|_| cfg!(debug_assertions)) {
@@ -363,9 +394,20 @@ impl ResolveAhead {
         }
         ResolveAhead {
             job,
+            first_load,
             keep_keys: Some(host.keep_keys),
             previous_keys,
         }
+    }
+
+    /// The first-load job of this load, for its parse workers. `None` when
+    /// the load has keys of a previous load or no job.
+    #[must_use]
+    pub fn first_load_job(&self) -> Option<FirstLoadJob> {
+        self.job
+            .as_ref()
+            .filter(|_| self.first_load)
+            .map(|job| FirstLoadJob(job.clone()))
     }
 
     /// Ends resolve ahead after the load of `resolver`: stops the workers,
@@ -389,9 +431,15 @@ impl ResolveAhead {
             workers.forget(job.epoch);
         }
         // The workers free the answers and the queue with the job.
+        // S1a: a first-load job keeps no known files for the next job. The
+        // check of a known answer asks the snapshot's lookup cache, which
+        // stores the answer; the next load then stores lookups that the
+        // same load after a first load with no job would not store
+        // (`GOPORT_LOAD_DUMP`, umami edit session). The next load starts as
+        // it would after a first load with no job.
         self.end_job(
             Some(Box::new((link.answers.take(), link.queue.take()))),
-            rejected,
+            rejected || self.first_load,
         );
         if worker_panic {
             debug_log(format_args!(
@@ -410,6 +458,7 @@ impl ResolveAhead {
             loader,
             known_files,
             worker_panic,
+            first_load: self.first_load,
         };
         LAST_STATS.with(|last| last.set(Some(stats)));
         debug_log(format_args!("resolve-ahead: {stats:?}"));
@@ -439,6 +488,74 @@ impl Drop for ResolveAhead {
     /// A load that ends with a panic stops its workers too.
     fn drop(&mut self) {
         self.end_job(None, true);
+    }
+}
+
+/// S1a: the resolve-ahead job of a language server's first program load,
+/// which has no keys of a previous load. Its keys are not queued: the
+/// load's parse workers (compiler/files_parser.rs) resolve the imports of
+/// each file they parse with a resolver of the job (`worker_resolver`), on
+/// the job's view of the host's file system (`AheadFs`), and publish each
+/// answer with the calls that made it. The loader finds an answer by its
+/// key and takes it only after its host's check passes
+/// (`ResolveAheadHost::accept`), as for any resolve-ahead answer: the check
+/// makes the snapshot's own read of each file the answer read, at the
+/// moment the loader's own resolution would make it, compares the worker's
+/// hash, and replays each call's effects (seen files, missing directories,
+/// the lookup cache). An answer that the loader does not take leaves no
+/// trace in the snapshot: the snapshot does not keep the job's lookups
+/// (`ResolveAheadHost::first_load`).
+// PORT: not in Go (perf). Go resolves in each parse task.
+#[derive(Clone)]
+pub struct FirstLoadJob(Arc<Job>);
+
+impl FirstLoadJob {
+    /// True when both are the same job.
+    #[must_use]
+    pub fn same(&self, other: &FirstLoadJob) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Makes this thread (a parse worker) a resolve-ahead worker of the job
+    /// (`begin_ahead_thread`), and gives its resolver: the loader
+    /// resolver's options on the job's view, publishing to the job's
+    /// answers. The worker calls `end_worker` when it ends.
+    #[must_use]
+    pub fn worker_resolver(&self) -> DefaultResolver {
+        let job = &self.0;
+        let view = &job.view;
+        let fs = Rc::new(AheadFs {
+            os: wrap_fs(osvfs_fs()),
+            job: job.clone(),
+        });
+        let directory_exists = {
+            let fs = fs.clone();
+            Rc::new(move |path: &str| fs.directory_exists_unlogged(path))
+                as Rc<dyn Fn(&str) -> bool>
+        };
+        begin_ahead_thread(
+            &view.current_directory,
+            view.use_case_sensitive_file_names,
+            FxHashMap::default(),
+            FxHashSet::default(),
+            directory_exists,
+        );
+        let package_jsons = Rc::new(new_info_cache(
+            &view.current_directory,
+            view.use_case_sensitive_file_names,
+        ));
+        let fs: Rc<dyn Fs> = fs;
+        let mut resolver = job.config.new_resolver(fs, Some(package_jsons));
+        resolver.caches.shared = Some(SharedResolutionLink {
+            cache: job.answers.clone(),
+            publish: true,
+        });
+        resolver
+    }
+
+    /// Ends `worker_resolver` on this thread.
+    pub fn end_worker() {
+        drop(end_ahead_thread());
     }
 }
 
