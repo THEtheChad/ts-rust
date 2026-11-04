@@ -284,3 +284,18 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   `vendor/difffuzz/` (feat/difffuzz 033e55442, unchanged).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `runs/`,
   `logs/` and `scratch/`.
+
+
+## Clock steps on this machine (2026-11-04)
+
+`systemd-timesyncd` steps the wall clock back about 1.14 s every 32 s here.
+Checks that rely on mtime order (`-b` up-to-date, incremental) can then flip
+in Go and in tsc-rs alike. The CLI tier measures `CLOCK_REALTIME −
+CLOCK_MONOTONIC` around every `build` and `incr` side.
+- A side that saw a step of more than 5 ms reruns, up to 6 times.
+- If every attempt saw a step, the item is an ERROR, never a DIFF.
+- Each item records `clockRetries`.
+
+`scripts/perf-rearch/clock-steps.py` logs the steps, and
+`scripts/perf-rearch/b-race-repro.py` reproduces the effect (`--step-back`
+forces it).

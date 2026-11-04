@@ -222,13 +222,19 @@ until the baseline and parity lanes have released the machine.
   cache, about 15% of the default parse phase, to be designed with program
   audit candidate 3.
 - **2026-11-04, E2 spike done:** the race-free view alone saves 0.3–0.4% (no-go); combined with thin columns, about 1% (conditional). Queued as E2b, low priority. See `experiments/e2-registry.md`.
-- **`-b --verbose` second run is nondeterministic under load** (lane A1's gate,
-  2026-11-04): on `cli/query/sync-persister/build`, the two tsc-rs runs
-  disagreed. One second run printed "needs to update timestamps of output
-  files" instead of "is up to date"; run alone it matched 3 of 3. The check
-  is mtime-based. Decide whether this is a gate harness timing issue (runs
-  too close together for the mtime resolution) or a real tsc-rs vs Go
-  difference under load; Go shares the logic.
+- **Resolved: the `-b --verbose` second-run "nondeterminism"** (2026-11-04).
+  It isn't a tsc-rs bug.
+  - **Cause:** `systemd-timesyncd` steps this WSL machine's wall clock back
+    about 1.14 s every 32 s (the kernel clock runs about 3.6% fast). A step
+    between an upstream `.d.ts` write and a downstream `.tsbuildinfo` write
+    inverts their mtimes.
+  - **Go shares it:** 14/400 pairs rebuilt, against tsc-rs 7/400. Every
+    failure, on both sides, happened during a step.
+  - **Fix:** `parity_cli.py` reruns a two-run side that saw a clock step
+    (`bef5f46b2`). The tools are `b-race-repro.py` and `clock-steps.py`.
+  - **Timing:** wall tools use monotonic clocks (`perf_counter`,
+    `performance.now`), so steps don't affect them. Durations read about
+    3.6% long, the same on both sides.
 - **Synthetic slots grow over an LSP session, on main too** (lane A1's
   stress test): about 160 live synthetic slots per iteration on umami
   (101.3k after 600 iterations with A1, 96.9k without). This is a memory
