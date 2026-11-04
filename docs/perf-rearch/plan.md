@@ -242,5 +242,9 @@ until the baseline and parity lanes have released the machine.
     MISMATCH in the `GOPORT_VERIFY_REUSE` tool when disk diverges from the
     snapshot; it's a follow-up in the A1 lane.
   - `GOPORT_REUSE_SYNTHETIC=0` turns it off.
-  - A parity full run on the merged head is running; it becomes
-    base-current if it passes.
+  - **Parity full on the merged head:** FAIL on one item,
+    `cli/hono/solution/build` (rs-nondet: a `-b` up-to-date timestamp
+    disagreement). It matched 6 of 6 alone on both the pre-A1 and the merged
+    bin, so it's treated as an existing `-b` race under load and is being
+    investigated in its own lane. base-current stays at the E0 run; A1 adds
+    no gate items.
