@@ -17,9 +17,11 @@
 // an environment variable repeat the `cfg` so that `quality.sh` sees it.
 
 use super::ReconcileEvent;
+use super::reconcile::Outcome;
 use crate::frontend::prelude::*;
 use crate::frontend::vfs::loadview::{self, LoadView, diag::ViewCounts};
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 thread_local! {
@@ -68,9 +70,9 @@ pub(super) fn end_scope(view: &LoadView, t0: f64) {
     let bypass = loadview::diag::take_bypass();
     let counts = view.counts();
     LAST_COUNTS.with(|last| last.set(Some((counts, bypass))));
-    if crate::frontend::compiler::load_dump::times_enabled() {
+    if crate::frontend::compiler::load_times::times_enabled() {
         use std::io::Write;
-        let t1 = crate::frontend::compiler::load_dump::monotonic_ms();
+        let t1 = crate::frontend::compiler::load_times::monotonic_ms();
         let line = format!(
             "goport load-view: t0={t0:.3} t1={t1:.3} bypass={bypass} {}\n",
             counts.describe()
@@ -110,7 +112,11 @@ pub(super) fn reconciles(view: &LoadView) -> bool {
 }
 
 pub(super) fn note_events(events: &[ReconcileEvent]) {
-    LAST_EVENTS.with(|last| *last.borrow_mut() = Some(events.to_vec()));
+    LAST_EVENTS.with(|last| {
+        last.borrow_mut()
+            .get_or_insert_with(Vec::new)
+            .extend_from_slice(events);
+    });
 }
 
 /// Tests: keep the record of each load's view (`take_records`).
@@ -155,8 +161,77 @@ pub fn set_reconcile(on: Option<bool>) {
     RECONCILE_OVERRIDE.with(|cell| cell.set(on));
 }
 
-/// Tests: the events of the last reconciliation on this thread, once.
+/// Tests: the events of the reconciliations on this thread since the last
+/// call (`None`: no reconciliation ended).
 #[must_use]
 pub fn take_last_events() -> Option<Vec<ReconcileEvent>> {
     LAST_EVENTS.with(|last| last.borrow_mut().take())
+}
+
+static FAIL_NEXT: AtomicUsize = AtomicUsize::new(0);
+static CHECK_DELAY_US: AtomicU64 = AtomicU64::new(0);
+
+/// Tests: the next `count` reconciliation jobs of the process fail (their
+/// plan task panics).
+pub fn fail_next_reconciles(count: usize) {
+    FAIL_NEXT.store(count, Ordering::SeqCst);
+}
+
+/// Tests: each reconciliation check sleeps `micros` first (a slow file
+/// system).
+pub fn set_check_delay(micros: u64) {
+    CHECK_DELAY_US.store(micros, Ordering::SeqCst);
+}
+
+/// A job's plan task: fails when `fail_next_reconciles` asks.
+pub(super) fn inject_failure() {
+    let left = FAIL_NEXT.load(Ordering::SeqCst);
+    if left > 0
+        && FAIL_NEXT
+            .compare_exchange(left, left - 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        panic!("load view reconciliation: injected failure");
+    }
+}
+
+/// A check: sleeps as `set_check_delay` asks.
+pub(super) fn slow_check() {
+    let micros = CHECK_DELAY_US.load(Ordering::Relaxed);
+    if micros > 0 {
+        std::thread::sleep(std::time::Duration::from_micros(micros));
+    }
+}
+
+/// The timing of one reconciliation job (`GOPORT_LOAD_TIMES`).
+pub(super) struct JobDiag {
+    t0: f64,
+}
+
+impl JobDiag {
+    pub(super) fn start() -> Self {
+        JobDiag {
+            t0: crate::frontend::compiler::load_times::monotonic_ms(),
+        }
+    }
+
+    /// Writes the `goport load-view-reconcile:` line of a job that ended.
+    #[cfg(feature = "diagnostics")]
+    pub(super) fn report(&self, checked: usize, outcome: &Outcome) {
+        if !crate::frontend::compiler::load_times::times_enabled() {
+            return;
+        }
+        use std::io::Write;
+        let wall = crate::frontend::compiler::load_times::monotonic_ms() - self.t0;
+        let result = match outcome {
+            Outcome::Done(events) => format!("events={}", events.len()),
+            Outcome::Failed => "failed".to_string(),
+        };
+        let line = format!(
+            "goport load-view-reconcile: t0={:.3} wall={wall:.3} threads={} checked={checked} {result}\n",
+            self.t0,
+            super::pool::size(),
+        );
+        let _ = std::io::stderr().write_all(line.as_bytes());
+    }
 }

@@ -261,7 +261,8 @@ pub fn process_all_program_files(
     single_threaded: bool,
 ) -> (ProcessedFiles, Option<GoError>) {
     let ProgramHosts { host } = hosts;
-    let mut times = super::load_dump::LoadTimes::start();
+    #[cfg(feature = "diagnostics")]
+    let mut times = super::load_times::LoadTimes::start();
     super::load_dump::begin_load();
     let compiler_options = opts.config.compiler_options().clone();
     // PERF (buildprog1): the root names are read from the config, as Go
@@ -472,10 +473,12 @@ pub fn process_all_program_files(
     }
 
     let root_tasks = loader.root_tasks.clone();
+    #[cfg(feature = "diagnostics")]
     if let Some(times) = &mut times {
         times.mark("setup");
     }
     loader.files_parser.borrow_mut().parse(&loader, &root_tasks);
+    #[cfg(feature = "diagnostics")]
     if let Some(times) = &mut times {
         times.mark("parse");
     }
@@ -526,6 +529,7 @@ pub fn process_all_program_files(
         mapper.host = None;
     }
 
+    #[cfg(feature = "diagnostics")]
     if let Some(times) = &mut times {
         times.mark("finish");
     }
@@ -540,10 +544,12 @@ pub fn process_all_program_files(
     }
     let processed_files = files_parser.get_processed_files(&loader);
     let module_resolution_error = loader.module_resolution_error.borrow().clone();
+    #[cfg(feature = "diagnostics")]
     if let Some(times) = &mut times {
         times.mark("collect");
     }
     drop(files_parser);
+    #[cfg(feature = "diagnostics")]
     if let Some(times) = times {
         let extra = if resolved_ahead {
             super::resolve_ahead::last_stats()

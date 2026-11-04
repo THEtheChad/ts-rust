@@ -178,7 +178,8 @@ pub const USED_FULL: u8 = 4;
 
 struct Slot<V> {
     value: V,
-    /// A worker stored it.
+    /// A worker stored it (the diagnostics' counts).
+    #[cfg(feature = "diagnostics")]
     by_worker: bool,
     /// What the serial loader read of it (`USED_*`); 0 when only workers
     /// did. The reconciliation checks only this.
@@ -279,13 +280,13 @@ impl LoadView {
         #[cfg(feature = "diagnostics")]
         self.diag.stored(kind, who, path);
         let result = map(&value);
-        let by_worker = who == Who::Worker;
-        let used = if by_worker { 0 } else { used };
+        let used = if who == Who::Worker { 0 } else { used };
         shard.insert(
             path.into(),
             Slot {
                 value,
-                by_worker,
+                #[cfg(feature = "diagnostics")]
+                by_worker: who == Who::Worker,
                 used,
             },
         );

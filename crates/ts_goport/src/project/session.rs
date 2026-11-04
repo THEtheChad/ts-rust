@@ -157,6 +157,10 @@ pub struct Session {
     // so the pair is a reference cycle that lives as long as the process.
     pub typings_installer: RefCell<Option<Rc<ata::TypingsInstaller>>>,
     pub background_queue: Rc<background::Queue>,
+    /// Loader v2 L1: the reconciliation of this session's load views
+    /// (`load_view_scope::Reconciler`).
+    // PORT: not in Go (perf).
+    pub load_views: Rc<RefCell<crate::frontend::compiler::load_view_scope::Reconciler>>,
 
     // snapshot is the current immutable state of all projects.
     pub snapshot: RefCell<Rc<Snapshot>>,
@@ -287,6 +291,7 @@ pub fn new_session(init: &SessionInit) -> Rc<Session> {
         registered_content_mapper_extensions: RefCell::new(Vec::new()),
         registered_content_mapper_snapshot_id: Cell::new(0),
         background_queue: background::new_queue(),
+        load_views: Rc::default(),
         start_time: Instant::now(),
         snapshot: RefCell::new(
             snapshot_host.new_root_snapshot(
@@ -2420,6 +2425,11 @@ impl Session {
             Some(&self.logger),
             self.client.clone(),
         );
+        // Loader v2 L1: the views of the clone's loads wait for their
+        // reconciliation after the watch registration (`reconcile_load_views`).
+        self.load_views
+            .borrow_mut()
+            .add(crate::frontend::compiler::load_view_scope::take_finished_views());
         // A failed API request may have mutated only a prefix of its clone. Such a
         // snapshot is returned to the caller for inspection and cleanup, but must
         // never become canonical session state or trigger adoption side effects.
@@ -2592,36 +2602,38 @@ impl Session {
         while !self.warm_auto_import_preempt.busy() && gostd::local::run_idle() {
             self.background_queue.wait();
         }
+        // PORT (loader v2 L1): the reconciliation of the load views runs on
+        // the reconcile threads and posts its result (`reconcile_load_views`).
+        while self.load_views.borrow().in_flight() && gostd::local::wait_pending() {
+            gostd::local::run_pending();
+            self.background_queue.wait();
+        }
     }
 }
 
 impl Session {
-    /// Loader v2 L1: right after the watch
-    /// registration, the observations of the snapshot's loads through their
-    /// OS views are checked against the disk on another thread
-    /// (`load_view_scope::reconcile_pending`). A change between a worker's
-    /// observation and the registration, which no watch event reports, then
-    /// goes through `didChangeWatchedFiles` as its watch event would. The
-    /// background queue counts the check as running until its events are
-    /// sent (`Queue::hold`).
+    /// Loader v2 L1: right after the watch registration, the observations of
+    /// the session's loads through their OS views are checked against the
+    /// disk on the reconcile threads (`load_view_scope::Reconciler`). A change
+    /// between a worker's observation and the registration, which no watch
+    /// event reports, then goes through `didChangeWatchedFiles` as its watch
+    /// event would. Nothing on the dispatch thread waits for the checks; the
+    /// result comes back as a posted job, and `close` cancels it.
     // PORT: not in Go (perf).
     fn reconcile_load_views(self: &Rc<Self>, ctx: &Context) {
-        let hold = self.background_queue.hold();
-        let s = self.clone();
+        let session = Rc::downgrade(self);
         let ctx = ctx.clone();
-        crate::frontend::compiler::load_view_scope::reconcile_pending(Box::new(
-            move |reconciled| {
-                let _hold = hold;
-                if !reconciled.events.is_empty() {
-                    s.did_change_watched_files(&ctx, &reconcile_file_events(&reconciled.events));
-                }
-            },
-        ));
+        let deliver: crate::frontend::compiler::load_view_scope::Deliver = Rc::new(move |events| {
+            if let Some(session) = session.upgrade() {
+                session.did_change_watched_files(&ctx, &reconcile_file_events(&events));
+            }
+        });
+        crate::frontend::compiler::load_view_scope::Reconciler::start(&self.load_views, deliver);
     }
 }
 
 /// The `didChangeWatchedFiles` events of a load view reconciliation
-/// (`load_view_scope::reconcile_pending`).
+/// (`load_view_scope::Reconciler`), in order.
 // PORT: not in Go (perf, loader v2 L1).
 fn reconcile_file_events(
     events: &[crate::frontend::compiler::load_view_scope::ReconcileEvent],
@@ -3081,6 +3093,9 @@ impl Session {
     // ts#64544: Close cancels the background context, waits for the
     // background tasks and releases the current snapshot.
     pub fn close(&self) {
+        // Loader v2 L1: the reconciliation in flight is cancelled; nothing
+        // waits for its I/O, and its result is dropped.
+        self.load_views.borrow_mut().cancel();
         // Cancel any pending scheduled snapshot update
         self.cancel_scheduled_snapshot_update();
         // Cancel any pending diagnostics refresh
