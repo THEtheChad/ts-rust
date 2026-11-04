@@ -3,8 +3,9 @@
 
 usage: parity_lsp.py --rs BIN --out DIR [--go BIN] [--tier quick|full] [--only REGEX]
 
-Sessions (project, files, positions): quick runs umami and ts-pattern with lspdiff's defaults (6
-files, 4 positions per file); full runs them with 12 files and 6 positions, and hono's too. Go's
+Sessions (project, files, positions): 12 files and 6 positions per file (lspdiff's defaults are 6
+and 4) on umami and ts-pattern, and in full also on hono; quick's sessions are full's, so a quick
+run compares with a full base. Go's
 two sessions per item set (go.jsonl, go2.jsonl) are kept in ~/.cache/perf-rearch/parity/go-cache/
 <go sha>/lsp/<session>-<project fingerprint>/ (parity_cli.fingerprint: commit, node_modules mtimes) and reused, so a run starts only tsc-rs. An answer on which Go's two
 sessions differ is GO-UNSTABLE. Items: lsp/<session>/<index> <step> (index: the answer's place in the
@@ -17,11 +18,13 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 
-from parity_cli import fingerprint
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # python3 -I leaves the script dir out
+from parity_cli import fingerprint  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
@@ -31,7 +34,7 @@ PROJECTS = {
     'hono': ['~/.cache/perf-rearch/parity-projects/repos/honojs__hono'],
 }
 SESSIONS = {
-    'quick': [('umami', 6, 4), ('ts-pattern', 6, 4)],
+    'quick': [('umami', 12, 6), ('ts-pattern', 12, 6)],
     'full': [('umami', 12, 6), ('ts-pattern', 12, 6), ('hono', 12, 6)],
 }
 

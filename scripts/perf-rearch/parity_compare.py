@@ -8,7 +8,8 @@ usage: parity_compare.py merge DIR            DIR/<tier>/results.json -> DIR/res
 
 Good: MATCH (CLI, LSP, fuzz, corpus), PASS and FLAKY (tests; FLAKY: passed when run again alone). compare fails on an item that is good in BASE
 and is DIFF, FAIL, ERROR, UNRUN, SKIP or IGNORED in CUR (a regression), and, when both runs are the
-same mode (quick or full), on such an item that CUR does not have (not run). Items that CUR has and
+same mode (quick or full), on such an item that CUR does not have (not run), and on any ERROR item
+in CUR (a harness error, or a tier that ended without results). Items that CUR has and
 BASE does not are new: listed, never a failure. An item that is GO-UNSTABLE in CUR is not compared
 (Go results are cached, so this needs a new Go cache). Items that are not good in BASE are known
 diffs: listed when they recover.
@@ -32,7 +33,9 @@ def merge(d):
     tiers = {}
     for t in TIERS:
         f = d / t / 'results.json'
-        if f.exists():
+        if not f.exists() and t in meta.get('tiers', []):
+            tiers[t] = {'summary': {'error': 'tier ended without results.json'}, 'items': {f'{t}/(tier)': {'status': 'ERROR'}}}
+        elif f.exists():
             r = json.loads(f.read_text())
             items = r.pop('items')
             tiers[t] = {'summary': r, 'items': items}
@@ -83,7 +86,10 @@ def compare(base, cur):
         print(f'RECOVERED {k}')
     for k in sorted(k for k, v in ci.items() if v['status'] == 'FLAKY'):
         print(f'FLAKY     {k} (failed, then passed alone)')
-    ok = not lost and not unrun
+    errors = [k for k, v in ci.items() if v['status'] == 'ERROR']
+    for k in errors[:30]:
+        print(f'ERROR     {k} {ci[k].get("detail", "")}')
+    ok = not lost and not unrun and not errors
     print('PARITY OK' if ok else 'PARITY FAIL')
     return 0 if ok else 1
 
