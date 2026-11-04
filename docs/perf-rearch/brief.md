@@ -65,6 +65,11 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **Timing builds:** every side of a timing is a stable build:
   `TS_CARGO_NIGHTLY=0 TS_CARGO_INCREMENTAL=0 RUSTUP_TOOLCHAIN=1.95.0 scripts/run-cargo-capped.sh build --release -p ts_goport --bin tsgo`,
   or `--profile goport` (fat LTO, the shipped profile) for final numbers.
+- **Same-built bins only:** build both sides of a comparison yourself, with
+  the same toolchain and profile. The shared
+  `bins/tsgo-main-91f3d021c-goport` uses about 1% fewer instructions than a
+  local `--profile goport` build of the same source (lane B1), so don't
+  compare it with your own builds.
   Edit-loop builds run 2 to 7% slower; never compare them with stable builds.
 - **Timing method:** a run starts only when the 1-minute load is under 1.5
   (`/proc/loadavg`). Interleave sides run by run. Record the load before and
