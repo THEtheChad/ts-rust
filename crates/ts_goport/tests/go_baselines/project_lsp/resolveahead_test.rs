@@ -1740,15 +1740,24 @@ os_child_test! {
         let root = fresh_project("viewfirst");
         let (serial, counts) = run_view(&root, false, Some(Mode::Off), &open_with_unsaved);
         assert!(counts.is_none(), "a view without GOPORT_LOAD_VIEW");
+        // The workers race the loader (on a busy machine they may fill
+        // nothing before it asks): every attempt must equal the serial load,
+        // and the test repeats until a demand found a worker's observation.
         let mut worker_hits = 0;
-        for attempt in 0..5 {
+        for attempt in 0..20 {
             let (left, counts) = run_view(&root, true, None, &open_with_unsaved);
             assert_eq!(left.0, serial.0, "attempt {attempt}");
             assert_eq!(left.1, serial.1, "attempt {attempt}");
             let (counts, bypass) = counts.expect("no view attached");
             assert_eq!(bypass, 0, "live OS calls bypassed the view: {counts:?}");
-            assert!(counts.hit.iter().sum::<u64>() > 0, "{counts:?}");
+            assert!(
+                counts.hit.iter().sum::<u64>() + counts.miss.iter().sum::<u64>() > 0,
+                "the loader made no demand through the view: {counts:?}"
+            );
             worker_hits += counts.hit_worker.iter().sum::<u64>();
+            if worker_hits > 0 && attempt >= 2 {
+                break;
+            }
         }
         // With one core there are no parse workers: the loader fills the view.
         if ts_goport::program::available_cores() > 1 {
