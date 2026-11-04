@@ -182,6 +182,7 @@ impl LoadViewScope {
 impl Drop for LoadViewScope {
     fn drop(&mut self) {
         let bypass = loadview::detach();
+        loadview::flush_trace();
         LAST_COUNTS.with(|last| last.set(Some((self.view.counts(), bypass))));
         if super::load_dump::times_enabled() {
             use std::io::Write;

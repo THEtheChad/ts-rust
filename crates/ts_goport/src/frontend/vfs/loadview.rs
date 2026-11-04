@@ -433,6 +433,17 @@ impl LoadView {
             }
         }
         let value = in_view(load);
+        if let Some(trace) = call_trace() {
+            use std::io::Write;
+            let mut trace = trace
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let who = match who {
+                Who::Loader => "loader",
+                Who::Worker => "worker",
+            };
+            let _ = writeln!(trace, "{}\t{path}\t{who}", kind.name());
+        }
         if self.frozen {
             if who == Who::Loader {
                 c.replay_miss.fetch_add(1, Ordering::Relaxed);
@@ -801,6 +812,34 @@ impl LoadView {
             views.push(Arc::new(view));
         }
         Ok(views)
+    }
+}
+
+/// `GOPORT_LOAD_VIEW_TRACE=<file>`: each OS call that a view makes (the
+/// backend calls of the load: loader misses and worker fills), as
+/// `kind<TAB>path<TAB>who`, for `scripts/perf-rearch/loader-v2/fsbench.c`.
+fn call_trace() -> Option<&'static Mutex<std::io::BufWriter<std::fs::File>>> {
+    static LOG: OnceLock<Option<Mutex<std::io::BufWriter<std::fs::File>>>> = OnceLock::new();
+    LOG.get_or_init(|| {
+        let file = std::env::var("GOPORT_LOAD_VIEW_TRACE").ok()?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)
+            .ok()
+            .map(|f| Mutex::new(std::io::BufWriter::new(f)))
+    })
+    .as_ref()
+}
+
+/// Flushes `GOPORT_LOAD_VIEW_TRACE` (at the end of each load).
+pub fn flush_trace() {
+    if let Some(trace) = call_trace() {
+        use std::io::Write;
+        let _ = trace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .flush();
     }
 }
 
