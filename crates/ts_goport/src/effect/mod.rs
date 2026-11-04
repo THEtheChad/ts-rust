@@ -46,8 +46,11 @@ pub const SWITCH_ENV: &str = "TSC_RS_EFFECT";
 /// The tsc command line flag that turns the Effect extension on.
 pub const SWITCH_FLAG: &str = "--effect";
 
-/// 0: not read yet, 1: off, 2: on.
-static SWITCH: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// `TSC_RS_EFFECT=1`, read once.
+static ENV_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// Set by `--effect` (`take_flag`) or `enable`. It only ever goes from off
+/// to on, so a concurrent first read of the environment cannot undo it.
+static FORCED_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// True when the Effect extension is on: `TSC_RS_EFFECT=1` (read once) or
 /// `--effect` (`take_flag`). Off, a tsconfig `@effect/language-service`
@@ -55,22 +58,15 @@ static SWITCH: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0)
 /// not called), so no rule, hook, option check or build info field runs.
 #[must_use]
 pub fn switch_on() -> bool {
-    use std::sync::atomic::Ordering;
-    match SWITCH.load(Ordering::Relaxed) {
-        0 => {
-            let on = std::env::var(SWITCH_ENV).as_deref() == Ok("1");
-            SWITCH.store(if on { 2 } else { 1 }, Ordering::Relaxed);
-            on
-        }
-        state => state == 2,
-    }
+    FORCED_ON.load(std::sync::atomic::Ordering::Acquire)
+        || *ENV_ON.get_or_init(|| std::env::var(SWITCH_ENV).as_deref() == Ok("1"))
 }
 
-/// Sets the Effect extension switch for this process. Tests that check
-/// Effect behaviour in process call it (child-process tests set
-/// `TSC_RS_EFFECT=1` instead).
-pub fn set_switch(on: bool) {
-    SWITCH.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+/// Turns the Effect extension on for this process (`--effect`, and tests that
+/// check Effect behaviour in process; child-process tests set
+/// `TSC_RS_EFFECT=1` instead). There is no way to turn it off again.
+pub fn enable() {
+    FORCED_ON.store(true, std::sync::atomic::Ordering::Release);
 }
 
 /// Takes `--effect` from the tsc command line `args` (without the program
@@ -83,7 +79,7 @@ pub fn take_flag(args: &mut [String]) {
         .first()
         .is_some_and(|arg| crate::execute::execute_tsc::is_build_flag(arg));
     if crate::fast_mode::blank_flag(args, build, SWITCH_FLAG) {
-        set_switch(true);
+        enable();
     }
 }
 
