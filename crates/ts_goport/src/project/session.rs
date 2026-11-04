@@ -2503,6 +2503,19 @@ impl Session {
                         }
                     }
                 }
+                // Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): right after the watch
+                // registration, the observations of the snapshot's loads
+                // through their OS views are checked against the disk. A
+                // change between a worker's observation and the
+                // registration, which no watch event reports, goes through
+                // `didChangeWatchedFiles` as its watch event would.
+                // PORT: not in Go (perf).
+                if let Some(reconciled) =
+                    crate::frontend::compiler::load_view_scope::reconcile_pending()
+                    && !reconciled.events.is_empty()
+                {
+                    s.did_change_watched_files(ctx, &reconcile_file_events(&reconciled.events));
+                }
                 let _ = s.update_content_mapper_registrations(ctx, new_snapshot);
                 s.publish_program_diagnostics(old_snapshot, new_snapshot);
                 s.send_project_info_telemetry_for_new_projects(old_snapshot, new_snapshot);
@@ -2592,6 +2605,29 @@ impl Session {
             self.background_queue.wait();
         }
     }
+}
+
+/// The `didChangeWatchedFiles` events of a load view reconciliation
+/// (`load_view_scope::reconcile_pending`).
+// PORT: not in Go (perf, loader v2 L1).
+fn reconcile_file_events(
+    events: &[crate::frontend::compiler::load_view_scope::ReconcileEvent],
+) -> Vec<Option<lsproto::FileEvent>> {
+    use crate::frontend::compiler::load_view_scope::ReconcileEvent;
+    events
+        .iter()
+        .map(|event| {
+            let (type_, file_name) = match event {
+                ReconcileEvent::Created(name) => (lsproto::FileChangeType::CREATED, name),
+                ReconcileEvent::Changed(name) => (lsproto::FileChangeType::CHANGED, name),
+                ReconcileEvent::Deleted(name) => (lsproto::FileChangeType::DELETED, name),
+            };
+            Some(lsproto::FileEvent {
+                uri: lsconv::file_name_to_document_uri(file_name),
+                type_,
+            })
+        })
+        .collect()
 }
 
 // Go: project/session.go:1488 hasContentMapperOperationTimings (ts#64015)

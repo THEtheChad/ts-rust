@@ -23,7 +23,9 @@ use ts_goport::lsp::lsproto;
 use ts_goport::project::{self, Session, SessionInit, SessionOptions};
 
 use super::projecttestutil;
-use super::util::{CHANGED, DELETED, bg, close, edit, generate_file_events, open, program, uri};
+use super::util::{
+    CHANGED, CREATED, DELETED, bg, close, edit, generate_file_events, open, program, uri,
+};
 
 /// A test in a child process with no OS override, with the environment
 /// variables `$env` set (after `with_a_worker`). It is skipped, with a
@@ -1963,4 +1965,294 @@ fn a_view_record_reads_back() {
     // A directory is not read speculatively, so the view has no read of it.
     assert!(b.reads.iter().all(|(path, _)| !path.ends_with("/d")));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// Loader v2 L1: the reconciliation after the watch registration
+// (`load_view_scope::reconcile_pending`).
+// ---------------------------------------------------------------------------
+
+/// Where a reconciliation test changes the disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChangePoint {
+    /// Before the load starts (the workers observe the changed disk).
+    BeforeObservation,
+    /// After the parse workers observed the disk, before the loader's
+    /// demands (`Mode::Force`: the workers are idle then).
+    BetweenObservationAndDemand,
+    /// After the load ended, before the watch registration.
+    BetweenDemandAndRegistration,
+    /// After the watch registration and the reconciliation: the client's
+    /// watcher reports it (`didChangeWatchedFiles`).
+    AfterRegistration,
+}
+
+/// What the language server shows after a session: the program's files,
+/// missing files, metadata and resolutions, every semantic diagnostic, and
+/// the active watch globs. Paths are relative to the root.
+#[derive(Debug, PartialEq, Eq)]
+struct Shown {
+    files: Vec<String>,
+    missing_files: Vec<String>,
+    metadata: BTreeSet<String>,
+    resolutions: BTreeSet<String>,
+    diagnostics: Vec<String>,
+    watches: BTreeSet<String>,
+}
+
+fn shown(session: &Rc<Session>, root: &str, client: &projecttestutil::ClientMock) -> Shown {
+    let observed = observe(session, root);
+    let relative = |text: &str| text.replace(root, "<root>");
+    let p = program(session, &file_uri(root, "src/index.ts"));
+    let mut diagnostics: Vec<String> = ts_goport::program::ls_program::get_semantic_diagnostics(
+        &p,
+        &projecttestutil::with_request_id(&bg()),
+        ts_goport::core::Node::NIL,
+    )
+    .iter()
+    .map(|d| relative(&ts_goport::frontend::compiler::load_dump::describe_diagnostic(d)))
+    .collect();
+    diagnostics.sort();
+    // The active watchers: each id's last watch call, less the unwatched.
+    let mut active: std::collections::BTreeMap<String, Vec<lsproto::FileSystemWatcher>> =
+        std::collections::BTreeMap::new();
+    for call in client.watch_files_calls() {
+        active.insert(call.id.0.clone(), call.watchers.clone());
+    }
+    for id in client.unwatch_files_calls() {
+        active.remove(&id.0);
+    }
+    let watches = active
+        .values()
+        .flatten()
+        .map(|w| relative(&format!("{:?} {:?}", w.glob_pattern, w.kind)))
+        .collect();
+    Shown {
+        files: observed.files,
+        missing_files: observed.missing_files,
+        metadata: observed.metadata,
+        resolutions: observed.resolutions,
+        diagnostics,
+        watches,
+    }
+}
+
+/// A session on the OS file system in `root` with a client that records the
+/// watch calls, file watching on, with or without the OS view.
+fn watched_session(root: &str, view: bool) -> (Rc<Session>, Rc<projecttestutil::ClientMock>) {
+    let client = Rc::new(projecttestutil::ClientMock::default());
+    let fs = if view {
+        bundled::wrap_fs(loadview::os_view_fs())
+    } else {
+        bundled::wrap_fs(osvfs_fs())
+    };
+    let session = project::new_session(&SessionInit {
+        background_ctx: bg(),
+        options: Rc::new(SessionOptions {
+            current_directory: root.to_string(),
+            default_library_path: bundled::lib_path(),
+            typings_location: String::new(),
+            position_encoding: lsproto::PositionEncodingKind::UTF8,
+            watch_enabled: true,
+            logging_enabled: false,
+            ..projecttestutil::session_options(root)
+        }),
+        fs,
+        client: Some(client.clone() as Rc<dyn ts_goport::project::Client>),
+        logger: None,
+        npm_executor: None,
+        spawner: None,
+        content_mapper_logger: None,
+        parse_cache: None,
+        content_mapped_parse_cache: None,
+    });
+    (session, client)
+}
+
+/// A session through the OS view whose disk changes (`change`) at `point`,
+/// with the reconciliation on or off. The session opens `src/index.ts`, waits
+/// for its background tasks (the watch registration and the
+/// reconciliation), then asks for the program again. Returns what it shows,
+/// what a fresh serial session (no view, no resolve ahead) of the final disk
+/// shows, and the reconciliation's events.
+fn reconciled_session(
+    label: &str,
+    point: ChangePoint,
+    reconcile: bool,
+    prepare: &dyn Fn(&str),
+    change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+) -> (Shown, Shown, Vec<load_view_scope::ReconcileEvent>) {
+    let index = |root: &str| file_uri(root, "src/index.ts");
+    let root = fresh_project(label);
+    prepare(&root);
+    loadview::set_enabled(Some(true));
+    load_view_scope::set_reconcile(Some(reconcile));
+    let changed = Rc::new(std::cell::Cell::new(false));
+    let hook = {
+        let root = root.clone();
+        let changed = changed.clone();
+        Rc::new(move || {
+            if !changed.replace(true) {
+                let _ = change(&root);
+            }
+        }) as Rc<dyn Fn()>
+    };
+    match point {
+        ChangePoint::BeforeObservation => {
+            hook();
+        }
+        ChangePoint::BetweenObservationAndDemand => {
+            resolve_ahead::set_mode(Some(Mode::Force));
+            resolve_ahead::set_first_load(Some(true));
+            resolve_ahead::set_after_workers(Some(hook.clone()));
+        }
+        ChangePoint::BetweenDemandAndRegistration => {
+            load_view_scope::set_after_load(Some(hook.clone()));
+        }
+        ChangePoint::AfterRegistration => {}
+    }
+    let (session, client) = watched_session(&root, true);
+    open(&session, &index(&root), INDEX);
+    program(&session, &index(&root));
+    resolve_ahead::set_after_workers(None);
+    load_view_scope::set_after_load(None);
+    session.wait_for_background_tasks();
+    let mut events = load_view_scope::take_last_events().unwrap_or_default();
+    if point == ChangePoint::AfterRegistration {
+        // The client's watcher reports the change.
+        let reported = change(&root);
+        changed.set(true);
+        let reported: Vec<(lsproto::FileChangeType, &str)> = reported
+            .iter()
+            .map(|(kind, name)| (*kind, name.as_str()))
+            .collect();
+        let reported: Vec<(lsproto::FileChangeType, String)> = reported
+            .iter()
+            .map(|(kind, name)| (*kind, file_uri(&root, name)))
+            .collect();
+        let reported: Vec<(lsproto::FileChangeType, &str)> =
+            reported.iter().map(|(k, u)| (*k, u.as_str())).collect();
+        super::util::watch(&session, &reported);
+    }
+    assert!(changed.get(), "the change did not run at {point:?}");
+    // The next request applies the pending changes (a reload).
+    program(&session, &index(&root));
+    session.wait_for_background_tasks();
+    if let Some(more) = load_view_scope::take_last_events() {
+        events.extend(more);
+    }
+    program(&session, &index(&root));
+    session.wait_for_background_tasks();
+    let after = shown(&session, &root, &client);
+    resolve_ahead::set_mode(None);
+    resolve_ahead::set_first_load(None);
+    load_view_scope::set_reconcile(None);
+    loadview::set_enabled(None);
+    drop(session);
+    // A fresh serial session of the final disk (same root path).
+    let final_root = fresh_project(label);
+    assert_eq!(final_root, root);
+    prepare(&root);
+    let _ = change(&root);
+    resolve_ahead::set_mode(Some(Mode::Off));
+    let (session, client) = watched_session(&root, false);
+    open(&session, &index(&root), INDEX);
+    program(&session, &index(&root));
+    session.wait_for_background_tasks();
+    let fresh = shown(&session, &root, &client);
+    resolve_ahead::set_mode(None);
+    drop(session);
+    std::fs::remove_dir_all(&root).unwrap();
+    (after, fresh, events)
+}
+
+/// `lib/c.ts` deleted (only the resolution of "../lib/c" looks it up).
+fn delete_c(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+    std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
+    vec![(DELETED, "lib/c.ts".to_string())]
+}
+
+/// A nearby package appears and the ancestor package's package.json
+/// changes.
+fn nearby_package(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+    write(
+        root,
+        "src/node_modules/pkg/package.json",
+        r#"{ "name": "pkg", "version": "3.0.0", "types": "index.d.ts" }"#,
+    );
+    write(
+        root,
+        "src/node_modules/pkg/index.d.ts",
+        "export declare const p: string;",
+    );
+    write(
+        root,
+        "node_modules/pkg/package.json",
+        r#"{ "name": "pkg", "version": "1.0.1", "types": "index.d.ts" }"#,
+    );
+    vec![
+        (CREATED, "src/node_modules".to_string()),
+        (CHANGED, "node_modules/pkg/package.json".to_string()),
+    ]
+}
+
+/// A file's text changes (its export's type).
+fn edit_a(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+    write(root, "src/a.ts", "export const a: string = 1;");
+    vec![(CHANGED, "src/a.ts".to_string())]
+}
+
+const POINTS: [ChangePoint; 4] = [
+    ChangePoint::BeforeObservation,
+    ChangePoint::BetweenObservationAndDemand,
+    ChangePoint::BetweenDemandAndRegistration,
+    ChangePoint::AfterRegistration,
+];
+
+fn reconciles_at_every_point(
+    label: &str,
+    change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+) {
+    for point in POINTS {
+        let (after, fresh, events) =
+            reconciled_session(&format!("{label}{point:?}"), point, true, &|_| {}, change);
+        assert_eq!(after, fresh, "{point:?}: events {events:?}");
+        if point == ChangePoint::BetweenDemandAndRegistration {
+            assert!(!events.is_empty(), "{point:?}: no reconciliation event");
+        }
+    }
+    // Without the reconciliation, a change after the load and before the
+    // registration is lost (the sensitivity of the tests above).
+    let (after, fresh, events) = reconciled_session(
+        &format!("{label}none"),
+        ChangePoint::BetweenDemandAndRegistration,
+        false,
+        &|_| {},
+        change,
+    );
+    assert!(events.is_empty(), "{events:?}");
+    assert_ne!(after, fresh, "the change was found with no reconciliation");
+}
+
+os_child_test! {
+    /// L1 reconciliation: a file deleted at each point of the load window.
+    fn the_reconciliation_recovers_a_deleted_file() {
+        reconciles_at_every_point("recdel", &delete_c);
+    }
+}
+
+os_child_test! {
+    /// L1 reconciliation: a nearby package that appears, and an ancestor
+    /// package.json that changes, at each point of the load window.
+    fn the_reconciliation_recovers_a_new_package() {
+        reconciles_at_every_point("recpkg", &nearby_package);
+    }
+}
+
+os_child_test! {
+    /// L1 reconciliation: a file whose text changes at each point of the
+    /// load window.
+    fn the_reconciliation_recovers_an_edited_file() {
+        reconciles_at_every_point("recedit", &edit_a);
+    }
 }

@@ -202,7 +202,17 @@ struct Slot<V> {
     value: V,
     /// A worker stored it.
     by_worker: bool,
+    /// What the serial loader read of it (`USED_*`); 0 when only workers
+    /// did. The reconciliation checks only this.
+    used: u8,
 }
+
+/// The loader read whether a stat entry is a file (`file_exists`).
+pub const USED_FILE: u8 = 1;
+/// The loader read whether a stat entry is a directory (`directory_exists`).
+pub const USED_DIR: u8 = 2;
+/// The loader read the whole entry (a `stat`, a read, a realpath, entries).
+pub const USED_FULL: u8 = 4;
 
 struct Shards<V> {
     shards: [Mutex<FxHashMap<Box<str>, Slot<V>>>; SHARDS],
@@ -263,6 +273,7 @@ impl<V> Shards<V> {
             Slot {
                 value,
                 by_worker: false,
+                used: 0,
             },
         );
     }
@@ -388,11 +399,14 @@ impl LoadView {
 
     /// `map` of the entry of `path` in `shards`, or of `load()` stored there
     /// (first answer wins). The OS call runs with no lock held.
+    /// `used`: what a loader demand reads of the entry (`USED_*`).
+    #[allow(clippy::too_many_arguments)]
     fn get<V, R>(
         &self,
         shards: &Shards<V>,
         kind: Kind,
         who: Who,
+        used: u8,
         path: &str,
         load: impl FnOnce() -> V,
         map: impl FnOnce(&V) -> R,
@@ -400,10 +414,11 @@ impl LoadView {
         let k = kind as usize;
         let c = &self.counters;
         {
-            let shard = shards.shard(path);
-            if let Some(slot) = shard.get(path) {
+            let mut shard = shards.shard(path);
+            if let Some(slot) = shard.get_mut(path) {
                 match who {
                     Who::Loader => {
+                        slot.used |= used;
                         c.hit[k].fetch_add(1, Ordering::Relaxed);
                         if slot.by_worker {
                             c.hit_worker[k].fetch_add(1, Ordering::Relaxed);
@@ -428,9 +443,10 @@ impl LoadView {
             return map(&value);
         }
         let mut shard = shards.shard(path);
-        match shard.get(path) {
+        match shard.get_mut(path) {
             Some(slot) => {
                 if who == Who::Loader {
+                    slot.used |= used;
                     c.race[k].fetch_add(1, Ordering::Relaxed);
                     c.hit[k].fetch_add(1, Ordering::Relaxed);
                     if slot.by_worker {
@@ -459,6 +475,7 @@ impl LoadView {
                     Slot {
                         value,
                         by_worker: who == Who::Worker,
+                        used: if who == Who::Loader { used } else { 0 },
                     },
                 );
                 result
@@ -470,10 +487,19 @@ impl LoadView {
         &self,
         os: &dyn Fs,
         who: Who,
+        used: u8,
         path: &str,
         map: impl FnOnce(&Option<FileInfo>) -> R,
     ) -> R {
-        self.get(&self.stats, Kind::Stat, who, path, || os.stat(path), map)
+        self.get(
+            &self.stats,
+            Kind::Stat,
+            who,
+            used,
+            path,
+            || os.stat(path),
+            map,
+        )
     }
 
     fn read(&self, os: &dyn Fs, who: Who, path: &str) -> Option<SharedText> {
@@ -481,6 +507,7 @@ impl LoadView {
             &self.reads,
             Kind::Read,
             who,
+            USED_FULL,
             path,
             || os.read_file_shared(path),
             Clone::clone,
@@ -501,7 +528,7 @@ impl LoadView {
         } {
             return found;
         }
-        let regular = self.stat_with(os, Who::Worker, path, |info| {
+        let regular = self.stat_with(os, Who::Worker, 0, path, |info| {
             info.as_ref().is_some_and(|info| info.mode().is_regular())
         });
         if !regular {
@@ -523,6 +550,7 @@ impl LoadView {
             &self.realpaths,
             Kind::Realpath,
             who,
+            USED_FULL,
             path,
             || os.realpath(path),
             Clone::clone,
@@ -534,14 +562,43 @@ impl LoadView {
             &self.entries,
             Kind::Entries,
             who,
+            USED_FULL,
             path,
             || os.get_accessible_entries(path),
             Clone::clone,
         )
     }
 
+    /// The observations that the serial loader read (`Slot::used`), with
+    /// what it read of each: what the reconciliation checks.
+    #[must_use]
+    pub fn demanded(&self) -> Demanded {
+        fn used<V: Clone, T>(shards: &Shards<V>, map: impl Fn(&V) -> T) -> Vec<(Box<str>, T, u8)> {
+            let mut all = Vec::new();
+            for shard in &shards.shards {
+                let shard = shard
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                all.extend(
+                    shard
+                        .iter()
+                        .filter(|(_, slot)| slot.used != 0)
+                        .map(|(path, slot)| (path.clone(), map(&slot.value), slot.used)),
+                );
+            }
+            all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+            all
+        }
+        Demanded {
+            stats: used(&self.stats, Clone::clone),
+            reads: used(&self.reads, |text| text.as_ref().map(|text| text.hash)),
+            realpaths: used(&self.realpaths, Clone::clone),
+            entries: used(&self.entries, Clone::clone),
+        }
+    }
+
     /// Every observation of the view, sorted by kind and path
-    /// (reconciliation and the record).
+    /// (the record).
     #[must_use]
     pub fn observations(&self) -> Observations {
         Observations {
@@ -768,8 +825,31 @@ fn replay_log() -> bool {
     *ON.get_or_init(|| std::env::var("GOPORT_LOAD_VIEW_REPLAY_LOG").is_ok_and(|v| v == "1"))
 }
 
-/// Every observation of a view (`LoadView::observations`): what a
-/// reconciliation checks against the disk. Reads keep only their hash.
+/// The observations of a view that its load's serial loader read
+/// (`LoadView::demanded`), each with what it read (`USED_*`). Reads keep
+/// only their hash.
+#[derive(Default)]
+pub struct Demanded {
+    pub stats: Vec<(Box<str>, Option<FileInfo>, u8)>,
+    pub reads: Vec<(Box<str>, Option<u128>, u8)>,
+    pub realpaths: Vec<(Box<str>, String, u8)>,
+    pub entries: Vec<(Box<str>, Entries, u8)>,
+}
+
+impl Demanded {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.stats.len() + self.reads.len() + self.realpaths.len() + self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Every observation of a view (`LoadView::observations`). Reads keep only
+/// their hash.
 #[derive(Default)]
 pub struct Observations {
     pub stats: Vec<(Box<str>, Option<FileInfo>)>,
@@ -845,7 +925,7 @@ impl Fs for ViewFs {
     fn file_exists(&self, path: &str) -> bool {
         self.with(
             |view, who| {
-                view.stat_with(&*self.os, who, path, |info| {
+                view.stat_with(&*self.os, who, USED_FILE, path, |info| {
                     info.as_ref().is_some_and(|info| !info.is_dir())
                 })
             },
@@ -894,7 +974,7 @@ impl Fs for ViewFs {
     fn directory_exists(&self, path: &str) -> bool {
         self.with(
             |view, who| {
-                view.stat_with(&*self.os, who, path, |info| {
+                view.stat_with(&*self.os, who, USED_DIR, path, |info| {
                     info.as_ref().is_some_and(FileInfo::is_dir)
                 })
             },
@@ -911,7 +991,7 @@ impl Fs for ViewFs {
 
     fn stat(&self, path: &str) -> Option<FileInfo> {
         self.with(
-            |view, who| view.stat_with(&*self.os, who, path, Clone::clone),
+            |view, who| view.stat_with(&*self.os, who, USED_FULL, path, Clone::clone),
             || self.os.stat(path),
         )
     }
