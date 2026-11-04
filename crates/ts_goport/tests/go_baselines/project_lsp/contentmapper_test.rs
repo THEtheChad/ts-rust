@@ -1508,3 +1508,123 @@ child_test! {
         session.close();
     }
 }
+
+child_test! {
+    // Not a Go port (perf/first-principles A1): with `importHelpers`, the
+    // canonical file and its supplemental file both get a `tslib` import.
+    // Go rebuilds on their edit (program.go:399-420); the port reuses the
+    // program, gives both new versions their own specifiers, and reports
+    // Go's update kind. The reused program equals a full build of the same
+    // inputs (`reuse_verify::dump`).
+    fn content_mapper_supplemental_file_with_import_helpers_reused_on_edit() {
+        const MAIN_TEXT: &str = "const value: number = supplementalValue;\n";
+        let file_map = files(&with_box(&files_for_box("declare const supplementalValue: number;\n")));
+        let (session, utils) = new_session(
+            file_map,
+            options("/home/project", true),
+            contentmappertest::new_spawner(),
+        );
+        let supplemental_path = path("/home/project/app.box.0.ts");
+        let helpers = |program: &NewProgram, p: &ts_goport::frontend::tspath::Path| {
+            program
+                .processed_files
+                .import_helpers_import_specifiers
+                .as_ref()
+                .and_then(|map| map.get(p).copied())
+                .expect("a tslib import")
+        };
+
+        open(&session, MAIN_URI, MAIN_TEXT);
+        let old_program = program(&session, MAIN_URI);
+        let old_helpers = helpers(&old_program, &path(BOX_PATH));
+        let old_supplemental_helpers = helpers(&old_program, &supplemental_path);
+
+        write_file(&utils, BOX_PATH, "declare const supplementalValue: string;\n");
+        watch(&session, &[(CHANGED, BOX_URI)]);
+        let new_program = program(&session, MAIN_URI);
+        assert!(std::sync::Arc::ptr_eq(
+            &old_program.processed_files.resolved_modules,
+            &new_program.processed_files.resolved_modules
+        ));
+        assert_eq!(
+            default_project(&session, MAIN_URI).borrow().program_update_kind,
+            project::ProgramUpdateKind::SAME_FILE_NAMES
+        );
+        for (p, old) in [
+            (path(BOX_PATH), old_helpers),
+            (supplemental_path.clone(), old_supplemental_helpers),
+        ] {
+            let new = helpers(&new_program, &p);
+            assert_ne!(new, old, "{p:?}");
+            let file = new_program.get_source_file_by_path(&p).unwrap();
+            assert!(new.parent().parent() == file.root, "{p:?}");
+            assert_eq!(helpers(&old_program, &p), old, "{p:?}");
+        }
+        let main_file = source_file(&new_program, "/home/project/main.ts");
+        let diagnostics = ls_program::get_semantic_diagnostics(
+            &new_program,
+            &projecttestutil::with_request_id(&bg()),
+            main_file.root,
+        );
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code() == 2322));
+
+        // A full build of the same inputs: a new session on the edited files.
+        let (full_session, _full_utils) = new_session(
+            files(&with_box(&files_for_box("declare const supplementalValue: string;\n"))),
+            options("/home/project", true),
+            contentmappertest::new_spawner(),
+        );
+        open(&full_session, MAIN_URI, MAIN_TEXT);
+        let full = program(&full_session, MAIN_URI);
+        assert!(!std::sync::Arc::ptr_eq(
+            &old_program.processed_files.resolved_modules,
+            &full.processed_files.resolved_modules
+        ));
+        let reused = ts_goport::program::reuse_verify::dump(&new_program);
+        let rebuilt = ts_goport::program::reuse_verify::dump(&full);
+        if reused != rebuilt {
+            let line = reused.lines().zip(rebuilt.lines()).position(|(a, b)| a != b);
+            panic!(
+                "the reused program differs from a full build at line {line:?}:\n{reused}\n----\n{rebuilt}"
+            );
+        }
+        assert!(reused.contains("to import 'importHelpers' as specified in compilerOptions"));
+        full_session.close();
+        session.close();
+    }
+}
+
+/// The files of `content_mapper_supplemental_file_with_import_helpers_reused_on_edit`
+/// with `box` as `app.box` (owned texts; `with_box` borrows them).
+fn files_for_box(box_text: &str) -> Vec<(String, String)> {
+    vec![
+        (
+            "/home/project/tsconfig.json".to_string(),
+            r#"{ "compilerOptions": { "strict": true, "importHelpers": true, "isolatedModules": true }, "contentMappers": [{ "package": "mapper", "extensions": [".box"] }] }"#.to_string(),
+        ),
+        (
+            "/home/project/node_modules/mapper/package.json".to_string(),
+            contentmappertest::package_json(contentmappertest::SUPPLEMENTAL_MAPPER),
+        ),
+        (
+            "/home/project/node_modules/tslib/package.json".to_string(),
+            r#"{"name":"tslib","version":"2.8.0","types":"tslib.d.ts"}"#.to_string(),
+        ),
+        (
+            "/home/project/node_modules/tslib/tslib.d.ts".to_string(),
+            "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n".to_string(),
+        ),
+        ("/home/project/app.box".to_string(), box_text.to_string()),
+        (
+            "/home/project/main.ts".to_string(),
+            "const value: number = supplementalValue;\n".to_string(),
+        ),
+    ]
+}
+
+fn with_box(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+    owned
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect()
+}
