@@ -1569,6 +1569,7 @@ impl FilesParser {
 
         ProcessedFiles {
             synthetic_owner: Some(Rc::clone(&loader.synthetic_owner)),
+            reused_synthetic_owners: None,
             finished_processing: true,
             load_stats: LoadStatCache(Cell::new(self.load_stats.take())),
             resolver: loader.resolver.clone(),

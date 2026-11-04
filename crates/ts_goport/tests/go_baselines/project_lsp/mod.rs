@@ -159,6 +159,7 @@ mod snapshot_task_program_test;
 mod snapshot_test;
 mod snapshotfs_test;
 mod stringliteralranges_test;
+mod synthetic_reuse_test;
 mod untitled_test;
 mod version_tables_test;
 mod watch_test;

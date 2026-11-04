@@ -115,7 +115,9 @@ impl NewProgram {
 
     // Go: program.go:2148 (*Program).GetIncludeReasons
     // Testing only
-    pub fn get_include_reasons(&self) -> &FxHashMap<Path, Vec<Rc<FileIncludeReason>>> {
+    pub fn get_include_reasons(
+        &self,
+    ) -> std::borrow::Cow<'_, FxHashMap<Path, Vec<Rc<FileIncludeReason>>>> {
         self.processed_files
             .include_processor
             .file_include_reasons
