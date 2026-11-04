@@ -72,12 +72,23 @@ noembed = ["goport_core/noembed", "goport_util/noembed"]
 # -p ts_goport --features test-hooks --test plain_early_emit`. Never in a
 # shipped build.
 test-hooks = ["goport_core/test-hooks"]
+# Diagnostic and verification output (see goport_core's `diagnostics`), for
+# the perf-rearch tools: `scripts/run-cargo-capped.sh build --release -p
+# ts_goport --features diagnostics --bin tsgo`. Never in a shipped build.
+diagnostics = ["goport_core/diagnostics"]
 
 [lints]
 workspace = true
 
 # Rust port of the pinned typescript-go baseline tests. `test = false` keeps
 # it out of `cargo test --workspace`; run it with `--test go_baselines`.
+# The instrumented runs read `GOPORT_EMIT_PHASE_TIMES` and
+# `GOPORT_CHECKER_CALL_LOG`.
+[[test]]
+name = "plain_early_emit"
+path = "tests/plain_early_emit.rs"
+required-features = ["diagnostics"]
+
 [[test]]
 name = "go_baselines"
 path = "tests/go_baselines/main.rs"

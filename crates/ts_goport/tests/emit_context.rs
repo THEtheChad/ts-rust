@@ -43,8 +43,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ts_goport::core::enter_program;
 use ts_goport::emitter::program_emit::{
-    DtsTwinMode, EmitOptions, WriteFile, WriteFileData, emit, js_twin_print_count,
-    set_dts_twin_mode,
+    EmitOptions, WriteFile, WriteFileData, emit, js_twin_print_count, set_dts_twin_check,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
 use ts_goport::program::{
@@ -111,52 +110,46 @@ enum Kind {
 /// One in-process emit setup.
 struct Mode {
     name: &'static str,
-    twins: DtsTwinMode,
+    /// The d.ts twin check mode (`set_dts_twin_check`).
+    twin_check: bool,
     edit: fn(&mut CompilerOptions),
     kind: Kind,
     /// The JS parts can run on the emit pool and the twins.
     pool: bool,
 }
 
-const MODES: [Mode; 6] = [
+const MODES: [Mode; 5] = [
     Mode {
         name: "pool, twins on",
-        twins: DtsTwinMode::On,
-        edit: |_| {},
-        kind: Kind::All,
-        pool: true,
-    },
-    Mode {
-        name: "pool, twins off",
-        twins: DtsTwinMode::Off,
+        twin_check: false,
         edit: |_| {},
         kind: Kind::All,
         pool: true,
     },
     Mode {
         name: "pool, twin check",
-        twins: DtsTwinMode::Check,
+        twin_check: true,
         edit: |_| {},
         kind: Kind::All,
         pool: true,
     },
     Mode {
         name: "--checkers 1",
-        twins: DtsTwinMode::On,
+        twin_check: false,
         edit: |options| options.checkers = Some(1),
         kind: Kind::All,
         pool: true,
     },
     Mode {
         name: "--singleThreaded (one emitter per file)",
-        twins: DtsTwinMode::On,
+        twin_check: false,
         edit: |options| options.single_threaded = Tristate::True,
         kind: Kind::All,
         pool: false,
     },
     Mode {
         name: "--emitDeclarationOnly",
-        twins: DtsTwinMode::On,
+        twin_check: false,
         edit: |options| options.emit_declaration_only = Tristate::True,
         kind: Kind::Dts,
         pool: false,
@@ -168,18 +161,18 @@ fn emit_matches_go_in_every_mode() {
     for project in &PROJECTS {
         for mode in &MODES {
             let what = format!("{} with {}", project.name, mode.name);
-            set_dts_twin_mode(Some(mode.twins));
+            set_dts_twin_check(Some(mode.twin_check));
             let js_prints = js_twin_print_count();
             let run = emit_project(project.name, mode.edit);
             let js_prints = js_twin_print_count() - js_prints;
-            set_dts_twin_mode(None);
+            set_dts_twin_check(None);
 
             assert_eq!(run.diagnostics, Vec::<String>::new(), "{what}: diagnostics");
             assert_files(&run.files, &expected(project.name, mode.kind), &what);
             if mode.pool && project.split {
                 assert!(run.pool_jobs > 0, "{what}: the emit pool got no job");
             }
-            if mode.pool && project.twin && mode.twins != DtsTwinMode::Off {
+            if mode.pool && project.twin {
                 assert!(js_prints > 0, "{what}: the twins printed no JS part");
             }
         }
@@ -193,7 +186,6 @@ fn tsgo_matches_go_with_any_emit_pool() {
             ("GOPORT_EMIT_THREADS", "0"),
             ("GOPORT_EMIT_THREADS", "1"),
             ("GOPORT_EMIT_THREADS", "8"),
-            ("GOPORT_EARLY_EMIT", "0"),
         ] {
             let what = format!("{} with {}={}", project.name, env.0, env.1);
             let root = copy_project(project.name);

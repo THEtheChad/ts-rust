@@ -2,8 +2,10 @@
 //! (`execute::incremental::Program::start_emit`). Each checker gets its emit
 //! jobs right behind its check job, so it emits when its own check ends and
 //! the emit pool runs during the check. The outputs, the build info, stdout
-//! and the exit code must be the same as with `GOPORT_EARLY_EMIT=0`, which
-//! keeps Go's barrier (the emit starts after the whole check).
+//! and the exit code must be the same as with `preserveSymlinks` (F4), which
+//! keeps Go's barrier (the emit starts after the whole check) and changes
+//! nothing else in the fixture: it has no symlink, and the option is not in
+//! the build info.
 //!
 //! The fixture is `fixtures/emit_pool`: 4 program files and the es2020 lib
 //! files, so 4 checkers get files. With declarations the JS parts of
@@ -14,8 +16,8 @@
 //! the same. A passing test deletes it.
 //!
 //! The rule test checks `emit_can_start_with_check` on the same fixture:
-//! each case that a check could see the outputs of keeps the barrier. Do not
-//! set `GOPORT_EARLY_EMIT=0` for this test. Its F2 cases load
+//! each case that a check could see the outputs of keeps the barrier. Its F2
+//! cases load
 //! `tsconfig.rules.json` (the same config with `"exclude": []`): without an
 //! `exclude`, the config excludes `outDir` and `declarationDir` from its
 //! files, so no program file would be inside them.
@@ -122,24 +124,35 @@ fn build_early_emit_writes_what_the_barrier_writes() {
     let out = root.join("out");
     // The fixture as a composite project, with its outputs and build info
     // in the scratch dir. The base config's `include` and `rootDir` stay
-    // relative to the fixture.
+    // relative to the fixture. The barrier side adds `preserveSymlinks`
+    // (F4), which keeps Go's barrier and is not in the build info.
     let config = root.join("tsconfig.json");
-    let text = format!(
-        r#"{{
+    let write_config = |barrier: bool| {
+        let text = format!(
+            r#"{{
   "extends": "{fixture}/tsconfig.json",
   "compilerOptions": {{
-    "composite": true,
+    "composite": true,{preserve}
     "outDir": "{out}",
     "tsBuildInfoFile": "{out}/tsconfig.tsbuildinfo"
   }}
 }}
 "#,
-        fixture = norm_str(FIXTURE),
-        out = norm(&out)
-    );
-    fs::write(&config, text).unwrap_or_else(|error| panic!("write {}: {error}", config.display()));
-    let barrier = tsgo_build(&config, &out, false);
-    let early = tsgo_build(&config, &out, true);
+            fixture = norm_str(FIXTURE),
+            preserve = if barrier {
+                "\n    \"preserveSymlinks\": true,"
+            } else {
+                ""
+            },
+            out = norm(&out)
+        );
+        fs::write(&config, text)
+            .unwrap_or_else(|error| panic!("write {}: {error}", config.display()));
+    };
+    write_config(true);
+    let barrier = tsgo_build(&config, &out);
+    write_config(false);
+    let early = tsgo_build(&config, &out);
     assert_eq!(
         barrier.status,
         Some(0),
@@ -348,7 +361,6 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
                 .current_dir(&root)
                 .args(args)
                 .args(["--pretty", "false"])
-                .env("GOPORT_EARLY_EMIT", "1")
                 .output()
                 .expect("run tsgo");
             assert_eq!(
@@ -392,7 +404,6 @@ fn tsc_p_list_files_only_writes_no_output() {
             "--pretty",
             "false",
         ])
-        .env("GOPORT_EARLY_EMIT", "1")
         .output()
         .expect("run tsgo");
     assert_eq!(
@@ -635,7 +646,6 @@ fn failed_write_before_a_dts_signature_panics_as_go() {
             .current_dir(&project.root)
             .args([args[0], "tsconfig.json", "--pretty", "false"])
             .args(&args[1..])
-            .env("GOPORT_EARLY_EMIT", "1")
             .output()
             .expect("run tsgo");
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1180,7 +1190,7 @@ fn api_build_writes_each_output_once_after_a_failed_write() {
 /// compiler options (with `incremental`), the output dir and the build info
 /// path. Go has no early emit, so its output is the same in each.
 #[cfg(unix)]
-const NO_EARLY_EMIT: [(&str, &str, &str, &str); 5] = [
+const NO_EARLY_EMIT: [(&str, &str, &str, &str); 4] = [
     (
         "noEmitOnError",
         r#""incremental": true, "noEmitOnError": true"#,
@@ -1205,23 +1215,7 @@ const NO_EARLY_EMIT: [(&str, &str, &str, &str); 5] = [
         "out",
         "tsconfig.tsbuildinfo",
     ),
-    (
-        "GOPORT_EARLY_EMIT=0",
-        r#""incremental": true"#,
-        "out",
-        "tsconfig.tsbuildinfo",
-    ),
 ];
-
-/// The `GOPORT_EARLY_EMIT` value of a `NO_EARLY_EMIT` case.
-#[cfg(unix)]
-fn early_emit_env(case: &str) -> &'static str {
-    if case == "GOPORT_EARLY_EMIT=0" {
-        "0"
-    } else {
-        "1"
-    }
-}
 
 /// noeediag1. `tsc -b` without the port's early emit (`NO_EARLY_EMIT`),
 /// with read-only `a.js` and `c.js`: the program emits them in its order
@@ -1246,7 +1240,6 @@ fn build_without_the_early_emit_reports_failed_writes_as_go() {
                 "--pretty",
                 "false",
             ])
-            .env("GOPORT_EARLY_EMIT", early_emit_env(case))
             .output()
             .expect("run tsgo -b");
         let error = |file: &str| format!("open {root}/{out_dir}/{file}: permission denied");
@@ -1306,8 +1299,7 @@ fn api_build_without_the_early_emit_keeps_failed_writes_in_their_files() {
     for (case, options, out_dir, build_info) in NO_EARLY_EMIT {
         let project = sort_failure_project(options, out_dir, false);
         let root = norm(&project.root);
-        let env = [("GOPORT_EARLY_EMIT", early_emit_env(case))];
-        let (_, got) = api_build_with(&project.root, &env, "", "useOS", &ok);
+        let (_, got) = api_build_with(&project.root, &[], "", "useOS", &ok);
         assert_eq!(got, answer(&root, out_dir), "{case}: Go N' answer");
         let build_info = project.read(build_info);
         let expected = emit_diagnostics_per_file(&build_info, &root, out_dir, |_| {
@@ -1590,7 +1582,6 @@ impl Solution {
             .arg("-b")
             .args(args)
             .args(["--pretty", "false"])
-            .env("GOPORT_EARLY_EMIT", "1")
             .output()
             .expect("run tsgo -b");
         (
@@ -1810,8 +1801,8 @@ fn can_start_with(config: &str, edit: impl FnOnce(&mut CompilerOptions)) -> bool
 
 /// Runs `tsgo -p` on the fixture as an incremental program, with `out` as
 /// the out dir and the build info in it, and `extra` arguments. `early`
-/// false sets `GOPORT_EARLY_EMIT=0`. It removes `out` first and returns what
-/// the run wrote there and printed.
+/// false adds `--preserveSymlinks`, which keeps the barrier (F4). It removes
+/// `out` first and returns what the run wrote there and printed.
 fn tsgo(out: &Path, extra: &[&str], early: bool) -> Run {
     if out.exists() {
         fs::remove_dir_all(out).unwrap_or_else(|error| panic!("remove {}: {error}", out.display()));
@@ -1823,8 +1814,8 @@ fn tsgo(out: &Path, extra: &[&str], early: bool) -> Run {
         .arg(norm(&out.join("tsconfig.tsbuildinfo")))
         .args(["--listEmittedFiles", "--pretty", "false"])
         .args(extra)
+        .args((!early).then_some("--preserveSymlinks"))
         .env("GOPORT_EMIT_THREADS", "2")
-        .env("GOPORT_EARLY_EMIT", if early { "1" } else { "0" })
         .output()
         .expect("run tsgo");
     let mut files = BTreeMap::new();
@@ -1839,9 +1830,9 @@ fn tsgo(out: &Path, extra: &[&str], early: bool) -> Run {
 }
 
 /// Runs `tsgo -b` on `config`, whose outputs and build info are in `out`.
-/// `early` false sets `GOPORT_EARLY_EMIT=0`. It removes `out` first, so the
-/// project is out of date, and returns what the run wrote there and printed.
-fn tsgo_build(config: &Path, out: &Path, early: bool) -> Run {
+/// It removes `out` first, so the project is out of date, and returns what
+/// the run wrote there and printed.
+fn tsgo_build(config: &Path, out: &Path) -> Run {
     if out.exists() {
         fs::remove_dir_all(out).unwrap_or_else(|error| panic!("remove {}: {error}", out.display()));
     }
@@ -1850,7 +1841,6 @@ fn tsgo_build(config: &Path, out: &Path, early: bool) -> Run {
         .arg(norm(config))
         .args(["--listEmittedFiles", "--pretty", "false"])
         .env("GOPORT_EMIT_THREADS", "2")
-        .env("GOPORT_EARLY_EMIT", if early { "1" } else { "0" })
         .output()
         .expect("run tsgo -b");
     let mut files = BTreeMap::new();

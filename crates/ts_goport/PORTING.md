@@ -689,7 +689,7 @@ The batch that adds it is not accepted until Theo approves.
   are Go's. The API build flushes on its orchestrator thread only
   (`flush_writes_on_this_thread`). Only that thread reaches its file
   system, so an API build emit with no early emit (noEmitOnError, F1 to
-  F4, `GOPORT_EARLY_EMIT=0`, or no incremental state) also keeps its
+  F4, or no incremental state) also keeps its
   writes, and that thread flushes them when the emit ends, with the same
   replay (`EmitFilesHandler::emit_with_writes_here`). So a TS5033 is in
   its file's result, sorted and in `emitDiagnosticsPerFile`, as in Go.
@@ -750,8 +750,7 @@ The batch that adds it is not accepted until Theo approves.
     without an extension; F2: a program file inside `outDir` or
     `declarationDir`; F3: a `node_modules` segment in either), and the
     other `early_emit_options_allow` cases: `preserveSymlinks` (F4),
-    `outFile`, `--generateTrace`, and every project with
-    `GOPORT_EARLY_EMIT=0`. `--singleThreaded` is not a gap: Go's build
+    `outFile` and `--generateTrace`. `--singleThreaded` is not a gap: Go's build
     then runs one task at a time (execute/build/orchestrator.go:919
     `rangeTasks`).
   - C1 rate shift (int56; state note `int56-decision-2026-10-09`). C1
@@ -1360,9 +1359,9 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   Go. A panic in the JS print on the twin comes after the checker ran the
   declaration transforms, which Go does not run then (`emit_on_twin` says
   what differs). A forced emit and a builder signature emit stay on the
-  checker. `GOPORT_DTS_TWIN=0` turns the twins off.
-  `GOPORT_DTS_TWIN_CHECK=1` also prints each part on the checker, and the
-  twin panics when its writes differ.
+  checker. In a `diagnostics` feature build `GOPORT_DTS_TWIN_CHECK=1`
+  also prints each part on the checker, and the twin panics when its
+  writes differ.
 - The content mapper host is dispatch-thread state (`contentmapper`
   module docs). Each mapper connection (`contentmapper::muxconn::MuxConn`)
   reads on its own thread, as Go's `AsyncConn.Run` goroutine does, and
@@ -1405,8 +1404,8 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   no such probe can reach an output (no extensionless relative import in a
   checked file with node16 or nodenext, no program file in `outDir` or
   `declarationDir`, no `node_modules` in them, no `preserveSymlinks`, no
-  `outFile`). `noEmit`, `noEmitOnError`, `--singleThreaded`, a trace and
-  `GOPORT_EARLY_EMIT=0` keep Go's order. `tsc -b`, watch, the plain
+  `outFile`). `noEmit`, `noEmitOnError`, `--singleThreaded` and a trace
+  keep Go's order. `tsc -b`, watch, the plain
   program and the goport bins do not start early. With the early start
   (and in `tsc -b`, which starts the check when it makes the program),
   `--extendedDiagnostics` "Check time" is the time that `start_check`
