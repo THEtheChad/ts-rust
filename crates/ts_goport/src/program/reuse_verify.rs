@@ -13,17 +13,19 @@
 //!   a shadow of the program (`NewProgram::shadow`) whose caches start
 //!   empty, so it changes nothing that the session reads later.
 //! - a child process (this binary with `GOPORT_VERIFY_REUSE_CHILD=1`) gets
-//!   the session's options, user config, inferred-project options and open
-//!   files (their editor text: a content-mapped file keeps its original
-//!   text, and the child runs its mapper), and the snapshot text of each
-//!   other program file whose text is not the one on disk. It starts a new
-//!   language server session on them, opens the files, and dumps the
-//!   program of the same project: a full build, as Go's rebuild. A separate
-//!   process cannot change the global ids or the session of the server.
-//! - the two dumps must be equal. A difference is reported on stderr and in
-//!   `GOPORT_VERIFY_REUSE_LOG`, and both dumps are kept in
-//!   `GOPORT_VERIFY_REUSE_DIR`. `GOPORT_VERIFY_REUSE=panic` panics then.
-//!   `GOPORT_VERIFY_REUSE=all` checks the reuses that Go makes too.
+//!   the session's inputs: its options and open files, and its snapshot
+//!   where the disk has changed since (see `project::reuse_verify`). It
+//!   starts a new language server session on them, opens the files, and
+//!   dumps the program of the same configured or inferred project, content
+//!   mappers included: a full build, as Go's rebuild. A separate process
+//!   cannot change the global ids or the session of the server.
+//! - the two dumps must be equal: OK, else MISMATCH. When the child cannot
+//!   rebuild the server's inputs the result is ERROR (not checked), never
+//!   MISMATCH (see `project::reuse_verify`). Each result goes to stderr and
+//!   `GOPORT_VERIFY_REUSE_LOG`, and both dumps of a MISMATCH are kept in
+//!   `GOPORT_VERIFY_REUSE_DIR`. `GOPORT_VERIFY_REUSE=panic` panics on a
+//!   MISMATCH or an ERROR. `GOPORT_VERIFY_REUSE=all` checks the reuses that
+//!   Go makes too.
 //!
 //! The dump has the options and root files, the file order and keys, the
 //! file metadata, the module and type reference resolutions, both
@@ -33,7 +35,8 @@
 //! the files found by searching node_modules, the missing files, the
 //! redirects and the emit blocking files.
 //!
-//! **What an OK covers: the program structure only.** It does not compare
+//! **What an OK covers: the program structure only** (the items above).
+//! It does not compare
 //! checker output (semantic, suggestion or global diagnostics) or LSP
 //! answers and notifications: computing them in the server would create
 //! checker state (type and symbol ids) that changes later answers. Checker

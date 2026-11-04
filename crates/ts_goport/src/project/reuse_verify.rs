@@ -1,22 +1,36 @@
 //! The project side of the reuse verify mode (perf/first-principles A1;
-//! see `program::reuse_verify` for the mode and the dump).
+//! see `program::reuse_verify` for the mode, the dump and what an OK
+//! covers).
 //!
 //! Not in Go. For each program that the language server reused beyond Go,
 //! `verify` sends the inputs of the session (`Request`) to a child process,
 //! which starts a new session on them and dumps the program of the same
 //! project: a full build, as Go's rebuild. The child runs the project
-//! system itself, so the effective options, the root files and their
-//! order, inferred projects and content mappers (with the server's
-//! spawner) are built as the server builds them. A content-mapped file
-//! goes to the child as its editor or disk text, and the child runs its
-//! mapper.
+//! system itself, so configured and inferred projects, the effective
+//! options and content mappers (with the server's spawner) are built as the
+//! server builds them. The inputs:
+//! - the session options, the custom config file name, the options of
+//!   inferred projects and the open files with their editor text (a
+//!   content-mapped file keeps its original text; the child runs its
+//!   mapper);
+//! - the server's snapshot where it answers differently from the disk now
+//!   (`SnapshotDiff`): the texts of its file cache (source files,
+//!   package.json files, the original texts of content-mapped files) and
+//!   the files it has as deleted, its cached directory entries, and the
+//!   texts of the config files that the program's command line was parsed
+//!   from (the config file registry and the extended config cache keep
+//!   them parsed). Every other lookup of the snapshot asks the disk now,
+//!   as the child does.
 //!
-//! The child cannot see:
-//! - typings that ATA installed for the project: a project with typings
-//!   files is reported as an error (not checked);
-//! - the original text of a closed content-mapped file that the snapshot
-//!   has cached and the disk has since changed (the snapshot keeps only the
-//!   transformed text): the child reads the disk.
+//! When the child cannot rebuild the server's inputs, the result is an
+//! ERROR (not checked), never a MISMATCH:
+//! - the child's options or root files differ from the server's (a reuse
+//!   keeps the old command line, as Go's rebuild does): for example a new
+//!   file under an include glob with no watch event, which the child's
+//!   config parse finds and the server's kept parse does not have;
+//! - the project has ATA typings files, or a custom module resolver (API);
+//! - the snapshot caches a deleted file or a directory on a
+//!   case-insensitive file system (the cache has its path, not its name).
 
 use crate::frontend::compiler::NewProgram;
 use crate::frontend::json::{json_marshal, json_unmarshal};
@@ -53,6 +67,19 @@ pub fn verify(project: &Project, host: &CompilerHost, program: &NewProgram) {
     let result = Request::of(project, host, program).and_then(|request| {
         let reused = dump(program);
         let full = run_child(&request)?;
+        // A reuse keeps the old program's command line, and so does Go's
+        // rebuild (`UpdateProgram` builds with `p.opts`): when the child's
+        // options or root files differ, the child did not rebuild the
+        // server's inputs, which is not a finding about the reuse.
+        let config = |dump: &str| -> String {
+            dump.split("\n== files\n").next().unwrap_or_default().to_string()
+        };
+        if config(&reused) != config(&full) {
+            return Err(match compare(&config(&reused), &config(&full)) {
+                Some(saved) => format!("the child's options or root files are not the server's (inputs not reconstructed): {saved}"),
+                None => "the child's options or root files are not the server's".to_string(),
+            });
+        }
         Ok(compare(&reused, &full))
     });
     let ms = start.elapsed().as_millis();
@@ -117,7 +144,7 @@ struct OpenFile {
 }
 
 /// What the child needs to start the session again.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct Request {
     current_directory: String,
     default_library_path: String,
@@ -134,9 +161,168 @@ struct Request {
     changed_file: String,
     /// The open files, in the session's order.
     open_files: Vec<OpenFile>,
-    /// Program files that are not open and whose snapshot text is not the
-    /// text on disk, with their snapshot text.
-    snapshot_texts: Vec<(String, String)>,
+    /// Where the server's snapshot answers differently from the disk.
+    snapshot: SnapshotDiff,
+}
+
+/// The answers of the server's snapshot file system that the disk no
+/// longer gives (the disk changed with no watch event). The snapshot keeps
+/// file texts (`cache_files`: config files, package.json files, the
+/// original texts of content-mapped files, source files) and directory
+/// entries (`cache_directories`); every other lookup of the snapshot asks
+/// the disk now, as the child does. An entry that needs a reload reads the
+/// disk on its next use, so it is not part of the diff.
+#[derive(Debug, Default)]
+struct SnapshotDiff {
+    /// Files with their snapshot text.
+    texts: Vec<(String, String)>,
+    /// Files that the snapshot has as deleted and the disk has.
+    missing: Vec<String>,
+    /// Directories with their snapshot entries.
+    directories: Vec<(String, Entries)>,
+}
+
+/// The same names in each list, in any order.
+fn same_entries(a: &Entries, b: &Entries) -> bool {
+    let sorted = |names: &[String]| {
+        let mut names = names.to_vec();
+        names.sort();
+        names
+    };
+    let symlinks = |e: &Entries| {
+        e.symlinks.as_ref().map(|s| {
+            let mut s: Vec<&String> = s.iter().collect();
+            s.sort();
+            s.into_iter().cloned().collect::<Vec<_>>()
+        })
+    };
+    sorted(&a.files) == sorted(&b.files)
+        && sorted(&a.directories) == sorted(&b.directories)
+        && symlinks(a) == symlinks(b)
+}
+
+impl SnapshotDiff {
+    /// Adds the texts of the program's config file and of the configs it
+    /// extends where the disk has another text. Go's rebuild builds with
+    /// the old program's command line (`p.opts`), which the config file
+    /// registry and the extended config cache keep parsed; the snapshot
+    /// does not keep these texts in its file cache.
+    fn add_config_texts(
+        &mut self,
+        command_line: &crate::frontend::tsoptions::ParsedCommandLine,
+        builder: &super::projectcollectionbuilder::ProjectCollectionBuilder,
+    ) {
+        let disk = crate::frontend::bundled::wrap_fs_exported(vfs::osvfs::osvfs_fs());
+        let mut texts: Vec<(String, String)> = Vec::new();
+        if let Some(config_file) = &command_line.config_file {
+            texts.push((
+                config_file.file_name.clone(),
+                crate::ast::source_file_text(config_file.source_file).to_string(),
+            ));
+        }
+        for &name in command_line.extended_source_files() {
+            let path = (builder.fs.to_path)(name);
+            let entry = builder
+                .extended_config_cache
+                .entries
+                .borrow()
+                .get(&path)
+                .and_then(|entry| entry.value.borrow().clone());
+            if let Some(extended) = entry
+                .as_ref()
+                .and_then(|entry| entry.extended_config_cache_entry.extended_result.as_ref())
+            {
+                texts.push((
+                    name.to_string(),
+                    crate::ast::source_file_text(extended.source_file).to_string(),
+                ));
+            }
+        }
+        for (name, text) in texts {
+            let (disk_text, ok) = disk.read_file(&name);
+            if (!ok || disk_text != text) && !self.texts.iter().any(|(n, _)| *n == name) {
+                self.texts.push((name, text));
+            }
+        }
+        self.texts.sort();
+    }
+
+    fn of(fs: &super::snapshotfs::SnapshotFSBuilder) -> Result<Self, String> {
+        let disk = crate::frontend::bundled::wrap_fs_exported(vfs::osvfs::osvfs_fs());
+        let case_sensitive = disk.use_case_sensitive_file_names();
+        let mut diff = SnapshotDiff::default();
+        let mut error = None;
+        let mut cached: rustc_hash::FxHashSet<tspath::Path> = rustc_hash::FxHashSet::default();
+        fs.cache_files.range(&mut |entry| {
+            let path = entry.key();
+            match entry.value() {
+                None => {
+                    // A deleted file has no file name in the cache: on a
+                    // case-insensitive file system its path is not a name.
+                    if !case_sensitive {
+                        error = Some(format!(
+                            "the snapshot has {} as deleted, which the child cannot name on a case-insensitive file system",
+                            path.0
+                        ));
+                        return false;
+                    }
+                    if disk.file_exists(&path.0) {
+                        diff.missing.push(path.0.clone());
+                    }
+                }
+                Some(file) => {
+                    let file = file.borrow();
+                    if file.needs_reload {
+                        return true;
+                    }
+                    cached.insert(path.clone());
+                    let name = &file.file_base.file_name;
+                    let (text, ok) = disk.read_file(name);
+                    if !ok || text != *file.file_base.content {
+                        diff.texts.push((name.clone(), file.file_base.content.to_string()));
+                    }
+                }
+            }
+            true
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        fs.cache_directories.range(&mut |entry| {
+            let Some(directory) = entry.value() else {
+                return true;
+            };
+            let path = entry.key();
+            if !case_sensitive {
+                error = Some(format!(
+                    "the snapshot caches the entries of {}, which the child cannot name on a case-insensitive file system",
+                    path.0
+                ));
+                return false;
+            }
+            let live = disk.get_accessible_entries(&path.0);
+            let merged = super::snapshotfs::merge_cached_directory_entries(
+                live.clone(),
+                &directory.borrow(),
+                &|child_path: &tspath::Path, child_name: &str| {
+                    cached.contains(child_path)
+                        || disk.file_exists(&tspath::combine_paths(&path.0, &[child_name]))
+                },
+                case_sensitive,
+            );
+            if !same_entries(&merged, &live) {
+                diff.directories.push((path.0.clone(), merged));
+            }
+            true
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        diff.texts.sort();
+        diff.missing.sort();
+        diff.directories.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(diff)
+    }
 }
 
 /// The LSP language id that `language_kind_to_script_kind` maps to `kind`.
@@ -176,26 +362,14 @@ impl Request {
                 text: overlay.file_base.content.to_string(),
             })
             .collect();
-        let open: rustc_hash::FxHashSet<&str> = open_files
-            .iter()
-            .map(|file| file.file_name.as_str())
-            .collect();
-        // A closed program file whose snapshot text is not the disk text (the
-        // disk changed with no watch event): Go's rebuild reads the snapshot.
-        let snapshot_texts = program
-            .source_files()
-            .iter()
-            .filter(|file| {
-                file.content_mapper().is_empty()
-                    && file.canonical_source_file().is_none()
-                    && !file.file_name().starts_with("bundled:")
-                    && !open.contains(file.file_name())
-            })
-            .filter(|file| {
-                std::fs::read_to_string(file.file_name()).map_or(true, |disk| disk != file.text())
-            })
-            .map(|file| (file.file_name().to_string(), file.text().to_string()))
-            .collect();
+        if project.module_resolver_factory.is_some() {
+            return Err(
+                "the project has a custom module resolver (API), which the child cannot have: not checked"
+                    .to_string(),
+            );
+        }
+        let mut snapshot = SnapshotDiff::of(&builder.fs)?;
+        snapshot.add_config_texts(program.command_line(), &builder);
         let inferred_options = match &builder.compiler_options_for_inferred_projects {
             Some(options) => json_marshal(&CompilerOptionsJSON(options), &[])
                 .map_err(|e| format!("inferred options: {e:?}"))?,
@@ -224,7 +398,7 @@ impl Request {
                     |file| file.file_name().to_string(),
                 ),
             open_files,
-            snapshot_texts,
+            snapshot,
         })
     }
 
@@ -251,10 +425,37 @@ impl Request {
             put(&file.language_kind);
             put(&file.text);
         }
-        put(&self.snapshot_texts.len().to_string());
-        for (name, text) in &self.snapshot_texts {
+        let diff = &self.snapshot;
+        put(&diff.texts.len().to_string());
+        for (name, text) in &diff.texts {
             put(name);
             put(text);
+        }
+        put(&diff.missing.len().to_string());
+        for name in &diff.missing {
+            put(name);
+        }
+        put(&diff.directories.len().to_string());
+        for (name, entries) in &diff.directories {
+            put(name);
+            let mut list = |names: &[String]| {
+                put(&names.len().to_string());
+                for n in names {
+                    put(n);
+                }
+            };
+            list(&entries.files);
+            list(&entries.directories);
+            // The symlinks: a marker, then the sorted names.
+            let symlinks: Vec<String> = match &entries.symlinks {
+                None => vec!["-".to_string()],
+                Some(symlinks) => {
+                    let mut sorted: Vec<String> = symlinks.iter().cloned().collect();
+                    sorted.sort();
+                    std::iter::once("+".to_string()).chain(sorted).collect()
+                }
+            };
+            list(&symlinks);
         }
         out
     }
@@ -305,11 +506,36 @@ impl Request {
                 text,
             });
         }
-        let mut snapshot_texts = Vec::new();
+        let mut snapshot = SnapshotDiff::default();
         for _ in 0..number(take()?)? {
             let name = take()?;
             let text = take()?;
-            snapshot_texts.push((name, text));
+            snapshot.texts.push((name, text));
+        }
+        for _ in 0..number(take()?)? {
+            snapshot.missing.push(take()?);
+        }
+        for _ in 0..number(take()?)? {
+            let name = take()?;
+            let mut list = || -> Result<Vec<String>, String> {
+                let n = number(take()?)?;
+                (0..n).map(|_| take()).collect()
+            };
+            let files = list()?;
+            let directories = list()?;
+            let marked = list()?;
+            let symlinks = match marked.split_first() {
+                Some((marker, names)) if marker == "+" => Some(names.iter().cloned().collect()),
+                _ => None,
+            };
+            snapshot.directories.push((
+                name,
+                Entries {
+                    files,
+                    directories,
+                    symlinks,
+                },
+            ));
         }
         Ok(Request {
             current_directory,
@@ -322,7 +548,7 @@ impl Request {
             config_file_name,
             changed_file,
             open_files,
-            snapshot_texts,
+            snapshot,
         })
     }
 }
@@ -439,7 +665,9 @@ fn run_child_session(spawner: Option<Rc<dyn crate::contentmapper::Spawner>>) -> 
     let base = crate::frontend::bundled::wrap_fs_exported(vfs::osvfs::osvfs_fs());
     let fs: Rc<dyn Fs> = Rc::new(SnapshotTextFs {
         inner: base,
-        texts: request.snapshot_texts.iter().cloned().collect(),
+        texts: request.snapshot.texts.iter().cloned().collect(),
+        missing: request.snapshot.missing.iter().cloned().collect(),
+        directories: request.snapshot.directories.iter().cloned().collect(),
     });
     let session = super::session::new_session(&SessionInit {
         background_ctx: ctx.clone(),
@@ -542,11 +770,13 @@ fn snapshot_case_sensitive() -> bool {
     vfs::osvfs::osvfs_fs().use_case_sensitive_file_names()
 }
 
-/// The file system of the child: the disk, with the snapshot text of the
-/// files that the server's snapshot keeps with another text.
+/// The file system of the child: the disk, with the answers of the
+/// server's snapshot where they differ (`SnapshotDiff`).
 struct SnapshotTextFs {
     inner: Rc<dyn Fs>,
     texts: FxHashMap<String, String>,
+    missing: rustc_hash::FxHashSet<String>,
+    directories: FxHashMap<String, Entries>,
 }
 
 impl Fs for SnapshotTextFs {
@@ -554,9 +784,13 @@ impl Fs for SnapshotTextFs {
         self.inner.use_case_sensitive_file_names()
     }
     fn file_exists(&self, path: &str) -> bool {
-        self.texts.contains_key(path) || self.inner.file_exists(path)
+        !self.missing.contains(path)
+            && (self.texts.contains_key(path) || self.inner.file_exists(path))
     }
     fn read_file(&self, path: &str) -> (String, bool) {
+        if self.missing.contains(path) {
+            return (String::new(), false);
+        }
         match self.texts.get(path) {
             Some(text) => (text.clone(), true),
             None => self.inner.read_file(path),
@@ -583,9 +817,41 @@ impl Fs for SnapshotTextFs {
         self.inner.directory_exists(path)
     }
     fn get_accessible_entries(&self, path: &str) -> Entries {
-        self.inner.get_accessible_entries(path)
+        // The disk lists a directory in name order (Go `os.ReadDir`); the
+        // snapshot's merged entries come in cache order (a Go map range),
+        // so a replayed listing is sorted as the disk sorts.
+        let mut entries = match self.directories.get(path) {
+            Some(entries) => {
+                let mut entries = entries.clone();
+                entries.files.sort();
+                entries.directories.sort();
+                entries
+            }
+            None => self.inner.get_accessible_entries(path),
+        };
+        // The listing agrees with the files that exist here: a file with a
+        // snapshot text is listed, a file that the snapshot has as deleted is
+        // not, as for the server's snapshot.
+        for name in self.texts.keys() {
+            if tspath::get_directory_path(name) == path {
+                let base = tspath::get_base_file_name(name);
+                if !entries.files.iter().any(|file| *file == base) {
+                    entries.files.push(base);
+                    entries.files.sort();
+                }
+            }
+        }
+        entries.files.retain(|file| {
+            !self
+                .missing
+                .contains(&tspath::combine_paths(path, &[file.as_str()]))
+        });
+        entries
     }
     fn stat(&self, path: &str) -> Option<FileInfo> {
+        if self.missing.contains(path) {
+            return None;
+        }
         self.inner.stat(path)
     }
     fn realpath(&self, path: &str) -> String {
@@ -616,8 +882,34 @@ mod tests {
                 language_kind: "typescriptreact".to_string(),
                 text: "const a = \"\n1\";".to_string(),
             }],
-            snapshot_texts: vec![("/p/b.ts".to_string(), String::new())],
+            snapshot: SnapshotDiff {
+                texts: vec![("/p/b.ts".to_string(), String::new())],
+                missing: vec!["/p/gone.ts".to_string()],
+                directories: vec![
+                    (
+                        "/p".to_string(),
+                        Entries {
+                            files: vec!["a.ts".to_string()],
+                            directories: vec!["src".to_string()],
+                            symlinks: None,
+                        },
+                    ),
+                    (
+                        "/p/src".to_string(),
+                        Entries {
+                            files: Vec::new(),
+                            directories: Vec::new(),
+                            symlinks: Some(
+                                ["x".to_string(), "a".to_string()].into_iter().collect(),
+                            ),
+                        },
+                    ),
+                ],
+            },
         };
-        assert_eq!(Request::decode(&request.encode()).unwrap(), request);
+        assert_eq!(
+            Request::decode(&request.encode()).unwrap().encode(),
+            request.encode()
+        );
     }
 }
