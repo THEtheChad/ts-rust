@@ -1,0 +1,10 @@
+# name	repo url (or local:<path>)	commit	tsconfig (relative to the repo)	installer	notes
+query	https://github.com/TanStack/query	44645e9eb1dafba5f2f229adb328582075484f36	packages/query-core/tsconfig.prod.json	pnpm	Query core, the repo's main target (prepare-query-inputs.mjs pin)
+hono	https://github.com/honojs/hono	06880c4a2b04de9dd74217f26dd831209b9c01f1	tsconfig.build.json	bun	prepare-hono-inputs.mjs pin
+zod	https://github.com/colinhacks/zod	43f729db4aa0cedff6d6b3261f33f8556b3c7102	packages/zod/tsconfig.json	pnpm	prepare-zod-project-input.mjs pin
+effect	https://github.com/Effect-TS/effect	0d083ba26b2e1afec8d3e8d83db0d05683b6602b	packages/effect/tsconfig.noeffect.json	pnpm	prepare-effect-project-inputs.mjs pin, plugins removed (see setup)
+ts-pattern	https://github.com/gvergnaud/ts-pattern	c92ca435c7e1827e0fd55c539080ef1bfd6fe3f0	tsconfig.json	npm	prepare-ts-pattern-input.mjs pin
+umami	local:/home/agent/.cache/lspdiff/projects/umami	559e3c607	tsconfig.json	none	the LSP benchmark project (scripts/lspdiff), symlinked
+t3-web	https://github.com/pingdotgg/t3code	cd41c4ada0c70cc2eec95ecd7266f3dab010c58c	apps/web/tsconfig.noeffect.json	pnpm	README T3 Code benchmark, plugins removed (see setup)
+t3-server	https://github.com/pingdotgg/t3code	cd41c4ada0c70cc2eec95ecd7266f3dab010c58c	apps/server/tsconfig.noeffect.json	pnpm	README T3 Code benchmark, plugins removed (see setup)
+vscode	https://github.com/microsoft/vscode	3f07e1aba32acacb8b08ae91bfdc954b580ad1fd	src/tsconfig.json	npm	README six-app benchmark; electron typings added by setup
