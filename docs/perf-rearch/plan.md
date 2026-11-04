@@ -426,3 +426,30 @@ once a **reconciliation step** is built and tested.
     - de-duplicate the verifier copies of `trackingvfs` and `cachedvfs`;
     - split `process_all_program_files` and `create_program`;
     - fix the 4 clippy warnings.
+- **2026-11-04, Chad: no old code behind switches.** "This is effectively a
+  rewrite, so it doesn't make sense that we would put old code behind
+  switches." This replaces the rollout-aid rule (brief: "Code quality: no old
+  paths"). Go is the oracle and git holds the old code, so a switch adds
+  nothing but a second path.
+  - **L1:** no `GOPORT_LOAD_VIEW`. The view and its reconciliation step
+    replace the LSP's first-load path in one merge, with Astra reviewing
+    both. "Default with recovery" stands; there is no opt-in phase.
+  - **D1-S1** is a spike: `GOPORT_CERT_SPLIT=refine` stays on its branch. If
+    D1 proceeds, the certified split replaces the FENNEL split outright once
+    testing shows zero divergences.
+  - **The cleanup lane starts now**, in three parts, so it doesn't collide
+    with running lanes:
+    - **C1 (now):** remove every old-path switch outside the loader and the
+      checker partition, inherited ones included (emit, program reuse, ast,
+      lib snapshots, incremental, memory). Move the verify, dump and timer env
+      names behind a `diagnostics` cargo feature, de-duplicate the verifier
+      copies of `trackingvfs` and `cachedvfs`, and fix the 4 clippy warnings.
+      Product options (`TSC_RS_EFFECT`) and tuning knobs stay.
+    - **C2 (after L1 merges):** the loader switches (`GOPORT_FIRST_LOAD_AHEAD`,
+      `GOPORT_RESOLVE_AHEAD`, `GOPORT_EARLY_ROOTS`, `GOPORT_JOB_MAP`,
+      `GOPORT_LOAD_COMMIT`/`NAMES`/`PREP`, `GOPORT_PREFETCH_MOVE_UP`,
+      `GOPORT_MAPPED_PREFETCH`), and split `process_all_program_files` and
+      `create_program`.
+    - **C3 (after D1 decides):** `GOPORT_FAST*`.
+  - **Gate later:** once C1 to C3 land, `quality.sh` fails on any new
+    behavior switch.
