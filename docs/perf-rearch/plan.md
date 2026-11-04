@@ -216,3 +216,8 @@ until the baseline and parity lanes have released the machine.
   - **Plan:** after the current fix rounds, root holds new CPU-heavy lanes so
     the suite and the B1/A1 timing jobs (`b1-time2`) can run in one idle
     window.
+- **2026-11-04, E3 spike done:** the overhead is duplicated resolution, not
+  parse work (`experiments/e3-parse-overhead.md`). The prototype is held
+  until an idle wall check. New candidate **E3b**: a shared package.json
+  cache, about 15% of the default parse phase, to be designed with program
+  audit candidate 3.
