@@ -39,11 +39,11 @@ use crate::execute::incremental::program::{
     read_build_info_program,
 };
 use crate::execute::tsc::{
-    CommandLineResult, CompileTimes, CompilerProgram, DiagnosticReporter, DiagnosticsReporter,
-    EmitInput, ExitStatus, ProgramLike, System, SystemParseConfigHost, create_diagnostic_reporter,
-    create_report_error_summary, emit_and_report_statistics, get_trace_with_writer_from_sys,
-    new_content_mapper_host, print_build_help, print_help, print_version, write_config_file,
-    write_str,
+    CommandLineResult, CompileTimes, DiagnosticReporter, DiagnosticsReporter,
+    EarlyEmitCompilerProgram, EmitInput, ExitStatus, ProgramLike, System, SystemParseConfigHost,
+    create_diagnostic_reporter, create_report_error_summary, emit_and_report_statistics,
+    get_trace_with_writer_from_sys, new_content_mapper_host, print_build_help, print_help,
+    print_version, write_config_file, write_str,
 };
 #[cfg(not(target_family = "wasm"))]
 use crate::execute::watcher::create_watcher;
@@ -793,18 +793,28 @@ fn perform_compilation(
         stop_tracing(sys);
         return result(status);
     }
+    // PORT: perf. Without a bin's replacement, the plain program sends each
+    // checker's emit right behind its check and global diagnostics read
+    // when the emit rules allow it (`EarlyEmitCompilerProgram`).
+    let write_file = hooks.write_file();
+    let early_emit_program = EarlyEmitCompilerProgram::new(write_file.clone());
+    let program_like: &dyn ProgramLike = hooks.program_like().unwrap_or(&early_emit_program);
     let (emit_result, _) = emit_and_report_statistics(&EmitInput {
         sys,
-        program_like: hooks.program_like().unwrap_or(&CompilerProgram),
+        program_like,
         config: Some(&*config),
         report_diagnostic,
         report_error_summary,
         writer: sys.writer(),
-        write_file: hooks.write_file(),
+        write_file,
         compile_times,
         testing,
         testing_m_times_cache: None,
     });
+    debug_assert!(
+        early_emit_program.started_used(),
+        "the emit did not use the check and emit that started early"
+    );
 
     stop_tracing(sys);
 
@@ -885,13 +895,25 @@ fn show_config(sys: &dyn System, config: &ParsedCommandLine, config_file_name: &
 // the build info tracking. There is no outDir or input guard: tsgo writes
 // next to the sources or into outDir, as Go does.
 pub(crate) fn os_write_file() -> WriteFile {
-    Arc::new(
-        |file_name: &str, text: &str, _data: &mut WriteFileData| -> Result<(), String> {
-            osvfs_fs()
-                .write_file(file_name, text)
-                .map_err(|err| fs_error_text(&err))
-        },
-    )
+    static OS_WRITE_FILE: std::sync::OnceLock<WriteFile> = std::sync::OnceLock::new();
+    OS_WRITE_FILE
+        .get_or_init(|| {
+            Arc::new(
+                |file_name: &str, text: &str, _data: &mut WriteFileData| -> Result<(), String> {
+                    osvfs_fs()
+                        .write_file(file_name, text)
+                        .map_err(|err| fs_error_text(&err))
+                },
+            )
+        })
+        .clone()
+}
+
+/// PORT: not in Go (perf). True when `write_file` is `os_write_file`'s
+/// callback (one shared value): the plain early emit holds only its writes
+/// (`execute::tsc::EarlyEmitCompilerProgram`).
+pub(crate) fn is_os_write_file(write_file: &WriteFile) -> bool {
+    Arc::ptr_eq(write_file, &os_write_file())
 }
 
 #[cfg(test)]

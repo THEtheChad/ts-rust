@@ -996,6 +996,10 @@ fn run_main(start: Instant) -> i32 {
     }));
     // Go: defer stop()
     stop();
+    // PORT: not in Go (perf). `GOPORT_EMIT_PHASE_TIMES=1` and
+    // `GOPORT_CHECKER_CALL_LOG=<file>`; both off by default.
+    ts_goport::emitter::phase_times::report();
+    ts_goport::program::write_checker_call_log();
     // `--showConfig` output has no trailing newline, and
     // `std::process::exit` runs no destructors, so flush here.
     let _ = sys.writer().borrow_mut().flush();

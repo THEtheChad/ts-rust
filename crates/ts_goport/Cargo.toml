@@ -67,6 +67,11 @@ jemalloc = ["goport_core/jemalloc", "dep:tikv-jemallocator", "dep:tikv-jemalloc-
 # there with crates/ts_goport/scripts/copy-libs.sh (build-release.sh does
 # this).
 noembed = ["goport_core/noembed", "goport_util/noembed"]
+# Test-only hooks for tests/plain_early_emit.rs (its panic, stall and write
+# panic tests run only with it): `scripts/run-cargo-capped.sh test --release
+# -p ts_goport --features test-hooks --test plain_early_emit`. Never in a
+# shipped build.
+test-hooks = ["goport_core/test-hooks"]
 
 [lints]
 workspace = true

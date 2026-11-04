@@ -10,7 +10,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use super::emitter::{DeclarationPrint, EmitOnly, Emitter, JsPrint, js_emit_needs_checker};
+use super::emitter::{DeclarationPrint, EmitOnly, Emitter, JsPrint, js_emit_checker_reason};
+use super::phase_times::{self, Route};
 use crate::frontend::outputpaths::{ForceEmitPaths, OutputPaths};
 use crate::frontend::tspath::{Path, has_extension, path_is_relative, to_path};
 use crate::printer::emit_context::{ParseEmitNodes, PrintTables};
@@ -163,14 +164,549 @@ fn emit_results_with(
         target.force_dts_emit(),
         target.force_js_emit(),
     );
+    phase_times::route(Route::StartAfterCheck, source_files.len());
     let pooled = start_emit_files_with_pool(&source_files, |_| target.clone(), wrap)
         .map(PendingPoolEmit::wait);
     match pooled {
         Some(results) => results,
         None => run_emit_jobs(source_files, move |source_file| {
-            wrap(&|| emit_source_file(source_file, &target))
+            let result = wrap(&|| emit_source_file(source_file, &target));
+            log_checker_emit(source_file);
+            result
         }),
     }
+}
+
+/// Adds the emit of `source_file` to the checker call log
+/// (`program::checker_call_log_event_here`), after its checker part.
+fn log_checker_emit(source_file: Node) {
+    crate::program::checker_call_log_event_here(|| {
+        format!(
+            "emit {}",
+            crate::program::checker_call_log_file(source_file)
+        )
+    });
+}
+
+/// PORT: not in Go (perf). True when plain `tsc -p` (a `*compiler.Program`,
+/// not incremental) may send its emit right behind its check
+/// (`start_plain_emit`): the rules of `emit_can_start_with_check` (options,
+/// F1 to F4), and the program has source files. Loading thread only; it
+/// reads every program file.
+#[must_use]
+pub fn plain_emit_can_start_with_check() -> bool {
+    plain_early_emit_enabled() && !source_files().is_empty() && emit_can_start_with_check()
+}
+
+/// False when `GOPORT_PLAIN_EARLY_EMIT` is `0`: plain `tsc -p` then emits
+/// after the whole check, as in Go, and the incremental early emit stays
+/// on (`GOPORT_EARLY_EMIT=0` turns both off). For tests, timing and the
+/// checker call log diff on one binary. Read once.
+fn plain_early_emit_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("GOPORT_PLAIN_EARLY_EMIT").as_deref() != Ok("0"))
+}
+
+/// PORT: not in Go (perf). The emit of plain `tsc -p` sent behind the
+/// check (`start_plain_emit`), not waited for yet. Its writes are held in
+/// memory (`DeferredWrites`) until `wait`, which runs after every check and
+/// global diagnostics read ended without a panic. When it drops without a
+/// `wait` (a panic in the check unwinds through its owner), it cancels the
+/// emit jobs that have not started, waits for the others and writes
+/// nothing, as Go's plain program writes nothing before its check ends.
+pub struct StartedPlainEmit {
+    /// The emit jobs; None once `wait` or the drop took them.
+    files: Option<PendingPlainFiles>,
+    /// The files of the jobs, in file order (one result per file).
+    source_files: Vec<Node>,
+    /// The `WriteFile` of the start: the real writes, at `wait`.
+    write_file: WriteFile,
+    /// The writes that the emit jobs made.
+    writes: Arc<DeferredWrites>,
+    /// `program::bind_thread_fingerprint` of this thread after the start.
+    /// The emit pool starts from a copy of this thread's state, so until
+    /// the wait this thread must not change it, else the pool would start
+    /// from other state than in the emit after the check.
+    fingerprint: (usize, (u64, u64), u64, usize),
+}
+
+enum PendingPlainFiles {
+    Pool(PendingPoolEmit),
+    Checkers(PendingCheckerJobs<EmitResult>),
+}
+
+/// One write of an emit, held until the check ends (`StartedPlainEmit`).
+struct DeferredWrite {
+    file_name: String,
+    text: String,
+    data: WriteFileData,
+}
+
+/// The writes of a plain early emit, by source file.
+///
+/// Until `open` (the check and the global diagnostics reads ended), every
+/// write waits here and its emitter sees a success. `open` then makes the
+/// waiting writes on a few threads, each file's in its order (the source
+/// map then the JS file, then the declaration map then the d.ts file; a
+/// file's d.ts part writes only after its JS part ended,
+/// `Emitter::wait_for_js_part`). After `open`, a write of a file with no
+/// write waiting is made at once by its emitter, as in the barrier path,
+/// so it gets its own result; a write of a file whose earlier writes still
+/// wait goes behind them. The outcome of each write that waited is applied
+/// to its file's result at the end (`apply_deferred_outcomes`).
+struct DeferredWrites {
+    /// The real writes.
+    write_file: WriteFile,
+    state: Mutex<SinkState>,
+}
+
+#[derive(Default)]
+struct SinkState {
+    /// Set by `open`.
+    open: bool,
+    /// Set when the emit is cancelled or a write panicked: no write is
+    /// made after it, and every write is dropped.
+    closed: bool,
+    files: FxHashMap<Node, FileWrites>,
+}
+
+#[derive(Default)]
+struct FileWrites {
+    /// The writes that wait, in order.
+    pending: std::collections::VecDeque<DeferredWrite>,
+    /// A flush thread makes this file's waiting writes.
+    writing: bool,
+    /// Each made write that waited: its file name and outcome.
+    outcomes: Vec<(String, WriteOutcome)>,
+    /// The TS5033 diagnostics of the failed writes that waited.
+    failures: Vec<Diagnostic>,
+}
+
+impl DeferredWrites {
+    fn lock(&self) -> std::sync::MutexGuard<'_, SinkState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The `WriteFile` of the emitters.
+    fn write(&self, file_name: &str, text: &str, data: &mut WriteFileData) -> Result<(), String> {
+        let mut state = self.lock();
+        if state.closed {
+            return Ok(());
+        }
+        if state.open
+            && state
+                .files
+                .get(&data.source_file)
+                .is_none_or(|file| file.pending.is_empty() && !file.writing)
+        {
+            drop(state);
+            return (self.write_file)(file_name, text, data);
+        }
+        state
+            .files
+            .entry(data.source_file)
+            .or_default()
+            .pending
+            .push_back(DeferredWrite {
+                file_name: file_name.to_owned(),
+                text: text.to_owned(),
+                data: data.clone(),
+            });
+        Ok(())
+    }
+
+    /// Makes the writes that wait, on a few threads, and lets later writes
+    /// through (see the type). Returns when no write waits.
+    fn open(&self) {
+        let _flush_timer = phase_times::start_flush();
+        let queue: Vec<Node> = {
+            let mut state = self.lock();
+            state.open = true;
+            state
+                .files
+                .iter_mut()
+                .filter(|(_, file)| !file.pending.is_empty())
+                .map(|(&node, file)| {
+                    file.writing = true;
+                    node
+                })
+                .collect()
+        };
+        if queue.is_empty() {
+            return;
+        }
+        let threads = std::thread::available_parallelism()
+            .map_or(4, std::num::NonZeroUsize::get)
+            .clamp(1, 8)
+            .min(queue.len());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads)
+                .map(|index| {
+                    let (next, queue) = (&next, &queue);
+                    std::thread::Builder::new()
+                        .name(format!("flush-{index}"))
+                        .spawn_scoped(scope, move || {
+                            while let Some(&node) =
+                                queue.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                            {
+                                self.flush_file(node);
+                            }
+                        })
+                        .expect("spawn a write thread")
+                })
+                .collect();
+            for worker in workers {
+                if let Err(payload) = worker.join() {
+                    resume_unwind(payload);
+                }
+            }
+        });
+    }
+
+    /// Makes the waiting writes of `node`, also those that its emitter
+    /// adds meanwhile, then lets its writes through.
+    fn flush_file(&self, node: Node) {
+        let _timer = phase_times::start(phase_times::Phase::Write);
+        loop {
+            let mut write = {
+                let mut state = self.lock();
+                if state.closed {
+                    return;
+                }
+                let file = state.files.get_mut(&node).expect("a flushed file");
+                let Some(write) = file.pending.pop_front() else {
+                    file.writing = false;
+                    return;
+                };
+                write
+            };
+            // The write gets the `WriteFileData` that its emitter made. The
+            // early emit runs only with the OS write (`os_write_file`),
+            // which reads none of it.
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                test_write_hook(&write.file_name);
+                (self.write_file)(&write.file_name, &write.text, &mut write.data)
+            }))
+            .unwrap_or_else(|payload| {
+                // No write after a panicking write: the panic goes on to
+                // `StartedPlainEmit`'s drop, which cancels and drains.
+                self.close();
+                resume_unwind(payload)
+            });
+            let mut state = self.lock();
+            // Another flush thread's write panicked and closed the writes
+            // (`close` clears `files`): stop without a second panic, so that
+            // panic is the one that goes on.
+            if state.closed {
+                return;
+            }
+            let file = state.files.get_mut(&node).expect("a flushed file");
+            match result {
+                Ok(()) => file.outcomes.push((
+                    write.file_name,
+                    WriteOutcome::Written(write.data.skipped_dts_write),
+                )),
+                Err(err) => {
+                    // A source map is `<file>.map` (`outputpaths`), and Go's
+                    // TS5033 for it names the file it maps.
+                    let message_file = write
+                        .file_name
+                        .strip_suffix(".map")
+                        .unwrap_or(&write.file_name);
+                    file.failures.push(new_compiler_diagnostic(
+                        diag::Could_not_write_file_0_Colon_1,
+                        args![message_file, err],
+                    ));
+                    file.outcomes.push((write.file_name, WriteOutcome::Failed));
+                }
+            }
+        }
+    }
+
+    /// Makes no write from now on, and drops every waiting write (a
+    /// cancelled emit, or a panic in a write).
+    fn close(&self) {
+        let mut state = self.lock();
+        state.closed = true;
+        state.files.clear();
+    }
+
+    /// The outcomes of the writes that waited, by source file.
+    fn take(&self) -> FxHashMap<Node, FileWrites> {
+        let mut state = self.lock();
+        debug_assert!(
+            state
+                .files
+                .values()
+                .all(|file| file.pending.is_empty() && !file.writing),
+            "a deferred write was not made"
+        );
+        std::mem::take(&mut state.files)
+    }
+}
+
+/// PORT: not in Go (tests, feature `test-hooks`).
+/// `GOPORT_TEST_WRITE_PANIC=<base name>` panics in the waiting write of the
+/// output with that base name (`DeferredWrites::flush_file`).
+#[cfg(feature = "test-hooks")]
+fn test_write_hook(file_name: &str) {
+    static NAME: OnceLock<Option<String>> = OnceLock::new();
+    let name = NAME.get_or_init(|| {
+        std::env::var("GOPORT_TEST_WRITE_PANIC")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    if let Some(name) = name
+        && file_name.rsplit('/').next() == Some(name.as_str())
+    {
+        panic!("GOPORT_TEST_WRITE_PANIC {name}");
+    }
+}
+
+#[cfg(not(feature = "test-hooks"))]
+#[inline(always)]
+fn test_write_hook(_file_name: &str) {}
+
+/// PORT: not in Go (perf). True when no output path of the plain emit is
+/// a file system entry other than a regular file (a directory, a FIFO, a
+/// device, a socket, a symlink). The early emit holds its writes and makes
+/// them on a few threads after the check; a write that blocks (opening a
+/// FIFO with no reader) could hold back the other outputs that the
+/// barrier path writes. With such an entry the program keeps the barrier.
+/// Loading thread; it stats every output path.
+#[must_use]
+pub fn plain_emit_outputs_are_regular_files() -> bool {
+    let host = new_emit_host_without_checker();
+    get_source_files_to_emit(None, false, false)
+        .into_iter()
+        .all(|file| {
+            let paths =
+                get_output_paths_for_source_file(file, host.as_ref(), ForceEmitPaths::default());
+            [
+                paths.js_file_path(),
+                paths.source_map_file_path(),
+                paths.declaration_file_path(),
+                paths.declaration_map_path(),
+            ]
+            .into_iter()
+            .filter(|path| !path.is_empty())
+            .all(|path| {
+                // The same OS path the write uses (`os_path`), so a name that is
+                // not UTF-8 is checked where it will be written.
+                std::fs::symlink_metadata(crate::frontend::vfs::os_path(path))
+                    .map_or(true, |meta| meta.file_type().is_file())
+            })
+        })
+}
+
+/// Set when a plain early emit is cancelled (`StartedPlainEmit` dropped
+/// without a wait): its emit jobs that have not started yet return an
+/// empty result. One plain program runs at a time in a process (the
+/// loading thread waits for or drops its emit before the next program).
+static PLAIN_EMIT_CANCELLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The `wrap` of the plain early emit: no work once it is cancelled.
+fn plain_emit_wrap(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
+    if PLAIN_EMIT_CANCELLED.load(std::sync::atomic::Ordering::Acquire) {
+        return EmitResult::default();
+    }
+    emit_file()
+}
+
+/// PORT: not in Go (perf). The first half of `emit(options)` for plain
+/// `tsc -p`, sent right behind the check: the same file jobs as `emit`
+/// sends after the check (`emit_results_with`), to the emit pool and to the
+/// checker threads, without a wait. Each checker thread runs its emit jobs
+/// after the jobs sent to it before: its check and its global diagnostics
+/// read (`program::start_global_diagnostics`), which the caller sends
+/// first. So each checker gets the same checker calls in the same order as
+/// with the emit after the whole check; only the other checkers' progress
+/// differs, and no checker reads another's state. The JS parts that need
+/// no checker run on the emit pool during the check.
+///
+/// The jobs transform and print, but make no write and no directory: each
+/// write goes to memory, and `StartedPlainEmit::wait` makes the writes with
+/// `options.write_file` once the check ended (`DeferredWrites`).
+///
+/// The caller checks `plain_emit_can_start_with_check`. `options` must be
+/// the options of the `emit` call of `EmitFilesAndReportErrors`: no target
+/// file, `EmitOnly::All`, no `force_emit`, and a `write_file`. With the
+/// rules, `noEmit` and `noEmitOnError` are off, so `handle_no_emit_options`
+/// returns None, and `--singleThreaded` and a trace are off, so the jobs
+/// run in file order and write no trace event.
+pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
+    debug_assert!(
+        options.target_source_files.is_none()
+            && options.emit_only == EmitOnly::All
+            && !options.force_emit,
+        "start_plain_emit: only the emit of all files starts early"
+    );
+    debug_assert!(
+        handle_no_emit_options(None).is_none()
+            && !single_threaded()
+            && crate::tracing::get().is_none(),
+        "start_plain_emit: the options do not allow an early emit"
+    );
+    let write_file = options
+        .write_file
+        .clone()
+        .expect("start_plain_emit: the early emit needs a WriteFile");
+    PLAIN_EMIT_CANCELLED.store(false, std::sync::atomic::Ordering::Release);
+    let writes = Arc::new(DeferredWrites {
+        write_file: write_file.clone(),
+        state: Mutex::default(),
+    });
+    let record: WriteFile = {
+        let writes = Arc::clone(&writes);
+        Arc::new(
+            move |file_name: &str, text: &str, data: &mut WriteFileData| {
+                writes.write(file_name, text, data)
+            },
+        )
+    };
+    let target = EmitterOptions {
+        emit_only: options.emit_only,
+        force_emit: options.force_emit,
+        write_file: Some(record),
+    };
+    let source_files = get_source_files_to_emit(None, false, false);
+    phase_times::route(Route::StartPlainEarly, source_files.len());
+    let files = match start_emit_files_with_pool(&source_files, |_| target.clone(), plain_emit_wrap)
+    {
+        Some(pool) => PendingPlainFiles::Pool(pool),
+        None => PendingPlainFiles::Checkers(send_on_checker_threads_for_files(
+            &source_files,
+            move |source_file| {
+                let result = plain_emit_wrap(&|| emit_source_file(source_file, &target));
+                log_checker_emit(source_file);
+                result
+            },
+        )),
+    };
+    StartedPlainEmit {
+        files: Some(files),
+        source_files,
+        write_file,
+        writes,
+        fingerprint: crate::program::bind_thread_fingerprint(),
+    }
+}
+
+impl StartedPlainEmit {
+    /// The second half of `emit(options)`: waits for the jobs that
+    /// `start_plain_emit` sent, lets their writes start (`DeferredWrites::open`)
+    /// and combines the results in file order. `options` must be the
+    /// options of the start. The caller calls it only after every check and
+    /// global diagnostics read ended.
+    pub fn wait(mut self, options: &EmitOptions) -> EmitResult {
+        assert!(
+            options.target_source_files.is_none()
+                && options.emit_only == EmitOnly::All
+                && !options.force_emit
+                && options
+                    .write_file
+                    .as_ref()
+                    .is_some_and(|write_file| Arc::ptr_eq(write_file, &self.write_file)),
+            "the emit did not get the options of the emit that started with the check"
+        );
+        let fingerprint = crate::program::bind_thread_fingerprint();
+        if fingerprint != self.fingerprint {
+            debug_assert!(
+                false,
+                "the loading thread changed its state during the early emit"
+            );
+            if crate::program::checker_call_log_enabled() {
+                eprintln!(
+                    "GOPORT_CHECKER_CALL_LOG: the loading thread changed its state during the early emit"
+                );
+            }
+        }
+        // Every check and global diagnostics read ended: the writes start.
+        // `self.files` stays until the waiting writes are made, so a panic
+        // in them closes the writes, cancels and drains the emit (drop).
+        self.writes.open();
+        let files = self
+            .files
+            .take()
+            .expect("the early emit is waited for once");
+        let mut results = match files {
+            PendingPlainFiles::Pool(pool) => pool.wait(),
+            PendingPlainFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
+        };
+        apply_deferred_outcomes(&self.source_files, &mut results, self.writes.take());
+        combine_emit_results(results)
+    }
+}
+
+impl Drop for StartedPlainEmit {
+    /// Without a `wait`, or with a panic in the waiting writes (a panic in
+    /// the check, the global diagnostics read or a write): closes the
+    /// writes, cancels the jobs that have not started, waits for the rest,
+    /// and drops their writes. The panic goes on after it.
+    fn drop(&mut self) {
+        let Some(files) = self.files.take() else {
+            return;
+        };
+        self.writes.close();
+        PLAIN_EMIT_CANCELLED.store(true, std::sync::atomic::Ordering::Release);
+        match files {
+            PendingPlainFiles::Pool(pool) => pool.drain(),
+            PendingPlainFiles::Checkers(jobs) => drop(jobs.wait_all()),
+        }
+        self.writes.close();
+    }
+}
+
+/// The outcome of one write that waited (`DeferredWrites`).
+enum WriteOutcome {
+    /// Written; true when the `WriteFile` skipped a d.ts write.
+    Written(bool),
+    /// The write failed.
+    Failed,
+}
+
+/// Changes each file's result for the outcomes of its writes that waited
+/// (`DeferredWrites`), as the emitter would have with the write inline
+/// (`Emitter::print_source_file`): a failed write is not an emitted file
+/// and adds TS5033 to its file's diagnostics, and a write that the
+/// `WriteFile` skipped (`skipped_dts_write`) is not an emitted file.
+fn apply_deferred_outcomes(
+    source_files: &[Node],
+    results: &mut [EmitResult],
+    mut outcomes: FxHashMap<Node, FileWrites>,
+) {
+    for (file, result) in source_files.iter().zip(results.iter_mut()) {
+        let Some(file_writes) = outcomes.remove(file) else {
+            continue;
+        };
+        for (file_name, outcome) in file_writes.outcomes {
+            let emitted = match outcome {
+                WriteOutcome::Written(skipped) => !skipped,
+                WriteOutcome::Failed => false,
+            };
+            if !emitted
+                && let Some(at) = result
+                    .emitted_files
+                    .iter()
+                    .position(|name| *name == file_name)
+            {
+                result.emitted_files.remove(at);
+            }
+        }
+        if !file_writes.failures.is_empty() {
+            let mut diagnostics = DiagnosticsCollection::default();
+            for diagnostic in std::mem::take(&mut result.diagnostics)
+                .into_iter()
+                .chain(file_writes.failures)
+            {
+                diagnostics.add(diagnostic);
+            }
+            result.diagnostics = diagnostics.get_diagnostics();
+        }
+    }
+    debug_assert!(outcomes.is_empty(), "a deferred write of no emitted file");
 }
 
 /// PORT: not in Go. The API emit (`handle_emit`) writes the outputs after
@@ -356,6 +892,7 @@ pub fn start_emit_batch_with(
     // batch replaces, so each checker does the same work in the same order.
     // With the pool, no trace is written (`emit_pool_enabled`), so there is
     // no trace event per target.
+    phase_times::route(Route::StartBatch, files.len());
     let pooled = start_emit_files_with_pool(&files, |file| file_targets[&file].clone(), wrap);
     let jobs = match pooled {
         Some(pool) => PendingFiles::Pool(pool),
@@ -368,7 +905,9 @@ pub fn start_emit_batch_with(
                     // One Go `Program.Emit` trace event per target, on the emit thread.
                     let _trace = trace_emit();
                     let target = &file_targets[&source_file];
-                    wrap(&|| emit_source_file(source_file, target))
+                    let result = wrap(&|| emit_source_file(source_file, target));
+                    log_checker_emit(source_file);
+                    result
                 },
             ))
         }
@@ -574,8 +1113,13 @@ enum FileEmit {
 /// emit never has `force_emit` and its parts get the paths of the whole
 /// emit.
 fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
+    file_route(source_file, target).0
+}
+
+/// `file_emit` with the reason (`phase_times::Route`).
+fn file_route(source_file: Node, target: &EmitterOptions) -> (FileEmit, Route) {
     if target.force_emit {
-        return FileEmit::OnChecker;
+        return (FileEmit::OnChecker, Route::CheckerForced);
     }
     let emit_only = target.emit_only;
     let options = options();
@@ -586,8 +1130,11 @@ fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
         && !options.emit_declaration_only.is_true()
         && !options.no_emit.is_true()
         && source_file_content_mapper(source_file).is_empty();
-    if !has_js || js_emit_needs_checker(source_file) {
-        return FileEmit::OnChecker;
+    if !has_js {
+        return (FileEmit::OnChecker, Route::CheckerNoJsPart);
+    }
+    if let Some(reason) = js_emit_checker_reason(source_file) {
+        return (FileEmit::OnChecker, reason);
     }
     // `get_output_paths_for_file` gives a d.ts path only with declarations
     // on, and never to a JSON file.
@@ -595,9 +1142,9 @@ fn file_emit(source_file: Node, target: &EmitterOptions) -> FileEmit {
         && options.get_emit_declarations()
         && !is_json_source_file(source_file);
     if has_dts {
-        FileEmit::Split
+        (FileEmit::Split, Route::PoolSplit)
     } else {
-        FileEmit::OnPool
+        (FileEmit::OnPool, Route::PoolWhole)
     }
 }
 
@@ -653,6 +1200,8 @@ fn start_emit_files_with_pool(
     wrap: Wrap,
 ) -> Option<PendingPoolEmit> {
     if files.is_empty() || !emit_pool_enabled() {
+        phase_times::route(Route::CheckerPoolOff, files.len());
+        phase_times::route(Route::PrintOnChecker, files.len());
         return None;
     }
     // The rule reads the binder data. Sending a job binds too, but the rule
@@ -660,10 +1209,18 @@ fn start_emit_files_with_pool(
     bind_all();
     let ways: Vec<FileEmit> = files
         .iter()
-        .map(|&file| file_emit(file, &target(file)))
+        .map(|&file| {
+            if !phase_times::enabled() {
+                return file_emit(file, &target(file));
+            }
+            let (way, route) = file_route(file, &target(file));
+            phase_times::route(route, 1);
+            way
+        })
         .collect();
     let twin_mode = dts_twin_mode();
     if twin_mode == DtsTwinMode::Off && ways.iter().all(|&way| way == FileEmit::OnChecker) {
+        phase_times::route(Route::PrintOnChecker, files.len());
         return None;
     }
 
@@ -718,13 +1275,25 @@ fn start_emit_files_with_pool(
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(&source_file)
                 .expect("one checker part per file");
-            match part.js_part {
+            let on_twin = twin_mode != DtsTwinMode::Off
+                && (part.js_part.is_some() || twin_can_print(&part.target));
+            phase_times::route(
+                if on_twin {
+                    Route::PrintOnTwin
+                } else {
+                    Route::PrintOnChecker
+                },
+                1,
+            );
+            let output = match part.js_part {
                 Some(js_part) => emit_declaration_part(source_file, part.target, js_part, wrap),
                 None if twin_mode != DtsTwinMode::Off && twin_can_print(&part.target) => {
                     emit_on_twin(source_file, &part.target, wrap, twin_mode)
                 }
                 None => CheckerOutput::Done(wrap(&|| emit_source_file(source_file, &part.target))),
-            }
+            };
+            log_checker_emit(source_file);
+            output
         })
     }));
     Some(PendingPoolEmit {
@@ -760,6 +1329,21 @@ impl PendingPoolEmit {
     /// (`wait_emit_jobs`).
     fn wait(self) -> Vec<EmitResult> {
         wait_emit_jobs(|| self.wait_here())
+    }
+
+    /// Waits for every job and drops the results and panics
+    /// (`StartedPlainEmit`'s drop).
+    fn drain(self) {
+        if let Ok(jobs) = self.checker {
+            for output in jobs.wait_all() {
+                if let Ok(CheckerOutput::Twin(job)) = output {
+                    drop(job.join());
+                }
+            }
+        }
+        for (_, job) in self.on_pool {
+            drop(job.join());
+        }
     }
 
     /// `wait` without `wait_emit_jobs`.

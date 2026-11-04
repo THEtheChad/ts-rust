@@ -4780,6 +4780,7 @@ fn send_thread_job<R: Send + 'static>(
         pending.fetch_add(1, Ordering::Relaxed);
         let job: Job = Box::new(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            checker_call_log_event_here(|| "job".to_string());
             // Before the result: a thread that has every result sees the
             // pool idle (`CheckerPool::idle`). A job gives no id after it.
             pending.fetch_sub(1, Ordering::Release);
@@ -4970,7 +4971,196 @@ pub fn with_checker_at<R>(index: usize, f: impl FnOnce(&mut Checker) -> R) -> R 
         worker == index,
         "checker {index} used on the thread of checker {worker}"
     );
+    if checker_call_log_enabled() {
+        CALL_LOG_LENDS.with(|lends| lends.set(lends.get() + 1));
+    }
     WORKER_CHECKER.with(|slot| f(slot.borrow_mut().as_mut().expect("worker checker")))
+}
+
+// ---------------------------------------------------------------------------
+// Checker call log (`GOPORT_CHECKER_CALL_LOG`)
+// ---------------------------------------------------------------------------
+
+/// PORT: not in Go (perf, debug). `GOPORT_CHECKER_CALL_LOG=<file>` logs the
+/// sequence of work on each checker: one line per checker job, and lines
+/// for the checks, global diagnostics reads and emits inside the jobs. Each
+/// line has the checker's type, symbol and instantiation counts and the
+/// number of checker lends (`with_checker_at`, which every emit resolver
+/// call takes) on its thread so far. Two runs that make the same checker
+/// calls in the same order on each checker give the same file; the early
+/// emit of plain `tsc -p` (`program_emit::start_plain_emit`) must not change
+/// it. `write_checker_call_log` writes it, sorted by checker, at the end of
+/// the run. Off, each site is one load of a `OnceLock`.
+#[inline]
+pub fn checker_call_log_enabled() -> bool {
+    // One relaxed load and one predictable branch once the variable is read.
+    match CALL_LOG_STATE.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => {
+            let on = checker_call_log_path().is_some();
+            CALL_LOG_STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// 0 before `GOPORT_CHECKER_CALL_LOG` is read, 1 off, 2 on.
+static CALL_LOG_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// PORT: not in Go (tests, feature `test-hooks`).
+/// `GOPORT_TEST_CHECK_PANIC=<base name>` panics in
+/// the check of the program file with that base name, after a second;
+/// `GOPORT_TEST_CHECK_STALL=<base name>` prints
+/// `GOPORT_TEST_CHECK_STALL <name>` to stderr there and blocks the check
+/// until the process ends; `GOPORT_TEST_CHECK_SLEEP=<base name>` makes that
+/// check a second slower. `tests/plain_early_emit.rs` uses them to check
+/// that the early emit writes nothing before every check ended. Off, one
+/// relaxed load and one predictable branch per checked file.
+/// Built only with the non-default feature `test-hooks`; without it the
+/// hook is empty, so an inherited variable changes nothing.
+#[cfg(not(feature = "test-hooks"))]
+#[inline(always)]
+fn test_check_hook(_source_file: Node) {}
+
+#[cfg(feature = "test-hooks")]
+#[inline]
+fn test_check_hook(source_file: Node) {
+    if TEST_CHECK_HOOK_STATE.load(Ordering::Relaxed) == 1 {
+        return;
+    }
+    test_check_hook_slow(source_file);
+}
+
+/// 0 before the variables are read, 1 when neither is set, 2 when one is.
+#[cfg(feature = "test-hooks")]
+static TEST_CHECK_HOOK_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[cfg(feature = "test-hooks")]
+#[cold]
+fn test_check_hook_slow(source_file: Node) {
+    static HOOKS: OnceLock<[Option<String>; 3]> = OnceLock::new();
+    let [panic_name, stall_name, sleep_name] = HOOKS.get_or_init(|| {
+        let read = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        [
+            read("GOPORT_TEST_CHECK_PANIC"),
+            read("GOPORT_TEST_CHECK_STALL"),
+            read("GOPORT_TEST_CHECK_SLEEP"),
+        ]
+    });
+    if panic_name.is_none() && stall_name.is_none() && sleep_name.is_none() {
+        TEST_CHECK_HOOK_STATE.store(1, Ordering::Relaxed);
+        return;
+    }
+    TEST_CHECK_HOOK_STATE.store(2, Ordering::Relaxed);
+    let file_name = source_file_file_name(source_file);
+    let base = file_name.rsplit('/').next().unwrap_or("");
+    if panic_name.as_deref() == Some(base) || sleep_name.as_deref() == Some(base) {
+        // Late, so the other checkers have checked and emitted first.
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
+    if panic_name.as_deref() == Some(base) {
+        panic!("GOPORT_TEST_CHECK_PANIC {base}");
+    }
+    if stall_name.as_deref() == Some(base) {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "GOPORT_TEST_CHECK_STALL {base}");
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
+fn checker_call_log_path() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        std::env::var("GOPORT_CHECKER_CALL_LOG")
+            .ok()
+            .filter(|path| !path.is_empty())
+    })
+    .as_deref()
+}
+
+/// The lines of the call log: (checker index, line number on that checker,
+/// text).
+static CHECKER_CALL_LOG: Mutex<Vec<(usize, u64, String)>> = Mutex::new(Vec::new());
+
+thread_local! {
+    /// Checker lends on this thread (`with_checker_at`), for the call log.
+    static CALL_LOG_LENDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Lines that this thread added to the call log.
+    static CALL_LOG_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds `label()` with the counts of `checker` to the call log, on the
+/// thread of checker `index`, when the log is on.
+pub fn checker_call_log_event(index: usize, checker: &Checker, label: impl FnOnce() -> String) {
+    if !checker_call_log_enabled() {
+        return;
+    }
+    let lends = CALL_LOG_LENDS.with(std::cell::Cell::get);
+    let seq = CALL_LOG_SEQ.with(|seq| {
+        let value = seq.get();
+        seq.set(value + 1);
+        value
+    });
+    let line = format!(
+        "{} types={} symbols={} instantiations={} lends={}",
+        label(),
+        checker.type_count,
+        checker.symbol_count,
+        checker.total_instantiation_count,
+        lends
+    );
+    CHECKER_CALL_LOG
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((index, seq, line));
+}
+
+/// `checker_call_log_event` for the checker of this checker thread, outside
+/// a lend of it. Does nothing off a checker thread or with the log off.
+pub fn checker_call_log_event_here(label: impl FnOnce() -> String) {
+    if !checker_call_log_enabled() {
+        return;
+    }
+    let Some(index) = worker_index() else {
+        return;
+    };
+    WORKER_CHECKER.with(|slot| {
+        if let Ok(slot) = slot.try_borrow()
+            && let Some(checker) = slot.as_ref()
+        {
+            checker_call_log_event(index, checker, label);
+        }
+    });
+}
+
+/// The file name of `file` for the call log.
+pub fn checker_call_log_file(file: Node) -> String {
+    source_file_file_name(file).to_string()
+}
+
+/// Writes the call log to its file, sorted by checker, when it is on. The
+/// tsc command calls it once, at the end of the run.
+pub fn write_checker_call_log() {
+    let Some(path) = checker_call_log_path() else {
+        return;
+    };
+    let mut lines = std::mem::take(
+        &mut *CHECKER_CALL_LOG
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+    lines.sort_by_key(|(index, seq, _)| (*index, *seq));
+    let mut text = String::new();
+    for (index, seq, line) in lines {
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "c{index} {seq:06} {line}");
+    }
+    if let Err(err) = std::fs::write(path, text) {
+        eprintln!("GOPORT_CHECKER_CALL_LOG: cannot write {path}: {err}");
+    }
 }
 
 // Go: compiler/checkerpool.go:451 forEachCheckerParallel
@@ -4984,10 +5174,29 @@ pub fn for_each_checker_parallel<R: Send + 'static>(cb: fn(usize, &mut Checker) 
 
 // Go: compiler/checkerpool.go:464 GetGlobalDiagnostics
 fn pool_get_global_diagnostics() -> Vec<Diagnostic> {
-    let receivers = (0..checker_count())
-        .map(|index| send_job(index, |checker| checker.get_global_diagnostics()))
-        .collect();
-    sort_and_deduplicate_diagnostics(wait_jobs(receivers).into_iter().flatten().collect())
+    sort_and_deduplicate_diagnostics(
+        wait_jobs(start_pool_global_diagnostics())
+            .into_iter()
+            .flatten()
+            .collect(),
+    )
+}
+
+/// The jobs of `pool_get_global_diagnostics`, sent and not waited for:
+/// one per checker, in checker order. Each checker reads its global
+/// diagnostics after the jobs sent to it before.
+fn start_pool_global_diagnostics() -> Vec<JobReceiver<Vec<Diagnostic>>> {
+    (0..checker_count())
+        .map(|index| {
+            send_job(index, move |checker| {
+                let diagnostics = checker.get_global_diagnostics();
+                checker_call_log_event(index, checker, || {
+                    format!("global diagnostics={}", diagnostics.len())
+                });
+                diagnostics
+            })
+        })
+        .collect()
 }
 
 // Go: compiler/checkerpool.go:476 forEachCheckerGroupDo
@@ -5054,7 +5263,17 @@ fn start_checker_group_do(
                         .collect()
                 });
                 mine.into_iter()
-                    .map(|(i, file)| (i, cb(checker, file)))
+                    .map(|(i, file)| {
+                        let diagnostics = cb(checker, file);
+                        checker_call_log_event(checker_index, checker, || {
+                            format!(
+                                "file {} diagnostics={}",
+                                checker_call_log_file(file),
+                                diagnostics.len()
+                            )
+                        });
+                        (i, diagnostics)
+                    })
                     .collect::<Vec<_>>()
             })
         })
@@ -5370,6 +5589,38 @@ pub fn get_semantic_diagnostics(source_file: Node) -> Vec<Diagnostic> {
     })
 }
 
+/// PORT: not in Go (perf). `get_semantic_diagnostics(Node::NIL)` whose
+/// jobs are sent and not waited for yet (`start_semantic_diagnostics`).
+pub struct PendingSemanticCheck(PendingCheckerGroup);
+
+impl PendingSemanticCheck {
+    /// Waits for the check. Same result as
+    /// `get_semantic_diagnostics(Node::NIL)`.
+    #[must_use]
+    pub fn wait(self) -> Vec<Diagnostic> {
+        filter_and_sort_diagnostics(self.0.wait().into_iter().flatten().collect())
+    }
+}
+
+/// PORT: not in Go (perf). The first half of
+/// `get_semantic_diagnostics(Node::NIL)`: sends the same checker group jobs
+/// (`collect_checker_diagnostics_from_files` of every source file) and
+/// returns without waiting. Each checker runs its job after the jobs sent
+/// to it before, so the result is the same as with an immediate wait.
+/// The plain `tsc -p` early emit uses it (`execute::tsc::emit`). Not with
+/// a check that steals files (`stealing_check`): its jobs read other
+/// checkers' queues.
+#[must_use]
+pub fn start_semantic_diagnostics() -> PendingSemanticCheck {
+    debug_assert!(
+        !stealing_check(),
+        "start_semantic_diagnostics: stealing check"
+    );
+    PendingSemanticCheck(start_checker_group_do(&source_files(), |c, f| {
+        get_semantic_diagnostics_with_checker(&context::background(), c, f)
+    }))
+}
+
 // Go: compiler/program.go:833 GetSemanticDiagnosticsForIncremental
 // GetSemanticDiagnosticsForIncremental includes newly discovered globals in each
 // file's cached diagnostics and leaves noEmit filtering to the builder.
@@ -5506,6 +5757,35 @@ pub fn get_global_diagnostics() -> Vec<Diagnostic> {
         return Vec::new();
     }
     pool_get_global_diagnostics()
+}
+
+/// PORT: not in Go (perf). `get_global_diagnostics` whose jobs are sent
+/// and not waited for yet (`start_global_diagnostics`).
+pub struct PendingGlobalDiagnostics(Vec<JobReceiver<Vec<Diagnostic>>>);
+
+impl PendingGlobalDiagnostics {
+    /// Waits for each checker's read. Same result as `get_global_diagnostics`
+    /// at the point where the jobs were sent.
+    #[must_use]
+    pub fn wait(self) -> Vec<Diagnostic> {
+        sort_and_deduplicate_diagnostics(wait_jobs(self.0).into_iter().flatten().collect())
+    }
+}
+
+/// PORT: not in Go (perf). The first half of `get_global_diagnostics`:
+/// sends one read to each checker and returns without waiting. Each
+/// checker reads its global diagnostics after the jobs sent to it before
+/// and before the jobs sent to it after, so work sent later (an emit)
+/// cannot add to what it reads. Loading thread only, and only for a
+/// program with source files (`get_global_diagnostics` sends no job
+/// without them).
+#[must_use]
+pub fn start_global_diagnostics() -> PendingGlobalDiagnostics {
+    debug_assert!(
+        !prog().source_file_order().is_empty(),
+        "start_global_diagnostics: a program without files"
+    );
+    PendingGlobalDiagnostics(start_pool_global_diagnostics())
 }
 
 // Go: compiler/program.go:1504 GetDeclarationDiagnostics
@@ -5866,6 +6146,7 @@ pub fn get_semantic_diagnostics_with_checker(
     c: &mut Checker,
     source_file: Node,
 ) -> Vec<Diagnostic> {
+    test_check_hook(source_file);
     let mut diags = filter_no_emit_semantic_diagnostics(
         get_bind_and_check_diagnostics_with_checker(
             ctx,

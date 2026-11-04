@@ -2,4 +2,5 @@
 
 pub mod emitter;
 pub mod no_checker;
+pub mod phase_times;
 pub mod program_emit;
