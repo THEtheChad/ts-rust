@@ -22,7 +22,8 @@ GO_LSP_DEFAULT = HOME / ".local/bin/tsgo-lsp-oracle-3e9236361fa9"
 MAX_LOAD = float(os.environ.get("MAX_LOAD", "1.5"))
 REPEAT_LOAD = float(os.environ.get("REPEAT_LOAD", "3"))
 OTHER_CORES = float(os.environ.get("OTHER_CORES", "1.0"))
-CLI_SCENARIOS = ["noemit", "emit", "emit-js", "emit-cjs", "single", "icount", "incr", "build"]
+CLI_SCENARIOS = ["noemit", "emit", "emit-js", "emit-cjs", "single", "icount", "icount-emit", "icount-emit-js",
+                 "icount-emit-cjs", "incr", "build"]
 LSP_SCENARIOS = ["concurrent", "probe", "ttfd"]
 
 USAGE = """\
@@ -47,6 +48,8 @@ cli options
                        noemit  -p CFG --noEmit --incremental false --composite false
                        emit    -p CFG with outDir/declarationDir/tsBuildInfoFile in a scratch dir (never the input)
                        single  noemit + --singleThreaded (tsc-rs labels only, unless --single-ref)
+                       icount  single, ungated, compared on user-space instructions (Go: GOMAXPROCS=1); also
+                               icount-emit, icount-emit-js, icount-emit-cjs (the emit scenarios, single-threaded)
                        incr    noemit + --incremental with build info in scratch: one cold build, then N warm
                                (no change) rebuilds; the warm ones are measured
                        build   -b CFG on a scratch copy of the repo (node_modules linked): cold build (copy
@@ -339,13 +342,43 @@ def scratch_copy(src, dst):
     files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=src,
                            capture_output=True, check=True).stdout
     subprocess.run(["rsync", "-a", "--files-from=-", "--from0", f"{src}/", f"{dst}/"], input=files, check=True)
+    # The top-level node_modules becomes a link to the original. A package's own node_modules (pnpm: links,
+    # relative, into the top-level store and to the workspace's packages) is copied as it is, links kept, so
+    # workspace packages resolve inside the copy and their sources stay under the copy's root.
     for nm in subprocess.run(["find", src, "-name", "node_modules", "-prune", "-type", "d"],
                              capture_output=True, text=True, check=True).stdout.split():
         rel = os.path.relpath(nm, src)
         link = Path(dst) / rel
+        if link.exists() or link.is_symlink():
+            continue
         link.parent.mkdir(parents=True, exist_ok=True)
-        if not link.exists():
+        if rel == "node_modules":
             link.symlink_to(nm)
+        else:
+            subprocess.run(["cp", "-a", nm, str(link)], check=True)
+
+
+def clean_copy(repo, dst):
+    """scratch_copy once (with a manifest of its files), then delete any file a run added."""
+    dst = Path(dst)
+    manifest = dst.parent / (dst.name + ".manifest")
+    if not manifest.exists():
+        scratch_copy(repo, str(dst))
+        manifest.write_text("\n".join(sorted(walk_files(dst))))
+        return
+    keep = set(manifest.read_text().splitlines())
+    for f in walk_files(dst):
+        if f not in keep:
+            (dst / f).unlink()
+
+
+def walk_files(root):
+    """Files under root, not following the node_modules links."""
+    out = []
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if not os.path.islink(os.path.join(d, x)) and x != "node_modules"]
+        out += [os.path.relpath(os.path.join(d, f), root) for f in files]
+    return out
 
 
 def cli(args):
@@ -387,30 +420,44 @@ def cli(args):
             elif scen == "single":
                 labs = [l for l, _ in bins if l != ref or args.single_ref]
                 variants.append(("single", labs, lambda b, lab: [b] + noemit + ["--singleThreaded"], None, repo))
-            elif scen in ("emit", "emit-js", "emit-cjs"):
+            elif scen in ("emit", "emit-js", "emit-cjs", "icount-emit", "icount-emit-js", "icount-emit-cjs"):
+                icount = scen.startswith("icount-")
+                scen_emit = scen[len("icount-"):] if icount else scen
                 # emit: the config's own outputs (JS, maps, d.ts as configured). emit-js: JS only (no maps,
                 # no d.ts). emit-cjs: JS only, CommonJS ES2017 (the emit audit's three modes).
-                extra = [] if scen == "emit" else ["--sourceMap", "false", "--declaration", "false",
+                extra = [] if scen_emit == "emit" else ["--sourceMap", "false", "--declaration", "false",
                                                    "--declarationMap", "false", "--emitDeclarationOnly", "false"]
-                if scen == "emit-cjs":
+                if scen_emit == "emit-cjs":
                     extra += ["--module", "commonjs", "--target", "es2017"]
+                if icount:
+                    extra += ["--singleThreaded"]
 
-                def emit_argv(b, lab, scen=scen, extra=extra):
+                src = scratch / f"src-{name}"
+
+                def emit_argv(b, lab, scen=scen, extra=extra, src=src):
                     d = scratch / f"{scen}-{name}-{lab}"
+                    # --rootDir: the copy's root. TypeScript 7 stops at TS5011 when outDir is set and the common
+                    # source dir is not the config's dir (zod, ts-pattern, T3 Code), and at TS6059 when a
+                    # configured rootDir does not hold every file (T3 server): both would skip the check.
                     a = [b] + base + ["--noEmit", "false", "--incremental", "false"] + comp + [
-                                      "--outDir", str(d / "out")]
-                    if scen == "emit" and (opts.get("declaration") or opts.get("composite")
+                                      "--outDir", str(d / "out"), "--rootDir", str(src)]
+                    if scen_emit == "emit" and (opts.get("declaration") or opts.get("composite")
                                            or opts.get("declarationDir")):
                         a += ["--declarationDir", str(d / "decl")]
                     if opts.get("outFile"):
                         a += ["--outFile", str(d / "out.js")]
                     return a + extra
 
-                def emit_pre(lab, scen=scen):
+                # Emit runs in a scratch copy of the repo: a config whose files lie outside its common root
+                # (T3 Code's web app includes ../../scripts/lib, TS5011) makes both compilers write JS and d.ts
+                # next to those sources, outside --outDir. The copy loses those extra files before every run.
+
+                def emit_pre(lab, scen=scen, src=src):
                     d = scratch / f"{scen}-{name}-{lab}"
                     shutil.rmtree(d, ignore_errors=True)
                     d.mkdir(parents=True)
-                variants.append((scen, [l for l, _ in bins], emit_argv, emit_pre, repo))
+                    clean_copy(str(repo), src)
+                variants.append((scen, [l for l, _ in bins], emit_argv, emit_pre, src))
             elif scen == "icount":
                 # Single-threaded user-space instructions: tsc-rs --singleThreaded, Go also GOMAXPROCS=1.
                 variants.append(("icount", [l for l, _ in bins], lambda b, lab: [b] + noemit + ["--singleThreaded"],
@@ -439,13 +486,13 @@ def label_env(args, lab, variant):
         k, _, v = kv.partition("=")
         if l == lab:
             env[k] = v
-    if variant == "icount" and lab == args.ref:
+    if variant.startswith("icount") and lab == args.ref:
         env["GOMAXPROCS"] = "1"
     return env
 
 
 def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, repo):
-    runs = args.icount_runs if variant == "icount" else args.runs
+    runs = args.icount_runs if variant.startswith("icount") else args.runs
     need = {lab: runs - rec.count(variant, name, lab) for lab, _ in bins}
     if all(n <= 0 for n in need.values()):
         return
@@ -473,7 +520,7 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
                            timeout=args.timeout)
         if pre == "incr":
             Path(a[a.index("--tsBuildInfoFile") + 1]).unlink(missing_ok=True)
-        if variant == "icount":
+        if variant.startswith("icount"):
             break  # deterministic: no warm-up
         r = run_measured(a, c, args.timeout, label_env(args, lab, variant))
         first[lab] = r
@@ -487,8 +534,8 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
             a, c = prep(lab, b)
             env = label_env(args, lab, variant)
             r = gated_run(rec, f"{variant} {name} {lab} run{i + 1}",
-                          lambda: run_measured(a, c, args.timeout, env), ungated=variant == "icount")
-            if variant.startswith("emit"):
+                          lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"))
+            if variant.startswith("emit") or variant.startswith("icount-emit"):
                 r["emit_hash"] = tree_hash(scratch / f"{variant}-{name}-{lab}")
             out = r.pop("_out")
             if i == 0:
@@ -655,7 +702,7 @@ def build_cells(rows, ref):
             cell["sides"][lab] = side
         if ref in cell["sides"]:
             # icount cells compare instructions; every other cell compares wall time.
-            key = "instr" if scen == "icount" else "wall"
+            key = "instr" if scen.startswith("icount") else "wall"
             cell["metric"] = key
             rw = cell["sides"][ref][key]
             for lab, side in cell["sides"].items():
