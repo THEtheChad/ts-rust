@@ -394,3 +394,15 @@ was the same as Go's.
     the corrected measurements.
   - **The LSP default** depends on Chad's decision about the
     concurrent-change contract.
+
+## Chad's decision (2026-11-04): LSP load view default
+
+**Default with recovery.** L1 (`GOPORT_LOAD_VIEW`) becomes the LSP default
+once a **reconciliation step** is built and tested.
+- **The step:** right after watch registration, re-check the view's
+  observations (including negative ones) against the disk. If anything
+  changed, trigger a normal reload, as a watch event would.
+- **The guarantee:** a change during the load window is never lost
+  permanently.
+- **Until then** L1 stays opt-in. The reconciliation step needs its own Astra
+  review.
