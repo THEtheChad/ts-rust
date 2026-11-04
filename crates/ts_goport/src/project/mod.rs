@@ -22,6 +22,7 @@ pub mod project_stringer_generated;
 pub mod projectcollection;
 pub mod projectcollectionbuilder;
 pub mod refcountcache;
+pub mod reuse_verify;
 pub mod session;
 pub mod snapshot;
 pub mod snapshotfs;

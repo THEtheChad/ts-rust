@@ -154,3 +154,208 @@ child_test! {
         assert_eq!(tsconfig_calls(), initial + 1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The verify mode (`GOPORT_VERIFY_REUSE`) across processes: the session runs
+// on real files, and the verify child is this test binary, running
+// `verify_child_entry` with the in-process content mapper spawner.
+// ---------------------------------------------------------------------------
+
+const VERIFY_CHILD_TEST: &str = "project_lsp::synthetic_reuse_test::verify_child_entry";
+
+/// The verify child of the tests below: a no-op unless the verify mode runs
+/// this binary as its child (`project::reuse_verify::CHILD_ENV`).
+#[test]
+fn verify_child_entry() {
+    if std::env::var_os(ts_goport::project::reuse_verify::CHILD_ENV).is_none() {
+        return;
+    }
+    let code = std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn(|| {
+            ts_goport::project::reuse_verify::child_main_with(Some(
+                crate::support::contentmappertest::new_spawner(),
+            ))
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    std::process::exit(code);
+}
+
+/// A temp directory with `files`, removed at the end.
+struct TempProject(std::path::PathBuf);
+
+impl TempProject {
+    fn new(label: &str, files: &[(&str, &str)]) -> Self {
+        let dir = std::env::temp_dir().join(format!("ts_goport_verify_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (name, text) in files {
+            let path = dir.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        TempProject(dir)
+    }
+    fn dir(&self) -> String {
+        self.0.to_string_lossy().replace('\\', "/")
+    }
+    fn uri(&self, name: &str) -> String {
+        format!("file://{}/{name}", self.dir())
+    }
+}
+
+impl Drop for TempProject {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A session on the OS file system in `dir`, with content mappers on.
+fn os_session(dir: &str) -> Rc<Session> {
+    ts_goport::project::new_session(&ts_goport::project::SessionInit {
+        background_ctx: bg(),
+        options: Rc::new(ts_goport::project::SessionOptions {
+            typings_location: String::new(),
+            run_external_code: true,
+            ..projecttestutil::session_options(dir)
+        }),
+        fs: ts_goport::frontend::bundled::wrap_fs(ts_goport::frontend::vfs::osvfs_fs()),
+        client: None,
+        logger: None,
+        npm_executor: None,
+        spawner: Some(crate::support::contentmappertest::new_spawner()),
+        content_mapper_logger: None,
+        parse_cache: None,
+        content_mapped_parse_cache: None,
+    })
+}
+
+/// Runs `body` in a child test process with the verify mode on (a
+/// difference or an error panics), and returns the verify log.
+fn with_verify(test: &str, body: impl FnOnce() + Send + 'static) -> Vec<String> {
+    let log = std::env::temp_dir().join(format!(
+        "ts_goport_verify_log_{}_{}",
+        test.rsplit("::").next().unwrap(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&log);
+    let log_name = log.to_string_lossy().to_string();
+    let args = ["--exact", VERIFY_CHILD_TEST, "--nocapture", "--test-threads=1"].join("\u{1f}");
+    crate::support::child::run_test_in_child_with_env(
+        test,
+        &[
+            ("GOPORT_VERIFY_REUSE", "all-panic"),
+            ("GOPORT_VERIFY_REUSE_LOG", &log_name),
+            ("GOPORT_VERIFY_REUSE_CHILD_ARGS", &args),
+        ],
+        body,
+    );
+    let lines = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_file(&log);
+    lines.lines().map(str::to_string).collect()
+}
+
+/// The parent side of the tests below runs here (`with_verify` re-runs the
+/// test in a child, and only there is the variable set).
+fn in_verify_child() -> bool {
+    std::env::var_os("GOPORT_VERIFY_REUSE").is_some()
+}
+
+#[test]
+fn verify_mode_checks_a_mapped_project_in_a_child_process() {
+    let lines = with_verify(
+        "project_lsp::synthetic_reuse_test::verify_mode_checks_a_mapped_project_in_a_child_process",
+        || {
+            if !in_verify_child() {
+                return;
+            }
+            let mapper = crate::support::contentmappertest::package_json(
+                crate::support::contentmappertest::SUPPLEMENTAL_MAPPER,
+            );
+            let p = TempProject::new(
+                "mapped",
+                &[
+                    (
+                        "tsconfig.json",
+                        r#"{ "compilerOptions": { "strict": true, "importHelpers": true, "isolatedModules": true, "types": [] }, "contentMappers": [{ "package": "mapper", "extensions": [".box"] }] }"#,
+                    ),
+                    ("node_modules/mapper/package.json", &mapper),
+                    ("node_modules/tslib/package.json", r#"{"name":"tslib","version":"2.8.0","types":"tslib.d.ts"}"#),
+                    ("node_modules/tslib/tslib.d.ts", "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n"),
+                    ("app.box", "declare const supplementalValue: number;\n"),
+                    ("main.ts", "const value: number = supplementalValue;\n"),
+                ],
+            );
+            let session = os_session(&p.dir());
+            open(&session, &p.uri("main.ts"), "const value: number = supplementalValue;\n");
+            let _ = program(&session, &p.uri("main.ts"));
+            // A closed mapped file changes on disk (the child maps the disk text).
+            std::fs::write(p.0.join("app.box"), "declare const supplementalValue: string;\n").unwrap();
+            watch(&session, &[(CHANGED, &p.uri("app.box"))]);
+            let _ = program(&session, &p.uri("main.ts"));
+            // An open mapped file is edited (the child maps the editor text).
+            let box_uri = p.uri("app.box");
+            open_kind(&session, &box_uri, "declare const supplementalValue: string;\n", lsproto::LanguageKind("box".into()));
+            let _ = program(&session, &p.uri("main.ts"));
+            edit(&session, &box_uri, 2, (0, 0), (0, 0), "// edited\n");
+            let _ = program(&session, &p.uri("main.ts"));
+            session.close();
+        },
+    );
+    if in_verify_child() {
+        return;
+    }
+    let ok = lines.iter().filter(|l| l.starts_with("goport verify-reuse: OK")).count();
+    assert!(ok >= 2, "{lines:?}");
+    assert!(lines.iter().all(|l| l.starts_with("goport verify-reuse: OK")), "{lines:?}");
+}
+
+#[test]
+fn verify_mode_checks_the_inferred_project_in_a_child_process() {
+    let lines = with_verify(
+        "project_lsp::synthetic_reuse_test::verify_mode_checks_the_inferred_project_in_a_child_process",
+        || {
+            if !in_verify_child() {
+                return;
+            }
+            let p = TempProject::new(
+                "inferred",
+                &[
+                    ("node_modules/react/package.json", r#"{"name":"react","version":"19.0.0","types":"index.d.ts"}"#),
+                    ("node_modules/react/index.d.ts", "export {};\n"),
+                    (
+                        "node_modules/react/jsx-runtime.d.ts",
+                        "export declare function jsx(type: any, props: any): any;\nexport declare namespace JSX { interface IntrinsicElements { [name: string]: any } type Element = any; }\n",
+                    ),
+                    ("a.tsx", "export const A = () => <div />;\n"),
+                    ("b.ts", "export const b = 1;\n"),
+                ],
+            );
+            let session = os_session(&p.dir());
+            let mut options = ts_goport::options::CompilerOptions::default();
+            options.jsx = ts_goport::flags::JsxEmit::REACT_JSX;
+            options.module = ts_goport::flags::ModuleKind::ES_NEXT;
+            options.module_resolution = ts_goport::flags::ModuleResolutionKind::BUNDLER;
+            session.did_change_compiler_options_for_inferred_projects(&bg(), Some(Rc::new(options)));
+            let a = p.uri("a.tsx");
+            open_kind(&session, &a, "export const A = () => <div />;\n", lsproto::LanguageKind::TYPE_SCRIPT_REACT);
+            open(&session, &p.uri("b.ts"), "export const b = 1;\n");
+            let old = program(&session, &a);
+            assert!(old.processed_files.jsx_runtime_import_specifiers.is_some());
+            for (version, text) in [(2, " // 1"), (3, " // 2")] {
+                edit(&session, &a, version, (0, 31), (0, 31), text);
+                let _ = program(&session, &a);
+            }
+            edit(&session, &p.uri("b.ts"), 2, (0, 0), (0, 0), "// b\n");
+            let _ = program(&session, &a);
+            session.close();
+        },
+    );
+    if in_verify_child() {
+        return;
+    }
+    let ok = lines.iter().filter(|l| l.starts_with("goport verify-reuse: OK")).count();
+    assert!(ok >= 3, "{lines:?}");
+    assert!(lines.iter().all(|l| l.starts_with("goport verify-reuse: OK")), "{lines:?}");
+}

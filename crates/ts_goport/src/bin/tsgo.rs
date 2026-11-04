@@ -959,8 +959,8 @@ fn send_code(worker: Worker, code: i32) {
 fn run_main(start: Instant) -> i32 {
     // Not in Go (perf/first-principles A1): the child of the language
     // server's reuse verify mode (`program::reuse_verify`).
-    if std::env::var_os(ts_goport::program::reuse_verify::CHILD_ENV).is_some() {
-        return ts_goport::program::reuse_verify::child_main();
+    if std::env::var_os(ts_goport::project::reuse_verify::CHILD_ENV).is_some() {
+        return ts_goport::project::reuse_verify::child_main();
     }
     let mut args: Vec<String> = ts_goport::frontend::osutil::args()[1..].to_vec();
 

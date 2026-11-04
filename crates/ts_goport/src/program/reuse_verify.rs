@@ -4,36 +4,48 @@
 //! Not in Go. Go builds a new program when the changed file has a synthetic
 //! import (JSX runtime or `importHelpers`); the port reuses the old program
 //! when the synthetic imports stay the same. With `GOPORT_VERIFY_REUSE=1`
-//! each such reuse is checked against a full build of the same inputs:
+//! each such reuse is checked against a full build of the same inputs.
+//! This module has the mode, the report and the canonical dump; the
+//! project system makes the request and runs the child
+//! (`project::reuse_verify`):
 //!
-//! - the language server writes a canonical dump of the reused program
-//!   (`dump`). It reads a shadow of the program (`NewProgram::shadow`)
-//!   whose caches start empty, so the dump changes nothing that the session
-//!   reads later.
+//! - the language server dumps the reused program (`dump`). The dump reads
+//!   a shadow of the program (`NewProgram::shadow`) whose caches start
+//!   empty, so it changes nothing that the session reads later.
 //! - a child process (this binary with `GOPORT_VERIFY_REUSE_CHILD=1`) gets
-//!   the config file, the current directory and the text of each program
-//!   file whose text is not the one on disk (`Request`). It builds the
-//!   program from scratch as the language server does (`ls_program`),
-//!   binds it and writes the same dump. A separate process cannot change
-//!   the global ids or the session of the server.
+//!   the session's options, user config, inferred-project options and open
+//!   files (their editor text: a content-mapped file keeps its original
+//!   text, and the child runs its mapper), and the snapshot text of each
+//!   other program file whose text is not the one on disk. It starts a new
+//!   language server session on them, opens the files, and dumps the
+//!   program of the same project: a full build, as Go's rebuild. A separate
+//!   process cannot change the global ids or the session of the server.
 //! - the two dumps must be equal. A difference is reported on stderr and in
 //!   `GOPORT_VERIFY_REUSE_LOG`, and both dumps are kept in
 //!   `GOPORT_VERIFY_REUSE_DIR`. `GOPORT_VERIFY_REUSE=panic` panics then.
 //!   `GOPORT_VERIFY_REUSE=all` checks the reuses that Go makes too.
 //!
-//! The dump has the file order and keys, the file metadata, the module and
-//! type reference resolutions, both synthetic specifier maps (text, parents
-//! and resolution mode), the synthetic specifiers that the include reasons
-//! keep, `--explainFiles`, the program, config and include processor
-//! diagnostics, the files found by searching node_modules, the missing
-//! files and the redirects.
+//! The dump has the options and root files, the file order and keys, the
+//! file metadata, the module and type reference resolutions, both
+//! synthetic specifier maps (text, parents and resolution mode), the
+//! synthetic specifiers that the include reasons keep, `--explainFiles`,
+//! the program, config, content mapper and include processor diagnostics,
+//! the files found by searching node_modules, the missing files, the
+//! redirects and the emit blocking files.
+//!
+//! **What an OK covers: the program structure only.** It does not compare
+//! checker output (semantic, suggestion or global diagnostics) or LSP
+//! answers and notifications: computing them in the server would create
+//! checker state (type and symbol ids) that changes later answers. Checker
+//! output of reused programs is compared with full builds in the unit
+//! tests below (in-process), and LSP answers and publishDiagnostics with Go
+//! by `scripts/lspdiff` and `scripts/perf-rearch/a1/pubdiag-stream.mjs`.
 
 use crate::frontend::bundled;
 use crate::frontend::compiler::{NewProgram, ProgramOptions};
 use crate::frontend::prelude::*;
 use std::fmt::Write as _;
-use std::io::{Read, Write};
-use std::time::{Duration, Instant};
+use std::io::Write;
 
 /// Which reuses the verify mode checks (`GOPORT_VERIFY_REUSE`).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,14 +57,15 @@ pub enum Mode {
     All,
 }
 
+static MODE: std::sync::OnceLock<(Mode, bool)> = std::sync::OnceLock::new();
+
 /// The verify mode, read once.
 pub fn mode() -> Mode {
-    static MODE: std::sync::OnceLock<(Mode, bool)> = std::sync::OnceLock::new();
     MODE.get_or_init(read_mode).0
 }
 
-fn panics() -> bool {
-    static MODE: std::sync::OnceLock<(Mode, bool)> = std::sync::OnceLock::new();
+/// A difference or an error panics (`GOPORT_VERIFY_REUSE=panic|all-panic`).
+pub fn panics() -> bool {
     MODE.get_or_init(read_mode).1
 }
 
@@ -66,48 +79,8 @@ fn read_mode() -> (Mode, bool) {
     }
 }
 
-/// The environment variable that makes this binary a verify child.
-pub const CHILD_ENV: &str = "GOPORT_VERIFY_REUSE_CHILD";
-
-/// Checks `program`, which `ls_program::update_program` made by reusing
-/// its old program for a change of `changed`, against a full build in a
-/// child process, and reports the result. The program must be bound.
-pub fn verify(program: &NewProgram, changed: &Path) {
-    let start = Instant::now();
-    let result = run_verify(program);
-    let elapsed = start.elapsed();
-    match result {
-        Ok(None) => report(&format!(
-            "goport verify-reuse: OK {} ({} files, {} ms)",
-            changed.0,
-            program.source_files().len(),
-            elapsed.as_millis()
-        )),
-        Ok(Some(saved)) => {
-            report(&format!(
-                "goport verify-reuse: MISMATCH {} ({} ms): {saved}",
-                changed.0,
-                elapsed.as_millis()
-            ));
-            if panics() {
-                panic!("goport verify-reuse: MISMATCH {}: {saved}", changed.0);
-            }
-        }
-        Err(error) => {
-            report(&format!(
-                "goport verify-reuse: ERROR {} ({} ms): {error}",
-                changed.0,
-                elapsed.as_millis()
-            ));
-            if panics() {
-                panic!("goport verify-reuse: ERROR {}: {error}", changed.0);
-            }
-        }
-    }
-}
-
 /// Writes `line` to stderr and appends it to `GOPORT_VERIFY_REUSE_LOG`.
-fn report(line: &str) {
+pub fn report(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
     if let Ok(log) = std::env::var("GOPORT_VERIFY_REUSE_LOG")
         && let Ok(mut file) = std::fs::OpenOptions::new()
@@ -119,23 +92,11 @@ fn report(line: &str) {
     }
 }
 
-/// Ok(None) when the dumps are equal, Ok(Some(where the dumps are)) when
-/// they differ.
-fn run_verify(program: &NewProgram) -> Result<Option<String>, String> {
-    let config_name = program.command_line().config_name();
-    if config_name.is_empty() {
-        return Err("no config file (inferred project): not checked".to_string());
-    }
-    let request = Request {
-        cwd: program.host().get_current_directory(),
-        config: config_name.to_string(),
-        roots: program.command_line().file_names().to_vec(),
-        overlays: overlays(program),
-    };
-    let reused = dump(program);
-    let full = run_child(&request)?;
+/// `None` when `reused` and `full` are equal, else where they first differ
+/// and the files that keep both (`GOPORT_VERIFY_REUSE_DIR`).
+pub fn compare(reused: &str, full: &str) -> Option<String> {
     if reused == full {
-        return Ok(None);
+        return None;
     }
     let dir = std::env::var("GOPORT_VERIFY_REUSE_DIR").map_or_else(
         |_| std::env::temp_dir().join("goport-verify-reuse"),
@@ -147,326 +108,21 @@ fn run_verify(program: &NewProgram) -> Result<Option<String>, String> {
     let base = dir.join(format!("{}-{n}", std::process::id()));
     let reused_path = base.with_extension("reused.txt");
     let full_path = base.with_extension("full.txt");
-    let _ = std::fs::write(&reused_path, &reused);
-    let _ = std::fs::write(&full_path, &full);
+    let _ = std::fs::write(&reused_path, reused);
+    let _ = std::fs::write(&full_path, full);
     let first = reused
         .lines()
         .zip(full.lines())
         .position(|(a, b)| a != b)
         .unwrap_or_else(|| reused.lines().count().min(full.lines().count()));
-    Ok(Some(format!(
+    Some(format!(
         "first difference at line {}: reused {:?}, full {:?}; dumps {} and {}",
         first + 1,
         reused.lines().nth(first).unwrap_or("<end>"),
         full.lines().nth(first).unwrap_or("<end>"),
         reused_path.display(),
         full_path.display()
-    )))
-}
-
-/// The program files whose text is not the text on disk (open files with
-/// changes), as the child must read them. Bundled lib files are skipped.
-fn overlays(program: &NewProgram) -> Vec<(String, String)> {
-    program
-        .source_files()
-        .iter()
-        .filter(|file| !file.file_name().starts_with("bundled:"))
-        .filter(|file| {
-            std::fs::read_to_string(file.file_name()).map_or(true, |disk| disk != file.text())
-        })
-        .map(|file| (file.file_name().to_string(), file.text().to_string()))
-        .collect()
-}
-
-/// What the child builds: the config file, the current directory, the
-/// root files and the texts that are not on disk. Go's `UpdateProgram`
-/// builds the new program with the old program's command line, so the
-/// child takes its root files (the language server lists them in its own
-/// order) and parses only the options.
-struct Request {
-    cwd: String,
-    config: String,
-    roots: Vec<String>,
-    overlays: Vec<(String, String)>,
-}
-
-impl Request {
-    /// Each string is its length in bytes, a newline and its bytes.
-    fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut put = |s: &str| {
-            out.extend_from_slice(format!("{}\n", s.len()).as_bytes());
-            out.extend_from_slice(s.as_bytes());
-        };
-        put(&self.cwd);
-        put(&self.config);
-        put(&self.roots.len().to_string());
-        for root in &self.roots {
-            put(root);
-        }
-        put(&self.overlays.len().to_string());
-        for (name, text) in &self.overlays {
-            put(name);
-            put(text);
-        }
-        out
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let mut rest = bytes;
-        let mut take = || -> Result<String, String> {
-            let newline = rest
-                .iter()
-                .position(|&b| b == b'\n')
-                .ok_or("truncated request")?;
-            let len: usize = std::str::from_utf8(&rest[..newline])
-                .map_err(|e| e.to_string())?
-                .parse()
-                .map_err(|e: std::num::ParseIntError| e.to_string())?;
-            let body = rest
-                .get(newline + 1..newline + 1 + len)
-                .ok_or("truncated request")?;
-            let s = String::from_utf8(body.to_vec()).map_err(|e| e.to_string())?;
-            rest = &rest[newline + 1 + len..];
-            Ok(s)
-        };
-        let cwd = take()?;
-        let config = take()?;
-        let roots_count: usize = take()?
-            .parse()
-            .map_err(|e: std::num::ParseIntError| e.to_string())?;
-        let mut roots = Vec::with_capacity(roots_count);
-        for _ in 0..roots_count {
-            roots.push(take()?);
-        }
-        let count: usize = take()?
-            .parse()
-            .map_err(|e: std::num::ParseIntError| e.to_string())?;
-        let mut overlays = Vec::with_capacity(count);
-        for _ in 0..count {
-            let name = take()?;
-            let text = take()?;
-            overlays.push((name, text));
-        }
-        Ok(Request {
-            cwd,
-            config,
-            roots,
-            overlays,
-        })
-    }
-}
-
-/// Runs this binary as a verify child on `request` and returns its dump.
-fn run_child(request: &Request) -> Result<String, String> {
-    // On Linux `/proc/self/exe` runs this binary even when a build has
-    // replaced the file since the server started.
-    let exe = if cfg!(target_os = "linux") && std::path::Path::new("/proc/self/exe").exists() {
-        std::path::PathBuf::from("/proc/self/exe")
-    } else {
-        std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?
-    };
-    let mut child = std::process::Command::new(exe)
-        .env(CHILD_ENV, "1")
-        .env_remove("GOPORT_VERIFY_REUSE")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("spawn: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("no child stdin")?;
-    let encoded = request.encode();
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(&encoded);
-    });
-    let mut stdout = child.stdout.take().ok_or("no child stdout")?;
-    let mut stderr = child.stderr.take().ok_or("no child stderr")?;
-    let reader = std::thread::spawn(move || {
-        let mut out = String::new();
-        let _ = stdout.read_to_string(&mut out);
-        out
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut out = String::new();
-        let _ = stderr.read_to_string(&mut out);
-        out
-    });
-    let deadline = Instant::now() + Duration::from_secs(300);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("child timed out after 300 s".to_string());
-            }
-            Err(e) => return Err(format!("wait: {e}")),
-        }
-    };
-    let _ = writer.join();
-    let out = reader.join().unwrap_or_default();
-    let err = err_reader.join().unwrap_or_default();
-    if !status.success() {
-        let tail: String = err
-            .chars()
-            .rev()
-            .take(2000)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        return Err(format!("child failed ({status}): {tail}"));
-    }
-    Ok(out)
-}
-
-/// The body of a verify child (`CHILD_ENV`): reads a `Request` on stdin,
-/// builds the program as the language server builds a new one, binds it
-/// and writes its dump on stdout. Returns the exit code.
-pub fn child_main() -> i32 {
-    let mut input = Vec::new();
-    if let Err(e) = std::io::stdin().read_to_end(&mut input) {
-        let _ = writeln!(std::io::stderr(), "verify child: stdin: {e}");
-        return 2;
-    }
-    let request = match Request::decode(&input) {
-        Ok(request) => request,
-        Err(e) => {
-            let _ = writeln!(std::io::stderr(), "verify child: {e}");
-            return 2;
-        }
-    };
-    crate::ast::set_editor_process();
-    let overlays: FxHashMap<String, String> = request.overlays.into_iter().collect();
-    let fs: Rc<dyn Fs> = bundled::wrap_fs(Rc::new(OverlayFs {
-        inner: osvfs_fs(),
-        overlays,
-    }));
-    let host = new_compiler_host(
-        &request.cwd,
-        fs.clone(),
-        &bundled::lib_path(),
-        None,
-        None,
-        None,
-    );
-    let sys = ConfigHost {
-        fs,
-        current_directory: request.cwd.clone(),
-    };
-    let (config, errors) =
-        get_parsed_command_line_of_config_file(&request.config, None, None, &sys, None);
-    let Some(config) = config else {
-        let _ = writeln!(
-            std::io::stderr(),
-            "verify child: cannot parse {}: {} errors",
-            request.config,
-            errors.len()
-        );
-        return 2;
-    };
-    // The roots are the server's, in its order; the set must be the one
-    // that this parse of the config finds.
-    let mut own_roots = config.file_names().to_vec();
-    let mut roots = request.roots.clone();
-    own_roots.sort();
-    roots.sort();
-    let roots_differ = own_roots != roots;
-    let program = super::ls_program::new_program(
-        ProgramOptions {
-            host,
-            config: Rc::new(config.with_file_names(request.roots)),
-            use_source_of_project_reference: true,
-            single_threaded: Tristate::Unknown,
-            typings_location: String::new(),
-            project_name: String::new(),
-            create_module_resolver: None,
-            skip_module_resolution: false,
-        },
-        None,
-    );
-    super::ls_program::bind_source_files(&program);
-    let mut out = dump(&program);
-    if roots_differ {
-        out.push_str("== the config's root files are not the server's\n");
-    }
-    let mut stdout = std::io::stdout();
-    if stdout
-        .write_all(out.as_bytes())
-        .and_then(|()| stdout.flush())
-        .is_err()
-    {
-        return 2;
-    }
-    0
-}
-
-/// `ParseConfigHost` of the child.
-struct ConfigHost {
-    fs: Rc<dyn Fs>,
-    current_directory: String,
-}
-
-impl ParseConfigHost for ConfigHost {
-    fn fs(&self) -> Rc<dyn Fs> {
-        self.fs.clone()
-    }
-    fn get_current_directory(&self) -> String {
-        self.current_directory.clone()
-    }
-}
-
-/// The OS file system with the texts of the language server's open files.
-struct OverlayFs {
-    inner: Rc<dyn Fs>,
-    overlays: FxHashMap<String, String>,
-}
-
-impl Fs for OverlayFs {
-    fn use_case_sensitive_file_names(&self) -> bool {
-        self.inner.use_case_sensitive_file_names()
-    }
-    fn file_exists(&self, path: &str) -> bool {
-        self.overlays.contains_key(path) || self.inner.file_exists(path)
-    }
-    fn read_file(&self, path: &str) -> (String, bool) {
-        match self.overlays.get(path) {
-            Some(text) => (text.clone(), true),
-            None => self.inner.read_file(path),
-        }
-    }
-    fn write_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.write_file(path, data)
-    }
-    fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.append_file(path, data)
-    }
-    fn remove(&self, path: &str) -> Result<(), FsError> {
-        self.inner.remove(path)
-    }
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<std::time::SystemTime>,
-        m_time: Option<std::time::SystemTime>,
-    ) -> Result<(), FsError> {
-        self.inner.chtimes(path, a_time, m_time)
-    }
-    fn directory_exists(&self, path: &str) -> bool {
-        self.inner.directory_exists(path)
-    }
-    fn get_accessible_entries(&self, path: &str) -> Entries {
-        self.inner.get_accessible_entries(path)
-    }
-    fn stat(&self, path: &str) -> Option<FileInfo> {
-        self.inner.stat(path)
-    }
-    fn realpath(&self, path: &str) -> String {
-        self.inner.realpath(path)
-    }
+    ))
 }
 
 /// The canonical dump of `program` (see the module comment). It reads a
@@ -767,6 +423,21 @@ mod tests {
     use super::*;
     use crate::frontend::compiler::ReuseOutcome;
     use crate::program::ls_program;
+
+    /// `ParseConfigHost` of the test projects.
+    struct ConfigHost {
+        fs: Rc<dyn Fs>,
+        current_directory: String,
+    }
+
+    impl ParseConfigHost for ConfigHost {
+        fn fs(&self) -> Rc<dyn Fs> {
+            self.fs.clone()
+        }
+        fn get_current_directory(&self) -> String {
+            self.current_directory.clone()
+        }
+    }
 
     struct Project {
         dir: std::path::PathBuf,
@@ -1233,21 +904,5 @@ mod tests {
                 }
             });
         }
-    }
-
-    // The request round trip of the verify child.
-    #[test]
-    fn request_round_trip() {
-        let request = Request {
-            cwd: "/p".to_string(),
-            config: "/p/tsconfig.json".to_string(),
-            roots: vec!["/p/a.ts".to_string(), "/p/é\n.ts".to_string()],
-            overlays: vec![("/p/a.ts".to_string(), "const a = \"\n1\";".to_string())],
-        };
-        let decoded = Request::decode(&request.encode()).unwrap();
-        assert_eq!(decoded.cwd, request.cwd);
-        assert_eq!(decoded.config, request.config);
-        assert_eq!(decoded.roots, request.roots);
-        assert_eq!(decoded.overlays, request.overlays);
     }
 }

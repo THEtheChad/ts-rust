@@ -930,7 +930,7 @@ impl Project {
                 _ => false,
             }
         {
-            crate::program::reuse_verify::verify(&new_program, &self.dirty_file_path);
+            super::reuse_verify::verify(self, &host, &new_program);
         }
 
         // Go: defer cleanupModuleResolver() (ts#64299)
