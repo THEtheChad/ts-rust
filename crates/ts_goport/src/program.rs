@@ -1851,7 +1851,6 @@ pub fn bind_all() {
     let tables = held_tables(program);
     tables.bound_symbols.get_or_init(|| {
         // Loader v2 L0: the bind phase of a load (`GOPORT_LOAD_TIMES`).
-        #[cfg(feature = "diagnostics")]
         let _phase = crate::frontend::compiler::load_times::PhaseTimer::start("bind");
         let unbound: Vec<Node> = program
             .source_files()
@@ -3357,7 +3356,6 @@ pub fn new_program_version(
     previous: Option<&'static GoProgram>,
 ) -> &'static GoProgram {
     // Loader v2 L0: the publish phase of a load (`GOPORT_LOAD_TIMES`).
-    #[cfg(feature = "diagnostics")]
     let _phase = crate::frontend::compiler::load_times::PhaseTimer::start("publish");
     go_frontend::new_program_version(np, previous)
 }

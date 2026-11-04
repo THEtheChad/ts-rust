@@ -62,10 +62,6 @@ same-file = "=1.0.6"
 nix = { version = "=0.31.3", default-features = false, features = ["process", "resource", "signal", "time"] }
 
 [features]
-# Loader v2 diagnostics (src/frontend/compiler/load_view_scope/diag.rs and
-# goport_util's): never in a shipped build; ts_goport's `diagnostics` turns
-# it on.
-diagnostics = ["goport_util/diagnostics"]
 # No defaults: ts_goport chooses the global allocator (its `jemalloc`
 # feature turns on this one), so the two crates cannot disagree about it.
 default = []
@@ -78,9 +74,12 @@ test-hooks = []
 # `project::reuse_verify`), `GOPORT_REUSE_STATS`, `GOPORT_CHECKER_CALL_LOG`,
 # `GOPORT_EMIT_PHASE_TIMES`, `GOPORT_DTS_TWIN_CHECK`,
 # `GOPORT_FLOWSKIP=verify` and `GOPORT_LIB_SNAPSHOT=trace` /
-# `GOPORT_LIB_PARSE_SNAPSHOT=trace`. Without it none of these is read. Off
-# in every shipped build; ts_goport's `diagnostics` turns it on.
-diagnostics = []
+# `GOPORT_LIB_PARSE_SNAPSHOT=trace`, and the loader's: `GOPORT_LOAD_TIMES`
+# (frontend/compiler/load_times.rs) and the load view's scope and
+# reconciliation diagnostics (frontend/compiler/load_view_scope/diag.rs,
+# with goport_util's). Without it none of these is read. Off in every
+# shipped build; ts_goport's `diagnostics` turns it on.
+diagnostics = ["goport_util/diagnostics"]
 # The binaries' global allocator is jemalloc: thread arenas
 # (`tikv-jemalloc-ctl`), `jemalloc_layout`, and the jemalloc thread budget
 # and glibc tunables in program.rs. Only ts_goport's `jemalloc` turns it on.
