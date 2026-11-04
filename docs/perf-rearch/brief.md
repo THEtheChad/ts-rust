@@ -38,6 +38,18 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 - **Never use remote hosts or Blacksmith** (`remote.sh`, `testbox.sh`,
   `boatbox.sh`). Everything runs here.
 
+## Parity gate (mandatory for every change)
+
+`scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main/`
+prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
+- **quick:** about 4 minutes, warm. Use it while iterating.
+- **full:** about 17 minutes (45 cold). Required before you report a change
+  as done.
+- **Known diffs on main:** see `known.txt` in the base. The Effect items go
+  away with lane E0.
+- Run full tiers under `systemd-run` (see Rules). The tests tier builds your
+  checkout's source, so run it from your own worktree.
+
 ## Rules
 
 - Edit only the files your prompt gives you. Commit only if your prompt says
