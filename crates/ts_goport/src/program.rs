@@ -5512,6 +5512,38 @@ pub fn get_semantic_diagnostics(source_file: Node) -> Vec<Diagnostic> {
     })
 }
 
+/// PORT: not in Go (perf). `get_semantic_diagnostics(Node::NIL)` whose
+/// jobs are sent and not waited for yet (`start_semantic_diagnostics`).
+pub struct PendingSemanticCheck(PendingCheckerGroup);
+
+impl PendingSemanticCheck {
+    /// Waits for the check. Same result as
+    /// `get_semantic_diagnostics(Node::NIL)`.
+    #[must_use]
+    pub fn wait(self) -> Vec<Diagnostic> {
+        filter_and_sort_diagnostics(self.0.wait().into_iter().flatten().collect())
+    }
+}
+
+/// PORT: not in Go (perf). The first half of
+/// `get_semantic_diagnostics(Node::NIL)`: sends the same checker group jobs
+/// (`collect_checker_diagnostics_from_files` of every source file) and
+/// returns without waiting. Each checker runs its job after the jobs sent
+/// to it before, so the result is the same as with an immediate wait.
+/// The plain `tsc -p` early emit uses it (`execute::tsc::emit`). Not with
+/// a check that steals files (`stealing_check`): its jobs read other
+/// checkers' queues.
+#[must_use]
+pub fn start_semantic_diagnostics() -> PendingSemanticCheck {
+    debug_assert!(
+        !stealing_check(),
+        "start_semantic_diagnostics: stealing check"
+    );
+    PendingSemanticCheck(start_checker_group_do(&source_files(), |c, f| {
+        get_semantic_diagnostics_with_checker(&context::background(), c, f)
+    }))
+}
+
 // Go: compiler/program.go:833 GetSemanticDiagnosticsForIncremental
 // GetSemanticDiagnosticsForIncremental includes newly discovered globals in each
 // file's cached diagnostics and leaves noEmit filtering to the builder.
@@ -5648,6 +5680,35 @@ pub fn get_global_diagnostics() -> Vec<Diagnostic> {
         return Vec::new();
     }
     pool_get_global_diagnostics()
+}
+
+/// PORT: not in Go (perf). `get_global_diagnostics` whose jobs are sent
+/// and not waited for yet (`start_global_diagnostics`).
+pub struct PendingGlobalDiagnostics(Vec<JobReceiver<Vec<Diagnostic>>>);
+
+impl PendingGlobalDiagnostics {
+    /// Waits for each checker's read. Same result as `get_global_diagnostics`
+    /// at the point where the jobs were sent.
+    #[must_use]
+    pub fn wait(self) -> Vec<Diagnostic> {
+        sort_and_deduplicate_diagnostics(wait_jobs(self.0).into_iter().flatten().collect())
+    }
+}
+
+/// PORT: not in Go (perf). The first half of `get_global_diagnostics`:
+/// sends one read to each checker and returns without waiting. Each
+/// checker reads its global diagnostics after the jobs sent to it before
+/// and before the jobs sent to it after, so work sent later (an emit)
+/// cannot add to what it reads. Loading thread only, and only for a
+/// program with source files (`get_global_diagnostics` sends no job
+/// without them).
+#[must_use]
+pub fn start_global_diagnostics() -> PendingGlobalDiagnostics {
+    debug_assert!(
+        !prog().source_file_order().is_empty(),
+        "start_global_diagnostics: a program without files"
+    );
+    PendingGlobalDiagnostics(start_pool_global_diagnostics())
 }
 
 // Go: compiler/program.go:1504 GetDeclarationDiagnostics

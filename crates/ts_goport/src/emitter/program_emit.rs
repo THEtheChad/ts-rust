@@ -188,6 +188,131 @@ fn log_checker_emit(source_file: Node) {
     });
 }
 
+/// PORT: not in Go (perf). True when plain `tsc -p` (a `*compiler.Program`,
+/// not incremental) may send its emit right behind its check
+/// (`start_plain_emit`): the rules of `emit_can_start_with_check` (options,
+/// F1 to F4), and the program has source files. Loading thread only; it
+/// reads every program file.
+#[must_use]
+pub fn plain_emit_can_start_with_check() -> bool {
+    plain_early_emit_enabled() && !source_files().is_empty() && emit_can_start_with_check()
+}
+
+/// False when `GOPORT_PLAIN_EARLY_EMIT` is `0`: plain `tsc -p` then emits
+/// after the whole check, as in Go, and the incremental early emit stays
+/// on (`GOPORT_EARLY_EMIT=0` turns both off). For tests, timing and the
+/// checker call log diff on one binary. Read once.
+fn plain_early_emit_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("GOPORT_PLAIN_EARLY_EMIT").as_deref() != Ok("0"))
+}
+
+/// PORT: not in Go (perf). The emit of plain `tsc -p` sent behind the
+/// check (`start_plain_emit`), not waited for yet.
+pub struct StartedPlainEmit {
+    files: PendingPlainFiles,
+    /// The `WriteFile` of the start. `wait` must get the same.
+    write_file: Option<WriteFile>,
+    /// `program::bind_thread_fingerprint` of this thread after the start.
+    /// The emit pool starts from a copy of this thread's state, so until
+    /// the wait this thread must not change it, else the pool would start
+    /// from other state than in the emit after the check.
+    fingerprint: (usize, (u64, u64), u64, usize),
+}
+
+enum PendingPlainFiles {
+    Pool(PendingPoolEmit),
+    Checkers(PendingCheckerJobs<EmitResult>),
+}
+
+/// PORT: not in Go (perf). The first half of `emit(options)` for plain
+/// `tsc -p`, sent right behind the check: the same file jobs as `emit`
+/// sends after the check (`emit_results_with`), to the emit pool and to the
+/// checker threads, without a wait. Each checker thread runs its emit jobs
+/// after the jobs sent to it before: its check and its global diagnostics
+/// read (`program::start_global_diagnostics`), which the caller sends
+/// first. So each checker gets the same checker calls in the same order as
+/// with the emit after the whole check; only the other checkers' progress
+/// differs, and no checker reads another's state. The JS parts that need
+/// no checker run on the emit pool during the check.
+///
+/// The caller checks `plain_emit_can_start_with_check`. `options` must be
+/// the options of the `emit` call of `EmitFilesAndReportErrors`: no target
+/// file, `EmitOnly::All`, no `force_emit`. With the rules, `noEmit` and
+/// `noEmitOnError` are off, so `handle_no_emit_options` returns None, and
+/// `--singleThreaded` and a trace are off, so the jobs run in file order
+/// and write no trace event.
+pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
+    debug_assert!(
+        options.target_source_files.is_none()
+            && options.emit_only == EmitOnly::All
+            && !options.force_emit,
+        "start_plain_emit: only the emit of all files starts early"
+    );
+    debug_assert!(
+        handle_no_emit_options(None).is_none()
+            && !single_threaded()
+            && crate::tracing::get().is_none(),
+        "start_plain_emit: the options do not allow an early emit"
+    );
+    let target = EmitterOptions::of(options);
+    let source_files = get_source_files_to_emit(None, false, false);
+    phase_times::route(Route::StartPlainEarly, source_files.len());
+    let wrap: Wrap = |emit_file| emit_file();
+    let files = match start_emit_files_with_pool(&source_files, |_| target.clone(), wrap) {
+        Some(pool) => PendingPlainFiles::Pool(pool),
+        None => PendingPlainFiles::Checkers(send_on_checker_threads_for_files(
+            &source_files,
+            move |source_file| {
+                let result = emit_source_file(source_file, &target);
+                log_checker_emit(source_file);
+                result
+            },
+        )),
+    };
+    StartedPlainEmit {
+        files,
+        write_file: options.write_file.clone(),
+        fingerprint: crate::program::bind_thread_fingerprint(),
+    }
+}
+
+impl StartedPlainEmit {
+    /// The second half of `emit(options)`: waits for the jobs that
+    /// `start_plain_emit` sent and combines their results in file order.
+    /// `options` must be the options of the start.
+    pub fn wait(self, options: &EmitOptions) -> EmitResult {
+        assert!(
+            options.target_source_files.is_none()
+                && options.emit_only == EmitOnly::All
+                && !options.force_emit
+                && match (&options.write_file, &self.write_file) {
+                    (Some(write_file), Some(started)) => Arc::ptr_eq(write_file, started),
+                    (None, None) => true,
+                    _ => false,
+                },
+            "the emit did not get the options of the emit that started with the check"
+        );
+        let fingerprint = crate::program::bind_thread_fingerprint();
+        if fingerprint != self.fingerprint {
+            debug_assert!(
+                false,
+                "the loading thread changed its state during the early emit"
+            );
+            if crate::program::checker_call_log_enabled() {
+                eprintln!(
+                    "GOPORT_CHECKER_CALL_LOG: the loading thread changed its state during the early emit"
+                );
+            }
+        }
+        let results = match self.files {
+            PendingPlainFiles::Pool(pool) => pool.wait(),
+            PendingPlainFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
+        };
+        combine_emit_results(results)
+    }
+}
+
 /// PORT: not in Go. The API emit (`handle_emit`) writes the outputs after
 /// the emit, on its own thread, because its file system is not shared with
 /// the emit threads. In Go the write runs in the emitter, and its TS5033

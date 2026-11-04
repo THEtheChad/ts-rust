@@ -78,6 +78,109 @@ impl ProgramLike for CompilerProgram {
     }
 }
 
+/// PORT: not in Go (perf). The plain `*compiler.Program` of `tsc -p`
+/// (`CompilerProgram`) with the early emit: when the emit rules allow it
+/// (`plain_emit_can_start_with_check`), the semantic diagnostics call of
+/// `GetDiagnosticsOfAnyProgram` sends, on each checker, its check, then its
+/// global diagnostics read, then its emit, and waits only for the check.
+/// Each checker then emits as soon as its own check and read end, while
+/// the others still check, and the emit pool runs the JS parts that need no
+/// checker during the check. Go waits for the whole check, reads the
+/// global diagnostics of every checker, then emits.
+///
+/// The plain program reads the global diagnostics again after the check
+/// (`get_diagnostics_of_any_program`, Go program.go:2088). Each checker's
+/// read here is queued before its emit, so an emit cannot add global
+/// diagnostics to it, and the next `get_global_diagnostics` call returns
+/// these reads. The `emit` call then waits for the emit that started.
+/// Each checker gets the same jobs in the same order as in Go: check,
+/// global diagnostics read, emit (with `declaration`, the declaration
+/// transforms run inside each file's emit, as before).
+///
+/// When the rules do not allow it, or the semantic diagnostics are not
+/// asked for (syntactic, option or global errors, `--listFilesOnly`),
+/// every call is the plain program's.
+pub struct EarlyEmitCompilerProgram {
+    /// The `WriteFile` of the emit call of `EmitFilesAndReportErrors`.
+    write_file: Option<WriteFile>,
+    started: RefCell<EarlyEmitStarted>,
+}
+
+#[derive(Default)]
+struct EarlyEmitStarted {
+    global_diagnostics: Option<crate::program::PendingGlobalDiagnostics>,
+    emit: Option<crate::emitter::program_emit::StartedPlainEmit>,
+}
+
+impl EarlyEmitCompilerProgram {
+    /// `write_file` must be the `write_file` of the `EmitInput` that
+    /// `emit_and_report_statistics` gets with this program.
+    #[must_use]
+    pub fn new(write_file: Option<WriteFile>) -> Self {
+        Self {
+            write_file,
+            started: RefCell::default(),
+        }
+    }
+
+    /// True when the caller used everything that the early start sent: the
+    /// calls followed `EmitFilesAndReportErrors`.
+    #[must_use]
+    pub fn started_used(&self) -> bool {
+        let started = self.started.borrow();
+        started.global_diagnostics.is_none() && started.emit.is_none()
+    }
+}
+
+impl ProgramLike for EarlyEmitCompilerProgram {
+    fn options(&self) -> &'static CompilerOptions {
+        options()
+    }
+    fn get_bind_diagnostics(&self, file: Node) -> Vec<Diagnostic> {
+        get_bind_diagnostics(file)
+    }
+    fn get_global_diagnostics(&self) -> Vec<Diagnostic> {
+        if let Some(pending) = self.started.borrow_mut().global_diagnostics.take() {
+            return pending.wait();
+        }
+        get_global_diagnostics()
+    }
+    fn get_semantic_diagnostics(&self, file: Node) -> Vec<Diagnostic> {
+        let first = {
+            let started = self.started.borrow();
+            started.global_diagnostics.is_none() && started.emit.is_none()
+        };
+        if !file.is_nil()
+            || !first
+            || !crate::emitter::program_emit::plain_emit_can_start_with_check()
+        {
+            return get_semantic_diagnostics(file);
+        }
+        // Per checker: check, global diagnostics read, emit.
+        let check = crate::program::start_semantic_diagnostics();
+        let global_diagnostics = crate::program::start_global_diagnostics();
+        let emit = crate::emitter::program_emit::start_plain_emit(&EmitOptions {
+            write_file: self.write_file.clone(),
+            ..EmitOptions::default()
+        });
+        {
+            let mut started = self.started.borrow_mut();
+            started.global_diagnostics = Some(global_diagnostics);
+            started.emit = Some(emit);
+        }
+        check.wait()
+    }
+    fn get_declaration_diagnostics(&self, file: Node) -> Vec<Diagnostic> {
+        get_declaration_diagnostics(file)
+    }
+    fn emit(&self, options: EmitOptions) -> EmitResult {
+        if let Some(started) = self.started.borrow_mut().emit.take() {
+            return started.wait(&options);
+        }
+        emit(options)
+    }
+}
+
 // Go: execute/tsc/emit.go:21 GetTraceWithWriterFromSys
 pub fn get_trace_with_writer_from_sys(
     w: Writer,
