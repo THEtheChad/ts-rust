@@ -233,3 +233,14 @@ until the baseline and parity lanes have released the machine.
   stress test): about 160 live synthetic slots per iteration on umami
   (101.3k after 600 iterations with A1, 96.9k without). This is a memory
   growth candidate; trace where the slots come from.
+- **2026-11-04, A1 merged** (`55b14f97c`): the LSP reuses the program on
+  edits that keep synthetic JSX and importHelpers imports.
+  - **Result:** per `.tsx` edit on umami, the program update goes from
+    208–217 ms to about 6.6 ms (Go: 125–130 ms). Update plus first hover goes
+    from 1.15G to 12–18M instructions.
+  - **Reviews:** two rounds. The remaining Astra finding is a false-positive
+    MISMATCH in the `GOPORT_VERIFY_REUSE` tool when disk diverges from the
+    snapshot; it's a follow-up in the A1 lane.
+  - `GOPORT_REUSE_SYNTHETIC=0` turns it off.
+  - A parity full run on the merged head is running; it becomes
+    base-current if it passes.
