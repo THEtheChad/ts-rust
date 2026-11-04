@@ -268,3 +268,28 @@ until the baseline and parity lanes have released the machine.
     bin `t3-de2c82a7/target/b1/bins/`.
 - **2026-11-04, parity full on the merged E0+A1+B1 head (`b22c2a3e6`): OK** (186,585 items, 0 lost). It is now base-current.
 - **2026-11-04, timing window 1 queued:** `perf-window1` (`scripts/perf-rearch/window1.sh`), comparing Go, main and head `b2febcd86`, plus the B1 and A1 same-bin A/Bs. Bins are `bins/*-goport-w1` (1.95.0, `--profile goport`). Results go to `~/.cache/perf-rearch/window1/gap.md`.
+
+## Timing window 1, first results (idle, 2026-11-04 01:43–03:16)
+
+Bins: `bins/*-goport-w1` (1.95.0, `--profile goport`). Head is `b2febcd86`
+(E0+A1+B1). Results: `~/.cache/perf-rearch/window1/gap.md`. Every output
+was the same as Go's.
+
+**Head vs Go:**
+- **CLI:** every cell faster. noemit, emit and emit-js run at 0.37–0.67×
+  Go's time, for example vscode check 5.33 s against 8.51 s, T3 server
+  3.96 s against 10.40 s, umami 726 ms against 1.37 s.
+  - The audits' "slower" cells were measured under load: the emit audit
+    timed the emit phase only, and vscode's 12.9 s was a loaded run.
+- **LSP:**
+  - concurrent at 120 ms/key: p95 95 ms against 344 ms (0.28×; main
+    1.31 s).
+  - 250 and 500 ms/key: 0.64–0.67×.
+  - `.tsx` probe: 7 ms against 53 ms; `.ts` probe: 3 ms against 12 ms.
+- **The only remaining gap is time to first diagnostics** (open a project,
+  pull one file's diagnostics): 425 ms against 289 ms, 1.47× slower, while
+  using less than half Go's CPU (1.43 s against 3.50 s). This is the serial
+  loader, track C (C1/C2), and the shared package.json cache (E3b) also
+  applies.
+- **B1's gain is small** (umami emit −3%, emit-js −4%, vscode flat).
+  `cli-emit-ab` is measuring it exactly.
