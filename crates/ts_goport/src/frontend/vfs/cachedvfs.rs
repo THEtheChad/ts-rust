@@ -81,6 +81,27 @@ impl CachedFs {
         self.cached(&self.realpath_cache, path)
     }
 
+    /// The cached answers, sorted, as text lines (`GOPORT_LOAD_DUMP`,
+    /// compiler/load_dump.rs).
+    pub fn dump(&self, out: &mut String) {
+        let _ = writeln_enabled(out, self.enabled.get());
+        sorted_lines(out, "file_exists", self.file_exists_cache.borrow().iter());
+        sorted_lines(
+            out,
+            "directory_exists",
+            self.directory_exists_cache.borrow().iter(),
+        );
+        sorted_lines(out, "realpath", self.realpath_cache.borrow().iter());
+        sorted_lines(
+            out,
+            "entries",
+            self.get_accessible_entries_cache
+                .borrow()
+                .iter()
+                .map(|(path, entries)| (path, (&entries.files, &entries.directories))),
+        );
+    }
+
     /// The file system that the cache asks.
     pub fn wrapped(&self) -> &Rc<dyn Fs> {
         &self.fs
@@ -224,4 +245,27 @@ impl Fs for CachedFs {
     fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
         self.fs.append_file(path, data)
     }
+}
+
+/// Appends `label key value` lines for `entries`, sorted.
+fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
+    out: &mut String,
+    label: &str,
+    entries: impl IntoIterator<Item = (K, V)>,
+) {
+    let mut lines: Vec<String> = entries
+        .into_iter()
+        .map(|(key, value)| format!("{label} {} {value:?}", key.as_ref()))
+        .collect();
+    lines.sort_unstable();
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+}
+
+/// The first line of `CachedFs::dump`.
+fn writeln_enabled(out: &mut String, enabled: bool) -> std::fmt::Result {
+    use std::fmt::Write as _;
+    writeln!(out, "lookup_cache enabled={enabled}")
 }

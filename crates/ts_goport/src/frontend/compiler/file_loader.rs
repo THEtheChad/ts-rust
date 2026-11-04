@@ -91,6 +91,10 @@ pub struct FileLoader {
     /// parse are kept for the next loads (`import_names`).
     // PORT: not in Go (perf).
     pub keeps_import_names: bool,
+    /// S1a: the resolve-ahead job of a language server's first load, whose
+    /// answers the parse workers make as they resolve (`FirstLoadJob`).
+    // PORT: not in Go (perf).
+    pub first_load_ahead: Option<super::resolve_ahead::FirstLoadJob>,
     /// The lookup logs of the worker answers that the load took from a
     /// prep (`FilePrep`, `WorkerMeta`), by the address of each log: each
     /// is noted once (`note_worker_logs`). The shared cache holds every
@@ -257,6 +261,8 @@ pub fn process_all_program_files(
     single_threaded: bool,
 ) -> (ProcessedFiles, Option<GoError>) {
     let ProgramHosts { host } = hosts;
+    let mut times = super::load_dump::LoadTimes::start();
+    super::load_dump::begin_load();
     let compiler_options = opts.config.compiler_options().clone();
     // PERF (buildprog1): the root names are read from the config, as Go
     // reads `opts.Config.FileNames()`, not from a copy of the list.
@@ -314,6 +320,7 @@ pub fn process_all_program_files(
         path_for_lib_file_resolutions: RefCell::new(FxHashMap::default()),
         shared_resolution: None,
         keeps_import_names: false,
+        first_load_ahead: None,
         noted_worker_logs: RefCell::new(FxHashSet::default()),
         content_mapper_failures: RefCell::new(FxHashMap::default()),
         content_mapper_init_failed: RefCell::new(FxHashSet::default()),
@@ -395,7 +402,16 @@ pub fn process_all_program_files(
             // file system is not the plain OS one: the host checks each
             // answer before the loader takes it. No project references, so
             // no key has a redirect and the resolver host fakes no file.
-            resolve_ahead = Some(super::resolve_ahead::ResolveAhead::start(host, &resolver));
+            // S1a: a first load has no keys of a previous load. When parse
+            // workers run (the host's first load), they resolve through the
+            // job's view as they parse, and the loader checks each answer
+            // as it checks a resolve-ahead answer (`FirstLoadJob`).
+            let first_load = loader.host.prefetch_parses()
+                && super::files_parser::parse_workers_enabled()
+                && super::resolve_ahead::first_load_enabled();
+            let started = super::resolve_ahead::ResolveAhead::start(host, &resolver, first_load);
+            loader.first_load_ahead = started.first_load_job();
+            resolve_ahead = Some(started);
             loader.keeps_import_names = true;
             drop_dead_import_names();
         }
@@ -456,7 +472,16 @@ pub fn process_all_program_files(
     }
 
     let root_tasks = loader.root_tasks.clone();
+    if let Some(times) = &mut times {
+        times.mark("setup");
+    }
     loader.files_parser.borrow_mut().parse(&loader, &root_tasks);
+    if let Some(times) = &mut times {
+        times.mark("parse");
+    }
+    // The parse workers have ended: no worker uses the first-load job.
+    loader.first_load_ahead = None;
+    let resolved_ahead = resolve_ahead.is_some();
     if let Some(resolve_ahead) = resolve_ahead
         && let Some(resolver) = loader
             .resolver
@@ -501,10 +526,34 @@ pub fn process_all_program_files(
         mapper.host = None;
     }
 
+    if let Some(times) = &mut times {
+        times.mark("finish");
+    }
     let files_parser = loader.files_parser.borrow();
+    // The collect takes the tasks' resolutions: the dump reads them first.
+    if super::load_dump::loading() {
+        let host_takes = !loader.host.is_plain_os_fs();
+        super::load_dump::end_load(
+            |out| dump_loader_state(&loader, &files_parser, out),
+            host_takes,
+        );
+    }
     let processed_files = files_parser.get_processed_files(&loader);
     let module_resolution_error = loader.module_resolution_error.borrow().clone();
+    if let Some(times) = &mut times {
+        times.mark("collect");
+    }
     drop(files_parser);
+    if let Some(times) = times {
+        let extra = if resolved_ahead {
+            super::resolve_ahead::last_stats()
+                .map(|stats| format!("ahead={stats:?}"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        times.report(processed_files.files.len(), &extra);
+    }
     drop(root_tasks);
     // PERF: in a one-program process the loader state (every parse task)
     // lives until the process ends anyway; freeing it is serial work before
@@ -513,6 +562,221 @@ pub fn process_all_program_files(
         std::mem::forget(loader);
     }
     (processed_files, module_resolution_error)
+}
+
+/// The processed state of a load for `GOPORT_LOAD_DUMP` (load_dump.rs):
+/// each path's task data and tasks, sorted by path, and the resolver's
+/// package.json cache entries, sorted.
+// PORT: not in Go (perf diagnostics).
+fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut String) {
+    use std::fmt::Write as _;
+    let mut paths: Vec<&Path> = files_parser.task_data_by_path.keys().collect();
+    paths.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    for path in paths {
+        let data = files_parser.task_data_by_path[path].borrow();
+        let _ = writeln!(
+            out,
+            "data {} lowest_depth={} started={} pkg={:?}",
+            path.as_str(),
+            data.lowest_depth,
+            data.started_sub_tasks,
+            data.package_id.string()
+        );
+        for (name, task) in &data.tasks {
+            let task = task.borrow();
+            let _ = writeln!(
+                out,
+                "  task {name} loaded={} started={} lib={} auto_types={} failed_lookup={} redirected={} file={} pkg={:?}",
+                task.loaded,
+                task.started_sub_tasks,
+                task.lib_file.is_some(),
+                task.is_for_automatic_type_directive,
+                task.failed_lookup,
+                task.redirected_parse_task.is_some(),
+                task.file.is_some(),
+                task.package_id.string(),
+            );
+            for diagnostic in &task.resolution_diagnostics {
+                let _ = writeln!(
+                    out,
+                    "    resolution_diagnostic {}",
+                    super::load_dump::describe_diagnostic(diagnostic)
+                );
+            }
+            for diagnostic in &task.processing_diagnostics {
+                let _ = writeln!(
+                    out,
+                    "    processing_diagnostic {}",
+                    describe_processing_diagnostic(diagnostic)
+                );
+            }
+            let _ = writeln!(out, "    include_reason {:?}", task.include_reason);
+            for reason in &task.all_include_reasons {
+                let _ = writeln!(out, "    all_include_reason {reason:?}");
+            }
+            for trace in task
+                .resolutions_trace
+                .iter()
+                .chain(&task.type_resolutions_trace)
+            {
+                let _ = writeln!(out, "    trace {:?} {:?}", trace.message.key(), trace.args);
+            }
+            let _ = writeln!(out, "    meta {:?}", task.metadata);
+            let mut resolutions: Vec<String> = task
+                .resolutions_in_file
+                .iter()
+                .map(|(key, module)| {
+                    format!(
+                        "    module {:?} {:?} {}",
+                        key.name,
+                        key.mode,
+                        super::load_dump::describe_module(module)
+                    )
+                })
+                .collect();
+            resolutions.sort_unstable();
+            for line in resolutions {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            let mut types: Vec<String> = task
+                .type_resolutions_in_file
+                .iter()
+                .map(|(key, resolved)| {
+                    format!(
+                        "    type {:?} {:?} {}",
+                        key.name,
+                        key.mode,
+                        describe_type_reference(resolved)
+                    )
+                })
+                .collect();
+            types.sort_unstable();
+            for line in types {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            for sub in &task.sub_tasks {
+                let sub = sub.borrow();
+                let _ = writeln!(
+                    out,
+                    "    sub {} depth+={} elide={}",
+                    sub.normalized_file_path, sub.increase_depth, sub.elide_on_depth
+                );
+            }
+        }
+    }
+    if let Some(resolver) = loader
+        .resolver
+        .as_ref()
+        .and_then(|resolver| resolver.as_default_resolver())
+    {
+        // The resolver's own caches: module and type reference answers,
+        // and the package.json cache as `get` gives it (its pending reads
+        // parsed).
+        let mut modules: Vec<String> = resolver
+            .caches
+            .module_resolution_cache
+            .cache
+            .borrow()
+            .iter()
+            .map(|(key, module)| {
+                format!(
+                    "resolver_module {:?} {:?} {:?} redirect={:?} {}",
+                    key.containing_directory,
+                    key.module_name,
+                    key.resolution_mode,
+                    key.redirect_config_name,
+                    super::load_dump::describe_module(module)
+                )
+            })
+            .collect();
+        modules.sort_unstable();
+        let mut types: Vec<String> = resolver
+            .caches
+            .type_ref_directive_resolution_cache
+            .cache
+            .borrow()
+            .iter()
+            .map(|(key, resolved)| {
+                format!(
+                    "resolver_type {:?} {:?} {:?} redirect={:?} inferred={} {}",
+                    key.containing_directory,
+                    key.type_reference_name,
+                    key.resolution_mode,
+                    key.redirect_config_name,
+                    key.from_inferred_types_containing_file,
+                    describe_type_reference(resolved)
+                )
+            })
+            .collect();
+        types.sort_unstable();
+        for line in modules.into_iter().chain(types).chain(
+            resolver
+                .package_json_info_cache
+                .dump_lines()
+                .into_iter()
+                .map(|line| format!("info_cache_{line}")),
+        ) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        let mut entries = Vec::new();
+        resolver.package_json_cache_entries(|path, entry| {
+            entries.push(format!(
+                "package_json {} dir={:?} dir_exists={} exists={}",
+                path.as_str(),
+                entry.package_directory,
+                entry.directory_exists,
+                entry.exists
+            ));
+            true
+        });
+        entries.sort_unstable();
+        for line in entries {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+}
+
+/// The canonical text of a type reference resolution (`GOPORT_LOAD_DUMP`).
+fn describe_type_reference(resolved: &ResolvedTypeReferenceDirective) -> String {
+    format!(
+        "file={:?} path={:?} original={:?} primary={} pkg={:?} external={} diags=[{}]",
+        resolved.resolved_file_name,
+        resolved.resolved_path.as_str(),
+        resolved.original_path,
+        resolved.primary,
+        resolved.package_id.string(),
+        resolved.is_external_library_import,
+        resolved
+            .resolution_diagnostics
+            .iter()
+            .map(super::load_dump::describe_diagnostic)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The canonical text of a processing diagnostic (`GOPORT_LOAD_DUMP`).
+fn describe_processing_diagnostic(
+    diagnostic: &super::processing_diagnostic::ProcessingDiagnostic,
+) -> String {
+    use super::processing_diagnostic::ProcessingDiagnosticData;
+    match &diagnostic.data {
+        ProcessingDiagnosticData::FileIncludeReason(reason) => {
+            format!("kind={} reason={reason:?}", diagnostic.kind.0)
+        }
+        ProcessingDiagnosticData::IncludeExplaining(explaining) => format!(
+            "kind={} file={:?} reason={:?} message={:?} args={:?}",
+            diagnostic.kind.0,
+            explaining.file.as_str(),
+            explaining.diagnostic_reason,
+            explaining.message.key(),
+            explaining.args
+        ),
+    }
 }
 
 /// `process_all_program_files` of the flat options, for the tests.
@@ -2387,7 +2651,11 @@ pub(crate) fn source_file_meta_data(
     let find = || PackageScope::of(resolver.get_package_scope_for_path(&directory).as_deref());
     let package_json_scope = resolver
         .as_default_resolver()
-        .and_then(|default| default.caches.package_scope_ahead(&directory, find))
+        .and_then(|default| {
+            default
+                .caches
+                .package_scope_ahead(&directory, &default.package_json_info_cache, find)
+        })
         .unwrap_or_else(find);
     meta_of_package_scope(package_json_scope, options, file_name)
 }

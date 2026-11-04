@@ -4,6 +4,7 @@ pub mod file_loader;
 pub mod files_parser;
 pub mod host;
 pub mod include_processor;
+pub mod load_dump;
 pub mod processing_diagnostic;
 pub mod program_lookup;
 pub mod program_new;
