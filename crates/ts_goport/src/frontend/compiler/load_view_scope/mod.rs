@@ -113,13 +113,18 @@ pub struct Reconciled {
 }
 
 /// The reconciliation of the loads that ended on this thread since the last
-/// one (`PENDING`): it checks each observation that their serial loaders
-/// read against the disk now, in parallel, and gives the file events of
-/// those that changed. The caller (the session, right after the watch
-/// registration of the snapshot that the loads made) sends them through
+/// one (`PENDING`), started by the session right after the watch
+/// registration of the snapshot that the loads made. A thread of its own
+/// checks each observation that their serial loaders read against the disk
+/// now, in parallel, so the dispatch thread does not wait for it (the first
+/// diagnostics of a load go out meanwhile). When it ends, `deliver` runs on
+/// this thread (`gostd::local::post_later`) with the file events of the
+/// observations that changed; the session sends them through
 /// `didChangeWatchedFiles`, so a change that happened between a worker's
-/// observation and the watch registration reloads as its watch event
-/// would. `None` when no load is pending.
+/// observation and the watch registration reloads as its watch event would.
+/// A change after the checks started is either found by them or reported by
+/// the watches, which are registered by then. Returns false (and drops
+/// `deliver`) when no load is pending.
 ///
 /// Each check is the OS call that made the observation, compared on what the
 /// loader read of it (`loadview::USED_*`): a `file_exists` or
@@ -129,16 +134,52 @@ pub struct Reconciled {
 /// realpath, the path; entries, the names in order, their kinds and the
 /// symlink set (the entries follow each link again, so a target that
 /// changes kind shows).
-#[must_use]
-pub fn reconcile_pending() -> Option<Reconciled> {
+pub fn reconcile_pending(deliver: Box<dyn FnOnce(Reconciled)>) -> bool {
     let views = PENDING.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
     if views.is_empty() {
-        return None;
+        return false;
     }
+    let slot: Arc<std::sync::Mutex<Option<Reconciled>>> = Arc::default();
+    let post = {
+        let slot = slot.clone();
+        crate::gostd::local::post_later(Box::new(move || {
+            let reconciled = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .unwrap_or_default();
+            #[cfg(feature = "diagnostics")]
+            diag::note_events(&reconciled.events);
+            deliver(reconciled);
+        }))
+    };
+    let run = move || {
+        let reconciled = reconcile_views(views);
+        *slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reconciled);
+        // The job runs on the dispatch thread now (also when this thread
+        // panicked: the handle posts when it drops).
+        post.post();
+    };
+    if let Err(err) = std::thread::Builder::new()
+        .name("goport-reconcile".to_string())
+        .spawn(run)
+    {
+        // Out of threads, as a parse worker pool would be: no silent loss of
+        // the reconciliation.
+        panic!("load view reconciliation: cannot start a thread: {err}");
+    }
+    true
+}
+
+/// Checks the observations of `views` (`reconcile_pending`), times it and
+/// frees the views.
+fn reconcile_views(views: Vec<Arc<LoadView>>) -> Reconciled {
     let t0 = super::load_dump::monotonic_ms();
     let mut reconciled = reconcile(&views);
     reconciled.wall_ms = super::load_dump::monotonic_ms() - t0;
-    crate::execute::build::build_task::drop_in_background(views);
+    drop(views);
     if super::load_dump::times_enabled() {
         use std::io::Write;
         let line = format!(
@@ -151,9 +192,7 @@ pub fn reconcile_pending() -> Option<Reconciled> {
         );
         let _ = std::io::stderr().write_all(line.as_bytes());
     }
-    #[cfg(feature = "diagnostics")]
-    diag::note_events(&reconciled.events);
-    Some(reconciled)
+    reconciled
 }
 
 /// One observation to check (`reconcile`).

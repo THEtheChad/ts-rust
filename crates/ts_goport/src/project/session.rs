@@ -2598,17 +2598,25 @@ impl Session {
 impl Session {
     /// Loader v2 L1 (`GOPORT_LOAD_VIEW=1`): right after the watch
     /// registration, the observations of the snapshot's loads through their
-    /// OS views are checked against the disk
+    /// OS views are checked against the disk on another thread
     /// (`load_view_scope::reconcile_pending`). A change between a worker's
-    /// observation and the registration, which no watch event reports, goes
-    /// through `didChangeWatchedFiles` as its watch event would.
+    /// observation and the registration, which no watch event reports, then
+    /// goes through `didChangeWatchedFiles` as its watch event would. The
+    /// background queue counts the check as running until its events are
+    /// sent (`Queue::hold`).
     // PORT: not in Go (perf).
     fn reconcile_load_views(self: &Rc<Self>, ctx: &Context) {
-        if let Some(reconciled) = crate::frontend::compiler::load_view_scope::reconcile_pending()
-            && !reconciled.events.is_empty()
-        {
-            self.did_change_watched_files(ctx, &reconcile_file_events(&reconciled.events));
-        }
+        let hold = self.background_queue.hold();
+        let s = self.clone();
+        let ctx = ctx.clone();
+        crate::frontend::compiler::load_view_scope::reconcile_pending(Box::new(
+            move |reconciled| {
+                let _hold = hold;
+                if !reconciled.events.is_empty() {
+                    s.did_change_watched_files(&ctx, &reconcile_file_events(&reconciled.events));
+                }
+            },
+        ));
     }
 }
 
