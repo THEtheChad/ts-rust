@@ -328,8 +328,7 @@ methods reach the AST through it.
   place (a later read panics), with their emit records, idToSymbol
   entries, fake scope records and the nil-key serialized types. A store
   in the serialized type cache under an enclosing declaration pins the
-  call: its nodes go to the current owner. `GOPORT_N1=0` turns print
-  scopes off. Go N' also releases the arenas of the emitter's per-file
+  call: its nodes go to the current owner. Go N' also releases the arenas of the emitter's per-file
   emit context and of the hover and signature help display builders; the
   port keeps those nodes with their thread or program version (PORT notes
   at each site).

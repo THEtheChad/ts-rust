@@ -121,7 +121,7 @@ pub use flat_map::*;
 pub use flow_p1::*;
 pub use flow_p2::*;
 pub use flow_p3::*;
-pub use flow_skip::{FlowSkip, FlowSkipMode};
+pub use flow_skip::FlowSkip;
 pub use grammarchecks_p1::*;
 pub use grammarchecks_p2::*;
 pub use grammarchecks_p3::*;

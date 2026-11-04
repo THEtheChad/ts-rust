@@ -213,15 +213,14 @@ impl Checker {
         // flowskip1: a walk that can only return the declared type and
         // makes nothing is skipped (flow_skip.rs). P1: no explicit flow node.
         // P3: declared == initial, not auto (go-model.md 2.4).
-        let evolved_type = if self.flow_skip.mode != FlowSkipMode::Off
-            && !explicit_flow_node
+        let evolved_type = if !explicit_flow_node
             && (initial_type.is_nil() || initial_type == declared_type)
             && declared_type != self.auto_type
             && declared_type != self.auto_array_type
             && let Some(nest) =
                 self.flow_skip_test(reference, declared_type, flow_container, flow_node)
         {
-            if self.flow_skip.mode == FlowSkipMode::Verify {
+            if self.flow_skip.verify {
                 self.flow_skip_verify(reference, declared_type, flow_container, flow_node, nest)
             } else {
                 declared_type
