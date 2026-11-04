@@ -42,6 +42,8 @@ PROJECTS_CFG = {
     "zod": (PROJECTS / "zod", "packages/zod/tsconfig.json"),
     "effect": (PROJECTS / "effect", "packages/effect/tsconfig.noeffect.json"),
     "ts-pattern": (PROJECTS / "ts-pattern", "tsconfig.json"),
+    # TS5011 (an option error) without rootDir, which skips the check.
+    "ts-pattern-rootdir": (PROJECTS / "ts-pattern", "tsconfig.json", ["--rootDir", "src"]),
 }
 
 STAT_DROP = re.compile(
@@ -156,18 +158,19 @@ def cases(kind: str, fx: dict) -> list:
     c = []
 
     def proj(name, extra, label=None, setup=None):
-        cwd, cfg = PROJECTS_CFG[name]
+        cwd, cfg, *base = PROJECTS_CFG[name]
+        base = base[0] if base else []
         c.append((f"{name}:{label or ' '.join(extra) or 'default'}", cwd,
-                  ["-p", cfg, *PLAIN, "--outDir", "OUT", *extra], setup))
+                  ["-p", cfg, *PLAIN, "--outDir", "OUT", *base, *extra], setup))
 
-    quick_projects = ["umami", "hono", "query", "ts-pattern"]
-    all_projects = ["umami", "hono", "query", "zod", "effect", "ts-pattern"]
+    quick_projects = ["umami", "hono", "query", "ts-pattern-rootdir"]
+    all_projects = ["umami", "hono", "query", "zod", "effect", "ts-pattern", "ts-pattern-rootdir"]
     names = all_projects if kind == "full" else quick_projects
     for name in names:
         proj(name, [])
         proj(name, ["--declaration"])
         proj(name, ["--sourceMap", "--declaration", "--declarationMap"])
-        if name in ("umami", "hono", "query", "ts-pattern"):
+        if name in ("umami", "hono", "query", "ts-pattern", "ts-pattern-rootdir"):
             proj(name, ["--module", "commonjs", "--moduleResolution", "bundler"], "commonjs")
             proj(name, ["--module", "commonjs", "--moduleResolution", "node10", "--ignoreDeprecations", "6.0"], "commonjs-node10")
         proj(name, ["--noCheck", "--declaration"])
@@ -214,7 +217,7 @@ def cases(kind: str, fx: dict) -> list:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("not a dir\n")
     fixture("writefail", ["--declaration"], "outdir-is-file", out_is_file)
-    proj("ts-pattern", ["--declaration"], "dir-at-output",
+    proj("ts-pattern-rootdir", ["--declaration"], "dir-at-output",
          lambda out: [(out / f).mkdir(parents=True) for f in ("index.js", "types/Match.d.ts")])
     return c
 
