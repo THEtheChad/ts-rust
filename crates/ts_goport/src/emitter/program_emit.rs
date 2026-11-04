@@ -1617,47 +1617,123 @@ impl TwinFile {
     }
 }
 
-/// The twin check mode that `set_dts_twin_check` set: 0 for none, 1 off,
-/// 2 on.
-static DTS_TWIN_CHECK_SET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
-/// Sets the d.ts twin check mode of this process (`dts_twin_check`), or
-/// with `None` goes back to the default. Tests use it.
-pub fn set_dts_twin_check(check: Option<bool>) {
-    let value = match check {
-        None => 0,
-        Some(false) => 1,
-        Some(true) => 2,
-    };
-    DTS_TWIN_CHECK_SET.store(value, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// PORT: not in Go (perf). The parts whose transforms run on a checker
 /// thread (the d.ts part of a split file, and the JS and d.ts parts of a
 /// file whose JS part needs the checker) print on the twin of the checker
 /// (`program::send_dts_twin_job`). The twins run only with the emit pool
 /// (`program::emit_pool_enabled`: not with `--singleThreaded` or a trace).
-/// True in check mode: the checker prints each part too, and the twin
-/// panics when its text differs from the checker's (`set_dts_twin_check`,
-/// and with the `diagnostics` feature `GOPORT_DTS_TWIN_CHECK=1`).
-pub fn dts_twin_check() -> bool {
-    match DTS_TWIN_CHECK_SET.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => false,
-        2 => true,
-        _ => dts_twin_check_from_env(),
-    }
-}
-
-/// `GOPORT_DTS_TWIN_CHECK=1`, read once.
-#[cfg(feature = "diagnostics")]
-fn dts_twin_check_from_env() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("GOPORT_DTS_TWIN_CHECK").as_deref() == Ok("1"))
-}
-
-#[cfg(not(feature = "diagnostics"))]
-fn dts_twin_check_from_env() -> bool {
+/// True in check mode (`twin_check`, only in a `diagnostics` feature
+/// build): the checker prints each part too, and the twin panics when its
+/// text differs from the checker's.
+#[inline(always)]
+fn dts_twin_check() -> bool {
+    #[cfg(feature = "diagnostics")]
+    return twin_check::on();
+    #[cfg(not(feature = "diagnostics"))]
     false
+}
+
+#[cfg(feature = "diagnostics")]
+pub use twin_check::set_dts_twin_check;
+
+/// The check mode of the d.ts twins (`dts_twin_check`): a `diagnostics`
+/// feature build only.
+#[cfg(feature = "diagnostics")]
+mod twin_check {
+    use super::*;
+
+    /// The twin check mode that `set_dts_twin_check` set: 0 for none, 1
+    /// off, 2 on.
+    static SET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+    /// Sets the d.ts twin check mode of this process, or with `None` goes
+    /// back to `GOPORT_DTS_TWIN_CHECK=1`. Tests use it.
+    pub fn set_dts_twin_check(check: Option<bool>) {
+        let value = match check {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        };
+        SET.store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The check mode: `set_dts_twin_check`, else `GOPORT_DTS_TWIN_CHECK=1`
+    /// (read once).
+    pub(super) fn on() -> bool {
+        static ENV: OnceLock<bool> = OnceLock::new();
+        match SET.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => *ENV.get_or_init(|| std::env::var("GOPORT_DTS_TWIN_CHECK").as_deref() == Ok("1")),
+        }
+    }
+
+    /// Check mode (`dts_twin_check`) on the checker thread: runs `finish` (the rest of
+    /// the part's emit) on an emitter like `emitter` on this thread, and
+    /// returns its writes in order, without writing them.
+    pub(super) fn record_print(
+        emitter: &Emitter,
+        finish: impl FnOnce(&mut Emitter),
+    ) -> Vec<(String, String)> {
+        let writes: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let sink = Arc::clone(&writes);
+        let record: WriteFile =
+            Arc::new(move |name: &str, text: &str, _data: &mut WriteFileData| {
+                sink.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((name.to_string(), text.to_string()));
+                Ok(())
+            });
+        let target = EmitterOptions {
+            emit_only: emitter.emit_only,
+            force_emit: emitter.force_emit,
+            write_file: Some(record),
+        };
+        let mut recorder = new_emitter(emitter.host.clone(), emitter.source_file, &target, None);
+        finish(&mut recorder);
+        std::mem::take(&mut *writes.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Check mode (`dts_twin_check`) on the d.ts twin: `write_file` (or the emit host
+    /// write when it is None) after a check that each write is the next one in
+    /// `expected`, the writes of the same print on the checker thread. It
+    /// panics at the first difference.
+    pub(super) fn checked_write_file(
+        write_file: Option<WriteFile>,
+        expected: Arc<Mutex<std::vec::IntoIter<(String, String)>>>,
+    ) -> WriteFile {
+        Arc::new(move |name: &str, text: &str, data: &mut WriteFileData| {
+            let next = expected
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .next();
+            match next {
+                Some((expected_name, expected_text))
+                    if expected_name == name && expected_text == text => {}
+                Some((expected_name, expected_text)) => {
+                    let at = expected_text
+                        .bytes()
+                        .zip(text.bytes())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(expected_text.len().min(text.len()));
+                    panic!(
+                        "twin check: the twin wrote {name} ({} bytes), the checker {expected_name} ({} bytes); they differ at byte {at}",
+                        text.len(),
+                        expected_text.len()
+                    );
+                }
+                None => panic!("twin check: the checker did not write {name}"),
+            }
+            match &write_file {
+                Some(write_file) => write_file(name, text, data),
+                None => crate::printer::EmitHost::write_file(
+                    new_emit_host_without_checker().as_ref(),
+                    name,
+                    text,
+                ),
+            }
+        })
+    }
 }
 
 /// The JS or d.ts print of a file part that its checker thread hands to its
@@ -1679,6 +1755,7 @@ struct TwinPrint {
     pack: PrintPack,
     /// Check mode (`dts_twin_check`): the writes of the print on the checker, in
     /// order (file name and text).
+    #[cfg(feature = "diagnostics")]
     expected: Option<Vec<(String, String)>>,
 }
 
@@ -1711,10 +1788,19 @@ impl TwinPrint {
     fn js(emitter: Emitter, print: JsPrint, check: bool) -> Self {
         let root = print.source_file;
         let (tables, pack) = export_print(&print.emit_context, &[root], check);
-        let expected =
-            check.then(|| record_print(&emitter, |recorder| recorder.finish_js_part(print)));
+        #[cfg(feature = "diagnostics")]
+        let expected = check
+            .then(|| twin_check::record_print(&emitter, |recorder| recorder.finish_js_part(print)));
         JS_TWIN_PRINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Self::from_parts(emitter, root, TwinTree::Js, tables, pack, expected)
+        Self::from_parts(
+            emitter,
+            root,
+            TwinTree::Js,
+            tables,
+            pack,
+            #[cfg(feature = "diagnostics")]
+            expected,
+        )
     }
 
     /// The print of `emitter` after `transform_declaration_part` returned
@@ -1732,9 +1818,19 @@ impl TwinPrint {
             &[root, print.content_mapped_source],
             check,
         );
-        let expected = check
-            .then(|| record_print(&emitter, |recorder| recorder.finish_declaration_part(print)));
-        Self::from_parts(emitter, root, tree, tables, pack, expected)
+        #[cfg(feature = "diagnostics")]
+        let expected = check.then(|| {
+            twin_check::record_print(&emitter, |recorder| recorder.finish_declaration_part(print))
+        });
+        Self::from_parts(
+            emitter,
+            root,
+            tree,
+            tables,
+            pack,
+            #[cfg(feature = "diagnostics")]
+            expected,
+        )
     }
 
     fn from_parts(
@@ -1743,7 +1839,7 @@ impl TwinPrint {
         tree: TwinTree,
         tables: PrintTables,
         pack: PrintPack,
-        expected: Option<Vec<(String, String)>>,
+        #[cfg(feature = "diagnostics")] expected: Option<Vec<(String, String)>>,
     ) -> Self {
         let Emitter {
             emit_only,
@@ -1767,6 +1863,7 @@ impl TwinPrint {
             tree,
             tables,
             pack,
+            #[cfg(feature = "diagnostics")]
             expected,
         }
     }
@@ -1801,13 +1898,20 @@ impl TwinPrint {
         install_print_pack(self.pack);
         let emit_context =
             crate::printer::emit_context::EmitContext::from_print_tables(self.tables);
+        #[cfg(feature = "diagnostics")]
         let expected = self
             .expected
             .map(|expected| Arc::new(Mutex::new(expected.into_iter())));
+        #[cfg(feature = "diagnostics")]
         let write_file = match &expected {
             None => self.write_file,
-            Some(expected) => Some(checked_write_file(self.write_file, Arc::clone(expected))),
+            Some(expected) => Some(twin_check::checked_write_file(
+                self.write_file,
+                Arc::clone(expected),
+            )),
         };
+        #[cfg(not(feature = "diagnostics"))]
+        let write_file = self.write_file;
         let new_line = options().new_line.get_new_line_character();
         let mut emitter = Emitter {
             host: new_emit_host_without_checker(),
@@ -1836,6 +1940,7 @@ impl TwinPrint {
         emitter.writer = None;
         // The twin keeps the nodes of one print at a time.
         release_print_packs();
+        #[cfg(feature = "diagnostics")]
         if let Some(expected) = expected {
             let rest: Vec<String> = expected
                 .lock()
@@ -1861,9 +1966,16 @@ fn export_print(
     roots: &[Node],
     check: bool,
 ) -> (PrintTables, PrintPack) {
+    #[cfg(feature = "diagnostics")]
     let tables = if check {
         emit_context.clone_print_tables()
     } else {
+        emit_context.take_print_tables()
+    };
+    // `check` is always false without the diagnostics feature.
+    #[cfg(not(feature = "diagnostics"))]
+    let tables = {
+        let _ = check;
         emit_context.take_print_tables()
     };
     let mut roots = roots.to_vec();
@@ -1872,69 +1984,6 @@ fn export_print(
         tables.for_each_emit_node_value(n, |n| more.push(n));
     });
     (tables, pack)
-}
-
-/// Check mode (`dts_twin_check`) on the checker thread: runs `finish` (the rest of
-/// the part's emit) on an emitter like `emitter` on this thread, and
-/// returns its writes in order, without writing them.
-fn record_print(emitter: &Emitter, finish: impl FnOnce(&mut Emitter)) -> Vec<(String, String)> {
-    let writes: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
-    let sink = Arc::clone(&writes);
-    let record: WriteFile = Arc::new(move |name: &str, text: &str, _data: &mut WriteFileData| {
-        sink.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((name.to_string(), text.to_string()));
-        Ok(())
-    });
-    let target = EmitterOptions {
-        emit_only: emitter.emit_only,
-        force_emit: emitter.force_emit,
-        write_file: Some(record),
-    };
-    let mut recorder = new_emitter(emitter.host.clone(), emitter.source_file, &target, None);
-    finish(&mut recorder);
-    std::mem::take(&mut *writes.lock().unwrap_or_else(PoisonError::into_inner))
-}
-
-/// Check mode (`dts_twin_check`) on the d.ts twin: `write_file` (or the emit host
-/// write when it is None) after a check that each write is the next one in
-/// `expected`, the writes of the same print on the checker thread. It
-/// panics at the first difference.
-fn checked_write_file(
-    write_file: Option<WriteFile>,
-    expected: Arc<Mutex<std::vec::IntoIter<(String, String)>>>,
-) -> WriteFile {
-    Arc::new(move |name: &str, text: &str, data: &mut WriteFileData| {
-        let next = expected
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .next();
-        match next {
-            Some((expected_name, expected_text))
-                if expected_name == name && expected_text == text => {}
-            Some((expected_name, expected_text)) => {
-                let at = expected_text
-                    .bytes()
-                    .zip(text.bytes())
-                    .position(|(a, b)| a != b)
-                    .unwrap_or(expected_text.len().min(text.len()));
-                panic!(
-                    "twin check: the twin wrote {name} ({} bytes), the checker {expected_name} ({} bytes); they differ at byte {at}",
-                    text.len(),
-                    expected_text.len()
-                );
-            }
-            None => panic!("twin check: the checker did not write {name}"),
-        }
-        match &write_file {
-            Some(write_file) => write_file(name, text, data),
-            None => crate::printer::EmitHost::write_file(
-                new_emit_host_without_checker().as_ref(),
-                name,
-                text,
-            ),
-        }
-    })
 }
 
 /// Go `emitter.emit` of one file from its two parts, JS first, as Go runs

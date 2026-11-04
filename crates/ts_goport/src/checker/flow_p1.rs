@@ -220,11 +220,19 @@ impl Checker {
             && let Some(nest) =
                 self.flow_skip_test(reference, declared_type, flow_container, flow_node)
         {
-            if self.flow_skip.verify {
+            // Verify mode runs Go's walk anyway (a `diagnostics` build).
+            #[cfg(feature = "diagnostics")]
+            let skipped = if self.flow_skip.verify {
                 self.flow_skip_verify(reference, declared_type, flow_container, flow_node, nest)
             } else {
                 declared_type
-            }
+            };
+            #[cfg(not(feature = "diagnostics"))]
+            let skipped = {
+                let _ = nest;
+                declared_type
+            };
+            skipped
         } else {
             self.flow_walk(
                 reference,
@@ -324,8 +332,10 @@ impl Checker {
         let mut flow_data_guard = None;
         // flowskip1 verify mode: record each loop turn (read once per call;
         // a nested verify restores the recording before it returns).
+        #[cfg(feature = "diagnostics")]
         let recording = self.flow_skip.recording.is_some();
         loop {
+            #[cfg(feature = "diagnostics")]
             if recording {
                 let depth = f.depth;
                 self.flow_skip_record(flow, depth);

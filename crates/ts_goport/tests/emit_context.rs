@@ -43,12 +43,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ts_goport::core::enter_program;
 use ts_goport::emitter::program_emit::{
-    EmitOptions, WriteFile, WriteFileData, emit, js_twin_print_count, set_dts_twin_check,
+    EmitOptions, WriteFile, WriteFileData, emit, js_twin_print_count,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
 use ts_goport::program::{
     emit_pool_job_count, format_diagnostic, release_program, try_load_version,
 };
+
+/// The d.ts twin check mode (`set_dts_twin_check`): only in a
+/// `diagnostics` feature build; else the twins print without the check.
+fn twin_check(check: Option<bool>) {
+    #[cfg(feature = "diagnostics")]
+    ts_goport::emitter::program_emit::set_dts_twin_check(check);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = check;
+}
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/emit_context");
 
@@ -161,11 +170,14 @@ fn emit_matches_go_in_every_mode() {
     for project in &PROJECTS {
         for mode in &MODES {
             let what = format!("{} with {}", project.name, mode.name);
-            set_dts_twin_check(Some(mode.twin_check));
+            if mode.twin_check && !cfg!(feature = "diagnostics") {
+                continue;
+            }
+            twin_check(Some(mode.twin_check));
             let js_prints = js_twin_print_count();
             let run = emit_project(project.name, mode.edit);
             let js_prints = js_twin_print_count() - js_prints;
-            set_dts_twin_check(None);
+            twin_check(None);
 
             assert_eq!(run.diagnostics, Vec::<String>::new(), "{what}: diagnostics");
             assert_files(&run.files, &expected(project.name, mode.kind), &what);
