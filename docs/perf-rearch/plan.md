@@ -23,3 +23,115 @@ implementation. Implementations follow, each one measured and reviewed.
 - 2026-11-03: upstream's code-shape parity rule and the repo's maintainer
   process (batches, `docs/typechecker-state`, remote hosts) don't apply on this
   branch (Chad). Behavior parity against Go at the pin is the bar.
+
+## Phase 2 draft: ranked plan (root, 2026-11-03, from the five audits)
+
+Sources are `audits/{frontend,program,checker,emit,lsp}.md`. The baseline
+gap table (`baseline.md`) is still pending and may reorder this.
+
+**Ordering principle:**
+1. First, close every place where tsc-rs is slower than Go today, with exact
+   and low-risk changes.
+2. Then take broad, exact wins.
+3. Then the large rewrites, each after its kill-or-go experiment.
+
+**Where tsc-rs is slower than Go today:**
+- the LSP `.tsx` edit (78 ms against 41 ms per update);
+- LSP saturation at 120 ms/key;
+- CLI JS emit (umami JS-only 0.13 s against 0.10 s; with source maps 0.15 s
+  against 0.10 s; CommonJS also slower);
+- possibly first global completion (pending).
+
+The CLI check, parse, bind, d.ts emit and incremental emit are already
+1.5–3× faster than Go.
+
+### Track A: LSP edit path (behind Go)
+
+- **A1. ReuseProgram for JSX-runtime, importHelpers and allowJs files.**
+  Program audit #1, LSP audit #1.
+  - **Gain:** `.tsx` update 78 → about 1 ms; ahead of Go per edit.
+  - **Size:** 200–400 lines.
+  - **Proof:** a verify mode comparing reuse with a full load, plus lspdiff
+    and the publishDiagnostics stream.
+  - **Trap:** report `SAME_FILE_NAMES` semantics to the consumers.
+- **A2. Preemptible diagnostics with stackful coroutines,** plus answering
+  cancelled queued requests with -32800 and priority ordering. LSP audit
+  #2 and #3.
+  - **Gain:** 120 ms/key p95 toward the no-diagnostics bound.
+  - **Spike first** (2–3 days). It replaces #116's thread plan if it holds.
+- **A3. Trust the previous load's resolutions** on overlay-only edits.
+  LSP audit #5. Possibly folded into C1/C3.
+
+### Track B: CLI emit (behind Go)
+
+- **B1. Early emit for plain `tsc -p`.** Emit audit #1.
+  - **Gain:** 5–8% of wall. **Size:** 100–250 lines, reusing the
+    incremental path's rules.
+- **B2. JS emit off the checker threads, with a precomputed answer table.**
+  Emit audit #2.
+  - **Experiment first:** compare with `--verbatimModuleSyntax`.
+  - **Proof:** a dual-run mode comparing the resolver call log and the
+    bytes.
+- **B3. Emit phase timers,** then fused TS-stripping transforms. Emit audit
+  #4.
+- **B4. Skip the redundant declaration-diagnostics transform** under the
+  safe conditions. Emit audit #3; measure first.
+
+### Track E: broad exact wins, low risk
+
+- **E1. THP for the checker arenas** (checker audit #4): about 5–8% check
+  CPU here.
+- **E2. Plain-load node registry lookup** (frontend #4): a one-function
+  experiment, aiming at −1 to −4% of check instructions.
+- **E3. Remove the +13% parse-worker overhead** (frontend #2).
+- **E4. Lib snapshot v2** (frontend #5): about −10% for small projects and
+  startup.
+- **E5. Instantiated member tables share the target's index** (checker #5):
+  2–5% of check.
+- **E6. Parser cost per node** (frontend #1): profile first; −25 to −40% of
+  parse.
+- **E7. Smaller items:** LSP owned-node arena, synthetic reads, freeze
+  copies, per-file fixed cost, the CLI source-map copy, stdout coalescing.
+
+### Track C: loader rewrite (large architecture)
+
+- **C1. Compact load graph with a deterministic serial replay** (program #2):
+  `u32` path ids, flat edges, O(1) free. 3–4 weeks.
+  - **Experiment:** a standalone replay timing from an `--explainFiles`
+    graph.
+- **C2. Parallel discovery on C1** (program #3): workers become
+  authoritative, about 3–5k lines of speculation are deleted, the vscode
+  load phase drops 0.42 → about 0.28 s, and the LSP rebuild 78 → 20–30 ms.
+- **C3. Incremental LSP rebuild** (program #4, LSP #6) and overlapped `-b`
+  loads (program #5).
+
+### Track D: checker parallelism (large; needs Chad's decision)
+
+- **D0. Experiments 1A and 1B** (checker audit): how often output depends on
+  the partition, and whether an event monitor catches every divergence.
+- **D1. Certified partition-free checking,** plus count-only switches
+  behind the monitor and a partition policy (checker #1–3).
+  - **Gain:** about 1.3–1.8× check wall on large projects.
+  - **Exactness is empirical:** Chad decides after D0.
+- **D2. A shared type store across checkers** (checker #8): long-term.
+
+### Decisions for Chad
+
+- **Certified checking (D1):** do you accept output identity proven by
+  large-scale testing plus a runtime fallback, rather than by construction?
+- **Persistent on-disk caches** (a parse/bind cache for node_modules
+  `.d.ts`; frontend #9, program #8): writing a cache directory is a side
+  effect Go doesn't have. Opt-in or not at all?
+- **Effect rules:** tsc-rs runs Effect's diagnostics where Go doesn't
+  (configured through `extends`). Keep as is (product behavior) or treat it
+  as a parity difference?
+
+### Proposed first wave (after Astra's review)
+
+1. A1 (implementation).
+2. B1 (implementation).
+3. Spikes with faster models: E2 (one function, `icount`), E1 (THP A/B),
+   and the B2 experiment.
+4. The A2 coroutine spike.
+5. D0 (no code) once the baseline timings are done, because it is
+   CPU-heavy.
