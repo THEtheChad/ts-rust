@@ -195,16 +195,7 @@ fn log_checker_emit(source_file: Node) {
 /// reads every program file.
 #[must_use]
 pub fn plain_emit_can_start_with_check() -> bool {
-    plain_early_emit_enabled() && !source_files().is_empty() && emit_can_start_with_check()
-}
-
-/// False when `GOPORT_PLAIN_EARLY_EMIT` is `0`: plain `tsc -p` then emits
-/// after the whole check, as in Go, and the incremental early emit stays
-/// on (`GOPORT_EARLY_EMIT=0` turns both off). For tests, timing and the
-/// checker call log diff on one binary. Read once.
-fn plain_early_emit_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GOPORT_PLAIN_EARLY_EMIT").as_deref() != Ok("0"))
+    !source_files().is_empty() && emit_can_start_with_check()
 }
 
 /// PORT: not in Go (perf). The emit of plain `tsc -p` sent behind the
@@ -958,8 +949,7 @@ pub fn emit_can_start_with_check() -> bool {
 /// The option part of `emit_can_start_with_check`. False with `noEmit`,
 /// `--listFilesOnly` (Go emits nothing with either), `noEmitOnError` (the
 /// emit needs every diagnostic first), `--singleThreaded`, a trace,
-/// `preserveSymlinks` (F4), `outFile`, `GOPORT_EARLY_EMIT=0`, and a check
-/// that steals files (fast mode, `crate::program::stealing_check`). Then
+/// `preserveSymlinks` (F4), `outFile`, and a check that steals files (fast mode, `crate::program::stealing_check`). Then
 /// `tsc -p` keeps Go's order exactly: it does not start the check early
 /// either. `tsc -b` starts each check early in
 /// any case. When these rules and `check_cannot_see_outputs` allow it, it
@@ -968,8 +958,7 @@ pub fn emit_can_start_with_check() -> bool {
 #[must_use]
 pub fn early_emit_options_allow() -> bool {
     let options = options();
-    early_emit_enabled()
-        && !crate::program::stealing_check()
+    !crate::program::stealing_check()
         && !options.no_emit.is_true()
         && !options.list_files_only.is_true()
         && !options.no_emit_on_error.is_true()
@@ -1036,14 +1025,6 @@ pub fn check_cannot_see_outputs() -> bool {
                 path_is_relative(name) && !has_extension(name)
             })
     })
-}
-
-/// False when `GOPORT_EARLY_EMIT` is `0`: the emit then waits for the whole
-/// check, as in Go (`emit_can_start_with_check`). For tests and timing on
-/// one binary. Read once.
-fn early_emit_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GOPORT_EARLY_EMIT").as_deref() != Ok("0"))
 }
 
 /// Go `tr.Push(tracing.PhaseEmit, "emit", nil, true)` at the start of
@@ -1178,8 +1159,7 @@ impl PoolJs {
 /// PORT: not in Go. Starts `emit_with` and `emit_batch_with` of `files`
 /// (each with its `target`: `emit_only`, `force_emit` and `write_file`) with the emit
 /// pool, and returns without waiting. None, before any work, when the pool
-/// is off (`emit_pool_enabled`), or when it would get no file and the
-/// twins are off (`dts_twin_mode`): the caller then runs every file on its
+/// is off (`emit_pool_enabled`): the caller then runs every file on its
 /// checker thread as before.
 ///
 /// First the JS part of each file that `file_emit` moves goes to the emit
@@ -1218,11 +1198,7 @@ fn start_emit_files_with_pool(
             way
         })
         .collect();
-    let twin_mode = dts_twin_mode();
-    if twin_mode == DtsTwinMode::Off && ways.iter().all(|&way| way == FileEmit::OnChecker) {
-        phase_times::route(Route::PrintOnChecker, files.len());
-        return None;
-    }
+    let twin_check = dts_twin_check();
 
     let mut pool_jobs = Vec::new();
     let mut js_emit_nodes = Vec::new();
@@ -1275,8 +1251,7 @@ fn start_emit_files_with_pool(
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(&source_file)
                 .expect("one checker part per file");
-            let on_twin = twin_mode != DtsTwinMode::Off
-                && (part.js_part.is_some() || twin_can_print(&part.target));
+            let on_twin = part.js_part.is_some() || twin_can_print(&part.target);
             phase_times::route(
                 if on_twin {
                     Route::PrintOnTwin
@@ -1287,8 +1262,8 @@ fn start_emit_files_with_pool(
             );
             let output = match part.js_part {
                 Some(js_part) => emit_declaration_part(source_file, part.target, js_part, wrap),
-                None if twin_mode != DtsTwinMode::Off && twin_can_print(&part.target) => {
-                    emit_on_twin(source_file, &part.target, wrap, twin_mode)
+                None if twin_can_print(&part.target) => {
+                    emit_on_twin(source_file, &part.target, wrap, twin_check)
                 }
                 None => CheckerOutput::Done(wrap(&|| emit_source_file(source_file, &part.target))),
             };
@@ -1416,8 +1391,8 @@ impl PoolJsPart {
 /// The d.ts part of a split file's emit, on its checker thread, merged with
 /// the JS part `js_part` from the emit pool. `wrap` is around the d.ts part
 /// only (the pool job wraps the JS part). Both parts end before a panic of
-/// either goes on. With d.ts twins on (`dts_twin_mode`), the checker runs
-/// the declaration transforms and its twin the print and the merge.
+/// either goes on. The checker runs the declaration transforms and its
+/// twin (`dts_twin_check`) the print and the merge.
 fn emit_declaration_part(
     source_file: Node,
     target: EmitterOptions,
@@ -1428,27 +1403,14 @@ fn emit_declaration_part(
         emit_only: EmitOnly::Dts,
         ..target
     };
-    let mode = dts_twin_mode();
-    if mode == DtsTwinMode::Off {
-        return CheckerOutput::Done(emit_declaration_part_here(
-            source_file,
-            &target,
-            js_part,
-            wrap,
-        ));
-    }
-
+    let check = dts_twin_check();
     let twin_print: RefCell<Option<TwinPrint>> = RefCell::new(None);
     let dts = catch_unwind(AssertUnwindSafe(|| {
         wrap(&|| {
             let mut emitter = new_emitter(new_emit_host(source_file), source_file, &target, None);
             match emitter.transform_declaration_part(js_part.js_emit_nodes()) {
                 Some(print) => {
-                    *twin_print.borrow_mut() = Some(TwinPrint::declaration(
-                        emitter,
-                        print,
-                        mode == DtsTwinMode::Check,
-                    ));
+                    *twin_print.borrow_mut() = Some(TwinPrint::declaration(emitter, print, check));
                     EmitResult::default()
                 }
                 None => {
@@ -1490,7 +1452,7 @@ fn twin_can_print(target: &EmitterOptions) -> bool {
 }
 
 /// PORT: not in Go (perf). The whole emit of a file on its checker thread
-/// (`FileEmit::OnChecker`), with the twins on (`mode` is not `Off`). The
+/// (`FileEmit::OnChecker`), with the twins (`dts_twin_check`). The
 /// checker runs the JS transforms, then the declaration transforms, as
 /// before, and its twin prints and writes the JS part, then the d.ts part
 /// (`TwinFile::run`), so the outputs of the file are written in Go's order
@@ -1507,9 +1469,10 @@ fn twin_can_print(target: &EmitterOptions) -> bool {
 /// A panic in the declaration transforms goes on in the twin's `wrap`
 /// after the twin printed and wrote the JS part, so the file's map and JS
 /// are written, as in Go (`emitJSFile` writes before `emitDeclarationFile`
-/// starts) and on the checker with the twins off.
+/// starts) and in an emit on the checker (`--singleThreaded`).
 ///
-/// One case is different from Go and from the twins off: a panic in the
+/// One case is different from Go and from an emit on the checker: a panic
+/// in the
 /// JS print on the twin. In Go, that panic stops the file's emit before its
 /// declaration transforms start. Here the checker ran them before the twin
 /// printed. So the checker made their checker calls: they can add to its
@@ -1519,16 +1482,15 @@ fn twin_can_print(target: &EmitterOptions) -> bool {
 /// file has no d.ts output, and its JS outputs are what the JS print wrote
 /// before its panic. To keep Go's calls in this case, the checker must wait
 /// for each JS print before the declaration transforms. That takes away
-/// what the twin gains. With `DtsTwinMode::Check` the checker also prints
-/// the JS part before the declaration transforms, so a panic in that print
-/// comes first, as with the twins off.
+/// what the twin gains. In check mode the checker also prints the JS part
+/// before the declaration transforms, so a panic in that print comes first,
+/// as in an emit on the checker.
 fn emit_on_twin(
     source_file: Node,
     target: &EmitterOptions,
     wrap: Wrap,
-    mode: DtsTwinMode,
+    check: bool,
 ) -> CheckerOutput {
-    let check = mode == DtsTwinMode::Check;
     let twin_file: RefCell<Option<TwinFile>> = RefCell::new(None);
     let here = wrap(&|| {
         let host = new_emit_host(source_file);
@@ -1655,89 +1617,122 @@ impl TwinFile {
     }
 }
 
-/// `emit_declaration_part` with the whole d.ts part on the checker thread.
-fn emit_declaration_part_here(
-    source_file: Node,
-    target: &EmitterOptions,
-    js_part: PoolJs,
-    wrap: Wrap,
-) -> EmitResult {
-    let PoolJs { job, emit_nodes } = js_part;
-    let js_part = Rc::new(RefCell::new(PoolJsPart {
-        job: Some(job),
-        result: None,
-    }));
-    let dts = catch_unwind(AssertUnwindSafe(|| {
-        wrap(&|| {
-            let mut emitter = new_emitter(
-                new_emit_host(source_file),
-                source_file,
-                target,
-                Some(js_part.clone()),
-            );
-            // `PoolJs::js_emit_nodes`
-            if let Some(print) = emitter.transform_declaration_part(emit_nodes.recv().ok()) {
-                emitter.finish_declaration_part(print);
-            }
-            emitter.writer = None;
-            emitter.emit_result
-        })
-    }));
-    let js = js_part.borrow_mut().take_result();
-    let dts = dts.unwrap_or_else(|payload| resume_unwind(payload));
-    let js = js.unwrap_or_else(|payload| resume_unwind(payload));
-    merge_emit_parts(js, dts)
-}
-
-/// Where the parts whose transforms run on a checker thread print: the d.ts
-/// part of a split file, and the JS and d.ts parts of a file whose JS part
-/// needs the checker (`GOPORT_DTS_TWIN`, `GOPORT_DTS_TWIN_CHECK`,
-/// `set_dts_twin_mode`). The twins are on only with the emit pool
+/// PORT: not in Go (perf). The parts whose transforms run on a checker
+/// thread (the d.ts part of a split file, and the JS and d.ts parts of a
+/// file whose JS part needs the checker) print on the twin of the checker
+/// (`program::send_dts_twin_job`). The twins run only with the emit pool
 /// (`program::emit_pool_enabled`: not with `--singleThreaded` or a trace).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DtsTwinMode {
-    /// On the checker thread, after its transforms.
-    Off,
-    /// On the twin of the checker (`program::send_dts_twin_job`).
-    On,
-    /// On the twin, and on the checker too: the twin panics when its text
-    /// differs from the checker's (tests and checks).
-    Check,
+/// True in check mode (`twin_check`, only in a `diagnostics` feature
+/// build): the checker prints each part too, and the twin panics when its
+/// text differs from the checker's.
+#[inline(always)]
+fn dts_twin_check() -> bool {
+    #[cfg(feature = "diagnostics")]
+    return twin_check::on();
+    #[cfg(not(feature = "diagnostics"))]
+    false
 }
 
-/// The mode that `set_dts_twin_mode` set: 0 for none, else the mode + 1.
-static DTS_TWIN_MODE_SET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[cfg(feature = "diagnostics")]
+pub use twin_check::set_dts_twin_check;
 
-/// Sets the d.ts twin mode of this process, or with `None` goes back to the
-/// environment (`dts_twin_mode`). Tests use it.
-pub fn set_dts_twin_mode(mode: Option<DtsTwinMode>) {
-    let value = match mode {
-        None => 0,
-        Some(DtsTwinMode::Off) => 1,
-        Some(DtsTwinMode::On) => 2,
-        Some(DtsTwinMode::Check) => 3,
-    };
-    DTS_TWIN_MODE_SET.store(value, std::sync::atomic::Ordering::Relaxed);
-}
+/// The check mode of the d.ts twins (`dts_twin_check`): a `diagnostics`
+/// feature build only.
+#[cfg(feature = "diagnostics")]
+mod twin_check {
+    use super::*;
 
-/// PORT: not in Go (perf). The d.ts twin mode: `set_dts_twin_mode`, else
-/// `Off` when `GOPORT_DTS_TWIN=0`, `Check` when `GOPORT_DTS_TWIN_CHECK=1`,
-/// else `On`. The environment is read once.
-pub fn dts_twin_mode() -> DtsTwinMode {
-    static ENV: OnceLock<DtsTwinMode> = OnceLock::new();
-    match DTS_TWIN_MODE_SET.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => DtsTwinMode::Off,
-        2 => DtsTwinMode::On,
-        3 => DtsTwinMode::Check,
-        _ => *ENV.get_or_init(|| {
-            if std::env::var("GOPORT_DTS_TWIN").as_deref() == Ok("0") {
-                DtsTwinMode::Off
-            } else if std::env::var("GOPORT_DTS_TWIN_CHECK").as_deref() == Ok("1") {
-                DtsTwinMode::Check
-            } else {
-                DtsTwinMode::On
+    /// The twin check mode that `set_dts_twin_check` set: 0 for none, 1
+    /// off, 2 on.
+    static SET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+    /// Sets the d.ts twin check mode of this process, or with `None` goes
+    /// back to `GOPORT_DTS_TWIN_CHECK=1`. Tests use it.
+    pub fn set_dts_twin_check(check: Option<bool>) {
+        let value = match check {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        };
+        SET.store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The check mode: `set_dts_twin_check`, else `GOPORT_DTS_TWIN_CHECK=1`
+    /// (read once).
+    pub(super) fn on() -> bool {
+        static ENV: OnceLock<bool> = OnceLock::new();
+        match SET.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => *ENV.get_or_init(|| std::env::var("GOPORT_DTS_TWIN_CHECK").as_deref() == Ok("1")),
+        }
+    }
+
+    /// Check mode (`dts_twin_check`) on the checker thread: runs `finish` (the rest of
+    /// the part's emit) on an emitter like `emitter` on this thread, and
+    /// returns its writes in order, without writing them.
+    pub(super) fn record_print(
+        emitter: &Emitter,
+        finish: impl FnOnce(&mut Emitter),
+    ) -> Vec<(String, String)> {
+        let writes: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let sink = Arc::clone(&writes);
+        let record: WriteFile =
+            Arc::new(move |name: &str, text: &str, _data: &mut WriteFileData| {
+                sink.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((name.to_string(), text.to_string()));
+                Ok(())
+            });
+        let target = EmitterOptions {
+            emit_only: emitter.emit_only,
+            force_emit: emitter.force_emit,
+            write_file: Some(record),
+        };
+        let mut recorder = new_emitter(emitter.host.clone(), emitter.source_file, &target, None);
+        finish(&mut recorder);
+        std::mem::take(&mut *writes.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Check mode (`dts_twin_check`) on the d.ts twin: `write_file` (or the emit host
+    /// write when it is None) after a check that each write is the next one in
+    /// `expected`, the writes of the same print on the checker thread. It
+    /// panics at the first difference.
+    pub(super) fn checked_write_file(
+        write_file: Option<WriteFile>,
+        expected: Arc<Mutex<std::vec::IntoIter<(String, String)>>>,
+    ) -> WriteFile {
+        Arc::new(move |name: &str, text: &str, data: &mut WriteFileData| {
+            let next = expected
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .next();
+            match next {
+                Some((expected_name, expected_text))
+                    if expected_name == name && expected_text == text => {}
+                Some((expected_name, expected_text)) => {
+                    let at = expected_text
+                        .bytes()
+                        .zip(text.bytes())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(expected_text.len().min(text.len()));
+                    panic!(
+                        "twin check: the twin wrote {name} ({} bytes), the checker {expected_name} ({} bytes); they differ at byte {at}",
+                        text.len(),
+                        expected_text.len()
+                    );
+                }
+                None => panic!("twin check: the checker did not write {name}"),
             }
-        }),
+            match &write_file {
+                Some(write_file) => write_file(name, text, data),
+                None => crate::printer::EmitHost::write_file(
+                    new_emit_host_without_checker().as_ref(),
+                    name,
+                    text,
+                ),
+            }
+        })
     }
 }
 
@@ -1758,8 +1753,9 @@ struct TwinPrint {
     tree: TwinTree,
     tables: PrintTables,
     pack: PrintPack,
-    /// `DtsTwinMode::Check`: the writes of the print on the checker, in
+    /// Check mode (`dts_twin_check`): the writes of the print on the checker, in
     /// order (file name and text).
+    #[cfg(feature = "diagnostics")]
     expected: Option<Vec<(String, String)>>,
 }
 
@@ -1792,10 +1788,19 @@ impl TwinPrint {
     fn js(emitter: Emitter, print: JsPrint, check: bool) -> Self {
         let root = print.source_file;
         let (tables, pack) = export_print(&print.emit_context, &[root], check);
-        let expected =
-            check.then(|| record_print(&emitter, |recorder| recorder.finish_js_part(print)));
+        #[cfg(feature = "diagnostics")]
+        let expected = check
+            .then(|| twin_check::record_print(&emitter, |recorder| recorder.finish_js_part(print)));
         JS_TWIN_PRINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Self::from_parts(emitter, root, TwinTree::Js, tables, pack, expected)
+        Self::from_parts(
+            emitter,
+            root,
+            TwinTree::Js,
+            tables,
+            pack,
+            #[cfg(feature = "diagnostics")]
+            expected,
+        )
     }
 
     /// The print of `emitter` after `transform_declaration_part` returned
@@ -1813,9 +1818,19 @@ impl TwinPrint {
             &[root, print.content_mapped_source],
             check,
         );
-        let expected = check
-            .then(|| record_print(&emitter, |recorder| recorder.finish_declaration_part(print)));
-        Self::from_parts(emitter, root, tree, tables, pack, expected)
+        #[cfg(feature = "diagnostics")]
+        let expected = check.then(|| {
+            twin_check::record_print(&emitter, |recorder| recorder.finish_declaration_part(print))
+        });
+        Self::from_parts(
+            emitter,
+            root,
+            tree,
+            tables,
+            pack,
+            #[cfg(feature = "diagnostics")]
+            expected,
+        )
     }
 
     fn from_parts(
@@ -1824,7 +1839,7 @@ impl TwinPrint {
         tree: TwinTree,
         tables: PrintTables,
         pack: PrintPack,
-        expected: Option<Vec<(String, String)>>,
+        #[cfg(feature = "diagnostics")] expected: Option<Vec<(String, String)>>,
     ) -> Self {
         let Emitter {
             emit_only,
@@ -1848,14 +1863,14 @@ impl TwinPrint {
             tree,
             tables,
             pack,
+            #[cfg(feature = "diagnostics")]
             expected,
         }
     }
 
     /// On the d.ts twin: prints and writes the d.ts part of a split file,
     /// waits for the JS part `js_part` on the emit pool, and returns their
-    /// merged result, as `emit_declaration_part_here` does on the checker
-    /// thread.
+    /// merged result.
     fn run(self, js_part: EmitPoolJob<EmitResult>, wrap: Wrap) -> EmitResult {
         let js_part = Rc::new(RefCell::new(PoolJsPart {
             job: Some(js_part),
@@ -1883,13 +1898,20 @@ impl TwinPrint {
         install_print_pack(self.pack);
         let emit_context =
             crate::printer::emit_context::EmitContext::from_print_tables(self.tables);
+        #[cfg(feature = "diagnostics")]
         let expected = self
             .expected
             .map(|expected| Arc::new(Mutex::new(expected.into_iter())));
+        #[cfg(feature = "diagnostics")]
         let write_file = match &expected {
             None => self.write_file,
-            Some(expected) => Some(checked_write_file(self.write_file, Arc::clone(expected))),
+            Some(expected) => Some(twin_check::checked_write_file(
+                self.write_file,
+                Arc::clone(expected),
+            )),
         };
+        #[cfg(not(feature = "diagnostics"))]
+        let write_file = self.write_file;
         let new_line = options().new_line.get_new_line_character();
         let mut emitter = Emitter {
             host: new_emit_host_without_checker(),
@@ -1918,6 +1940,7 @@ impl TwinPrint {
         emitter.writer = None;
         // The twin keeps the nodes of one print at a time.
         release_print_packs();
+        #[cfg(feature = "diagnostics")]
         if let Some(expected) = expected {
             let rest: Vec<String> = expected
                 .lock()
@@ -1943,9 +1966,16 @@ fn export_print(
     roots: &[Node],
     check: bool,
 ) -> (PrintTables, PrintPack) {
+    #[cfg(feature = "diagnostics")]
     let tables = if check {
         emit_context.clone_print_tables()
     } else {
+        emit_context.take_print_tables()
+    };
+    // `check` is always false without the diagnostics feature.
+    #[cfg(not(feature = "diagnostics"))]
+    let tables = {
+        let _ = check;
         emit_context.take_print_tables()
     };
     let mut roots = roots.to_vec();
@@ -1954,69 +1984,6 @@ fn export_print(
         tables.for_each_emit_node_value(n, |n| more.push(n));
     });
     (tables, pack)
-}
-
-/// `DtsTwinMode::Check` on the checker thread: runs `finish` (the rest of
-/// the part's emit) on an emitter like `emitter` on this thread, and
-/// returns its writes in order, without writing them.
-fn record_print(emitter: &Emitter, finish: impl FnOnce(&mut Emitter)) -> Vec<(String, String)> {
-    let writes: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
-    let sink = Arc::clone(&writes);
-    let record: WriteFile = Arc::new(move |name: &str, text: &str, _data: &mut WriteFileData| {
-        sink.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((name.to_string(), text.to_string()));
-        Ok(())
-    });
-    let target = EmitterOptions {
-        emit_only: emitter.emit_only,
-        force_emit: emitter.force_emit,
-        write_file: Some(record),
-    };
-    let mut recorder = new_emitter(emitter.host.clone(), emitter.source_file, &target, None);
-    finish(&mut recorder);
-    std::mem::take(&mut *writes.lock().unwrap_or_else(PoisonError::into_inner))
-}
-
-/// `DtsTwinMode::Check` on the d.ts twin: `write_file` (or the emit host
-/// write when it is None) after a check that each write is the next one in
-/// `expected`, the writes of the same print on the checker thread. It
-/// panics at the first difference.
-fn checked_write_file(
-    write_file: Option<WriteFile>,
-    expected: Arc<Mutex<std::vec::IntoIter<(String, String)>>>,
-) -> WriteFile {
-    Arc::new(move |name: &str, text: &str, data: &mut WriteFileData| {
-        let next = expected
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .next();
-        match next {
-            Some((expected_name, expected_text))
-                if expected_name == name && expected_text == text => {}
-            Some((expected_name, expected_text)) => {
-                let at = expected_text
-                    .bytes()
-                    .zip(text.bytes())
-                    .position(|(a, b)| a != b)
-                    .unwrap_or(expected_text.len().min(text.len()));
-                panic!(
-                    "twin check: the twin wrote {name} ({} bytes), the checker {expected_name} ({} bytes); they differ at byte {at}",
-                    text.len(),
-                    expected_text.len()
-                );
-            }
-            None => panic!("twin check: the checker did not write {name}"),
-        }
-        match &write_file {
-            Some(write_file) => write_file(name, text, data),
-            None => crate::printer::EmitHost::write_file(
-                new_emit_host_without_checker().as_ref(),
-                name,
-                text,
-            ),
-        }
-    })
 }
 
 /// Go `emitter.emit` of one file from its two parts, JS first, as Go runs

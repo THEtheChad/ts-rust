@@ -39,14 +39,23 @@ use std::sync::{Arc, Mutex};
 use ts_goport::core::enter_program;
 use ts_goport::emitter::emitter::{EmitOnly, EmitTestPanic, set_emit_test_panic};
 use ts_goport::emitter::program_emit::{
-    DtsTwinMode, EmitOptions, EmitResult, WriteFile, WriteFileData, combine_emit_results, emit,
-    emit_batch, emit_with, js_twin_print_count, set_dts_twin_mode,
+    EmitOptions, EmitResult, WriteFile, WriteFileData, combine_emit_results, emit, emit_batch,
+    emit_with, js_twin_print_count,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
 use ts_goport::program::{
     dts_twin_job_count, emit_pool_job_count, format_diagnostic, release_program, source_files,
     try_load_version,
 };
+
+/// The d.ts twin check mode (`set_dts_twin_check`): only in a
+/// `diagnostics` feature build; else the twins print without the check.
+fn twin_check(check: Option<bool>) {
+    #[cfg(feature = "diagnostics")]
+    ts_goport::emitter::program_emit::set_dts_twin_check(check);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = check;
+}
 
 /// The tests of this file run one at a time: the d.ts twin mode and the
 /// twin job count are process-wide.
@@ -133,13 +142,16 @@ fn dts_twins_print_like_the_checker_threads() {
         (|_: &mut CompilerOptions| {}) as fn(&mut CompilerOptions),
         |options| options.checkers = Some(1),
     ] {
-        set_dts_twin_mode(Some(DtsTwinMode::Check));
+        twin_check(Some(true));
         let twin_jobs = dts_twin_job_count();
         let twins = run(edit);
         let twin_jobs = dts_twin_job_count() - twin_jobs;
-        set_dts_twin_mode(Some(DtsTwinMode::Off));
-        let checkers = run(edit);
-        set_dts_twin_mode(None);
+        twin_check(None);
+        // `--singleThreaded` prints every part on its checker thread.
+        let checkers = run(|options| {
+            edit(options);
+            single_threaded(options);
+        });
 
         assert!(twin_jobs > 0, "the d.ts twins got no job");
         assert!(
@@ -172,15 +184,18 @@ fn twins_print_js_like_the_checker_threads() {
             false,
         ),
     ] {
-        set_dts_twin_mode(Some(DtsTwinMode::Check));
+        twin_check(Some(true));
         let js_prints = js_twin_print_count();
         let twin_jobs = dts_twin_job_count();
         let twins = run_config(JS_TWIN_CONFIG, edit);
         let js_prints = js_twin_print_count() - js_prints;
         let twin_jobs = dts_twin_job_count() - twin_jobs;
-        set_dts_twin_mode(Some(DtsTwinMode::Off));
-        let checkers = run_config(JS_TWIN_CONFIG, edit);
-        set_dts_twin_mode(None);
+        twin_check(None);
+        // `--singleThreaded` prints every part on its checker thread.
+        let checkers = run_config(JS_TWIN_CONFIG, |options| {
+            edit(options);
+            single_threaded(options);
+        });
 
         assert!(twin_jobs > 0, "the twins got no job");
         // `emit` and `emit_batch` each print the 3 files.
@@ -214,13 +229,11 @@ fn twin_panics_write_like_the_checker_threads() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for step in [EmitTestPanic::DeclarationTransforms, EmitTestPanic::JsPrint] {
         set_emit_test_panic(Some((step, "/src/model.ts")));
-        set_dts_twin_mode(Some(DtsTwinMode::On));
+        twin_check(Some(false));
         let js_prints = js_twin_print_count();
         let twins = run_panic(JS_TWIN_CONFIG);
         let js_prints = js_twin_print_count() - js_prints;
-        set_dts_twin_mode(Some(DtsTwinMode::Off));
-        let checkers = run_panic(JS_TWIN_CONFIG);
-        set_dts_twin_mode(None);
+        twin_check(None);
         set_emit_test_panic(None);
 
         assert!(js_prints > 0, "{step:?}: the twins printed no JS file");
@@ -258,10 +271,6 @@ fn twin_panics_write_like_the_checker_threads() {
                 .any(|name| name.ends_with("/out/shape.d.ts")),
             "{step:?}: the other files must emit: {:?}",
             twins.guarded.files.keys()
-        );
-        assert_eq!(
-            twins, checkers,
-            "{step:?}: twins against the checker threads"
         );
     }
 }

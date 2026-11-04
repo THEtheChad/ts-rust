@@ -722,6 +722,7 @@ impl Project {
         let mut update_kind = ProgramUpdateKind::NEW_FILES;
         let mut program_cloned = false;
         let mut go_cloned = false;
+        #[cfg(feature = "diagnostics")]
         let mut reuse_outcome = None;
         let new_program: Rc<compiler::NewProgram>;
         let mut file_refs: Option<ProgramFileRefs> = None;
@@ -819,7 +820,10 @@ impl Project {
             // finds for a program with the same files.
             program_cloned = outcome.reused_storage();
             go_cloned = outcome.go_reuses();
-            reuse_outcome = Some(outcome);
+            #[cfg(feature = "diagnostics")]
+            {
+                reuse_outcome = Some(outcome);
+            }
             // Go: p.host.builder (read in each branch below)
             let builder = || {
                 host.builder
@@ -918,25 +922,10 @@ impl Project {
 
         ls_program::bind_source_files(&new_program);
 
-        // Not in Go (perf/first-principles A1): `GOPORT_VERIFY_REUSE` checks
-        // a reused program against a full build in a child process.
-        let verify = crate::program::reuse_verify::mode();
-        if verify != crate::program::reuse_verify::Mode::Off
-            && match reuse_outcome {
-                Some(compiler::ReuseOutcome::ReusedSynthetic) => true,
-                Some(compiler::ReuseOutcome::Reused) => {
-                    verify == crate::program::reuse_verify::Mode::All
-                }
-                _ => false,
-            }
-        {
-            super::reuse_verify::verify(self, &host, &new_program);
-        }
-        // Not in Go (perf/first-principles A1): `GOPORT_REUSE_STATS=<file>`
-        // appends, after each program update, what reuses keep alive.
-        if let Some(stats) = reuse_stats_file() {
-            super::reuse_verify::append_stats(stats, reuse_outcome, &new_program);
-        }
+        // Not in Go (perf/first-principles A1): the reuse verify mode and
+        // the reuse stats of a `diagnostics` feature build.
+        #[cfg(feature = "diagnostics")]
+        super::reuse_verify::after_update(self, &host, reuse_outcome, &new_program);
 
         // Go: defer cleanupModuleResolver() (ts#64299)
         let cleanup = cleanup_module_resolver.borrow_mut().take();
@@ -1141,17 +1130,6 @@ impl ls::Project for RefCell<Project> {
     fn has_file(&self, file_name: &str) -> bool {
         ls::Project::has_file(&*self.borrow(), file_name)
     }
-}
-
-/// `GOPORT_REUSE_STATS`, read once (perf/first-principles A1).
-fn reuse_stats_file() -> Option<&'static str> {
-    static FILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    FILE.get_or_init(|| {
-        std::env::var("GOPORT_REUSE_STATS")
-            .ok()
-            .filter(|f| !f.is_empty())
-    })
-    .as_deref()
 }
 
 // Go: project/project.go:511 CreateProgramResult

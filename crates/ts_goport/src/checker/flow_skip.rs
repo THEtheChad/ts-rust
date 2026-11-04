@@ -39,10 +39,10 @@
 //! (tests with assertion calls, walks that end at the reference's own
 //! declaration) get no index (flowskip4).
 //!
-//! `GOPORT_FLOWSKIP`: unset or `1` on, `0` off, `verify` indexes every file,
-//! tests each walk, then runs Go's walk anyway, and panics when the skip
-//! would differ (result, counters of made things and effects, visited nodes,
-//! depth). `GOPORT_FLOWSKIP_STATS=<file>` writes the process totals of the
+//! Verify mode (`GOPORT_FLOWSKIP=verify` in a `diagnostics` feature build)
+//! indexes every file, tests each walk, then runs Go's walk anyway, and
+//! panics when the skip would differ (result, counters of made things and
+//! effects, visited nodes, depth). There `GOPORT_FLOWSKIP_STATS=<file>` writes the process totals of the
 //! tests to `<file>` (updated after at least 256 tests per checker: the
 //! inline countdown does not flush, and its walks are not in the counts).
 //! Its writes cost
@@ -101,21 +101,16 @@ const S_JOINED: u8 = 1;
 const S_EXTRAS: u8 = 2;
 const S_BLOCKED: u8 = 3;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlowSkipMode {
-    Off,
-    On,
-    Verify,
+/// `GOPORT_FLOWSKIP=verify` (verify mode), read once per process.
+#[cfg(feature = "diagnostics")]
+fn verify_from_env() -> bool {
+    static VERIFY: OnceLock<bool> = OnceLock::new();
+    *VERIFY.get_or_init(|| std::env::var("GOPORT_FLOWSKIP").as_deref() == Ok("verify"))
 }
 
-/// `GOPORT_FLOWSKIP`, read once per process.
-pub fn flow_skip_mode_from_env() -> FlowSkipMode {
-    static MODE: OnceLock<FlowSkipMode> = OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("GOPORT_FLOWSKIP").as_deref() {
-        Ok("0") => FlowSkipMode::Off,
-        Ok("verify") => FlowSkipMode::Verify,
-        _ => FlowSkipMode::On,
-    })
+#[cfg(not(feature = "diagnostics"))]
+fn verify_from_env() -> bool {
+    false
 }
 
 /// A tuning value from the environment (read once per process), else
@@ -156,7 +151,9 @@ enum Refusal {
     Root,
     Cross,
 }
+#[cfg(feature = "diagnostics")]
 const REFUSALS: usize = 14;
+#[cfg(feature = "diagnostics")]
 const REFUSAL_NAMES: [&str; REFUSALS] = [
     "kind",
     "inline",
@@ -174,7 +171,9 @@ const REFUSAL_NAMES: [&str; REFUSALS] = [
     "cross",
 ];
 
-/// Counters of the tests of one checker (`GOPORT_FLOWSKIP_STATS`).
+/// Counters of the tests of one checker (`GOPORT_FLOWSKIP_STATS`, a
+/// `diagnostics` feature build).
+#[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FlowSkipStats {
     pub tested: u64,
@@ -186,15 +185,19 @@ pub struct FlowSkipStats {
     pub build_ns: u64,
 }
 
+#[cfg(feature = "diagnostics")]
 const STAT_SLOTS: usize = 6 + REFUSALS;
+#[cfg(feature = "diagnostics")]
 static STATS_TOTAL: [AtomicU64; STAT_SLOTS] = [const { AtomicU64::new(0) }; STAT_SLOTS];
 
+#[cfg(feature = "diagnostics")]
 fn stats_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| std::env::var("GOPORT_FLOWSKIP_STATS").ok())
         .as_deref()
 }
 
+#[cfg(feature = "diagnostics")]
 impl FlowSkipStats {
     fn slots(&self) -> [u64; STAT_SLOTS] {
         let mut s = [0; STAT_SLOTS];
@@ -243,6 +246,7 @@ impl FlowSkipStats {
 }
 
 /// Verify mode: what Go's walk did.
+#[cfg(feature = "diagnostics")]
 #[derive(Debug, Default)]
 pub struct FlowSkipRecording {
     pub visited: Vec<FlowNodeId>,
@@ -251,7 +255,10 @@ pub struct FlowSkipRecording {
 
 /// The flow skip state of one checker (`Checker::flow_skip`).
 pub struct FlowSkip {
-    pub mode: FlowSkipMode,
+    /// Verify mode (see the module comment): Go's walk runs after each
+    /// skip test, and a skip that would differ panics.
+    #[cfg(feature = "diagnostics")]
+    pub verify: bool,
     /// A file is indexed when the steps of its walks so far reach this many
     /// per flow node of the file (and `confirm_steps` holds). The index
     /// costs about as much as 5 to 8 skipped walk steps per flow node, and
@@ -288,12 +295,17 @@ pub struct FlowSkip {
     /// Port counter of effect sites, read by verify mode: effects signature
     /// misses, `ensureAssignmentsMarked` writes, `isExhaustiveSwitchStatement`
     /// and `isReachableFlowNode` calls, entity-name key resolutions.
+    #[cfg(feature = "diagnostics")]
     pub effects: u64,
     /// Verify mode: set while Go's walk of a skipped reference runs.
+    #[cfg(feature = "diagnostics")]
     pub recording: Option<Box<FlowSkipRecording>>,
+    #[cfg(feature = "diagnostics")]
     pub stats: FlowSkipStats,
+    #[cfg(feature = "diagnostics")]
     stats_flushed: FlowSkipStats,
     /// Tests: each tested reference and whether the test skipped it.
+    #[cfg(feature = "diagnostics")]
     pub trace: Option<Vec<(Node, bool)>>,
     /// Final answers of `isConstantReference` for identifier symbols.
     constant_references: FxHashMap<SymbolId, bool>,
@@ -301,14 +313,12 @@ pub struct FlowSkip {
 
 impl Default for FlowSkip {
     fn default() -> Self {
-        let mode = flow_skip_mode_from_env();
+        let verify = verify_from_env();
         FlowSkip {
-            mode,
+            #[cfg(feature = "diagnostics")]
+            verify,
             // Verify mode indexes every file at once, so it tests every walk.
-            build_steps: tuning(
-                "GOPORT_FLOWSKIP_BUILD_STEPS",
-                if mode == FlowSkipMode::Verify { 0 } else { 16 },
-            ),
+            build_steps: tuning("GOPORT_FLOWSKIP_BUILD_STEPS", if verify { 0 } else { 16 }),
             min_steps: tuning("GOPORT_FLOWSKIP_MIN_STEPS", 8),
             sample_every: tuning("GOPORT_FLOWSKIP_SAMPLE_EVERY", SAMPLE_EVERY).max(1),
             confirm_steps: tuning("GOPORT_FLOWSKIP_CONFIRM_STEPS", 8),
@@ -321,10 +331,15 @@ impl Default for FlowSkip {
                 measured: 0,
                 probed: 0,
             },
+            #[cfg(feature = "diagnostics")]
             effects: 0,
+            #[cfg(feature = "diagnostics")]
             recording: None,
+            #[cfg(feature = "diagnostics")]
             stats: FlowSkipStats::default(),
+            #[cfg(feature = "diagnostics")]
             stats_flushed: FlowSkipStats::default(),
+            #[cfg(feature = "diagnostics")]
             trace: None,
             constant_references: FxHashMap::default(),
         }
@@ -334,7 +349,6 @@ impl Default for FlowSkip {
 impl std::fmt::Debug for FlowSkip {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FlowSkip")
-            .field("mode", &self.mode)
             .field("files", &self.files.len())
             .finish_non_exhaustive()
     }
@@ -1340,6 +1354,7 @@ enum Settle {
 // ──────────────────────────────────────────────────────────────────────
 
 /// Values that a skipped walk must not change (verify mode).
+#[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Snapshot {
     types: u32,
@@ -1545,10 +1560,11 @@ impl Checker {
         // counts inline walks too, and the stats leave it out: each
         // instruction here is paid by every walk.
         let fs = &mut self.flow_skip;
-        if fs.hot_file == Some(flow.file_index() as u32)
-            && fs.hot.countdown > 1
-            && fs.trace.is_none()
-        {
+        #[cfg(feature = "diagnostics")]
+        let traced = fs.trace.is_some();
+        #[cfg(not(feature = "diagnostics"))]
+        let traced = false;
+        if fs.hot_file == Some(flow.file_index() as u32) && fs.hot.countdown > 1 && !traced {
             fs.hot.countdown -= 1;
             return None;
         }
@@ -1564,26 +1580,27 @@ impl Checker {
         flow_container: Node,
         flow: FlowNodeId,
     ) -> Option<u32> {
-        self.flow_skip.stats.tested += 1;
-        if self.flow_skip.stats.tested - self.flow_skip.stats_flushed.tested >= 256 {
-            let mut flushed = self.flow_skip.stats_flushed;
-            self.flow_skip.stats.flush(&mut flushed);
-            self.flow_skip.stats_flushed = flushed;
+        #[cfg(feature = "diagnostics")]
+        {
+            self.flow_skip.stats.tested += 1;
+            if self.flow_skip.stats.tested - self.flow_skip.stats_flushed.tested >= 256 {
+                let mut flushed = self.flow_skip.stats_flushed;
+                self.flow_skip.stats.flush(&mut flushed);
+                self.flow_skip.stats_flushed = flushed;
+            }
         }
         let result = self.flow_skip_test_worker(reference, declared_type, flow_container, flow);
-        if let Some(trace) = self.flow_skip.trace.as_mut() {
-            trace.push((reference, result.is_ok()));
-        }
-        match result {
-            Ok(nest) => {
-                self.flow_skip.stats.skipped += 1;
-                Some(nest)
+        #[cfg(feature = "diagnostics")]
+        {
+            if let Some(trace) = self.flow_skip.trace.as_mut() {
+                trace.push((reference, result.is_ok()));
             }
-            Err(why) => {
-                self.flow_skip.stats.refused[why as usize] += 1;
-                None
+            match result {
+                Ok(_) => self.flow_skip.stats.skipped += 1,
+                Err(why) => self.flow_skip.stats.refused[why as usize] += 1,
             }
         }
+        result.ok()
     }
 
     fn flow_skip_test_worker(
@@ -1679,22 +1696,27 @@ impl Checker {
             let flows = static_go_file(file)
                 .and_then(|g| g.flow_nodes.get())
                 .expect("a counted file is static");
+            #[cfg(feature = "diagnostics")]
             let start = std::time::Instant::now();
             let index = FileIndex::build(file, flows.as_slice(), self.strict_null_checks);
             self.flow_skip
                 .files
                 .insert(file as u32, FileState::Built(Box::new(index)));
             self.flow_skip.hot_file = None;
-            let stats = &mut self.flow_skip.stats;
-            stats.built += 1;
-            stats.built_nodes += flows.len() as u64;
-            stats.build_ns += start.elapsed().as_nanos() as u64;
+            #[cfg(feature = "diagnostics")]
+            {
+                let stats = &mut self.flow_skip.stats;
+                stats.built += 1;
+                stats.built_nodes += flows.len() as u64;
+                stats.build_ns += start.elapsed().as_nanos() as u64;
+            }
         }
         let mut files = std::mem::take(&mut self.flow_skip.files);
         let Some(FileState::Built(index)) = files.get_mut(&(file as u32)) else {
             unreachable!("the file index was built above");
         };
         let result = self.flow_skip_check(index, reference, declared_type, flow_container, flow);
+        #[cfg(feature = "diagnostics")]
         if result.is_ok() {
             self.flow_skip.stats.skipped_steps += u64::from(index.steps[flow.local_index()]);
         }
@@ -2129,11 +2151,14 @@ impl Checker {
         }
         Ok(())
     }
+}
 
-    // ──────────────────────────────────────────────────────────────────
-    // Verify mode
-    // ──────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// Verify mode (a `diagnostics` feature build)
+// ──────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "diagnostics")]
+impl Checker {
     fn flow_skip_snapshot(&self, resolve_names: u64) -> Snapshot {
         Snapshot {
             types: self.type_count,
@@ -2284,7 +2309,9 @@ impl Checker {
     }
 }
 
-#[cfg(test)]
+// The tests run the skip in verify mode, so they need the `diagnostics`
+// feature.
+#[cfg(all(test, feature = "diagnostics"))]
 mod tests {
     use super::*;
 
@@ -2320,7 +2347,7 @@ mod tests {
             .expect("a.ts is not in the program")
             .root;
         let result = crate::program::with_type_checker_for_file(file, move |checker| {
-            checker.flow_skip.mode = FlowSkipMode::Verify;
+            checker.flow_skip.verify = true;
             checker.flow_skip.build_steps = 0;
             checker.flow_skip.min_steps = 0;
             checker.flow_skip.trace = Some(Vec::new());

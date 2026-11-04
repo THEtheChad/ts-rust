@@ -10,6 +10,39 @@ use crate::frontend::prelude::*;
 use std::io;
 use std::time::SystemTime;
 
+/// PORT: not in Go. The write methods of an `Fs` wrapper whose writes go
+/// to its inner file system `self.$inner` unchanged (writes are outputs,
+/// not reads to track or replay): `write_file`, `append_file`, `remove`
+/// and `chtimes`. Use it inside the `impl Fs` block, as
+/// `vfs::fs_write_through!(inner)`.
+#[macro_export]
+macro_rules! fs_write_through {
+    ($inner:ident) => {
+        fn write_file(&self, path: &str, data: &str) -> Result<(), $crate::frontend::vfs::FsError> {
+            self.$inner.write_file(path, data)
+        }
+        fn append_file(
+            &self,
+            path: &str,
+            data: &str,
+        ) -> Result<(), $crate::frontend::vfs::FsError> {
+            self.$inner.append_file(path, data)
+        }
+        fn remove(&self, path: &str) -> Result<(), $crate::frontend::vfs::FsError> {
+            self.$inner.remove(path)
+        }
+        fn chtimes(
+            &self,
+            path: &str,
+            a_time: Option<std::time::SystemTime>,
+            m_time: Option<std::time::SystemTime>,
+        ) -> Result<(), $crate::frontend::vfs::FsError> {
+            self.$inner.chtimes(path, a_time, m_time)
+        }
+    };
+}
+pub use crate::fs_write_through;
+
 // Go: vfs.go:14 FS
 // FS is a file system abstraction.
 // PORT: Go interface values are shared pointers, so every method takes

@@ -4037,13 +4037,13 @@ const LINK_SESSION_FLAT_IDS: usize = 1 << 22;
 
 /// The flat bound of a new store with pages `P`: `LINK_SESSION_FLAT_IDS`
 /// in a language server, API or `tsc --watch` process, where the lineage
-/// grows with each edit (`ast::frees_file_versions_by_default`), else
+/// grows with each edit (`ast::free_file_versions`), else
 /// `P::CLI_FLAT_IDS`.
 // PORT: Go has one bound. A store keeps the bound it was made with, so a
 // store that lives across `ast::set_editor_process` (in a test process)
 // still finds its records.
 fn link_flat_ids<V: Default, P: LinkPage<V>>() -> usize {
-    if crate::ast::frees_file_versions_by_default() {
+    if crate::ast::free_file_versions() {
         LINK_SESSION_FLAT_IDS
     } else {
         P::CLI_FLAT_IDS

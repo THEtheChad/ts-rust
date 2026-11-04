@@ -136,7 +136,7 @@ pub struct RefactorProvider {
 // PORT: Go fills the list from `init()` (`RegisterRefactorProvider`); the
 // port has one external provider, Effect's (`effect::ls`), listed only when
 // the Effect extension is on.
-fn external_refactor_providers() -> Option<&'static RefactorProvider> {
+fn external_refactor_provider() -> Option<&'static RefactorProvider> {
     crate::effect::switch_on().then_some(&crate::effect::ls::EFFECT_REFACTOR_PROVIDER)
 }
 
@@ -265,7 +265,7 @@ impl LanguageService {
                 params.range,
                 Feature::CODE_ACTIONS,
             ) {
-                for provider in external_refactor_providers() {
+                if let Some(provider) = external_refactor_provider() {
                     let refactor_actions = (provider.get_refactor_actions)(
                         ctx,
                         mapped.script,

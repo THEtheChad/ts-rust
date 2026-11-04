@@ -7,7 +7,8 @@
 //! before every check ended: its writes wait in memory.
 //!
 //! Each test compares a run with the early emit against a run with
-//! `GOPORT_PLAIN_EARLY_EMIT=0` (the emit after the whole check, as in Go).
+//! `--preserveSymlinks` (rule F4: the emit after the whole check, as in Go;
+//! the fixture has no symlink, so nothing else changes).
 //! A plain run (no instrumentation) gives the outputs, stdout, stderr and
 //! the exit code, which must be equal. A second run of each side with
 //! `GOPORT_EMIT_PHASE_TIMES=1` and `GOPORT_CHECKER_CALL_LOG` gives the emit
@@ -17,7 +18,8 @@
 //! be the plain run's. Every run sets each `GOPORT_*` variable it depends
 //! on, and writes to the same new directory under the system temp dir, so
 //! the paths in outputs and messages are the same. A passing test deletes
-//! it.
+//! it. The instrumented runs need the `diagnostics` feature, so this test
+//! needs it too (`required-features`).
 //!
 //! The panic and stall tests use the test hooks `GOPORT_TEST_CHECK_PANIC`
 //! and `GOPORT_TEST_CHECK_STALL` (`program::test_check_hook`): a check that
@@ -67,9 +69,7 @@ struct Instrumented {
 
 /// The `GOPORT_*` variables that change how a run emits, removed from
 /// every run before it sets its own.
-const RUN_ENV: [&str; 9] = [
-    "GOPORT_EARLY_EMIT",
-    "GOPORT_PLAIN_EARLY_EMIT",
+const RUN_ENV: [&str; 7] = [
     "GOPORT_EMIT_PHASE_TIMES",
     "GOPORT_CHECKER_CALL_LOG",
     "GOPORT_TEST_CHECK_PANIC",
@@ -81,6 +81,7 @@ const RUN_ENV: [&str; 9] = [
 
 /// `tsgo -p tsconfig.json --outDir out --pretty false <args>` in `root`,
 /// with each `GOPORT_*` variable of `RUN_ENV` unset, then `env` set.
+/// `early` false adds `--preserveSymlinks`, which keeps Go's barrier.
 fn tsgo_command(root: &Path, args: &[&str], early: bool, env: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tsgo"));
     command
@@ -93,14 +94,12 @@ fn tsgo_command(root: &Path, args: &[&str], early: bool, env: &[(&str, &str)]) -
             "--pretty",
             "false",
         ])
-        .args(args);
+        .args(args)
+        .args((!early).then_some("--preserveSymlinks"));
     for name in RUN_ENV {
         command.env_remove(name);
     }
-    command
-        .env("GOPORT_EARLY_EMIT", "1")
-        .env("GOPORT_EMIT_THREADS", "2")
-        .env("GOPORT_PLAIN_EARLY_EMIT", if early { "1" } else { "0" });
+    command.env("GOPORT_EMIT_THREADS", "2");
     for (name, value) in env {
         command.env(name, value);
     }
@@ -251,7 +250,7 @@ fn compare_with(
     assert_ne!(
         barrier_report.start,
         Start::Early,
-        "{case}: GOPORT_PLAIN_EARLY_EMIT=0 keeps the barrier"
+        "{case}: --preserveSymlinks keeps the barrier"
     );
     assert_eq!(
         early_report.call_log, barrier_report.call_log,

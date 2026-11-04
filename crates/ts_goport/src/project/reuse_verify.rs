@@ -1,6 +1,6 @@
 //! The project side of the reuse verify mode (perf/first-principles A1;
 //! see `program::reuse_verify` for the mode, the dump and what an OK
-//! covers).
+//! covers). Only in a `diagnostics` feature build.
 //!
 //! Not in Go. For each program that the language server reused beyond Go,
 //! `verify` sends the inputs of the session (`Request`) to a child process,
@@ -57,11 +57,48 @@ const CHILD_OUT_ENV: &str = "GOPORT_VERIFY_REUSE_CHILD_OUT";
 /// of their own binary as the child).
 const CHILD_ARGS_ENV: &str = "GOPORT_VERIFY_REUSE_CHILD_ARGS";
 
+/// After `project.create_program` made `program` (`outcome` for an update):
+/// with `GOPORT_VERIFY_REUSE`, checks a reuse beyond Go (or, in the `all`
+/// modes, every reuse) against a full build (`verify`), and with
+/// `GOPORT_REUSE_STATS=<file>` appends what reuses keep alive
+/// (`append_stats`).
+pub fn after_update(
+    project: &Project,
+    host: &CompilerHost,
+    outcome: Option<crate::frontend::compiler::ReuseOutcome>,
+    program: &NewProgram,
+) {
+    use crate::frontend::compiler::ReuseOutcome;
+    use crate::program::reuse_verify::{Mode, mode};
+    let checked = match outcome {
+        Some(ReuseOutcome::ReusedSynthetic) => mode() != Mode::Off,
+        Some(ReuseOutcome::Reused) => mode() == Mode::All,
+        _ => false,
+    };
+    if checked {
+        verify(project, host, program);
+    }
+    if let Some(stats) = reuse_stats_file() {
+        append_stats(stats, outcome, program);
+    }
+}
+
+/// `GOPORT_REUSE_STATS`, read once.
+fn reuse_stats_file() -> Option<&'static str> {
+    static FILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
+        std::env::var("GOPORT_REUSE_STATS")
+            .ok()
+            .filter(|f| !f.is_empty())
+    })
+    .as_deref()
+}
+
 /// Checks `program`, the new program of `project` that a reuse made, against
 /// a full build in a child process, and reports the result. `host` is the
 /// project's compiler host during `create_program`. The program must be
 /// bound.
-pub fn verify(project: &Project, host: &CompilerHost, program: &NewProgram) {
+fn verify(project: &Project, host: &CompilerHost, program: &NewProgram) {
     let start = Instant::now();
     let changed = project.dirty_file_path.0.clone();
     let result = Request::of(project, host, program).and_then(|request| {
@@ -108,7 +145,7 @@ pub fn verify(project: &Project, host: &CompilerHost, program: &NewProgram) {
 /// the outcome, the program's files, its per-path owners of reused
 /// synthetic specifiers, the live synthetic slots of this thread and the
 /// registered program versions.
-pub fn append_stats(
+fn append_stats(
     file: &str,
     outcome: Option<crate::frontend::compiler::ReuseOutcome>,
     program: &NewProgram,
@@ -267,7 +304,7 @@ impl SnapshotDiff {
                         return false;
                     }
                     if disk.file_exists(&path.0) {
-                        diff.missing.push(path.0.clone());
+                        diff.missing.push(path.0);
                     }
                 }
                 Some(file) => {
@@ -275,7 +312,7 @@ impl SnapshotDiff {
                     if file.needs_reload {
                         return true;
                     }
-                    cached.insert(path.clone());
+                    cached.insert(path);
                     let name = &file.file_base.file_name;
                     let (text, ok) = disk.read_file(name);
                     if !ok || text != *file.file_base.content {
@@ -311,7 +348,7 @@ impl SnapshotDiff {
                 case_sensitive,
             );
             if !same_entries(&merged, &live) {
-                diff.directories.push((path.0.clone(), merged));
+                diff.directories.push((path.0, merged));
             }
             true
         });
@@ -796,23 +833,7 @@ impl Fs for SnapshotTextFs {
             None => self.inner.read_file(path),
         }
     }
-    fn write_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.write_file(path, data)
-    }
-    fn append_file(&self, path: &str, data: &str) -> Result<(), FsError> {
-        self.inner.append_file(path, data)
-    }
-    fn remove(&self, path: &str) -> Result<(), FsError> {
-        self.inner.remove(path)
-    }
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<std::time::SystemTime>,
-        m_time: Option<std::time::SystemTime>,
-    ) -> Result<(), FsError> {
-        self.inner.chtimes(path, a_time, m_time)
-    }
+    vfs::fs_write_through!(inner);
     fn directory_exists(&self, path: &str) -> bool {
         self.inner.directory_exists(path)
     }

@@ -35,9 +35,8 @@
 //! ```
 //!
 //! `snapshot_matches_live_parse` fails while the blob is stale.
-//! `GOPORT_LIB_PARSE_SNAPSHOT=0` turns the snapshot off (for A/B timing),
-//! and `GOPORT_LIB_PARSE_SNAPSHOT=trace` writes one line per lib file to
-//! stderr.
+//! In a `diagnostics` feature build `GOPORT_LIB_PARSE_SNAPSHOT=trace` writes
+//! one line per lib file to stderr.
 //!
 //! Blob layout: `MAGIC`, then the sections as `lib_snapshot::write_blob`
 //! writes them. A section is the key (four u64, little-endian), one byte
@@ -64,7 +63,7 @@ use crate::ast::store::{
 use crate::ast::store::{lib_parse_slot_views, lib_parse_store_dump};
 use crate::astdata::NodeData;
 use crate::binder::lib_snapshot::{
-    MIN_TEXT_LEN, Mode, SnapshotEntry, SnapshotReader, TEXT_BIT, const_hash, mix, read_entries,
+    MIN_TEXT_LEN, SnapshotEntry, SnapshotReader, TEXT_BIT, const_hash, mix, read_entries,
     text_matches,
 };
 use crate::frontend::prelude::*;
@@ -239,11 +238,18 @@ fn options_hash(opts: &SourceFileParseOptions, script_kind: ScriptKind) -> u64 {
 // Load
 // ──────────────────────────────────────────────────────────────────────
 
-/// `GOPORT_LIB_PARSE_SNAPSHOT`: "0" turns the snapshot off, "trace" traces
-/// it.
-fn mode() -> Mode {
-    static MODE: OnceLock<Mode> = OnceLock::new();
-    *MODE.get_or_init(|| Mode::from_env("GOPORT_LIB_PARSE_SNAPSHOT"))
+/// True when each snapshot load writes one line to stderr:
+/// `GOPORT_LIB_PARSE_SNAPSHOT=trace` in a `diagnostics` feature build. Read
+/// once.
+#[cfg(feature = "diagnostics")]
+fn trace() -> bool {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var("GOPORT_LIB_PARSE_SNAPSHOT").as_deref() == Ok("trace"))
+}
+
+#[cfg(not(feature = "diagnostics"))]
+fn trace() -> bool {
+    false
 }
 
 /// The lib files in `BLOB`, read once. Empty when the blob does not read.
@@ -282,8 +288,7 @@ pub(crate) fn load(
     source_text: &'static str,
     script_kind: ScriptKind,
 ) -> Option<LoadedParse> {
-    let mode = mode();
-    if mode == Mode::Off || source_text.len() < MIN_TEXT_LEN {
+    if source_text.len() < MIN_TEXT_LEN {
         return None;
     }
     #[cfg(test)]
@@ -292,7 +297,7 @@ pub(crate) fn load(
     }
     let lib = bundled_lib_name(&opts.file_name)?;
     let entry = entries().iter().find(|entry| entry.name == lib)?;
-    let start = (mode == Mode::Trace).then(std::time::Instant::now);
+    let start = trace().then(std::time::Instant::now);
     let result = load_section(store, entry.section, opts, source_text, script_kind);
     if let Some(start) = start {
         let status = match &result {
