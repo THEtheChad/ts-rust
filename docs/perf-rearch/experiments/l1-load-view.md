@@ -48,28 +48,53 @@ L1's recovery and match Go). Branch `t3/per-load-frozen-loader-view`.
   semantics. It is deleted (round 3: 1,521 lines out of `crates/`, `reconcile.rs` 552 and
   `pool.rs` 77 among them).
 
-## Observation-to-watch window (round 3)
-From when a load got a path's OS answer to the end of the watch registration that follows it
-(every `registerCapability` answered). View: the time each loader-demanded entry of V was first
-observed (by a worker or the loader). Base: the base serial loader's first OS call per path on
-the loading thread (`422caac19` with `scripts/perf-rearch/loader/l1-window-base-spike.patch`,
-never merged). Both logs are written after the load. Idle, 3 runs per side,
-`l1-window-run.mjs` + `l1-window.py`, results in `~/.cache/perf-rearch/l1/window/results.txt`.
+## Observation-to-watch window (round 4, replaces round 3's)
+From when a load started the OS call that answered a path to the end of the watch registration
+that follows the load (every `registerCapability` answered). Both sides take the time before
+the OS call and write their logs after the registration. View: each loader-demanded entry of
+V (first OS call, by a worker or the loader; diagnostics build `cdeba80d3`). Base: the base
+serial loader's first OS call per path on the loading thread (`0f2570052` with
+`scripts/perf-rearch/loader/l1-window-base-spike.patch`, never merged). Idle, 5 runs per side,
+interleaved; `l1-window-run.mjs`, then `l1-window.py pair` over the paths both observed
+(results: `~/.cache/perf-rearch/l1/window2/`).
 
-| umami, ms | load span | load end → watch | reads p10 / p50 / p90 / max | all kinds p50 / p90 / max |
-|---|---|---|---|---|
-| view r1 | 257.2 | 27.3 | 207.0 / 231.9 / 261.6 / 274.7 | 237.5 / 268.3 / 283.7 |
-| view r2 | 242.9 | 29.1 | 193.9 / 220.4 / 249.4 / 262.6 | 226.9 / 257.0 / 271.2 |
-| view r3 | 255.0 | 80.5 | 255.2 / 282.8 / 311.6 / 325.3 | 290.0 / 319.8 / 334.3 |
-| base r1 | 367.8 | 26.2 | 127.3 / 207.9 / 329.1 / 373.0 | 229.2 / 352.7 / 393.2 |
-| base r2 | 379.0 | 24.5 | 128.7 / 211.6 / 335.7 / 382.4 | 233.5 / 358.7 / 402.8 |
-| base r3 | 372.6 | 26.1 | 125.8 / 206.4 / 328.5 / 379.4 | 227.8 / 357.4 / 398.1 |
+**Criterion (stated before the measurement):** material if the paired p90 delta (view − base)
+is over +50 ms, or if more than 5% of the paths are over +100 ms.
 
-5,006 reads and 27,500 observations on both sides. The view observes early (25k of them by
-workers) but its load ends about 120 ms sooner, so its windows are narrower: the median read
-window is 10–75 ms longer than the base's, the p90 and max are 60–110 ms shorter. Hono's first
-load (292 reads, 1,390 observations, 30–37 ms span) has windows of 65–125 ms on both sides,
-dominated by the load-end-to-watch delay (44–93 ms, varying from run to run on both).
+| paired delta, ms | n | p50 | p90 | p99 | max | > +50 | > +100 |
+|---|---|---|---|---|---|---|---|
+| umami, reads | 25,030 | +16.6 | **+83.8** | +115.8 | +183.6 | 7,045 | 1,051 (4.2%) |
+| umami, all kinds | 137,500 | −4.3 | **+78.2** | +109.3 | +183.6 | 31,857 | 4,808 (3.5%) |
+| hono, reads | 1,460 | −4.4 | +10.5 | +12.4 | +15.6 | 0 | 0 |
+| hono, all kinds | 6,950 | −12.6 | −0.9 | +11.9 | +15.6 | 0 | 0 |
+
+**Verdict: material on umami** (paired p90 +78 ms over all kinds, +84 ms for reads, both above
++50; the share over +100 ms is 3.5% and 4.2%, under 5%). **Not material on hono** (a 30–40 ms
+first load). Per run, umami's load span is 239–267 ms with the view against 361–379 ms for
+the base, and the load end to watch 12–15 ms on both.
+
+**Why: worker prefetch order.** The paths whose window grows are the ones that the serial
+loader reaches late but the workers observe early. By the base loader's read offset in its
+load: 0–50 ms, delta p50 −117; 100–150, −52; 200–250, +41 (p90 +95); 250–300, +74 (p90
++104). All 31,857 paths over +50 ms were observed by a worker, at a median 77 ms into the
+view's load, where the base read them at a median 268 ms. The view ends about 120 ms sooner,
+but its workers read the late part of the serial order much earlier than that. This is the
+window against the base serial loader; Go reads in parallel parse tasks too, so its own
+window is not the serial one (not measured here).
+
+**Fix options (not implemented; Chad decides):**
+1. **Measure Go's window first.** The bar is Go's behavior. A Go oracle build with the same
+   probe (time before each `vfs` call, log after `updateWatch`) would show whether Go's
+   parallel parse tasks already observe as early as V's workers. If so, no change is needed.
+2. **Bound the workers' lead at demand.** When the loader demands an entry that a worker
+   observed more than T ms earlier (T = 50 ms), the loader makes the OS call again and V
+   keeps the new answer. That caps the window's growth at about T, but it puts those OS calls
+   back on the loader thread: the paths read after 150 ms in the base order are about half of
+   all observations, so it costs about half of the view's loader gain.
+3. **Pace the workers to the loader's order.** Workers take parse jobs in the serial loader's
+   expected order, within K files of its demand cursor. That keeps observation times close to
+   the demand times without loader OS calls, at the cost of less parallel prefetch (needs a
+   measurement of the loss).
 
 ## Memory (umami RSS after the first load, release builds, idle)
 `l1-rss.mjs`, VmRSS at 1, 5 and 12 s after the first diagnostics (steady): base `422caac19`
