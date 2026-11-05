@@ -633,3 +633,19 @@ once a **reconciliation step** is built and tested.
   - **pkgjson-overlay:** ATA is now off (root, `7e8a0fd0f`). LSP tier rerun:
     0 lost, 35 GO-BROKEN, 2,566 MATCH.
   - Astra reviews H1 and H2 together next.
+- **2026-11-05, H3 merged** (`b1268f00c`): all 12 of Astra's gate holes are
+  closed.
+  - **Negative controls:** the H1 self-test has 123 checks, of which 19 fail
+    on the old code; the H2 self-test has 48, of which 15 fail.
+  - **New behaviour:** content-hashed cache keys, input re-hash with ERROR on
+    change, new bad items fail, a quick-subset check, request-identity
+    alignment, and a deterministic `ata-overlay` scenario.
+  - **Grandfather list:** `parity-grandfathered.json` lists 35 known fuzz
+    failures by their exact failure.
+  - **Hidden real issue found:** `fuzz/1:25496` takes 84 s in tsc-rs against
+    10.7 s in Go, with the same output. The old 120 s retry overwrote the
+    timeout. `base-current` now points to `h3-head-efef52257-full-warm`, which
+    records the timeout; **lane P1** fixes the slowness.
+  - New brief rule: never write into the shared inputs.
+  - An Astra re-review of H3 is running; the interim rule stays until it
+    accepts.

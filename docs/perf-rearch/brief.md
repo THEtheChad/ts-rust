@@ -95,7 +95,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now the C1+ND1+L1 head efef52257, run head-efef52257-full; on main the Effect items were known
+  this branch (now the C1+ND1+L1 head efef52257 under the H3 gate, run h3-head-efef52257-full-warm, which records `fuzz/1:25496` as a tsc-rs timeout (8× slower than Go, lane P1); on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - **Referees:** on the cli, fuzz and corpus tiers the gate applies the
@@ -152,6 +152,11 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
     `--tsBuildInfoFile` and delete it before each run, or later runs are
     no-ops.
   - Trust deltas under 2% only with all three handled.
+- **Never write into the shared inputs** (`~/.cache/perf-rearch/projects/`,
+  the parity fixtures). Benches and tools work on copies, or pass a scratch
+  `--outDir`/`--tsBuildInfoFile` plus `--incremental false --composite false`.
+  The gate re-hashes the inputs and marks changed ones ERROR. A bench that
+  wrote into `projects/t3code` mid-gate cost a full run on 2026-11-05.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
   `systemd-run --user --collect --slice=app-batch.slice --nice=10 -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
