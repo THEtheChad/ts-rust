@@ -53,8 +53,12 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
     one stable answer and must not crash. Examples are the fuzzer finds
     microsoft/TypeScript #65078 and #65079.
   - **The partition exception above** (GO-PARTITION) also stands.
-  - **Scope:** JS-AGREES applies to the CLI, fuzz and corpus tiers. The LSP
-    tier has no JS referee; GO-BROKEN still applies there.
+  - **Scope:** JS-AGREES applies to the CLI, fuzz and corpus tiers.
+  - **LSP:** JS-AGREES uses JS tsserver 6.0.3, driven directly over its own
+    protocol (lane H2). Its answers are mapped to the LSP request kinds and
+    compared on normalized fields. Kinds with no tsserver equivalent (watch
+    registrations, pull-diagnostic order) have no JS referee. GO-BROKEN
+    applies everywhere.
   - **Speed is not a difference.** Faster is always the goal.
 - **Oracles:** Go at pin `3e9236361fa9` (`~/.local/bin/tsgo-oracle-3e9236361fa9`,
   LSP `~/.local/bin/tsgo-lsp-oracle-3e9236361fa9 --lsp --stdio`), Go source
