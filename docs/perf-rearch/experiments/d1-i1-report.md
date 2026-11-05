@@ -82,3 +82,25 @@ The handoff is `docs/perf-rearch/design/d1-impl.md` on the branch. Bins are
   GO-BROKEN items are the base's GO-UNSTABLE fuzz cases.
 - **Wall:** the gated bench never ran (load 25–77). Indicative only:
   t3-server 18.0 → 16.2 s against I1.
+
+## D1-I2b (branch `t3/certified-checker-cycle-bounds`, head f53c97e78; design `design/d1-i2b.md`)
+- **Publication race fixed:** publish before the pending count drops, with a
+  stall test.
+- **T5b:** `add` reports insert vs reuse, with epochs.
+- **t3-server:**
+  - Go's real count at `app.test.ts:1451` is 2.62M; the I1 virtual count was
+    5.32M, an overestimate.
+  - New compositional rule: entry-reset memos take max(saved, end), and fresh
+    files reset where Go does.
+  - The virtual peak is now 4.15M (17% margin), with 0 bound violations
+    against Go's real peaks. t3-server commits.
+- **Cycle agreement** (`cert_cycles.rs`): `CycleDisagree` and
+  `CycleAmbiguous`. vscode commits (the `reportRelationError` temporary type
+  parameter is skipped). Gap: the "resolved normally elsewhere" case has no
+  end-to-end test.
+- **Relation-budget bound:** 0 fires; the closest margin is 2.9% (umami).
+- **Identity:** 66/66 against Go c4. 15 commit, 5 fall back (ConstraintCut ×4,
+  InstantiationDepth ×1).
+- **icount:** the exact path is +0.03–0.06%, within LTO noise.
+- **Wall:** not measured (load 19–70).
+- **Integration lane D1-I2 started:** I2a + I2b + perf head.
