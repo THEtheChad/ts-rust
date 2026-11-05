@@ -7,9 +7,9 @@ import { endPosition, languageId, pickPositions, readText, rel } from "./project
 // a completion after each; bench.mjs types it at a fixed speed).
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
-export async function startServer(cmd, root, { stderr, watch = false, env } = {}) {
+export async function startServer(cmd, root, { stderr, watch = false, ata = true, env } = {}) {
   const client = new LspClient(cmd, { cwd: root, stderr, env });
-  const init = await client.request("initialize", initializeParams(root, { watch }));
+  const init = await client.request("initialize", initializeParams(root, { watch, ata }));
   if (init.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
   client.notify("initialized", {});
   return client;
@@ -48,9 +48,10 @@ export function removeTail(client, doc, length) {
   });
 }
 
-// Runs the session and returns [{ step, method, params, result, error }].
+// Runs the session and returns [{ step, method, params, result, error }]. ATA is off: its typings
+// would join an inferred project whenever its npm call returns (see initializeParams).
 export async function runSession(cmd, root, files, { positions = 4, stderr, env } = {}) {
-  const client = await startServer(cmd, root, { stderr, env });
+  const client = await startServer(cmd, root, { stderr, env, ata: false });
   const log = [];
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);

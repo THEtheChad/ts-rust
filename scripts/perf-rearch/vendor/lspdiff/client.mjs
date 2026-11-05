@@ -131,12 +131,19 @@ export const userPreferences = {
 // VS Code does. Both servers then register their watch globs with the client
 // (client/registerCapability) instead of logging "file watching: disabled", and send refresh
 // requests after file-system events.
-export function initializeParams(rootDir, { watch = false } = {}) {
+//
+// ata: false turns automatic type acquisition off (disableAutomaticTypeAcquisition). With it on,
+// both servers start ATA for an inferred project in the background, and its first step runs
+// `npm install types-registry@latest` (network, about 0.5 s). Its typings join the inferred project
+// at the first request after npm returns, so whether an answer sees them depends on npm's timing.
+// That made lsp/hono-f12-p6/0057 vary on Go and on tsc-rs alike (docs/perf-rearch/parity.md, "ATA").
+export function initializeParams(rootDir, { watch = false, ata = true } = {}) {
+  const prefs = ata ? userPreferences : { ...userPreferences, unstable: { ...userPreferences.unstable, disableAutomaticTypeAcquisition: true } };
   const params = {
     processId: null,
     rootUri: fileUri(rootDir),
     workspaceFolders: [{ uri: fileUri(rootDir), name: "root" }],
-    initializationOptions: { userPreferences },
+    initializationOptions: { userPreferences: prefs },
     capabilities: {
       general: { positionEncodings: ["utf-16"] },
       workspace: { workspaceFolders: true, applyEdit: true, workspaceEdit: { documentChanges: true } },

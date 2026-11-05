@@ -1,0 +1,8 @@
+#!/bin/sh
+# ND1: a stand-in for npm on the language servers' PATH (repro.mjs --npm-delay). It
+# sleeps $ND1_NPM_DELAY seconds (default 0) and succeeds without doing anything, so the ATA
+# "npm install types-registry@latest" step takes a fixed time and no network. The types
+# registry under ~/.cache/typescript/7.1 must be installed already.
+sleep "${ND1_NPM_DELAY:-0}"
+echo "$(date +%T.%N) npm $*" >> "${ND1_NPM_LOG:-/dev/null}"
+exit 0

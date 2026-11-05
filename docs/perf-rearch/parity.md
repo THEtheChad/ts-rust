@@ -113,7 +113,11 @@ positions, for completion; and it asks for quick fixes for the first 3 errors. T
 into one file, asking for a completion per keystroke, and requests diagnostics again. Answers are
 compared as normalized JSON (the root path is masked; completion items and WorkspaceEdit files
 are sorted, since Go itself does not keep those orders). The client advertises no dynamic watch
-registration, so both servers log "file watching: disabled".
+registration, so both servers log "file watching: disabled". Automatic type acquisition (ATA) is
+off (`disableAutomaticTypeAcquisition`), so an answer does not depend on when npm returns (see
+"ATA in the standard sessions" below). A Go cache entry is keyed by the session, the project
+fingerprint and the sha of the vendored lspdiff sources, so a change to the session script makes
+new Go runs.
 
 **Watch scenarios** (`scenario.mjs`). Here the client advertises what VS Code does:
 `workspace.didChangeWatchedFiles` with `dynamicRegistration` and `relativePatternSupport`,
@@ -223,6 +227,44 @@ The test build is incremental: 0.4 s with nothing changed. After a checker chang
 go_baselines and workspace test binaries takes several minutes. A cold `target/` took about 25
 min with sccache. The Go side is cached, so after a pin or Go-binary change the first run costs
 about twice the warm time. The `js` mode takes about 9.5 minutes.
+
+## ATA in the standard sessions (lane ND1, 2026-11-04)
+
+`lsp/hono-f12-p6/0057` (the inlay hints of `runtime-tests/deno/ssg.test.tsx`) was a recurring
+`rs-schedule`/`rs-nondet` DIFF: on about 1 run in 12, the parameter hint of
+`console.error(...)` at 50:19 was `message:` (`@types/node` `console.d.ts`) instead of Go's
+`...data:` (`lib.dom.d.ts`). That was not a tsc-rs bug. It is a race in Go's design that both
+servers share:
+
+- `ssg.test.tsx` is in no tsconfig, so it gets the inferred project (138 files, no
+  `@types/node`). Inferred projects have type acquisition on, so adopting that snapshot starts ATA
+  as a background task (Go `project/session.go:2027` `triggerATAForUpdatedProjects`; tsc-rs
+  `project/session.rs` `trigger_ata_for_updated_projects`).
+- ATA's first step runs `npm install --ignore-scripts types-registry@latest` in
+  `~/.cache/typescript/7.1` (Go `project/ata/ata.go:378`; tsc-rs `project/ata/ata.rs` `init`).
+  That takes about 0.5 s and uses the network. The typings it finds (the project's `@types/node`,
+  `bun-types` and others) are then pending, and the next request that takes a snapshot adds them
+  (Go `snapshot.go:551` `DidUpdateATAState`). The inferred project then has 754 files, and
+  `Console.error` has three overloads, with the node one first.
+- So an answer on the inferred project depends on whether npm returned before the request. Go
+  gets through the first file's 55 requests in about 0.2 s, before npm returns. tsc-rs's first
+  request, `bench.mts diagnostic`, takes 0.65 to 1.05 s (it waits for the 12 didOpens to load
+  the projects; Go 0.12 s). So tsc-rs reached ssg.test.tsx close to the moment npm returned, and
+  load or `GOPORT_PARSE_THREADS=1` tipped it. Under 6 parallel sessions with one parse thread,
+  17 of 60 runs gave `message:`.
+- With a stand-in npm (`scripts/perf-rearch/nd1/fake-npm/npm`): returning at once, Go and tsc-rs
+  both answer `message:` (3 of 3 each); after 5 s, both answer `...data:` (3 of 3 each).
+
+The 20 GO-UNSTABLE `references` items of hono, and the `rs-nondet` references items 0178, 0232,
+0335, 0595 and 0635 of later runs, are the same race: their extra locations are in ATA's typings
+(`~/.cache/typescript/7.1/node_modules/@types/node/*`, `bun-types`). ATA also changes
+`~/.cache/typescript/7.1` itself, so the Go cache could go stale.
+
+The fix is in the harness. Standard sessions turn ATA off for both servers
+(`vendor/lspdiff/client.mjs` `initializeParams(..., { ata: false })`, which `session.mjs`
+`runSession` uses). The watch scenarios keep ATA on. They settle at checkpoints and register its
+watch globs (`program files for /dev/null/inferred`). The repro is `scripts/perf-rearch/nd1/repro.mjs`
+(`--ata` turns the old behavior back on).
 
 ## LSP watch scenarios on the perf head (2026-11-04)
 
