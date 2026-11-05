@@ -1,0 +1,50 @@
+{
+ "about": "The accepted coverage of the quick parity mode (lane H4): every item a quick run must have, whatever the harness that runs it says. parity_compare.py reads this file from the accepted ref (perf/first-principles, or --accepted-ref), never from the candidate's checkout, and requires each base item it names; parity_cli.py, parity_lsp.py, parity_fuzz.py (through parity.sh) and parity_tests.py run at least these items in quick mode. Removing an entry is a reviewed change of this file: until it is accepted, compare still requires the item and prints the shrink. cli: item names; lsp: session names (every answer of the session); fuzz: cases 0 to count-1 of the seed; tests: every test of a binary whose name starts with one of binaryPrefixes, and every TestLocal row when testLocal.",
+ "version": 1,
+ "cli": [
+  "cli/hono/build/emit",
+  "cli/hono/build/extdiag",
+  "cli/hono/build/noemit",
+  "cli/hono/spec/emit",
+  "cli/hono/spec/extdiag",
+  "cli/hono/spec/noemit",
+  "cli/query/core-prod/emit",
+  "cli/query/core-prod/extdiag",
+  "cli/query/core-prod/noemit",
+  "cli/query/core/emit",
+  "cli/query/core/extdiag",
+  "cli/query/core/noemit",
+  "cli/ts-pattern/src/emit",
+  "cli/ts-pattern/src/extdiag",
+  "cli/ts-pattern/src/noemit",
+  "cli/ts-pattern/tests/emit",
+  "cli/ts-pattern/tests/extdiag",
+  "cli/ts-pattern/tests/noemit",
+  "cli/umami/root/emit",
+  "cli/umami/root/extdiag",
+  "cli/umami/root/noemit",
+  "cli/zod/zod-build/emit",
+  "cli/zod/zod-build/extdiag",
+  "cli/zod/zod-build/noemit"
+ ],
+ "lsp": [
+  "ata-overlay",
+  "fsevents",
+  "fsevents-narrow",
+  "pkgjson-overlay",
+  "ts-pattern-f12-p6",
+  "umami-f12-p6",
+  "unsaved-ts-pattern",
+  "watch-ts-pattern-f12"
+ ],
+ "fuzz": {
+  "seed": "1",
+  "count": 1500
+ },
+ "tests": {
+  "binaryPrefixes": [
+   "go_baselines"
+  ],
+  "testLocal": true
+ }
+}

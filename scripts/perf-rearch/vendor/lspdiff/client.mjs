@@ -1,15 +1,17 @@
 // A minimal LSP client over stdio (JSON-RPC with Content-Length framing). No dependencies.
-import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { ServerProcess } from "./sandbox.mjs";
+import { SETTINGS } from "./settings.mjs";
 
 // A request the server does not answer in this time ends the run: the server is killed and the
 // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
-const REQUEST_TIMEOUT_MS = Number(process.env.LSPDIFF_REQUEST_TIMEOUT_MS ?? 300000);
+const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
 
 export class LspClient {
   // cmd: [binary, ...args]. Server-to-client requests get a fixed answer, see onServerRequest.
   constructor(cmd, { cwd, env, stderr } = {}) {
-    this.proc = spawn(cmd[0], cmd.slice(1), { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    this.server = new ServerProcess(cmd, { cwd, env, stderr });
+    this.proc = this.server.proc;
     this.nextId = 1;
     this.pending = new Map(); // id -> { resolve, reject, method, start }
     this.notifications = []; // { method, params, at }
@@ -18,18 +20,14 @@ export class LspClient {
     this.events = [];
     this.lastMessageAt = performance.now();
     this.buf = Buffer.alloc(0);
-    this.exited = new Promise((resolve) => this.proc.on("exit", (code, signal) => resolve({ code, signal })));
+    this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
-    this.stderrTail = "";
+    this.malformed = null; // a message that broke the framing or the JSON
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
-    this.proc.stderr.on("data", (chunk) => {
-      this.stderrTail = (this.stderrTail + chunk.toString("utf8")).slice(-2000);
-      stderr?.write(chunk);
-    });
     this.proc.stdin.on("error", () => {}); // writes after a crash: the exit handler reports it
     this.proc.on("exit", (code, signal) => {
       this.dead ??= `server exited (${code ?? signal})`;
-      const panic = /^panic: .*$/m.exec(this.stderrTail)?.[0];
+      const panic = /^panic: .*$/m.exec(this.server.tail)?.[0];
       for (const p of this.pending.values()) p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
       this.pending.clear();
     });
@@ -42,11 +40,30 @@ export class LspClient {
       if (headerEnd < 0) return;
       const header = this.buf.subarray(0, headerEnd).toString("ascii");
       const length = Number(/Content-Length: *(\d+)/i.exec(header)?.[1]);
+      if (!Number.isInteger(length)) return this.#broken(`a message without a Content-Length: ${header.slice(0, 80)}`);
       if (this.buf.length < headerEnd + 4 + length) return;
       const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
       this.buf = this.buf.subarray(headerEnd + 4 + length);
-      this.#onMessage(JSON.parse(body));
+      let msg;
+      try {
+        msg = JSON.parse(body);
+      } catch {
+        return this.#broken(`malformed JSON: ${body.slice(0, 80)}`);
+      }
+      this.#onMessage(msg);
     }
+  }
+
+  // A server that breaks the protocol: the run ends there (a crash of the server, never an answer).
+  #broken(why) {
+    this.malformed ??= why;
+    this.dead ??= `server broke the protocol (${why})`;
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new Error(`${this.dead} during ${p.method}`));
+    }
+    this.pending.clear();
+    this.proc.kill("SIGKILL");
   }
 
   #onMessage(msg) {
@@ -118,14 +135,38 @@ export class LspClient {
     this.notify("$/cancelRequest", { id });
   }
 
+  // Ends the session and returns its result (sandbox.mjs ServerProcess.result): the shutdown request
+  // must be answered without an error in LSPDIFF_SHUTDOWN_MS, and after `exit` the server must exit
+  // by itself with code 0 in that time; its stderr must have no crash line, and it must not have
+  // changed its inputs. Every outcome is in the result, none is swallowed.
   async shutdown() {
-    try {
-      await Promise.race([this.request("shutdown", null), new Promise((r) => setTimeout(r, 5000))]);
-      this.notify("exit", null);
-    } catch {}
-    const timer = setTimeout(() => this.proc.kill("SIGKILL"), 5000);
-    await this.exited;
+    const ms = SETTINGS.LSPDIFF_SHUTDOWN_MS;
+    let shutdown = "ok";
+    if (this.dead) shutdown = `not asked: ${this.dead}`;
+    else {
+      let timer;
+      const r = await Promise.race([
+        // LSP shutdown has no params: Go (and tsc-rs) answer `params: null` with InvalidParams.
+        this.request("shutdown").then((x) => x, (e) => ({ failed: String(e.message) })),
+        new Promise((res) => (timer = setTimeout(() => res({ failed: `no answer to shutdown in ${ms} ms` }), ms))),
+      ]);
+      clearTimeout(timer);
+      if (r.failed) shutdown = r.failed;
+      else if (r.error) shutdown = `shutdown answered an error: ${JSON.stringify(r.error).slice(0, 200)}`;
+      if (!this.dead) this.notify("exit", null);
+    }
+    this.proc.stdin.end();
+    let killed = false;
+    const asked = performance.now();
+    const timer = setTimeout(() => {
+      killed = this.proc.exitCode === null && this.proc.signalCode === null;
+      if (killed) this.proc.kill("SIGKILL");
+    }, ms);
+    const { signal } = await this.server.exited;
     clearTimeout(timer);
+    const forced = killed && signal === "SIGKILL"; // it was still running, and our kill ended it
+    const exitMs = Math.round(performance.now() - asked);
+    return this.server.result({ shutdown, forced, exitMs, extra: this.malformed ? [`protocol: ${this.malformed}`] : [] });
   }
 }
 

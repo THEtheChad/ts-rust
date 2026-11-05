@@ -39,15 +39,16 @@
 // ATA: the scenarios that set `ata: false` turn it off (pkgjson-overlay); ata-overlay runs it against
 // the stand-in npm; the others leave it on with the user's npm and typings cache
 // (~/.cache/typescript/7.1, which parity_lsp.py keys their Go cache by).
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
-import { ATA_STORE, writeFixture, writeTree } from "./fixtures.mjs";
+import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
 import { TYPED, startServer } from "./session.mjs";
+import { SETTINGS } from "./settings.mjs";
 
-const SETTLE_MS = Number(process.env.LSPDIFF_SETTLE_MS ?? 1000);
+const SETTLE_MS = SETTINGS.LSPDIFF_SETTLE_MS;
 const json = (v) => JSON.stringify(v, null, 2) + "\n";
 const langOf = (path) => (path.endsWith(".json") ? "json" : /x$/.test(path) ? "typescriptreact" : "typescript");
 
@@ -61,6 +62,7 @@ class Script {
     this.active = new Map(); // didChangeWatchedFiles registration id -> watchers
     this.registered = new Map(); // other registrations: id -> { method, registerOptions }
     this.ids = []; // every registration id, raw, in order
+    this.expected = null; // a fixture scenario: rel -> text or { symlink }, what the dir must hold
   }
 
   abs(r) {
@@ -142,11 +144,13 @@ class Script {
     const type = existsSync(path) ? 2 : 1;
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
+    this.expected?.set(r, text);
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(path), type }] });
   }
 
   fsDelete(r) {
     rmSync(this.abs(r));
+    this.expected?.delete(r);
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(this.abs(r)), type: 3 }] });
   }
 
@@ -179,28 +183,46 @@ class Script {
     const [a, b] = [this.abs(from), this.abs(to)];
     mkdirSync(dirname(b), { recursive: true });
     renameSync(a, b);
+    if (this.expected) {
+      this.expected.set(to, this.expected.get(from));
+      this.expected.delete(from);
+    }
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(a), type: 3 }, { uri: fileUri(b), type: 1 }] });
   }
 
-  // ata-overlay: waits until ATA is idle (no stand-in npm call in flight, and none started for
-  // ATA_IDLE_MS after the last one ended, at most 60 s), lets the server settle, and logs the npm calls
-  // since the last wait as an item ("<label> ata npm", method ata/npm: each call's arguments and exit
-  // code), compared like an answer. The scenario waits after every step, so no request is ever sent
-  // while ATA's npm call runs: a request in that window starts a second install of the same typings
-  // and makes the next answers depend on which install a snapshot sees (Go and tsc-rs alike; the race
-  // ND1 found with the real npm).
+  // ata-overlay: waits until ATA is idle and logs the npm calls since the last wait as an item
+  // ("<label> ata npm", method ata/npm: each call's arguments and exit code), compared like an answer.
+  // The barrier (lane H4) is the stand-in npm's own log: every call writes a start line and, when its
+  // work is done, a done line with the same pid. ATA is idle when every started call is done, its
+  // process has exited, and no call started for ATA_IDLE_MS. A wait that reaches ATA_DEADLINE_MS
+  // fails the run (a timeout of that server: for tsc-rs a DIFF, for Go GO-BROKEN), never a success.
+  // The scenario waits after every step, so no request is ever sent while ATA's npm call runs: a
+  // request in that window starts a second install of the same typings and makes the next answers
+  // depend on which install a snapshot sees (Go and tsc-rs alike; the race ND1 found with the real npm).
   async ataIdle(label) {
     const file = this.ata.log;
-    const quiet = Number(process.env.ATA_IDLE_MS ?? 1500);
     const read = () => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (e) {
+        return e.code === "EPERM";
+      }
+    };
     const start = performance.now();
     let last = performance.now();
     let seen = -1;
     for (;;) {
       const log = read();
       if (log.length !== seen) [seen, last] = [log.length, performance.now()];
-      const busy = log.filter((e) => e.start).length > log.filter((e) => e.done).length;
-      if ((!busy && performance.now() - last >= quiet) || performance.now() - start > 60000) break;
+      const done = new Set(log.filter((e) => e.done).map((e) => e.pid));
+      const busy = log.some((e) => e.start && (!done.has(e.pid) || alive(e.pid)));
+      if (!busy && performance.now() - last >= SETTINGS.ATA_IDLE_MS) break;
+      if (performance.now() - start > SETTINGS.ATA_DEADLINE_MS) {
+        const open = log.filter((e) => e.start && !done.has(e.pid)).map((e) => e.args.join(" "));
+        throw Object.assign(new Error(`ATA did not finish in ${SETTINGS.ATA_DEADLINE_MS} ms at ${label} (npm still running: ${open.join("; ") || "a process that has not exited"})`), { timeout: true });
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
     await this.client.settle(SETTLE_MS);
@@ -212,7 +234,7 @@ class Script {
   // Waits until the server is quiet (no checkpoint): between didOpens, so that each snapshot's
   // background task (watch updates) ends before the next snapshot starts. Go runs those tasks as
   // concurrent goroutines, and back-to-back snapshots make its registrations race.
-  quiet(ms = 300) {
+  quiet(ms = SETTINGS.LSPDIFF_QUIET_MS) {
     return this.client.settle(ms);
   }
 
@@ -522,9 +544,34 @@ SCENARIOS["ata-overlay"] = {
 SCENARIOS["fsevents-narrow"] = { ...SCENARIOS.fsevents, workspace: "src" };
 SCENARIOS["watch-narrow"] = { ...SCENARIOS.watch, workspace: "src" };
 
-// Runs a scenario on one server and returns its log ([{ step, method, params, result, error }]).
-// A fixture scenario first writes its fixture into `root`. When the server crashes or times out,
-// the error carries the answers so far as `log`.
+// What a fixture dir holds that the script did not put there (lane H4): a file or symlink the server
+// created, changed or deleted. [] when the dir is exactly `expected`.
+function fixtureChanges(root, expected) {
+  const found = new Map();
+  const walk = (rel) => {
+    for (const n of readdirSync(join(root, rel)).sort()) {
+      const r = rel ? `${rel}/${n}` : n;
+      const st = lstatSync(join(root, r));
+      if (st.isSymbolicLink()) found.set(r, { symlink: readlinkSync(join(root, r)) });
+      else if (st.isDirectory()) walk(r);
+      else found.set(r, readFileSync(join(root, r), "utf8"));
+    }
+  };
+  walk("");
+  const out = [];
+  for (const [r, v] of found) {
+    if (!expected.has(r)) out.push(`created ${r}`);
+    else if (JSON.stringify(v) !== JSON.stringify(expected.get(r))) out.push(`changed ${r}`);
+  }
+  for (const r of expected.keys()) if (!found.has(r)) out.push(`deleted ${r}`);
+  return out;
+}
+
+// Runs a scenario on one server and returns { log: [{ step, method, params, result, error }],
+// session } (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
+// fixture dir is not what the script made it). A fixture scenario first writes its fixture into
+// `root`. When the server crashes or times out, the error carries the answers so far as `log` and the
+// session as `session`.
 // serverLog: a file that gets the server's window/logMessage stream (lspdiff --server-logs).
 export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog } = {}) {
   const scenario = SCENARIOS[name];
@@ -545,7 +592,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
       ATA_NODE: process.execPath,
       ATA_STORE: join(dir, "store"),
       ATA_NPM_LOG: ata.log,
-      ATA_NPM_DELAY_MS: process.env.ATA_NPM_DELAY_MS ?? "500",
+      ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
       XDG_CACHE_HOME: join(dir, "xdg"),
     };
   }
@@ -554,25 +601,37 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
-    throw Object.assign(e, { log: [] });
+    throw Object.assign(e, { log: [], session: e.session });
   }
   const s = new Script(client, root);
   s.ata = ata;
+  if (scenario.fixture) s.expected = new Map(Object.entries(FIXTURES[scenario.fixture]));
+  let failure;
   try {
     await scenario.run(s, { files });
     await s.checkpoint("end");
     // The raw ids, sorted: the only item where the watcher counter is not masked.
     s.log.push({ step: "end watch ids", method: "watch/ids", result: [...new Set(s.ids)].sort(), ms: 0 });
   } catch (e) {
-    throw Object.assign(e, { log: s.log });
-  } finally {
-    await client.shutdown();
-    if (serverLog) {
-      const lines = client.events.filter((e) => e.method === "window/logMessage").map((e) => `[${(e.at / 1000).toFixed(3)}] ${e.params?.message}`);
-      writeFileSync(serverLog, lines.join("\n") + "\n");
-    }
-    if (scenario.fixture) rmSync(root, { recursive: true, force: true });
-    if (ata) rmSync(`${root}-ata`, { recursive: true, force: true });
+    failure = e;
   }
-  return s.log;
+  const session = await client.shutdown();
+  if (s.expected) {
+    const changes = fixtureChanges(root, s.expected);
+    if (changes.length) Object.assign(session, { clean: false, why: [...session.why, `it changed the fixture: ${changes.slice(0, 5).join(", ")}`] });
+  }
+  if (serverLog) {
+    const lines = client.events.filter((e) => e.method === "window/logMessage").map((e) => `[${(e.at / 1000).toFixed(3)}] ${e.params?.message}`);
+    writeFileSync(serverLog, lines.join("\n") + "\n");
+  }
+  if (scenario.fixture) rmSync(root, { recursive: true, force: true });
+  if (ata) rmSync(`${root}-ata`, { recursive: true, force: true });
+  if (failure) throw Object.assign(failure, { log: s.log, session });
+  return { log: s.log, session };
+}
+
+// What lspdiff and parity_lsp.py need to know of a scenario: whether it writes a fixture, whether ATA
+// is on, and whether its typings cache is private (else the user's, ~/.cache/typescript/7.1).
+export function scenarioInfo() {
+  return Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, { fixture: v.fixture ?? null, ata: v.ata ?? true, typings: v.typings ?? "user" }]));
 }

@@ -12,7 +12,8 @@ It builds (scripts/run-cargo-capped.sh, the edit-loop release build of the check
 and runs the test binaries as ci.yml's test and test-local jobs do: in the crate dir, with
 RUST_TEST_THREADS=1, TS_GO_REPO at the pinned Go checkout (tsc/ of microsoft__TypeScript@3e9236361fa9)
 and its own TSCTEST_TMP and COMPILER_RUNNER_TMP per binary:
-  - every test binary of the workspace (full only), --jobs binaries at a time (each binary is its
+  - every test binary of the workspace (full; quick: those the quick manifest's binaryPrefixes name
+    beside go_baselines, parity-quick-manifest.json), --jobs binaries at a time (each binary is its
     own process with its own temp dirs, so binaries can run side by side; inside a binary one thread);
   - go_baselines, the default set, without TestLocal (`--exact --skip compiler_runner::test_local`);
   - go_baselines TestLocal in --shards shards (COMPILER_RUNNER_SHARD=i/n, COMPILER_RUNNER_JOBS
@@ -38,6 +39,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))  # python3 -I leaves the script dir out
+import parity_modes as modes  # noqa: E402
 # The test builds have the diagnostics feature (crates/ts_goport/Cargo.toml): tests/plain_early_emit.rs
 # needs it, and the reuse verify, call log and phase report tests run only with it.
 FEATURES = 'ts_goport/diagnostics'
@@ -116,7 +119,12 @@ def main():
     head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=checkout, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=checkout,
                            capture_output=True, text=True).stdout.strip() != ''
-    suites = [] if args.tier == 'quick' else build(checkout, ['--workspace', '--features', FEATURES])
+    if args.tier == 'quick':  # the quick manifest's binaries (go_baselines is always built below)
+        prefixes = modes.working_manifest().test_prefixes
+        suites = [] if set(prefixes) <= {'go_baselines'} else [
+            s for s in build(checkout, ['--workspace', '--features', FEATURES]) if s[0].startswith(prefixes) and s[0] != 'go_baselines']
+    else:
+        suites = build(checkout, ['--workspace', '--features', FEATURES])
     gb = build(checkout, ['-p', 'ts_goport', '--features', FEATURES, '--test', 'go_baselines'])
     gb = [s for s in gb if s[0] == 'go_baselines']
     assert len(gb) == 1, gb

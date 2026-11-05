@@ -113,7 +113,7 @@ const itemIndexes = opt.items ? opt.items.split(",").map(Number) : [];
 const itemText = new WeakMap(); // inlay hint result -> " items i:sha/count ..."
 
 async function fullSession() {
-  const log = await runSession([opt.bin, "--lsp", "--stdio"], root, files, { positions: 6, env });
+  const { log } = await runSession([opt.bin, "--lsp", "--stdio"], root, files, { positions: 6, env });
   const result = log.find((e) => e.step === "runtime-tests/deno/ssg.test.tsx inlayHint").result;
   if (itemIndexes.length && result) {
     itemText.set(result, ` items ${itemIndexes.map((i) => `${i}:${sha(log[i].result)}/${sortedSha(log[i].result)}/${log[i].result?.length ?? "-"}`).join(" ")}`);

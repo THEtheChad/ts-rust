@@ -29,8 +29,9 @@
 //   - per scalar that differs: a ref that is neither lossy nor ambiguous, that differs between Go and
 //     tsc-rs (else they differ only in encoding: no referee), and that JS's ref equals;
 //   - per set: each element Go has and tsc-rs lacks absent from JS (JS has its ref at most as often
-//     as tsc-rs), and each element tsc-rs has and Go lacks present in JS (at least as often), with
-//     its residue one that Go gives an element of this answer or that JS gives that element; no
+//     as tsc-rs), and each element tsc-rs has and Go lacks present in JS as a whole element: its key
+//     and its residue both JS's for that element, at least as often (lane H4: never a residue Go
+//     gives another element); no
 //     ambiguous ref, and no ref that two distinct exact elements share (that merge would let one
 //     stand for the other);
 //   - per set whose order counts (order "fixed": every list but completion items, whose order
@@ -464,7 +465,6 @@ export function judge(go, rs, js) {
       const rf = check(e, "go-only");
       if (typeof rf === "string" && (jk.get(rf) ?? 0) > (rsRef.get(rf) ?? 0)) fail(`${k} go-only ${short(e)}: JS has it`);
     }
-    const goResidues = new Set(gi.map((it) => it.residue));
     for (const [e, n] of rc) {
       if (n <= (gc.get(e) ?? 0)) continue;
       points.push(`${k} rs-only ${short(e)}`);
@@ -474,11 +474,13 @@ export function judge(go, rs, js) {
         fail(`${k} rs-only ${short(e)}: JS lacks it`);
         continue;
       }
-      // The fields JS does not referee: Go's own form for an element of this answer, or JS's.
-      const jsResidues = new Set(ji.filter((it) => it.ref === rf).map((it) => it.refResidue));
-      for (const it of ri.filter((x) => x.exact === e)) {
-        if (!goResidues.has(it.residue) && !(it.refResidue != null && jsResidues.has(it.refResidue))) {
-          fail(`${k} rs-only ${short(e)}: its other fields ${short(it.residue)} are neither a form Go gives here nor JS's`);
+      // The whole element needs JS's evidence (lane H4): its other fields must be JS's for that same
+      // element, as often as tsc-rs has it. A field Go gives another element of the answer is no
+      // evidence for this one (it would let a new target borrow an old target's range).
+      const jsWhole = count(ji.filter((it) => it.ref === rf).map((it) => it.refResidue));
+      for (const [res, m] of count(ri.filter((x) => x.exact === e).map((x) => x.refResidue))) {
+        if (res == null || (jsWhole.get(res) ?? 0) < m) {
+          fail(`${k} rs-only ${short(e)}: its other fields ${short(res)} are not JS's for this element (no evidence for the whole element)`);
         }
       }
     }

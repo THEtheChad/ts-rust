@@ -7,8 +7,8 @@ usage: parity_cli.py --rs CMD --out DIR [--go BIN] [--tier quick|full] [--jobs N
 --rs is the binary under test, or a command split at spaces (`node .../tsc` for the js mode).
 Projects and configs come from --projects (default parity-projects.json next to this file); a
 project's first existing "dirs" entry is used, and a project with none is SKIP. Each config runs
-the variants of the tier (VARIANTS below; quick runs the variants marked quick, on the configs
-marked quick):
+the variants below (VARIANTS); quick runs the items the quick manifest names
+(parity-quick-manifest.json "cli", parity_modes.py):
 
   noemit      -p CFG --noEmit --pretty false
   emit        -p CFG --noEmit false --pretty false   (every written file compared)
@@ -23,11 +23,16 @@ marked quick):
   build       -b CFG --verbose --pretty false, run twice (cold, then up to date); only configs
               with "build": true
 
-Every side of an item runs on a fresh overlay of the project dir (unshare -rm, then an overlayfs
-mount on the project's own path; the upper dir is ~/.cache/perf-rearch/parity/scratch/<item>/upper),
-so the configured outDir, declarationDir and tsBuildInfoFile are used as they are, paths in output
-are the project's real paths, the project never changes, and the written files are exactly the
-upper dir (sha256 each; a file the second run of incr or build rewrites or touches counts again).
+Every side of an item runs on a fresh overlay of the project's snapshot (lane H4: parity_inputs.Inputs,
+a read-only copy of the tree made once per content) mounted at the project's own path (unshare -rm,
+then overlayfs with the snapshot as the lower dir; the upper dir is
+~/.cache/perf-rearch/parity/scratch/<item>/upper), so the configured outDir, declarationDir and
+tsBuildInfoFile are used as they are, paths in output are the project's real paths, neither the
+project nor its snapshot ever changes, another process writing into the project changes nothing a
+run sees, and the written files are exactly the upper dir (sha256 each; a file the second run of
+incr or build rewrites or touches counts again). Every snapshot is made before the first process and
+watched with inotify while the tier runs (parity_watch.py); a change to one makes its project's items
+ERROR and discards the tier's staged cache entries.
 
 The second run of build (and incr) compares file mtimes that the first run wrote, and mtimes come
 from the wall clock. When the wall clock steps during a side (here systemd-timesyncd stepped it back
@@ -36,12 +41,13 @@ be older than an earlier one, and Go and tsc-rs alike then rebuild ("is older th
 side runs again, up to CLOCK_ATTEMPTS times; when every attempt saw a step, the item is an ERROR.
 
 Go's result is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/cli), keyed
-by the Go binary, the project path, the content of the whole project tree (parity_inputs.tree_hash:
-sources, configs, node_modules, every file but .git), config, arguments and the run's parameters
-(timeout, overlay command). The tree hashes are taken when the tier starts and taken again when it
-ends: an item of a project that changed while the tier ran is an ERROR. When the cache is made Go
-runs twice. tsc-rs runs --rs-runs times (default 1 for quick,
-2 for full).
+by the Go binary, the project path, the content of the snapshot (parity_inputs.tree_hash: sources,
+configs, node_modules, every file but .git), config, arguments and the run's parameters (timeout,
+overlay command). Each entry holds that key material and is read only when it matches. New Go and
+JS entries are staged (parity_inputs.Stage) and published only when the tier's inputs verified clean
+at its end. When the cache is made Go runs twice. tsc-rs runs --rs-runs times (default 1 for quick,
+2 for full). Every tsc-rs process counts, also the attempts of a side that ran again because the
+wall clock stepped (`attempts`): a crash or timeout in any of them sets rsFailure.
 
 Compared per item: exit code, stdout, stderr and the written file tree (sha256 of each file).
 Status: MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, DIFF, ERROR, SKIP. An item that is not MATCH
@@ -82,6 +88,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # python3 -I does not put the script's dir on the path
 import parity_inputs as inputs  # noqa: E402
+import parity_modes as modes  # noqa: E402
 import parity_referees as referees  # noqa: E402
 
 HOME = Path.home()
@@ -89,14 +96,15 @@ SCRATCH = HOME / '.cache/perf-rearch/parity/scratch'
 ENV = {k: v for k, v in os.environ.items() if not k.startswith(('GOPORT_', 'TSGO_', 'TS_'))}
 ENV.pop('NODE_OPTIONS', None)
 TIMEOUT = 1800
-# Runs a command on an overlay of the project dir (lower: the project, upper: what the run writes), in
-# a user and mount namespace, so the project never changes and the written files are the upper dir.
+# Runs a command on an overlay at the project's path (lower: the project's snapshot, upper: what the
+# run writes), in a user and mount namespace, so neither the project nor the snapshot changes and the
+# written files are the upper dir. $1 lower, $2 upper, $3 work, $4 mount point, $5 cwd.
 OVERLAY = ['unshare', '-rm', '--', 'sh', '-c',
-           'mount -t overlay overlay -o "lowerdir=$1,upperdir=$2,workdir=$3" "$1" && cd "$4" && shift 4 && exec "$@"',
+           'mount -t overlay overlay -o "lowerdir=$1,upperdir=$2,workdir=$3" "$4" && cd "$5" && shift 5 && exec "$@"',
            'overlay']
-CACHE_VERSION = 5  # bump when a change of this file changes Go's cached results
-PARTITION_VERSION = 2  # the same, for the per-N Go results of the partition check
-JS_CACHE_VERSION = 2  # the same, for JS tsc's results
+CACHE_VERSION = 6  # bump when a change of this file changes Go's cached results (6: lane H4 snapshots, staged)
+PARTITION_VERSION = 3  # the same, for the per-N Go results of the partition check
+JS_CACHE_VERSION = 3  # the same, for JS tsc's results
 # A side whose wall clock stepped by more than CLOCK_STEP_NS runs again (see the top comment).
 CLOCK_STEP_NS = 5_000_000
 CLOCK_ATTEMPTS = 6
@@ -110,17 +118,17 @@ def clock_offset():
 class ClockStepped(Exception):
     pass
 
-# name: (quick, kind, extra args). {S} is the scratch dir.
+# name: (kind, extra args).
 VARIANTS = {
-    'noemit': (True, 'plain', ['--noEmit', '--pretty', 'false']),
-    'emit': (True, 'emit', ['--pretty', 'false']),
-    'decl': (False, 'emit', ['--declaration', '--declarationMap', '--sourceMap', '--pretty', 'false']),
-    'incr': (False, 'incr', ['--incremental', '--pretty', 'false']),
-    'listfiles': (False, 'plain', ['--noEmit', '--listFiles', '--pretty', 'false']),
-    'extdiag': (True, 'plain', ['--noEmit', '--extendedDiagnostics', '--pretty', 'false']),
-    'pretty': (False, 'plain', ['--noEmit', '--pretty', 'true']),
-    'showconfig': (False, 'plain', ['--showConfig']),
-    'build': (False, 'build', ['--verbose', '--pretty', 'false']),
+    'noemit': ('plain', ['--noEmit', '--pretty', 'false']),
+    'emit': ('emit', ['--pretty', 'false']),
+    'decl': ('emit', ['--declaration', '--declarationMap', '--sourceMap', '--pretty', 'false']),
+    'incr': ('incr', ['--incremental', '--pretty', 'false']),
+    'listfiles': ('plain', ['--noEmit', '--listFiles', '--pretty', 'false']),
+    'extdiag': ('plain', ['--noEmit', '--extendedDiagnostics', '--pretty', 'false']),
+    'pretty': ('plain', ['--noEmit', '--pretty', 'true']),
+    'showconfig': ('plain', ['--showConfig']),
+    'build': ('build', ['--verbose', '--pretty', 'false']),
 }
 # -b --verbose starts each message with the wall clock: "06:12:55 PM - " (--pretty false) or
 # "[6:12:55 PM] " (pretty).
@@ -161,10 +169,15 @@ def load_projects(path):
 
 
 def rs_failure(runs):
-    """'timeout' or 'crash' when a tsc-rs run of the side timed out or crashed, else None."""
+    """'timeout' or 'crash' when a tsc-rs run timed out or crashed, else None."""
     if any(r.code == 'timeout' for r in runs):
         return 'timeout'
     return 'crash' if any(referees.crashed(r) for r in runs) else None
+
+
+def outcome(r):
+    return 'timeout' if r.code == 'timeout' else 'crash' if referees.crashed(r) else f'exit {r.code}'
+
 
 
 class Run:
@@ -220,9 +233,11 @@ class Item:
         self.scratch = SCRATCH / self.name.replace('/', '__')
         self.cwd = project['root'] / config.get('cwd', '.')
         self.clock_retries = 0
+        self.inputs = None  # the tier's parity_inputs.Inputs
+        self.attempts = []  # every process of a side, as (side label, attempt, run): [(cmd, Run)]
 
     def args(self):
-        quick, kind, extra = VARIANTS[self.variant]
+        kind, extra = VARIANTS[self.variant]
         cfg = self.config['config']
         if kind == 'build':
             return ['-b', cfg, *extra]
@@ -233,7 +248,7 @@ class Item:
     def run_side(self, cmd):
         """One side on a fresh overlay: one or two runs (incr, build), each a Run with the files it wrote.
         A two-run side during which the wall clock stepped runs again (see the top comment)."""
-        kind = VARIANTS[self.variant][1]
+        kind = VARIANTS[self.variant][0]
         if kind not in ('incr', 'build'):
             return self.run_side_once(cmd, kind)
         for _ in range(CLOCK_ATTEMPTS):
@@ -252,13 +267,18 @@ class Item:
         upper.mkdir(parents=True)
         work.mkdir()
         root = self.project['root']
-        cwd = root / self.config.get('cwd', '.')
+        snap = self.inputs.of(root)
+        cwd = Path(snap.label) / self.config.get('cwd', '.')
         before = {}
         runs = []
         for k in range(2 if kind in ('incr', 'build') else 1):
             if k:
                 time.sleep(0.02)  # mtime granularity between the cold and the second run
-            code, out, err, secs = execute([*OVERLAY, str(root), str(upper), str(work), str(cwd), *cmd, *self.args()], cwd)
+            code, out, err, secs = execute([*OVERLAY, str(snap.path), str(upper), str(work), snap.label, str(cwd),
+                                            *cmd, *self.args()], self.scratch)
+            changed = self.inputs.check(root)
+            if changed:
+                raise inputs.SnapshotError(changed)
             if self.variant == 'extdiag':
                 out = mask_stats(out)
             if kind == 'build':
@@ -267,6 +287,7 @@ class Item:
             runs.append(Run(code, out, err, {f: sha256_file(upper / f) if v[0] >= 0 else 'deleted'
                                              for f, v in now.items() if before.get(f) != v}, secs))
             before = now
+        self.attempts.append((cmd, runs))
         return runs
 
 
@@ -310,20 +331,16 @@ def run_key(runs):
     return json.dumps([r.key() for r in runs])
 
 
-def cached_side(it, cfile, cmd, count=2, cache_timeouts=True):
-    """A side of an item run `count` times (the first one kept), cached in cfile:
-    (runs, why the runs differ or None)."""
-    if cfile.exists():
-        gc = json.loads(cfile.read_text())
-    else:
+def cached_side(it, stage, cfile, material, cmd, count=2, cache_timeouts=True):
+    """A side of an item run `count` times (the first one kept), staged for cfile with its key
+    material: (runs, why the runs differ or None)."""
+    gc = stage.load(cfile, material)
+    if gc is None:
         sides = [it.run_side(cmd) for _ in range(count)]
         unstable = next((compare(sides[0], o) for o in sides[1:] if compare(sides[0], o)), None)
         gc = {'item': it.name, 'cmd': cmd, 'runs': [r.to_json() for r in sides[0]], 'unstable': unstable}
         if cache_timeouts or not any(r.code == 'timeout' for side in sides for r in side):
-            cfile.parent.mkdir(parents=True, exist_ok=True)
-            tmp = cfile.with_suffix(f'.tmp{os.getpid()}')
-            tmp.write_text(json.dumps(gc))
-            tmp.replace(cfile)
+            stage.save(cfile, material, gc)
     runs = [Run.from_json(r) for r in gc['runs']]
     if it.variant == 'extdiag':  # caches written before the padding rule (idempotent)
         for r in runs:
@@ -336,7 +353,8 @@ class Tier:
 
     def __init__(self, args, rs_cmd, rs_runs, go_sha, cache, out):
         self.args, self.rs_cmd, self.rs_runs, self.go_sha, self.cache, self.out = args, rs_cmd, rs_runs, go_sha, cache, out
-        self.snapshot = inputs.Snapshot()
+        self.inputs = inputs.Inputs()
+        self.stage = inputs.Stage('cli')
         self.js_sha, self.js_error = None, None
         if args.referees:
             try:
@@ -345,16 +363,23 @@ class Tier:
                 self.js_error = str(e)
         self.js_cache = HOME / f'.cache/perf-rearch/parity/js-cache/{self.js_sha}/cli'
 
-    def key(self, it, *extra):
-        """The cache key of an item's evidence: what the run reads (the project tree's content) and
-        how it runs (arguments, config, timeout, the overlay command), with the producer in `extra`."""
+    def material(self, it, *extra):
+        """The key material of an item's evidence: what the run reads (the snapshot's content and the
+        path it is mounted at) and how it runs (arguments, config, timeout, the overlay command), with
+        the producer in `extra`."""
         root = it.project['root']
-        return hashlib.sha256(json.dumps([*extra, str(root), os.path.realpath(root), self.snapshot.of(root),
-                                          it.config, it.variant, it.args(), TIMEOUT, OVERLAY]).encode()).hexdigest()[:24]
+        snap = self.inputs.of(root)
+        return [*extra, str(root), snap.label, snap.hash, it.config, it.variant, it.args(), TIMEOUT, OVERLAY]
+
+    def key(self, it, *extra):
+        return hashlib.sha256(json.dumps(self.material(it, *extra)).encode()).hexdigest()[:24]
 
     def run_item(self, it):
+        it.inputs = self.inputs
         key = self.key(it, CACHE_VERSION, self.go_sha)
-        go_runs, go_unstable = cached_side(it, self.cache / f'{key}.json', [self.args.go])
+        go_runs, go_unstable = cached_side(it, self.stage, self.cache / f'{key}.json',
+                                           self.material(it, CACHE_VERSION, self.go_sha), [self.args.go])
+        it.attempts = []  # from here: tsc-rs's processes only
         rs_all = [it.run_side(self.rs_cmd) for _ in range(self.rs_runs)]
         clear(it.scratch)
         row = {'goSecs': round(sum(r.secs for r in go_runs), 1),
@@ -363,10 +388,17 @@ class Tier:
         nondet = next((compare(rs_all[0], runs) for runs in rs_all[1:] if compare(rs_all[0], runs)), None)
         status, detail, extra = self.judge(it, key, go_runs, go_unstable, rs_all, diffs[0], nondet)
         clear(it.scratch)
+        # Every tsc-rs process counts: the side's runs, a side run again after a clock step, and a
+        # confirming run. A crash or timeout in any of them is a failure, whatever the final runs say.
+        rs_procs = [r for cmd, runs in it.attempts if cmd == self.rs_cmd for r in runs]
+        failure = rs_failure(rs_procs)
+        if failure and status != 'DIFF':
+            status, detail = 'DIFF', f'tsc-rs {failure} in an attempt ({", ".join(map(outcome, rs_procs))})'
         row.update(status=status, **({'detail': detail} if detail else {}), **extra)
-        failure = next((f for f in map(rs_failure, rs_all) if f), None)
-        if failure and status not in referees.REFEREED and status != 'MATCH':
+        if failure:
             row['rsFailure'] = failure
+        if status != 'MATCH' or len(rs_procs) > sum(map(len, rs_all)):
+            row['attempts'] = [{'outcome': outcome(r), 'code': r.code, 'secs': round(r.secs, 2)} for r in rs_procs]
         if it.clock_retries:
             row['clockRetries'] = it.clock_retries
         if status == 'DIFF':
@@ -401,7 +433,8 @@ class Tier:
         return status, detail, extra
 
     def go_at_n(self, it, key, n):
-        runs, unstable = cached_side(it, self.cache / f'{key}.p{PARTITION_VERSION}-c{n}.json',
+        runs, unstable = cached_side(it, self.stage, self.cache / f'{key}.p{PARTITION_VERSION}-c{n}.json',
+                                     self.material(it, CACHE_VERSION, self.go_sha, 'p', PARTITION_VERSION, n),
                                      [self.args.go, *referees.go_args(n)], cache_timeouts=False)
         if any(r.code == 'timeout' for r in runs):
             return referees.FAILED
@@ -413,7 +446,8 @@ class Tier:
         if self.js_error:
             return None
         cfile = self.js_cache / f'{self.key(it, JS_CACHE_VERSION, self.js_sha)}.json'
-        runs, _ = cached_side(it, cfile, ['node', self.args.js], count=1, cache_timeouts=False)
+        runs, _ = cached_side(it, self.stage, cfile, self.material(it, JS_CACHE_VERSION, self.js_sha),
+                              ['node', self.args.js], count=1, cache_timeouts=False)
         return runs
 
     def write_diff(self, it, go_runs, rs_all, diffs, nondet):
@@ -423,7 +457,8 @@ class Tier:
         bad = next(runs for runs, df in zip(rs_all, diffs + [nondet]) if df) if any(diffs) else rs_all[-1]
         (d / 'rs.json').write_text(json.dumps([r.to_json() for r in bad], indent=1))
         (d / 'cmd.txt').write_text(f'cd {it.project["root"] / it.config.get("cwd", ".")} && {shlex.join([*rs_cmd, *it.args()])}'
-                                   f'   # writes into the project: run it on a copy or an overlay\n')
+                                   f'   # writes into the project: run it on a copy or an overlay '
+                                   f'(the gate ran it on the snapshot {self.inputs.of(it.project["root"]).path})\n')
         text = ''
         for k, (g, r) in enumerate(zip(go_runs, bad)):
             text += text_diff(g.stdout, r.stdout, f'go run{k + 1} stdout', f'{label} stdout')
@@ -432,6 +467,14 @@ class Tier:
                 if g.tree.get(n) != r.tree.get(n):
                     text += f'file {n}: go {g.tree.get(n, "-")[:12]} {label} {r.tree.get(n, "-")[:12]}\n'
         (d / 'diff.txt').write_text(text)
+
+
+def _snapshot_error(inp, root):
+    try:
+        inp.of(root)
+    except inputs.SnapshotError as e:
+        return str(e)
+    return None
 
 
 def main():
@@ -452,22 +495,26 @@ def main():
                     help='GO-BROKEN, GO-PARTITION and JS-AGREES (off for the js mode: GO-UNSTABLE and DIFF as before)')
     ap.add_argument('--referee-all', action='store_true',
                     help='run the JS check even where GO-PARTITION decided (recorded in referees.js)')
+    ap.add_argument('--snapshots', help=f'the snapshot store (default {inputs.SNAPSHOTS}; the self-tests use their own)')
     args = ap.parse_args()
+    if args.snapshots:
+        inputs.SNAPSHOTS = Path(args.snapshots)
     rs_cmd = shlex.split(args.rs)
     rs_runs = args.rs_runs or (1 if args.tier == 'quick' else 2)
     go_sha = sha256_file(args.go)[:16]
     cache = Path(args.cache) if args.cache else HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/cli'
     out = Path(args.out)
     projects = load_projects(args.projects)
+    quick_items = modes.working_manifest().cli if args.tier == 'quick' else None
     items, skipped = [], {}
     for p in projects:
         for c in p['configs']:
-            for v, (quick, kind, _) in VARIANTS.items():
+            for v, (kind, _) in VARIANTS.items():
                 if kind == 'build' and not c.get('build'):
                     continue
                 if v in c.get('skipVariants', []):
                     continue
-                if args.tier == 'quick' and not (quick and c.get('quick')):
+                if quick_items is not None and f'cli/{p["name"]}/{c["label"]}/{v}' not in quick_items:
                     continue
                 name = f'cli/{p["name"]}/{c["label"]}/{v}'
                 if not re.search(args.only, name):
@@ -490,6 +537,16 @@ def main():
     lock = threading.Lock()
     counts = Counter(r['status'] for r in skipped.values())
     start = time.monotonic()
+    snap_start = time.monotonic()
+    roots = sorted({str(it.project['root']) for it in items})
+    with ThreadPoolExecutor(4) as pool:  # every snapshot before the first process, then the watch
+        for root, err in zip(roots, pool.map(lambda r: _snapshot_error(tier.inputs, r), roots)):
+            if err:
+                print(f'cli: no snapshot of {root}: {err}', flush=True)
+    tier.inputs.watch()
+    snap_secs = round(time.monotonic() - snap_start, 1)
+    print(f'cli: {len(tier.inputs.snaps)} snapshots in {snap_secs}s; '
+          f'{tier.inputs.watch_error or "watched with inotify"}', flush=True)
 
     def one(it):
         try:
@@ -504,7 +561,9 @@ def main():
 
     with ThreadPoolExecutor(args.jobs) as pool:
         list(pool.map(one, items))
-    changed = tier.snapshot.verify()
+    verify_start = time.monotonic()
+    changed = tier.inputs.verify()
+    verify_secs = round(time.monotonic() - verify_start, 1)
     for it in items:
         why = changed.get(str(it.project['root']))
         if why and results[it.name]['status'] != 'ERROR':
@@ -514,9 +573,16 @@ def main():
             print(f'ERROR       {it.name} {why}', flush=True)
     counts = +counts
     summary = {'tier': args.tier, 'rs': args.rs, 'rsRuns': rs_runs, 'goSha': go_sha, 'counts': dict(counts),
-               'inputs': tier.snapshot.hashes, 'jsSha': tier.js_sha, **({'jsError': tier.js_error} if tier.js_error else {}),
+               'inputs': tier.inputs.hashes, 'snapshots': {r: s.as_json() for r, s in tier.inputs.snaps.items()},
+               'watch': tier.inputs.watch_error or 'inotify', 'changed': changed,
+               'secs': {'snapshots': snap_secs, 'verify': verify_secs},
+               'jsSha': tier.js_sha, **({'jsError': tier.js_error} if tier.js_error else {}),
                'wallSecs': round(time.monotonic() - start, 1), 'items': dict(sorted(results.items()))}
     (out / 'results.json').write_text(json.dumps(summary, indent=1) + '\n')
+    if changed:  # an invalidated run: none of its new cache entries is evidence
+        print(f'cli: inputs changed ({len(changed)} roots): {tier.stage.discard()} staged cache entries discarded')
+    else:
+        print(f'cli: {tier.stage.publish()} cache entries published')
     print(f'cli: {dict(counts)} in {summary["wallSecs"]}s')
 
 
