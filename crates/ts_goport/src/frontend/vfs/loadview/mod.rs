@@ -34,8 +34,10 @@
 //! when V's stat says it is a regular file (no speculative read of a FIFO or
 //! a device); otherwise it gets a failed read and V stores no read.
 //!
-//! **Lifetime.** One view per load: attached when the load starts and freed
-//! when it ends (`compiler::load_view_scope`).
+//! **Lifetime.** One view per load: attached when the load starts; when it
+//! ends, the load's scope, parse pool and resolve-ahead job let go of it, and
+//! a worker still inside a resolution of the job holds its own reference
+//! until that returns (`compiler::load_view_scope`).
 //!
 //! **Semantics.** With nothing that the load observes changing on disk
 //! during the load, every V answer equals the live answer, so the load is

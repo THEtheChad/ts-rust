@@ -2284,4 +2284,68 @@ mod load_view {
             assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
         }
     }
+
+    /// Waits up to `seconds` for `done`.
+    fn wait_until(seconds: u64, done: impl Fn() -> bool) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        while std::time::Instant::now() < until {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        done()
+    }
+
+    os_child_test! {
+        /// Astra L1 round 3, finding 1: a load's view goes when the load
+        /// ends, except the references of workers that still run a
+        /// resolution of its job, which go when they return. Here every
+        /// resolve-ahead worker of a keyed load is held inside the job
+        /// across the load's end (`hold_in_job`), and a third load runs
+        /// meanwhile, whose ended job waits to be freed behind them: only
+        /// the held view stays alive (`live_views`, diagnostics only) until
+        /// the workers are let go.
+        fn a_view_held_by_a_worker_goes_when_the_worker_returns() {
+            use ts_goport::frontend::vfs::loadview::diag::live_views;
+            if ts_goport::program::available_cores() == 1 {
+                // No resolve-ahead workers on one core.
+                return;
+            }
+            watchdog(60);
+            let root = fresh_project("viewfree");
+            let session = os_view_session(&root);
+            open_index(&session, &root);
+            session.wait_for_background_tasks();
+            assert!(
+                wait_until(10, || live_views() == 0),
+                "the first load's view is still alive: {}",
+                live_views()
+            );
+            resolve_ahead::hold_in_job(true);
+            add_import(&session, &root);
+            program(&session, &file_uri(&root, "src/index.ts"));
+            session.wait_for_background_tasks();
+            let stats = resolve_ahead::last_stats().expect("no resolve-ahead load");
+            assert!(stats.keys > 0, "not a keyed load: {stats:?}");
+            // A third load while the workers are held in the second's job: no
+            // worker starts its job, which ends with the load and waits to be
+            // freed behind them; it must not keep the third view.
+            edit_index(&session, &root, 3, "import { b } from \"./sub/b\";\n");
+            program(&session, &file_uri(&root, "src/index.ts"));
+            session.wait_for_background_tasks();
+            // The loads have ended; their scopes, parse pools and jobs let go
+            // of their views, and the held workers keep the second one.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert_eq!(live_views(), 1, "only the held workers' view");
+            resolve_ahead::hold_in_job(false);
+            assert!(
+                wait_until(10, || live_views() == 0),
+                "the view outlived the workers: {}",
+                live_views()
+            );
+            drop(session);
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
 }

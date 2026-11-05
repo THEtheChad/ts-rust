@@ -119,8 +119,16 @@ fn replay_log() -> bool {
     *ON.get_or_init(|| std::env::var("GOPORT_LOAD_VIEW_REPLAY_LOG").is_ok_and(|v| v == "1"))
 }
 
-/// The counters and the replay state of one view.
-#[derive(Default)]
+static LIVE_VIEWS: AtomicU64 = AtomicU64::new(0);
+
+/// The views alive in the process (made and not yet dropped).
+#[must_use]
+pub fn live_views() -> u64 {
+    LIVE_VIEWS.load(Ordering::SeqCst)
+}
+
+/// The counters and the replay state of one view. Making and dropping it
+/// counts the view (`live_views`).
 pub(super) struct ViewDiag {
     /// Per kind: loader demands found in the view, those found in a
     /// worker's entry, loader misses (a live OS call, stored), loader misses
@@ -141,6 +149,29 @@ pub(super) struct ViewDiag {
     /// A recorded view read back (`LoadView::read_records`): it stores
     /// nothing.
     frozen: bool,
+}
+
+impl Default for ViewDiag {
+    fn default() -> Self {
+        LIVE_VIEWS.fetch_add(1, Ordering::SeqCst);
+        ViewDiag {
+            hit: Default::default(),
+            hit_worker: Default::default(),
+            miss: Default::default(),
+            race: Default::default(),
+            fill: Default::default(),
+            late: Default::default(),
+            skipped_reads: AtomicU64::new(0),
+            replay_miss: AtomicU64::new(0),
+            frozen: false,
+        }
+    }
+}
+
+impl Drop for ViewDiag {
+    fn drop(&mut self) {
+        LIVE_VIEWS.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn bump(counter: &AtomicU64) {
@@ -379,13 +410,8 @@ impl LoadView {
             if r.take(4)? != b"VIEW" {
                 return Err(format!("bad record magic at {}", r.at - 4));
             }
-            let view = LoadView {
-                diag: ViewDiag {
-                    frozen: true,
-                    ..ViewDiag::default()
-                },
-                ..LoadView::default()
-            };
+            let mut view = LoadView::default();
+            view.diag.frozen = true;
             r.list(|r, path| Ok(view.stats.insert_recorded(path, r.info()?)))?;
             r.list(|r, path| {
                 let text = r.option(|r| Ok(SharedText::new(r.string()?)))?;

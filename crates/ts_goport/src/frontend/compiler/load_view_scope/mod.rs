@@ -3,11 +3,15 @@
 //!
 //! `begin` attaches a new view under the session's host for the load on this
 //! thread; the scope detaches it when it ends, before any later load or
-//! auto-import work, and frees it then (on the free thread). Nothing keeps
-//! the view after the load: as in Go, a change that happens after the load
-//! read a file and before the watch registration is seen when a later watch
-//! event reports that path (Go `project/session.go` `updateWatch` registers
-//! after the load).
+//! auto-import work, and lets go of it then (the free thread drops its
+//! reference). The load's parse pool and resolve-ahead job let go of theirs
+//! when the load ends too (`PrefetchShared::release_load_view`,
+//! `Workers::end`); a worker that still runs a resolution of the job holds
+//! its own until that returns, and the view is freed with the last of them.
+//! Nothing reconciles the view after the load: as in Go, a change that
+//! happens after the load read a file and before the watch registration is
+//! seen when a later watch event reports that path (Go `project/session.go`
+//! `updateWatch` registers after the load).
 //!
 //! Diagnostics (cargo feature `diagnostics`, `diag.rs`): the counts and
 //! observation-time lines, the V-replay oracle and the test hooks.

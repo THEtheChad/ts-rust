@@ -22,8 +22,11 @@ L1's recovery and match Go). Branch `t3/per-load-frozen-loader-view`.
 - **Texts:** the cached file takes V's `Arc` and hash (no copy, no rehash), the parse cache passes
   it on, the worker's parse text is the same allocation, and `take_prefetched` compares by
   pointer first.
-- **Lifetime:** `load_view_scope::begin` attaches V around `create_program`; the scope detaches
-  it at the end of the load, before any later load or auto-import work, and frees it then.
+- **Lifetime:** `load_view_scope::begin` attaches V around `create_program`; at the end of the
+  load, before any later load or auto-import work, the scope, the parse pool and the
+  resolve-ahead job let go of it (round 4). A worker still inside a resolution of the job
+  holds its own reference until that returns; the view is freed with the last reference.
+  The ended-job queue is bounded (`MAX_ENDED` = 4 before frees go ahead of new jobs).
 - **Keyed loads** under V check every lookup through the snapshot's lookup cache, as first loads
   do, and adopt the package.json lookups of the answers they take into the loader's `InfoCache`:
   their lookup cache and `InfoCache` equal the serial loader's.

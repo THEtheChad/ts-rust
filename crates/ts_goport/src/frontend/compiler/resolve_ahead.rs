@@ -384,7 +384,7 @@ impl ResolveAhead {
                     stats: Arc::default(),
                     config: config.clone(),
                     inject_panic: INJECT_PANIC.with(Cell::get),
-                    os_view: crate::frontend::vfs::loadview::current(),
+                    os_view: std::sync::Mutex::new(crate::frontend::vfs::loadview::current()),
                 })
             });
         let first_load = first_load && job.is_some();
@@ -897,6 +897,14 @@ impl Workers {
         // store in a shard now ends before this takes the lock, and a later
         // one sees `closed`.
         job.stats.wait_for_stores();
+        // The load's view goes with the load. A worker that still runs a
+        // resolution of the job holds its own reference until it returns.
+        drop(
+            job.os_view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
         let mut state = lock_state(self);
         if state
             .job
@@ -946,14 +954,56 @@ impl Workers {
     }
 }
 
+/// Tests (diagnostics): while held (`hold_in_job`), a worker that starts a
+/// job waits there, holding the job and its view, before it takes a key.
+#[cfg(feature = "diagnostics")]
+static HOLD_IN_JOB: (std::sync::Mutex<bool>, std::sync::Condvar) =
+    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+/// Tests (diagnostics): holds the workers that start a job (`on`), or
+/// lets them go.
+#[cfg(feature = "diagnostics")]
+pub fn hold_in_job(on: bool) {
+    *HOLD_IN_JOB
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = on;
+    HOLD_IN_JOB.1.notify_all();
+}
+
+#[cfg(feature = "diagnostics")]
+fn diag_hold_in_job() {
+    let mut held = HOLD_IN_JOB
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while *held {
+        held = HOLD_IN_JOB
+            .1
+            .wait(held)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+}
+
+/// The ended loads whose data may wait behind new jobs (`run_worker`).
+const MAX_ENDED: usize = 4;
+
 /// A worker: runs each posted job once and frees the data of ended loads.
-/// A new job goes before the data to free.
+/// A new job goes before the data to free, unless `MAX_ENDED` ended loads
+/// wait.
 fn run_worker(workers: &'static Workers) {
     let mut ran = 0;
     loop {
         let task = {
             let mut state = lock_state(workers);
             loop {
+                // Bounded retention: past `MAX_ENDED` ended loads, their
+                // frees go before a new job.
+                if state.ended.len() >= MAX_ENDED
+                    && let Some(ended) = state.ended.pop()
+                {
+                    break Task::Free(ended);
+                }
                 if state.generation != ran
                     && let Some(job) = &state.job
                 {
@@ -1074,14 +1124,21 @@ struct Job {
     inject_panic: bool,
     /// Loader v2 L1: the per-load OS view of the job's load
     /// (`vfs::loadview`), which the workers read through and fill.
-    os_view: Option<Arc<crate::frontend::vfs::loadview::LoadView>>,
+    /// The load ends with it (`Workers::end`): a worker that still runs a
+    /// resolution holds its own reference until that returns.
+    os_view: std::sync::Mutex<Option<Arc<crate::frontend::vfs::loadview::LoadView>>>,
 }
 
 impl Job {
     /// A worker's OS file system for this job: the OS file system of its
     /// thread, under the load's OS view when there is one.
     fn worker_os(&self) -> Rc<dyn Fs> {
-        crate::frontend::vfs::loadview::worker_fs(self.os_view.as_ref())
+        let view = self
+            .os_view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        crate::frontend::vfs::loadview::worker_fs(view.as_ref())
     }
 }
 
@@ -1122,6 +1179,8 @@ fn run_job(job: &Arc<Job>) {
     let view = &job.view;
     let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
     let fs = begin_ahead_fs(job, reads, kept);
+    #[cfg(feature = "diagnostics")]
+    diag_hold_in_job();
     let fs: Rc<dyn Fs> = fs;
     let mut resolver = job.config.new_resolver(fs, Some(package_jsons.clone()));
     resolver.caches.shared = Some(SharedResolutionLink {
@@ -1699,7 +1758,7 @@ mod tests {
                 current_directory: root.to_string(),
             }),
             inject_panic,
-            os_view: None,
+            os_view: std::sync::Mutex::default(),
         })
     }
 

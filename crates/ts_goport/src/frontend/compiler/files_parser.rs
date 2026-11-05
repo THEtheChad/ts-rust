@@ -649,6 +649,9 @@ impl FilesParser {
         drop(prefetch);
         let shared = Arc::clone(&pool.shared);
         drop(pool);
+        // The workers have ended: the load's view goes now, not with the
+        // pool on the free thread.
+        shared.release_load_view();
         // The program keeps the lookups of the plain OS host's load for the
         // thread that finishes its symlink cache (`HostStatCache`). A `tsc
         // -b` host keeps its own (`CompilerHost::stat_cache`).
@@ -2967,7 +2970,7 @@ struct PrefetchShared {
     /// Loader v2 L1: the per-load OS view of the loader's load
     /// (`vfs::loadview`), set with the load. The workers read through it
     /// from their next job on, and fill it.
-    view: OnceLock<Arc<crate::frontend::vfs::loadview::LoadView>>,
+    view: Mutex<Option<Arc<crate::frontend::vfs::loadview::LoadView>>>,
 }
 
 /// What `take_prefetched` gave the loader during one program load.
@@ -3217,7 +3220,7 @@ impl PrefetchShared {
             config,
             stats: Arc::new(SharedStatCache::default()),
             resolve: OnceLock::new(),
-            view: OnceLock::new(),
+            view: Mutex::new(None),
             counts: std::env::var_os("GOPORT_PREFETCH_STATS").map(|_| {
                 Mutex::new(PrefetchStats {
                     started: Some(std::time::Instant::now()),
@@ -3231,8 +3234,19 @@ impl PrefetchShared {
     /// this thread, if it has one (`WorkerFiles::refresh`).
     fn take_load_view(&self) {
         if let Some(view) = crate::frontend::vfs::loadview::current() {
-            let _ = self.view.set(view);
+            *lock(&self.view) = Some(view);
         }
+    }
+
+    /// The load's OS view, while the load runs.
+    fn load_view(&self) -> Option<Arc<crate::frontend::vfs::loadview::LoadView>> {
+        lock(&self.view).clone()
+    }
+
+    /// Lets go of the load's OS view when the workers have ended (the pool
+    /// itself goes to the free thread, which can be behind).
+    fn release_load_view(&self) {
+        drop(lock(&self.view).take());
     }
 
     /// Closes the queue: the workers stop after their current job.
@@ -4352,8 +4366,8 @@ struct WorkerFiles {
 
 impl WorkerFiles {
     fn new(shared: &PrefetchShared) -> Self {
-        let view = shared.view.get();
-        let os = crate::frontend::vfs::loadview::worker_fs(view);
+        let view = shared.load_view();
+        let os = crate::frontend::vfs::loadview::worker_fs(view.as_ref());
         WorkerFiles {
             fs: Rc::new(WorkerFs {
                 fs: os.clone(),
@@ -4368,7 +4382,7 @@ impl WorkerFiles {
     /// Takes the load's OS view when the loader set it after this worker
     /// started (an early pool).
     fn refresh(&mut self, shared: &PrefetchShared) {
-        if !self.viewed && shared.view.get().is_some() {
+        if !self.viewed && lock(&shared.view).is_some() {
             *self = WorkerFiles::new(shared);
         }
     }
