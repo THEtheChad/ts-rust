@@ -60,3 +60,25 @@ The handoff is `docs/perf-rearch/design/d1-impl.md` on the branch. Bins are
 6. The C3 deletion.
 7. A memory cap and physical-core count in the N policy.
 8. The shared-diagnostic-pointer parity fix.
+
+## D1-I2a (branch `t3/certified-checker-fallback`, head 85b6f0420; design `design/d1-i2a.md`)
+- **In-process fallback.** The program is loaded once; check, emit and report
+  run as one attempt. On a fire or panic before the commit, the attempt
+  unwinds and the pool is drained (`abandon_checker_pool`), then the attempt
+  runs again exactly with a fresh c4 pool. No exec, no marker, no re-read.
+  - **Global-state audit:** nothing found that can't be reset. The pool entry,
+    `file_associations`, the declaration-diagnostics cache, the certified
+    state and the unported registry are reset; a fingerprint assert backs it.
+- **Ordered commit.** `certify` comes before the first file write. Order:
+  held stream pieces, then files through the normal emit error path (TS5033),
+  then the report. The aliased-stdout repro is byte-identical to Go.
+- **Findings 1, 2, 3, 6 and 8 fixed.** The identity tools compare exact order,
+  check determinism first, use the referees, run from a manifest, and have a
+  forced-fallback side.
+- **Identity:** 66/66 exact against Go c4; forced fallback 66/66. Without
+  fallback, 27 fired: all identical, or JS-AGREES (zod N=8, needs review).
+- **Parity full:** 1 lost, `lsp/pkgjson-overlay/0007` (the ATA flake; the
+  branch predates the ATA-off fix). The LSP-only rerun lost 0. The 9
+  GO-BROKEN items are the base's GO-UNSTABLE fuzz cases.
+- **Wall:** the gated bench never ran (load 25–77). Indicative only:
+  t3-server 18.0 → 16.2 s against I1.
