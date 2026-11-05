@@ -46,11 +46,14 @@
 // variant seen per request identity (sha256 of the normalized answer), for one key material
 // (--go-variants-material: the Go binary, the content-hashed inputs, the session's definition, its
 // scripting sources and settings; parity_lsp.py makes it, without the run count). A record of other
-// material or another normalizer is not read. --go-prior <log> (repeatable) adds the answers of Go
-// logs from earlier fills of the same material. A request whose recorded variants include one this
-// fill's Go runs did not give is GO-BROKEN ("Go answers vary across fills"). --go-variants-out
-// <file> gets the union of the record, the priors and this fill's Go answers: a variant once seen
-// stays.
+// material or another normalizer is not read, and a malformed one stops lspdiff (checkRecord). Each
+// variant keeps its provenance (fill, run, log). Only Go runs whose session is clean (inputs intact,
+// a clean end) add to the record; a Go run that changed its inputs stops lspdiff (no Go evidence).
+// --go-prior <log> (repeatable) adds the answers of Go logs from earlier fills of the same material,
+// each only with a clean <run>.session.json beside it. --fill-id names this fill in the provenance.
+// A request whose recorded variants include one this fill's Go runs did not give is GO-BROKEN ("Go
+// answers vary across fills"). --go-variants-out <file> gets the union of the record, the priors and
+// this fill's Go answers: a variant once seen stays.
 // `node lspdiff.mjs info` prints the settings (settings.mjs) and the scenarios' ATA setup as JSON.
 // --server-logs writes each scenario run's window/logMessage stream to <out>/<run>.server.log.
 // --js <tsserver.js> adds the JS referee (referee.mjs, tsserver.mjs): when an answer is a DIFF of a
@@ -102,6 +105,7 @@ const { positionals, values: opt } = parseArgs({
     "go-variants-out": { type: "string" },
     "go-variants-material": { type: "string" },
     "go-prior": { type: "string", multiple: true },
+    "fill-id": { type: "string" },
     "js-stage": { type: "string" },
     scenario: { type: "string" },
     "rs-runs": { type: "string", default: "1" },
@@ -150,6 +154,42 @@ function normalize(value, method) {
   if (method === "textDocument/completion" && Array.isArray(v?.result?.items)) v.result.items = byJson(v.result.items);
   if (v?.result?.changes) v.result.changes = Object.fromEntries(Object.entries(v.result.changes).sort(([a], [b]) => (a < b ? -1 : 1)));
   return v;
+}
+
+// The variant record (accumulated Go evidence), version VARIANTS_FORMAT, validated strictly on every
+// read and write: exactly { version, material, normalizer, variants }; variants: request key (the
+// form requestKeys makes) -> { answer hash (16 hex) -> [provenance, at least one] }; provenance:
+// exactly { fill, run, log }, non-empty strings. Anything else throws: lspdiff stops, and parity_lsp.py
+// makes the session an ERROR.
+const VARIANTS_FORMAT = 2;
+const REQ_KEY = /^\d+\u0000[^\u0000]+\u0000[^\u0000]+\u0000[^\u0000]*$/;
+function checkRecord(rec, where) {
+  const bad = (why) => {
+    throw new Error(`malformed Go variant record ${where}: ${why}`);
+  };
+  const exact = (o, keys, at) => {
+    if (!o || typeof o !== "object" || Array.isArray(o)) bad(`${at} is not an object`);
+    const got = Object.keys(o).sort().join(",");
+    if (got !== [...keys].sort().join(",")) bad(`${at} has keys ${got}, not ${keys.join(",")}`);
+  };
+  exact(rec, ["version", "material", "normalizer", "variants"], "the record");
+  if (rec.version !== VARIANTS_FORMAT) bad(`version ${JSON.stringify(rec.version)}, not ${VARIANTS_FORMAT}`);
+  if (typeof rec.material !== "string" || !rec.material) bad("material is not a string");
+  if (typeof rec.normalizer !== "string" || !/^[0-9a-f]{16}$/.test(rec.normalizer)) bad("normalizer is not 16 hex digits");
+  if (!rec.variants || typeof rec.variants !== "object" || Array.isArray(rec.variants)) bad("variants is not an object");
+  for (const [k, byHash] of Object.entries(rec.variants)) {
+    if (!REQ_KEY.test(k)) bad(`not a request key: ${JSON.stringify(k.slice(0, 80))}`);
+    if (!byHash || typeof byHash !== "object" || Array.isArray(byHash) || !Object.keys(byHash).length) bad(`${JSON.stringify(k.slice(0, 60))}: not an object of hashes`);
+    for (const [h, provs] of Object.entries(byHash)) {
+      if (!/^[0-9a-f]{16}$/.test(h)) bad(`${JSON.stringify(k.slice(0, 60))}: not a 16-hex hash: ${JSON.stringify(h)}`);
+      if (!Array.isArray(provs) || !provs.length) bad(`${h}: no provenance`);
+      for (const pv of provs) {
+        exact(pv, ["fill", "run", "log"], `the provenance of ${h}`);
+        if (![pv.fill, pv.run, pv.log].every((x) => typeof x === "string" && x)) bad(`the provenance of ${h} has an empty or non-string field`);
+      }
+    }
+  }
+  return rec;
 }
 
 // A value as canonical JSON: object keys sorted, the project root masked.
@@ -276,8 +316,9 @@ if (mode === "diff") {
     writeFileSync(join(dir, `${name}.session.json`), JSON.stringify(r.session));
     saveLog(dir, name, r.log);
   };
-  // name -> the run's session result (sandbox.mjs).
+  // name -> the run's session result (sandbox.mjs), and where its log is.
   const sessions = {};
+  const logFrom = {};
   for (const [name, cmd] of Object.entries(runs)) {
     const isGo = name.startsWith("go");
     const from = isGo && [opt["go-stage"], goCache].find((d) => cachedRun(d, name));
@@ -285,6 +326,7 @@ if (mode === "diff") {
       logs[name] = readLog(join(from, `${name}.jsonl`));
       broken[name] = readBroken(from, name);
       sessions[name] = readSession(from, name);
+      logFrom[name] = join(from, `${name}.jsonl`);
       console.log(`${name}: ${logs[name].length} answers from ${join(from, `${name}.jsonl`)}`);
       continue;
     }
@@ -298,6 +340,7 @@ if (mode === "diff") {
     logs[name] = r.log;
     broken[name] = r.broken;
     sessions[name] = r.session;
+    logFrom[name] = join(opt["go-stage"] && isGo && r.broken?.kind !== "timeout" ? opt["go-stage"] : outDir, `${name}.jsonl`);
     if (r.broken) writeFileSync(join(outDir, `${name}.broken.json`), JSON.stringify(r.broken));
     writeFileSync(join(outDir, `${name}.session.json`), JSON.stringify(r.session));
     writeFileSync(join(outDir, `${name}.jsonl`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
@@ -326,28 +369,51 @@ if (mode === "diff") {
   const failureOf = (b) => (b ? (b.kind === "timeout" ? "timeout" : "crash") : undefined);
   // One run's answer at merged position p: its normalized answer, NOT_ASKED, or null when it ended.
   const at = (k, p, method) => (aligned[k][p] ? answer(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
-  // Accumulated Go evidence (see the top comment): request key -> Set of answer hashes.
+  // Accumulated Go evidence (see the top comment): request key -> Map(answer hash -> [provenance]).
+  // Only a Go run whose session is clean (its inputs intact, sandbox.mjs, and a clean end) counts; a
+  // Go run that changed its inputs makes the whole session an error.
   const hash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
-  const NORMALIZER = hash([normalize, canon, requestKeys].map(String).join("\n"));
+  // The identity of the answer-to-hash transformation: the record's format version and the source of
+  // every function on the way (normalize, canon, requestKeys, answer, hash).
+  const NORMALIZER = hash([VARIANTS_FORMAT, normalize, canon, requestKeys, answer, hash].map(String).join("\n"));
   const variants = new Map();
-  const addVariant = (k, h) => (variants.get(k) ?? variants.set(k, new Set()).get(k)).add(h);
-  const addLog = (log) => requestKeys(log).forEach((k, i) => addVariant(k, hash(answer(log[i], log[i].method))));
+  const addVariant = (k, h, prov) => {
+    const byHash = variants.get(k) ?? variants.set(k, new Map()).get(k);
+    const list = byHash.get(h) ?? byHash.set(h, []).get(h);
+    if (!list.some((x) => x.fill === prov.fill && x.run === prov.run && x.log === prov.log)) list.push(prov);
+  };
+  const addLog = (log, prov) => requestKeys(log).forEach((k, i) => addVariant(k, hash(answer(log[i], log[i].method)), prov));
+  const cleanSession = (s) => !!s && s.clean === true && Array.isArray(s.why) && s.why.length === 0 && !(s.inputs?.modified?.length);
+  const changedInputs = goNames.filter((k) => sessions[k]?.inputs?.modified?.length);
+  if (changedInputs.length) throw new Error(`Go changed its inputs in ${changedInputs.map((k) => `${k} (${sessions[k].inputs.modified.slice(0, 3).join(", ")})`).join("; ")}: no Go evidence`);
   const vMaterial = opt["go-variants-material"];
+  const fillId = opt["fill-id"] ?? outDir;
   if ((opt["go-variants"] || opt["go-variants-out"] || opt["go-prior"]) && !vMaterial) throw new Error("--go-variants needs --go-variants-material");
   let priorVariants = 0;
   if (opt["go-variants"] && existsSync(opt["go-variants"])) {
-    const rec = JSON.parse(readFileSync(opt["go-variants"], "utf8"));
+    const rec = checkRecord(JSON.parse(readFileSync(opt["go-variants"], "utf8")), opt["go-variants"]);
     if (rec.material === vMaterial && rec.normalizer === NORMALIZER) {
-      for (const [k, hs] of Object.entries(rec.variants)) for (const h of hs) addVariant(k, h);
+      for (const [k, byHash] of Object.entries(rec.variants)) for (const [h, provs] of Object.entries(byHash)) for (const pv of provs) addVariant(k, h, pv);
       priorVariants = Object.keys(rec.variants).length;
     } else console.log(`go variants: ${opt["go-variants"]} has other ${rec.material === vMaterial ? "normalizer" : "material"}: not merged`);
   }
-  for (const f of opt["go-prior"] ?? []) addLog(readLog(f));
-  if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${(opt["go-prior"] ?? []).length} prior logs`);
+  // A prior log counts only with its session result beside it, clean (inputs intact, a clean end).
+  let priorsUsed = 0;
+  for (const f of opt["go-prior"] ?? []) {
+    const sf = f.replace(/\.jsonl$/, ".session.json");
+    const s = existsSync(sf) ? JSON.parse(readFileSync(sf, "utf8")) : null;
+    if (!cleanSession(s)) {
+      console.log(`go variants: prior ${f} not used: ${s ? `its session is not clean (${(s.why ?? []).join("; ") || "no why"})` : "no session result"}`);
+      continue;
+    }
+    addLog(readLog(f), { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f });
+    priorsUsed++;
+  }
+  if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${priorsUsed} of ${(opt["go-prior"] ?? []).length} prior logs used`);
   // The recorded variants at merged position p that none of this fill's Go runs gave.
   const earlierOnly = (p, method) => {
     const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answer(aligned[k][p], method))));
-    return [...(variants.get(order[p]) ?? [])].filter((h) => !seen.has(h));
+    return [...(variants.get(order[p])?.keys() ?? [])].filter((h) => !seen.has(h));
   };
   const mismatches = [];
   const unstable = [];
@@ -404,10 +470,15 @@ if (mode === "diff") {
   }
   // The record after this fill: monotone (a variant once seen stays).
   if (opt["go-variants-out"]) {
-    for (const k of goNames) addLog(logs[k]);
+    for (const k of goNames.filter((k) => cleanSession(sessions[k]))) addLog(logs[k], { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) });
     const out = opt["go-variants-out"];
     mkdirSync(join(out, ".."), { recursive: true });
-    const rec = { material: vMaterial, normalizer: NORMALIZER, variants: Object.fromEntries([...variants].map(([k, hs]) => [k, [...hs].sort()])) };
+    const rec = checkRecord({
+      version: VARIANTS_FORMAT,
+      material: vMaterial,
+      normalizer: NORMALIZER,
+      variants: Object.fromEntries([...variants].map(([k, byHash]) => [k, Object.fromEntries([...byHash].sort(([a], [b]) => (a < b ? -1 : 1)))])),
+    }, out);
     writeFileSync(`${out}.tmp`, JSON.stringify(rec));
     renameSync(`${out}.tmp`, out);
   }
