@@ -24,6 +24,9 @@ export class LspClient {
     this.dead = null; // why the server is gone, once it is
     this.malformed = null; // a message that broke the framing or the JSON
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
+    // At EOF every byte must have been part of a whole message: a partial header or body, or any
+    // stray output, fails the session (lane H4 round 3).
+    this.stdoutEnded = new Promise((resolve) => this.proc.stdout.on("end", resolve));
     this.proc.stdin.on("error", () => {}); // writes after a crash: the exit handler reports it
     this.proc.on("exit", (code, signal) => {
       this.dead ??= `server exited (${code ?? signal})`;
@@ -38,8 +41,12 @@ export class LspClient {
     for (;;) {
       const headerEnd = this.buf.indexOf("\r\n\r\n");
       if (headerEnd < 0) return;
-      const header = this.buf.subarray(0, headerEnd).toString("ascii");
-      const length = Number(/Content-Length: *(\d+)/i.exec(header)?.[1]);
+      const header = this.buf.subarray(0, headerEnd).toString("latin1");
+      // Every header line is a "Name: value" field (LSP base protocol), so stray output in front of a
+      // header is a protocol error, not part of it.
+      const lines = header.split("\r\n");
+      if (!lines.every((l) => /^[A-Za-z][A-Za-z0-9-]*: ?[^\r\n]*$/.test(l))) return this.#broken(`a header with stray bytes: ${JSON.stringify(header.slice(0, 80))}`);
+      const length = Number(/^Content-Length: *(\d+)$/im.exec(header)?.[1]);
       if (!Number.isInteger(length)) return this.#broken(`a message without a Content-Length: ${header.slice(0, 80)}`);
       if (this.buf.length < headerEnd + 4 + length) return;
       const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
@@ -165,6 +172,13 @@ export class LspClient {
     const { signal } = await this.server.exited;
     clearTimeout(timer);
     const forced = killed && signal === "SIGKILL"; // it was still running, and our kill ended it
+    // stdout must really end (EOF), not just go quiet: a child that inherited it can still write.
+    // An expired wait is no evidence of a clean end (Astra recheck, 2026-11-05).
+    let eof;
+    const ended = await Promise.race([this.stdoutEnded.then(() => true), new Promise((r) => (eof = setTimeout(() => r(false), 2000)))]);
+    clearTimeout(eof);
+    if (!ended) this.malformed ??= "stdout did not reach EOF within 2000 ms of the server's exit (a child process still holds it)";
+    if (this.buf.length) this.malformed ??= `stdout ended with ${this.buf.length} bytes that are no whole message: ${JSON.stringify(this.buf.subarray(0, 80).toString("latin1"))}`;
     const exitMs = Math.round(performance.now() - asked);
     return this.server.result({ shutdown, forced, exitMs, extra: this.malformed ? [`protocol: ${this.malformed}`] : [] });
   }

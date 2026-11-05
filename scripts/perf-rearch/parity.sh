@@ -129,8 +129,7 @@ for t in $tiers; do
   case $t in
   cli) tier cli python3 -I "$here/parity_cli.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/cli" --tier "$mode" \
     --rs-runs "$rs_runs" ;;
-  lsp) tier lsp python3 -I "$here/parity_lsp.py" --rs "$bin" --go "$GO_LSP" --out "$out/lsp" --tier "$mode" \
-    ${base:+--base "$base"} ;;
+  lsp) tier lsp python3 -I "$here/parity_lsp.py" --rs "$bin" --go "$GO_LSP" --out "$out/lsp" --tier "$mode" ;;
   fuzz) tier fuzz python3 -I "$here/parity_fuzz.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/fuzz" --seed 1 \
     --count "$fuzz_count" --jobs 12 --rs-runs "$rs_runs" ;;
   corpus) tier corpus python3 -I "$here/parity_fuzz.py" --corpus --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/corpus" \

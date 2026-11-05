@@ -81,13 +81,11 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 
 ## Parity gate (mandatory for every change)
 
-> **Interim, until lane H3 merges (2026-11-05).** Astra found false-good
-> paths in the referees and the compare (`reviews/2026-11-05-astra-h1h2.md`).
-> Until H3 lands, PARITY OK is not enough on its own:
-> - **Referee passes:** list every item that is good only through a referee
->   (GO-BROKEN, GO-PARTITION, JS-AGREES), and every "new items not good".
-> - **Quick runs:** confirm the compared count, because a quick run against
->   a full base can drop items silently.
+> **Harness edits reset Go evidence.** The LSP Go-variant record is keyed on
+> the lspdiff sources, so any edit to them starts the record empty. Sessions
+> where Go races (hono and query references, the umami watch load) can then
+> come out LOST. Before judging a run after such an edit, add verified fills:
+> `parity_lsp.py --tier full --only '^<session>$' --go-refill '^<session>$'`.
 
 `scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-current`
 prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
@@ -95,7 +93,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now the L1+P1 head a8392a002 under the H4 gate, run h4-p1-a8392a002-full-3, PARITY OK with 0 lost; on main the Effect items were known
+  this branch (now the L1+P1 head a8392a002 under the H4 gate, run h4r3-a8392a002-full, PARITY OK with 0 lost; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - **Referees:** on the cli, fuzz and corpus tiers the gate applies the
