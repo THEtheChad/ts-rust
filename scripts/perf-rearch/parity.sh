@@ -5,7 +5,8 @@
 # Go's default run is still good when GO-BROKEN (Go crashed, timed out or its runs differ; tsc-rs
 # stable), GO-PARTITION (tsc-rs equals Go at another --checkers N, N in 1,2,3,4,6,8,12,16, where
 # Go's output depends on N) or JS-AGREES (JS tsc 6.0.3 sides with tsc-rs on every point where it
-# differs from Go). Each extra Go and JS run happens only for such an item, once: it is cached.
+# differs from Go). The extra Go and JS runs happen only for items that are not MATCH, once: they are
+# cached (docs/perf-rearch/parity.md, "Referees").
 #
 # usage: scripts/perf-rearch/parity.sh quick|full <tsgo bin> [--base DIR] [--out DIR] [--checkout DIR]
 #                                       [--tiers t1,t2,...]
