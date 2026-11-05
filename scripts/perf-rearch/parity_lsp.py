@@ -18,7 +18,7 @@ sessions are all full sessions, so a quick run compares with a full base.
 
 Go's four sessions per item set (go.jsonl to go4.jsonl with their session results, GO_RUNS) are
 kept in ~/.cache/perf-rearch/parity/go-cache/<go sha>/lsp/<session>-<key>/ and reused, so a run starts
-only tsc-rs. The key (session_key) is the sha of what the session reads and how it runs: the
+only tsc-rs. The key (session_material) is the sha of what the session reads and how it runs: the
 session's definition (project, files, positions, scenario), the project's path and the content of
 its snapshot (parity_inputs.Inputs), for scenarios with ATA on the user's npm also the snapshot of the
 typings cache (~/.cache/typescript/7.1) and the npm on PATH, the lspdiff sources that script the
