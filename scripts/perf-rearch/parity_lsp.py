@@ -153,6 +153,18 @@ def variants_material(material, go_sha):
     return {**{k: v for k, v in material.items() if k not in ('extra', 'version')}, 'go': go_sha, 'variants': VARIANTS_VERSION}
 
 
+def refill_dirs(refills, material):
+    """The extra Go fills of a key (--go-refill), each with this exact material in its key.json."""
+    out = []
+    for d in sorted(refills.glob('*')) if refills.is_dir() else []:
+        try:
+            if json.loads((d / 'key.json').read_text()) == json.loads(json.dumps(material)):
+                out.append(d)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 def same_but_runs(a, b):
     strip = lambda m: {k: v for k, v in m.items() if k != 'extra'}  # noqa: E731
     return strip(a) == strip(b)
@@ -276,6 +288,8 @@ def main():
     ap.add_argument('--js', default=str(JS_TSSERVER), help='JS tsserver.js, the JS-AGREES referee')
     ap.add_argument('--no-js', action='store_true', help='no JS referee (statuses MATCH, GO-BROKEN, DIFF)')
     ap.add_argument('--js-all', action='store_true', help='run JS on every session: calibration and the report')
+    ap.add_argument('--go-refill', help='sessions (regex) whose Go runs run again into one more fill '
+                    '(go-cache/<go sha>/lsp-refills/<key>/<run>/; its clean runs join the variant record)')
     args = ap.parse_args()
     use_js = not args.no_js and Path(args.js).exists()
     js_error = None
@@ -342,9 +356,15 @@ def main():
         js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
         go_dir = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}'
         go_cache, go_stage = key_dir(go_dir / 'lsp' / key, material, stage)
+        refills = go_dir / 'lsp-refills' / key
+        go_final = go_dir / 'lsp' / key
+        if args.go_refill and re.search(args.go_refill, name):  # one more Go fill, kept beside the others
+            go_final = refills / stage.dir.name
+            go_cache, go_stage = None, key_dir(go_final, material, stage)[1]
         vmat = variants_material(material, go_sha_full)
         vfile = go_dir / 'lsp-variants' / f'{name}-{inputs.json_hash(vmat)[:24]}.json'
-        priors = [f for d in prior_dirs(go_dir / 'lsp', name, key, material) for f in sorted(d.glob('go*.jsonl'))]
+        priors = [f for d in [*prior_dirs(go_dir / 'lsp', name, key, material), *refill_dirs(refills, material)]
+                  for f in sorted(d.glob('go*.jsonl'))]
         sout = out / name
         sandbox = {'scratch': str(HOME / f'.cache/perf-rearch/parity/scratch/lsp-sandbox/{name}'), 'mounts': mounts}
         # A heap above Node's default: umami's 7 logs are 340 MB each, and JS adds one.
@@ -355,7 +375,7 @@ def main():
                 '--go-variants-out', str(stage.staged(vfile)), '--go-variants-material', json.dumps(vmat, sort_keys=True)]
         for f in priors:
             cmd += ['--go-prior', str(f)]
-        cmd += ['--fill-id', f'{stage.dir.name}/{name}']
+        cmd += ['--fill-id', f'{stage.dir.name}/{name}', '--go-final', str(go_final)]
         if use_js:
             js_cache, js_stage = key_dir(HOME / f'.cache/perf-rearch/parity/js-cache/{js_sha}/lsp/{js_key}', js_material, stage)
             cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]

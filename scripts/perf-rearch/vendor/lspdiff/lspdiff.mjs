@@ -106,6 +106,7 @@ const { positionals, values: opt } = parseArgs({
     "go-variants-material": { type: "string" },
     "go-prior": { type: "string", multiple: true },
     "fill-id": { type: "string" },
+    "go-final": { type: "string" },
     "js-stage": { type: "string" },
     scenario: { type: "string" },
     "rs-runs": { type: "string", default: "1" },
@@ -340,7 +341,8 @@ if (mode === "diff") {
     logs[name] = r.log;
     broken[name] = r.broken;
     sessions[name] = r.session;
-    logFrom[name] = join(opt["go-stage"] && isGo && r.broken?.kind !== "timeout" ? opt["go-stage"] : outDir, `${name}.jsonl`);
+    // Where the log lives once published (--go-final: parity_lsp.py publishes the stage there).
+    logFrom[name] = join(opt["go-stage"] && isGo && r.broken?.kind !== "timeout" ? opt["go-final"] ?? opt["go-stage"] : outDir, `${name}.jsonl`);
     if (r.broken) writeFileSync(join(outDir, `${name}.broken.json`), JSON.stringify(r.broken));
     writeFileSync(join(outDir, `${name}.session.json`), JSON.stringify(r.session));
     writeFileSync(join(outDir, `${name}.jsonl`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");

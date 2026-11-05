@@ -1170,6 +1170,17 @@ the gate to:
   are. If a later Go fill sees the race at the default settings, the item becomes GO-BROKEN and the
   entry goes stale: remove it then. Root decides whether the entry stays.
 
+### Round 3 (Astra's H4 review, `reviews/2026-11-05-astra-h4.md`)
+
+| # | finding | fix | commit |
+|---|---|---|---|
+| 1 | `drain()` could return before the reader parsed an event it had read: a same-byte rewrite got MATCH | `Watch.finish()` stops the reader, joins it and drains the queue under the parse lock before any final answer; `oracle.run` also checks each input's stat identity (a write sets the ctime). The snapshots' stat check stays | `b3f36718c` |
+| 2 | an incomplete LSP stdout at EOF passed | after stdout ends, any byte that was no whole message fails the session; a header line that is not `Name: value` is a protocol error | `8dc888b67` |
+| 3 | accumulated evidence trusted keys, not input validity | only Go runs with a clean session add variants, each with provenance; priors need a clean session result; no H3 imports; a Go run that changed its inputs stops the session | `b31deac7d` |
+| 4 | a malformed record widened acceptance | strict schema on read and write, a malformed record stops lspdiff | `b31deac7d` |
+| 5 | the normalizer fingerprint omitted `answer` and `hash` | it covers the format version and every function from answer to hash | `b31deac7d` |
+| 6 | a failed watch construction leaked fds and watches, and fuzz raised | the partial watcher closes its instance and pipe; fuzz falls back to the stat and byte check (the attempt's `watch` says so), no ERROR | `b3f36718c` |
+
 ### Accumulated Go evidence (root's decision, after the first H4 report)
 
 Any output the pinned Go binary has ever produced for the same inputs and settings is a legitimate
@@ -1187,14 +1198,25 @@ answer per request identity):
   not give is GO-BROKEN (`Go answers vary across fills`).
 - **Earlier fills:** lspdiff also gets, as `--go-prior`, the Go logs of the session's other cache
   dirs whose `key.json` is this material at another run count.
-- **The base's logs** count where they are provably the same inputs. The base was made by the H3
-  harness, so `parity_lsp.legacy_prior` recomputes the base's own key with H3's formula: the
-  scripting sources of `0bfd0c4a6`, H3's env settings (unset: the defaults, which must equal this
-  run's), the session, the root, the realpath and this run's snapshot hash as the tree hash. Only if
-  that equals the key the base recorded for the session (and the logs sit in this Go binary's cache
-  dir) are its Go logs imported. On base-current this holds for all three standard sessions
-  (`hono-f12-p6-283a125df958…`, `umami-f12-p6-cc378c18f0f7…`, `ts-pattern-f12-p6-e0ed0132ec83…`).
-  The watch scenarios are not imported: in H3 their typings cache was live and shared across runs.
+- **Only verified runs (round 3).** A variant enters the record only from a Go run whose session is
+  clean: its inputs intact (`sandbox.mjs`), a clean end, and a tier whose snapshots verified clean
+  (the record is staged). Each variant keeps its provenance (`fill`, `run`, `log`). A prior log
+  counts only with a clean `<run>.session.json` beside it. A Go run of the fill that changed its
+  inputs stops the session (an ERROR: no Go evidence); a Go crash or timeout before an answer is
+  still GO-BROKEN by contract.
+- **No imports from before H4.** H4 imported the base's H3 logs where the base's recorded key could
+  be recomputed from this run's content hashes. A key says what a run was given, not that it kept its
+  inputs (H3 ran on the live tree), so round 3 removed the import. Records are now version 2, and the
+  version-1 records, which held the imported H3 answers, were deleted from the cache.
+- **Strict record schema:** exactly `{version: 2, material, normalizer, variants}`; `variants` maps a
+  request key to `{16-hex hash: [provenance, ...]}`; each provenance is exactly `{fill, run, log}`.
+  Anything else stops lspdiff with `malformed Go variant record`, and parity_lsp makes the session an
+  ERROR.
+- **Normalizer identity:** the sha of the record format version and the source of every function
+  from answer to hash (`normalize`, `canon`, `requestKeys`, `answer`, `hash`).
+- **More fills:** `parity_lsp.py --go-refill REGEX` runs a session's Go runs once more into
+  `go-cache/<go sha>/lsp-refills/<key>/<run>/` (with its `key.json`); those dirs are priors of the
+  key, so their clean runs join the record.
 - **More Go runs on multi-project workspaces:** sessions on hono and query run Go 8 times (`g8` in
   the key), since `ls/crossproject.go` searches projects in goroutines. The other sessions keep 4.
 
@@ -1203,9 +1225,15 @@ Negative controls (`h4-selftest.mjs`, `parity_h4_test.py`):
 - the record keeps it without its log (monotone);
 - a record of another binary or another input is never merged;
 - prior logs come only from the same material at another run count;
-- the base's logs of another input, or of other scripting sources, are never imported.
+- round 3: a prior log whose session changed its inputs, ended unclean, or has no session result is
+  never evidence; a Go run of the fill that changed its inputs stops the session; malformed records
+  fail loudly; a changed `answer` function does not read the record; Go logs of a harness before H4
+  are never priors.
 
-`lsp/hono-f12-p6/0476` is GO-BROKEN again. Its first 8-run fill already disagrees with itself (`go,go2,go3,go4,go8 | go5,go6,go7`), and the base's and the 4-run fill's variants are in the record.
+`lsp/hono-f12-p6/0476` after round 3: the keys changed (`client.mjs` is a session source), so every
+lsp Go fill is new and the record started empty. The first verified 8-run fill of hono disagrees
+with itself on 0476 (`go,go2,go4,go5,go7,go8 | go3,go6`), and one `--go-refill` fill again (`go,go5,go6,go8 |
+go2,go3,go4,go7`). The record holds both orders with 16 runs of provenance, so 0476 stays GO-BROKEN on verified H4-or-later evidence alone.
 
 ### Regenerating the grandfather entries
 
