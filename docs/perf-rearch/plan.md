@@ -588,3 +588,13 @@ once a **reconciliation step** is built and tested.
     match to any of them.
   - **D2** (shared type store) becomes more plausible, but only for designs
     whose results can be shown to equal some Go-N.
+- **2026-11-04, Chad: better than Go is allowed, with a mechanical referee.**
+  Root had wrongly written "not allowed"; Chad corrected it.
+  - **Referees Chad chose:**
+    - **JS-AGREES:** on every point where tsc-rs differs from Go, JS tsc
+      6.0.3 sides with tsc-rs. This covers diagnostics, the emitted files
+      that differ, and the exit code.
+    - **GO-BROKEN:** Go crashes, hangs or varies with itself; tsc-rs must be
+      stable.
+  - **Not chosen:** a reviewed allowlist. Any other difference fails.
+  - The harness lane H1 implements both alongside GO-PARTITION.

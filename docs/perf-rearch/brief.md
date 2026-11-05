@@ -34,15 +34,33 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
   - **Why:** in these cases Go's default answer is an artifact of its split.
     On zod a limit hit in an earlier file caches a degraded type; JS tsc
     6.0.3 reports 0 errors there and Go c4 reports 22.
-  - **Never allowed:** run-to-run variation. Output that differs from Go in
-    other ways ("better than Go") is allowed in principle (Chad); how such a
-    difference is verified is being defined. Until then the gate still fails on
-    it: bring it to root with evidence, don't work around it.
+  - **Never allowed:** run-to-run variation.
+- **Better than Go (Chad, 2026-11-04).** tsc-rs may differ from Go where it
+  is provably better. A difference passes only by one of these mechanical
+  referees; any other difference fails the gate.
+  - **JS-AGREES:** JS tsc 6.0.3 (`~/.cache/perf-rearch/js-tsc`) sides with
+    tsc-rs on every point where tsc-rs and Go differ.
+    - Each diagnostic Go prints and tsc-rs doesn't must be absent from JS's
+      output.
+    - Each diagnostic tsc-rs prints and Go doesn't must be in JS's output,
+      byte-identical: file, position, code and text.
+    - Each emitted file that differs from Go's must equal JS's.
+    - The exit code must equal JS's whenever it differs from Go's.
+    - Points where tsc-rs equals Go need no JS agreement, since JS 6 and Go
+      differ in many unrelated ways.
+  - **GO-BROKEN:** Go crashes (panic or abnormal exit), times out, or varies
+    between its own runs at the same settings on that input. tsc-rs must give
+    one stable answer and must not crash. Examples are the fuzzer finds
+    microsoft/TypeScript #65078 and #65079.
+  - **The partition exception above** (GO-PARTITION) also stands.
+  - **Scope:** JS-AGREES applies to the CLI, fuzz and corpus tiers. The LSP
+    tier has no JS referee; GO-BROKEN still applies there.
+  - **Speed is not a difference.** Faster is always the goal.
 - **Oracles:** Go at pin `3e9236361fa9` (`~/.local/bin/tsgo-oracle-3e9236361fa9`,
   LSP `~/.local/bin/tsgo-lsp-oracle-3e9236361fa9 --lsp --stdio`), Go source
-  `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`. The JS `tsc` is a
-  secondary reference: where Go and JS differ, Go wins. Record such cases, but
-  they are not tsc-rs bugs.
+  `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`. Go is the default
+  reference. JS `tsc` 6.0.3 is the referee for JS-AGREES only; where Go and JS
+  differ and tsc-rs equals Go, that is fine and not a tsc-rs bug.
 - **Repo:** fork `THEtheChad/ts-rust`. Branch `perf/first-principles`, worktree
   `/home/agent/personal/ts-rust-perf`, both based on `main` @ `91f3d021c`.
   Root owns that worktree and its merges. Agents work in their own worktree.
