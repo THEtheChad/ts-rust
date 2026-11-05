@@ -16,6 +16,12 @@
 // differs from the first is GO-UNSTABLE (the watch scenarios use 4: Go's background tasks run as
 // concurrent goroutines, so its registrations can race).
 // --server-logs writes each scenario run's window/logMessage stream to <out>/<run>.server.log.
+// --js <tsserver.js> adds the JS referee (referee.mjs, tsserver.mjs): when an answer is a DIFF of a
+// refereed kind (and tsc-rs agreed with itself), JS tsserver replays the same session once and an
+// answer on which it sides with tsc-rs on every differing point is JS-AGREES. --js-cache <dir> keeps
+// its log (js.jsonl) there; --js-all runs JS on every session and records JS's view of every item
+// and the calibration (js.json: per kind, how often JS equals Go where tsc-rs equals Go).
+// --js-kinds m1,m2 replaces the refereed kinds (referee.mjs REFEREED_KINDS; the self-test uses it).
 //
 //   node scripts/lspdiff/lspdiff.mjs diff  --project <dir> [--files 6] [--positions 4] [--file <rel>...]
 //                                          [--scenario <name>] [--rs-runs 1] [--rs-env K=V...] [--go-cache <dir>]
@@ -32,6 +38,7 @@ import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
 import { SCENARIOS, runScenario } from "./scenario.mjs";
+import { applyJsReferee } from "./referee.mjs";
 import { runSession } from "./session.mjs";
 
 const { positionals, values: opt } = parseArgs({
@@ -54,6 +61,10 @@ const { positionals, values: opt } = parseArgs({
     "go-runs": { type: "string", default: "2" },
     "rs-env": { type: "string", multiple: true },
     "server-logs": { type: "boolean", default: false },
+    js: { type: "string" },
+    "js-cache": { type: "string" },
+    "js-all": { type: "boolean", default: false },
+    "js-kinds": { type: "string" },
     pulls: { type: "string", default: "all" },
     modes: { type: "string", default: "concurrent,one-at-a-time" },
     verbose: { type: "boolean", default: false },
@@ -107,6 +118,17 @@ if (mode === "diff") {
   }
   const logs = {};
   const goCache = opt["go-cache"];
+  // One server run of the session (or scenario): its log.
+  const runOne = (name, cmd, env) =>
+    scenario
+      ? runScenario(cmd, scenario, root, { files, stderr, env, serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
+      : runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
+  const saveLog = (dir, name, log) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.jsonl.tmp`), log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    renameSync(join(dir, `${name}.jsonl.tmp`), join(dir, `${name}.jsonl`));
+  };
+  const readLog = (f) => readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   for (const [name, cmd] of Object.entries(runs)) {
     const isGo = name.startsWith("go");
     if (goCache && isGo) {
@@ -123,16 +145,10 @@ if (mode === "diff") {
     }
     const start = performance.now();
     const env = envs[name];
-    logs[name] = scenario
-      ? await runScenario(cmd, scenario, root, { files, stderr, env, serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
-      : await runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
+    logs[name] = await runOne(name, cmd, env);
     console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${logs[name].length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s`);
     writeFileSync(join(outDir, `${name}.jsonl`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    if (goCache && isGo) {
-      mkdirSync(goCache, { recursive: true });
-      writeFileSync(join(goCache, `${name}.jsonl.tmp`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
-      renameSync(join(goCache, `${name}.jsonl.tmp`), join(goCache, `${name}.jsonl`));
-    }
+    if (goCache && isGo) saveLog(goCache, name, logs[name]);
   }
   const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method));
   const byMethod = {};
@@ -172,6 +188,43 @@ if (mode === "diff") {
       row.differ++;
       mismatches.push(entry);
     }
+  }
+  if (opt.js) {
+    const jsCache = opt["js-cache"];
+    const runJs = async () => {
+      const cached = jsCache && join(jsCache, "js.jsonl");
+      if (cached && existsSync(cached)) {
+        const log = readLog(cached);
+        console.log(`js: ${log.length} answers from ${cached}`);
+        return log;
+      }
+      if (opt.reuse && existsSync(join(outDir, "js.jsonl"))) return readLog(join(outDir, "js.jsonl"));
+      const start = performance.now();
+      const log = await runOne("js", { tsserver: opt.js });
+      console.log(`js: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s`);
+      writeFileSync(join(outDir, "js.jsonl"), log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+      if (jsCache) saveLog(jsCache, "js", log);
+      return log;
+    };
+    // tsc-rs's determinism comes before JS: with one plain tsc-rs run, an answer that would become
+    // JS-AGREES needs one more run that gives it again.
+    const rerunRs = rsRuns === 1 && !Object.keys(envs).length
+      ? async () => {
+          const start = performance.now();
+          const log = await runOne("rs-confirm", servers.rs);
+          console.log(`rs-confirm: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s`);
+          return log;
+        }
+      : undefined;
+    const kinds = opt["js-kinds"] !== undefined ? new Set(opt["js-kinds"].split(",").filter(Boolean)) : undefined;
+    const ref = await applyJsReferee({ items, logs, root, runJs, rerunRs, answerKey: answer, all: opt["js-all"], kinds });
+    for (const it of items) {
+      if (it.status !== "JS-AGREES") continue;
+      byMethod[it.method].differ--;
+      byMethod[it.method].jsAgrees = (byMethod[it.method].jsAgrees ?? 0) + 1;
+    }
+    writeFileSync(join(outDir, "js.json"), JSON.stringify(ref, null, 1));
+    if (ref.ran) console.log(`js referee: ${ref.decided} answers JS-AGREES`);
   }
   const total = (k) => Object.values(byMethod).reduce((a, b) => a + b[k], 0);
   const [equal, differ, goUnstable] = ["equal", "differ", "goUnstable"].map(total);

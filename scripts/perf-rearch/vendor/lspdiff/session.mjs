@@ -2,13 +2,16 @@
 // see exactly the same sequence and Go picks its checkers deterministically.
 import { LspClient, fileUri, initializeParams } from "./client.mjs";
 import { endPosition, languageId, pickPositions, readText, rel } from "./project.mjs";
+import { TsserverClient } from "./tsserver.mjs";
 
 // Typed at the end of the first file, one character per didChange (the diff session asks for
 // a completion after each; bench.mjs types it at a fixed speed).
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
+// cmd: an LSP server's [binary, ...args], or { tsserver: <tsserver.js> } for JS tsserver driven over
+// its own protocol (tsserver.mjs, the referee; its ATA is always off).
 export async function startServer(cmd, root, { stderr, watch = false, ata = true, env } = {}) {
-  const client = new LspClient(cmd, { cwd: root, stderr, env });
+  const client = cmd.tsserver ? new TsserverClient(cmd.tsserver, { cwd: root, stderr, env }) : new LspClient(cmd, { cwd: root, stderr, env });
   const init = await client.request("initialize", initializeParams(root, { watch, ata }));
   if (init.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
   client.notify("initialized", {});
