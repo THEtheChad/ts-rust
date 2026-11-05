@@ -417,31 +417,58 @@ fn assigned_name(node: Node) -> &'static str {
 // Keys
 // ──────────────────────────────────────────────────────────────────────
 
-/// A mention key: family, the property names from the top of the chain
-/// down, then the root text (`this` for the keyword). Equal texts give
-/// equal keys; a hash collision only makes a test refuse more.
-fn chain_key(family: u8, names: &[&'static str], root: &str) -> u64 {
-    let mut h = rustc_hash::FxHasher::default();
-    h.write_u8(family);
-    for name in names {
-        h.write(name.as_bytes());
-        h.write_u8(0xff);
+/// The hash of a chain body: the root text (`this` for the keyword), or a
+/// rootless marker, then the property names from the root out. A body
+/// grows one name at a time, so the keys of every prefix of a chain cost
+/// one pass over its names. Equal texts give equal keys; a hash collision
+/// only makes a test refuse more.
+#[derive(Clone)]
+struct ChainHash(rustc_hash::FxHasher);
+
+impl ChainHash {
+    fn rooted(root: &str) -> Self {
+        let mut h = rustc_hash::FxHasher::default();
+        h.write(root.as_bytes());
+        h.write_u8(0xfe);
+        Self(h)
     }
-    h.write_u8(0xfe);
-    h.write(root.as_bytes());
-    h.finish()
+
+    fn rootless() -> Self {
+        let mut h = rustc_hash::FxHasher::default();
+        h.write_u8(0xfd);
+        Self(h)
+    }
+
+    /// Adds the next name out from the root.
+    fn push(&mut self, name: &str) {
+        self.0.write(name.as_bytes());
+        self.0.write_u8(0xff);
+    }
+
+    fn key(&self, family: u8) -> u64 {
+        let mut h = self.0.clone();
+        h.write_u8(family);
+        h.finish()
+    }
+}
+
+/// A mention key: family, the root text and the property names (`names`
+/// from the top of the chain down).
+fn chain_key(family: u8, names: &[&'static str], root: &str) -> u64 {
+    let mut h = ChainHash::rooted(root);
+    for name in names.iter().rev() {
+        h.push(name);
+    }
+    h.key(family)
 }
 
 /// A chain-site key: family and the property names, without the root.
 fn names_key(family: u8, names: &[&'static str]) -> u64 {
-    let mut h = rustc_hash::FxHasher::default();
-    h.write_u8(family);
-    h.write_u8(0xfd);
-    for name in names {
-        h.write(name.as_bytes());
-        h.write_u8(0xff);
+    let mut h = ChainHash::rootless();
+    for name in names.iter().rev() {
+        h.push(name);
     }
-    h.finish()
+    h.key(family)
 }
 
 fn root_text(root: Node) -> &'static str {
@@ -1451,21 +1478,31 @@ impl Checker {
                 } else {
                     K_ACC_THIS
                 };
-                let root = root_text(root);
-                mentions.push(chain_key(F_ACC, &names, root));
-                if union {
-                    mentions.push(chain_key(F_ACC_U, &names, root));
+                // Each proper prefix `names[i..]` (i >= 1) is one more name
+                // out from the root than the one before, so its keys come
+                // from one running hash: a chain of k names costs O(k),
+                // not O(k^2) (deep chains such as `a[0][0]...[0]`).
+                let mut mention = ChainHash::rooted(root_text(root));
+                mentions.push(mention.key(F_ACCP));
+                let mut chain = ChainHash::rootless();
+                for name in names[1..].iter().rev() {
+                    mention.push(name);
+                    mentions.push(mention.key(F_ACCP));
+                    chain.push(name);
+                    if kind == K_ACC_IDENT {
+                        chains.push(chain.key(C_CM));
+                    }
                 }
-                for i in 1..=names.len() {
-                    mentions.push(chain_key(F_ACCP, &names[i..], root));
+                mention.push(names[0]);
+                mentions.push(mention.key(F_ACC));
+                if union {
+                    mentions.push(mention.key(F_ACC_U));
                 }
                 if kind == K_ACC_IDENT {
-                    chains.push(names_key(C_M, &names));
+                    chain.push(names[0]);
+                    chains.push(chain.key(C_M));
                     if union {
-                        chains.push(names_key(C_M_U, &names));
-                    }
-                    for i in 1..names.len() {
-                        chains.push(names_key(C_CM, &names[i..]));
+                        chains.push(chain.key(C_M_U));
                     }
                 }
                 Some(RefKeys {
