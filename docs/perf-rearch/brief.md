@@ -95,7 +95,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now the C1+ND1+L1 head efef52257, run head-efef52257-full. Under the H3 gate `fuzz/1:25496` is LOST, a real 8× tsc-rs slowness that lane P1 is fixing; until P1 merges, that one lost item is expected and every other item must pass; on main the Effect items were known
+  this branch (now the L1+H3+P1 head a8392a002, run p1-head-a8392a002-full, PARITY OK under the H3 gate; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - **Referees:** on the cli, fuzz and corpus tiers the gate applies the

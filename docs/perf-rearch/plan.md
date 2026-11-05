@@ -667,3 +667,17 @@ once a **reconciliation step** is built and tested.
     - request identity with method and params;
     - ATA completion barriers and settings in the key;
     - grandfather schema validation.
+- **2026-11-05, P1 merged** (`a7615f4d1`).
+  - **Cause:** `fuzz/1:25496` was O(n⁴) in tsc-rs's own flow-skip key hashing
+    (`flow_skip.rs` `chain_key`/`names_key` rehashed every prefix). Go is O(n³)
+    on the same emit-time re-check pattern.
+  - **Fix:** `ChainHash` builds every prefix key in one pass.
+  - **Result:** 43.6 s → 2.2 s, against Go's 4.6 s. On projects, icount is
+    within ±0.03% single-threaded.
+  - **Parity:** full PARITY OK. `base-current` now points to
+    `runs/p1-head-a8392a002-full`.
+  - **Not counted by the compare:** `fuzz/1:5391` is a DIFF, but its base
+    status is GO-UNSTABLE, so it's ignored. That gap belongs to H4 finding 3.
+  - **Still timing out on both sides:** the 26 grandfathered deep-nesting
+    cases. They don't share P1's cause; 1776 shows a `get_implied_constraint`
+    explosion.
