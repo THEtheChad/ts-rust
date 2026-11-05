@@ -589,6 +589,7 @@ pub fn obs_log_on() -> bool {
 }
 
 /// Appends `line` and a newline to the observation log, if it is on.
+#[cfg(feature = "diagnostics")]
 fn obs_line(line: std::fmt::Arguments<'_>) {
     if let Some(log) = env_file_log("GOPORT_LOAD_OBS_LOG", &OBS_LOG) {
         let mut log = lock(log);
