@@ -75,3 +75,32 @@ the lane branch.
 
 - **Quality:** shipped escape hatches 41 → 40, complexity flat, duplication
   3.64%, `panic!` +4.
+
+## Round 3 (head `fb62e1799`, code at `117ee423d`): reconciliation dropped, Go's watch window
+- **Deleted:** 1,521 lines (`reconcile.rs`, `pool.rs`, the non-blocking reader,
+  the session reconcile state and its tests); 323 added (window tests and a
+  diagnostics-only observation log). V is freed at the end of the load.
+- **Window, observation to watch registration** (umami, 3 runs, ms):
+
+  | | p50 | p90 | max |
+  |---|---|---|---|
+  | V | 220–283 | 249–312 | 263–325 |
+  | base serial | 206–212 | 329–336 | 373–382 |
+
+  The window is not materially larger.
+- **RSS** (umami): base 542–550 MiB, head 529–533 MiB.
+- **Parity:** full PARITY OK, 0 lost of 187,119, 25 recovered.
+- **ttfd** (umami idle, 7 runs; manifest
+  `~/.cache/perf-rearch/l1/ttfd-117ee423d/manifest.jsonl`):
+
+  | | median |
+  |---|---|
+  | Go | 288.4 ms |
+  | base | 402.7 ms |
+  | L1 | **280.0 ms** |
+
+- **Quality:**
+  - shipped escape hatches 41 → 40;
+  - production lines +1,730 net;
+  - functions above cognitive 25: flat;
+  - `nm`: 0 diagnostic symbols.
