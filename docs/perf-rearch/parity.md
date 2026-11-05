@@ -1170,6 +1170,43 @@ the gate to:
   are. If a later Go fill sees the race at the default settings, the item becomes GO-BROKEN and the
   entry goes stale: remove it then. Root decides whether the entry stays.
 
+### Accumulated Go evidence (root's decision, after the first H4 report)
+
+Any output the pinned Go binary has ever produced for the same inputs and settings is a legitimate
+Go output. The lsp tier therefore keeps, per key material, a record of every Go answer variant it
+has seen (`go-cache/<go sha>/lsp-variants/<session>-<sha>.json`, the sha256 of each normalized
+answer per request identity):
+
+- **Key material:** the Go binary's full sha, the session's definition, the project's path and
+  snapshot hash, the typings snapshot and npm (scenarios with the user's ATA), the scripting sources
+  and every lspdiff setting. That is the session's cache-key material without the run count and the
+  log format version (`parity_lsp.variants_material`). lspdiff reads a record only if its material
+  and its normalizer (the sha of lspdiff's normalize and identity code) are this run's.
+- **Merging is monotone.** Each fill adds its Go answers to the record (staged, published with the
+  logs), and nothing is ever removed. A request whose record holds a variant this fill's Go runs did
+  not give is GO-BROKEN (`Go answers vary across fills`).
+- **Earlier fills:** lspdiff also gets, as `--go-prior`, the Go logs of the session's other cache
+  dirs whose `key.json` is this material at another run count.
+- **The base's logs** count where they are provably the same inputs. The base was made by the H3
+  harness, so `parity_lsp.legacy_prior` recomputes the base's own key with H3's formula: the
+  scripting sources of `0bfd0c4a6`, H3's env settings (unset: the defaults, which must equal this
+  run's), the session, the root, the realpath and this run's snapshot hash as the tree hash. Only if
+  that equals the key the base recorded for the session (and the logs sit in this Go binary's cache
+  dir) are its Go logs imported. On base-current this holds for all three standard sessions
+  (`hono-f12-p6-283a125df958…`, `umami-f12-p6-cc378c18f0f7…`, `ts-pattern-f12-p6-e0ed0132ec83…`).
+  The watch scenarios are not imported: in H3 their typings cache was live and shared across runs.
+- **More Go runs on multi-project workspaces:** sessions on hono and query run Go 8 times (`g8` in
+  the key), since `ls/crossproject.go` searches projects in goroutines. The other sessions keep 4.
+
+Negative controls (`h4-selftest.mjs`, `parity_h4_test.py`):
+- a variant an earlier fill of the same material gave makes the item GO-BROKEN;
+- the record keeps it without its log (monotone);
+- a record of another binary or another input is never merged;
+- prior logs come only from the same material at another run count;
+- the base's logs of another input, or of other scripting sources, are never imported.
+
+`lsp/hono-f12-p6/0476` is GO-BROKEN again. Its first 8-run fill already disagrees with itself (`go,go2,go3,go4,go8 | go5,go6,go7`), and the base's and the 4-run fill's variants are in the record.
+
 ### Regenerating the grandfather entries
 
 ```sh
@@ -1242,10 +1279,19 @@ commit), the tests tier on this lane's checkout (perf/first-principles `71ab4891
 
 | run | dir (`runs/`) | wall | result |
 |---|---|---|---|
-| full, evidence-warm Go caches | `h4-p1-a8392a002-full-2` | 29 min (15:03 to 15:32 UTC, load 3 to 22) | **PARITY FAIL: 1 lost**, `lsp/hono-f12-p6/0476` (below) |
+| **full, with accumulated Go evidence** (harness `990c9c2fa`) | `h4-p1-a8392a002-full-3` | 22 min (16:35 to 16:57 UTC, load 8 to 20) | **PARITY OK**: 187,174 compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 36 grandfathered, 0 stale; 6 newly good by a referee (below) |
+| full, before accumulated evidence | `h4-p1-a8392a002-full-2` | 29 min (15:03 to 15:32 UTC, load 3 to 22) | PARITY FAIL: 1 lost, `lsp/hono-f12-p6/0476` (below) |
 | quick | `h4-p1-a8392a002-quick` | 8 min | **PARITY OK**: 142,785 compared, all 141,056 base items the accepted manifest requires, 0 not run, 2 grandfathered |
 
-Full, per tier:
+The final full run: cli 170 MATCH (261 s); tests 139,900 PASS, 1 FLAKY, 1,731 IGNORED (218 s); lsp
+2,625 MATCH, 33 GO-BROKEN, every `session end` MATCH (186 s; the three standard sessions imported
+the base's 4 Go logs each, hono and query ran Go 8 times); fuzz 29,955 MATCH, 36 DIFF (all
+grandfathered), 8 GO-BROKEN, 1 JS-AGREES (770 s); corpus 12,727 MATCH (184 s, warm). Newly good by
+a referee, none excused by an entry: `lsp/hono-f12-p6/0295` references (Go's 8 runs differ: one in 8
+gave another order), the 4 umami watch items below, and `fuzz/1:19122` (below). `0476` is
+GO-BROKEN as in the base.
+
+The run before it (`-full-2`), per tier:
 
 | tier | wall | result |
 |---|---|---|
