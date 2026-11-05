@@ -1181,6 +1181,15 @@ the gate to:
 | 5 | the normalizer fingerprint omitted `answer` and `hash` | it covers the format version and every function from answer to hash | `b31deac7d` |
 | 6 | a failed watch construction leaked fds and watches, and fuzz raised | the partial watcher closes its instance and pipe; fuzz falls back to the stat and byte check (the attempt's `watch` says so), no ERROR | `b3f36718c` |
 
+**Round 3 gate:** `tsgo-head-a8392a002-rel` against `base-current` (`h4-p1-a8392a002-full-3`),
+harness `8e8b41b48` (`--accepted-ref` that commit), `runs/h4r3-a8392a002-full`, 24 min, load 4 to
+12: **PARITY OK**. 187,187 items compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not
+good, 36 grandfathered, 0 stale, 0 newly good by a referee. cli 170 MATCH; tests 139,900 PASS, 1 FLAKY
+(`watch_ends_soon_after_sigint_or_sigterm`), 1,731 IGNORED; lsp 2,625 MATCH, 33 GO-BROKEN (every Go
+fill new: `client.mjs` changed; `0476` GO-BROKEN, `go,go2,go4,go5,go7,go8 | go3,go6`); fuzz 29,955
+MATCH, 36 DIFF (all grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. No fuzz or corpus
+attempt needed the stat fallback.
+
 ### Accumulated Go evidence (root's decision, after the first H4 report)
 
 Any output the pinned Go binary has ever produced for the same inputs and settings is a legitimate
