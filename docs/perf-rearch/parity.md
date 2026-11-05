@@ -4,8 +4,8 @@
 (`3e9236361fa9`, `~/.local/bin/tsgo-oracle-3e9236361fa9`, LSP `tsgo-lsp-oracle-3e9236361fa9`)
 byte for byte, except where a referee (see "Referees") accepts a difference. The rewrite lanes run
 it on every change. A change passes when no item that was good in the base is bad now, the run has
-every base item its mode runs, no new item is bad, tsc-rs crashed or timed out nowhere, and no item
-is an ERROR (see "The verdict").
+every item the accepted coverage requires, every known-bad item fails exactly as its accepted
+grandfather entry pins it, no new item is bad, and no item is an ERROR (see "The verdict").
 
 ```sh
 scripts/perf-rearch/parity.sh quick <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main   # ~4 min warm
@@ -22,44 +22,66 @@ RUN`), new items that are not good (`NEW`), items where tsc-rs crashed or timed 
 recovered items, every item that became good by a referee (grouped by status, never cut), the
 grandfathered items with their reasons, FLAKY tests and harness `ERROR`s.
 
-### The verdict (`parity_compare.py compare`; lane H3)
+### The verdict (`parity_compare.py compare`; lanes H3 and H4)
+
+A run is judged by accepted artifacts, never by the candidate's own definitions (lane H4):
+
+- **the base**, the `--base` dir root accepted (`base-current`);
+- **the quick manifest**, `scripts/perf-rearch/parity-quick-manifest.json`: the items a quick run
+  must have;
+- **the grandfather file**, `scripts/perf-rearch/parity-grandfathered.json`: the known-bad items,
+  each pinned to its exact failure.
+
+compare reads the last two at the accepted git ref (`--accepted-ref`, else `$PARITY_ACCEPTED_REF`,
+else `perf/first-principles`), not from the checkout that runs it, and validates both strictly. It
+prints the ref, and where the checkout's own copy differs (a shrunk manifest item by item); the
+accepted copy still decides. A lane that changes either file runs its gate with `--accepted-ref
+HEAD` and says so: root accepts the change by merging it.
 
 PARITY FAIL on any of:
 
-- **LOST:** good in the base, not good now.
-- **NOT RUN:** good in the base, a mode of this run runs it, and the run lacks it.
-  `parity_modes.py` is the one definition of what quick and full run; `parity.sh` takes its
-  settings from it. A quick run against a full base must have every quick item. An item is
-  exempt only when it is positively full-only: a known config or variant that is not quick, a known
-  full-only lsp session, a workspace test binary, a fuzz case at index 1,500 or above, or a corpus
-  case. An unknown name is required. A run with `--tiers` fails on the tiers it left out.
-- **NEW:** not in the base and not good (IGNORED tests excepted; SKIP counts as not good).
-- **CRASH:** tsc-rs crashed or timed out on the item (the row's `rsFailure`, or an lsp detail
-  `tsc-rs: ...`), whatever the base says.
+- **LOST:** good in the base, not good now. No grandfather entry excuses it.
+- **NOT RUN:** a base item, good or known-bad, that the run must have and lacks. A full run must have
+  every base item; a quick run every item the accepted manifest names (its cli items, every answer
+  of its lsp sessions, fuzz cases 0 to 1,499, the go_baselines tests and TestLocal rows). A run with
+  `--tiers` fails on the tiers it left out.
+- **KNOWN-BAD:** a base item that is not good, is still not good, and that no grandfather entry
+  matches exactly: it changed to another failure, became nondeterministic, or was never pinned.
+- **NEW:** not in the base, not good (IGNORED tests excepted; SKIP counts as not good), and no
+  entry matches it.
+- **STALE GRANDFATHER:** an entry whose item the run has and that does not fail exactly as listed
+  (good now: remove the entry; or failing differently), or whose item the run must have and lacks.
 - **ERROR:** any ERROR item, including an input that changed while the tier ran.
+- **INVALID:** an accepted artifact that is missing, unreadable or not exactly its schema.
 
-`scripts/perf-rearch/parity-grandfathered.json` lists known items that NEW or CRASH would otherwise
-fail, each with its status, its `rsFailure` and a reason. An entry excuses its item only while the
-status and `rsFailure` are the listed ones. Every excused item is printed with its reason
-(`GRANDFATHERED`), and every entry that no longer applies is printed as `STALE GRANDFATHER`.
-Only one gate runs at a time, under a lock: the scratch paths are fixed, so the paths in the
-output agree with the cached Go results. The test tier builds and tests the checkout (`--checkout`,
-default the worktree that holds the script). Every other tier runs `<tsgo bin>`.
+A grandfather entry (`parity_grandfather.py`) pins its item by structured evidence: its status and
+rsFailure, the case's content identity, Go's cached result (status, outcome, panic line), the
+attempt labels each mode makes, and the fingerprint every tsc-rs attempt must have (outcome, exit
+code, sha256 of stdout, stderr and the written files, inputs intact). Entries exist for fuzz and
+corpus items, the tiers whose rows carry that evidence. Every excused item is printed with its
+reason (`GRANDFATHERED`). Only one gate runs at a time, under a lock: the scratch paths are fixed,
+so the paths in the output agree with the cached Go results. The test tier builds and tests the
+checkout (`--checkout`, default the worktree that holds the script). Every other tier runs `<tsgo
+bin>`.
 
-## Input identities (`parity_inputs.py`; lane H3)
+## Input identities (`parity_inputs.py`; lanes H3 and H4)
 
 Every Go, Go-N and JS cache key holds the content of what the run reads and the parameters it runs
-with, so a warm cache never answers for other inputs.
+with, so a warm cache never answers for other inputs. Every cache entry also holds that key
+material and is read only when it matches (lane H4).
 
-- **cli:** the realpath of the project dir and `tree_hash` of its whole tree. That covers every
-  directory entry but `.git`: sources, configs, `node_modules`, symlink targets, and the trees that
-  symlinks out of the project point to. The key also holds the config, the arguments, the timeout
-  and the overlay command.
-- **lsp:** the session's definition (project, files, positions, scenario), the resolved project
-  dir and its `tree_hash`, and for scenarios the typings cache their ATA reads
-  (`~/.cache/typescript/7.1`). It also holds the lspdiff sources that script the session, including
-  the stand-in npm, and the harness settings `LSPDIFF_SETTLE_MS` and `LSPDIFF_REQUEST_TIMEOUT_MS`.
-  The JS key adds `tsserver.mjs`.
+- **cli:** the project's path and `tree_hash` of its snapshot (below). That covers every directory
+  entry but `.git`: sources, configs, `node_modules` and symlink targets. The key also holds the
+  config, the arguments, the timeout and the overlay command.
+- **lsp:** the session's definition (project, files, positions, scenario), the project's path and
+  its snapshot's hash, and for scenarios with ATA on the user's npm the snapshot of the typings cache
+  their ATA reads (`~/.cache/typescript/7.1`) and the npm on `PATH` (its realpath and version). It
+  also holds the lspdiff sources that script the session (the stand-in npm, `sandbox.mjs` and
+  `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
+  `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
+  `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
+  module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
+  `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`.
 - **fuzz and corpus:** the case's id and `json_hash` of its content (every file, the options, the
   extra arguments), its directory, `oracle.ARGS`, the timeout and the number of Go runs. A changed
   mutator, seed corpus or parameter makes new Go runs.
@@ -70,14 +92,24 @@ with, so a warm cache never answers for other inputs.
   impossible on that tier, and the summary says why (`jsError`).
 
 `tree_hash` caches each file's sha256 by its (dev, inode, size, mtime, ctime). Every write changes
-ctime, and user space cannot set it, so a cached hash is reused only for the unchanged file. The
-hashes are taken when a tier starts. Every input root is hashed again when the tier ends, and the
-items of a root that changed in between become ERROR (`input changed while the tier ran`).
+ctime, and user space cannot set it, so a cached hash is reused only for the unchanged file.
 
-Cost on MS-A2 (load 45 to 60): the first hash of all 12 project trees and the typings cache took
-273 s (t3code 91 s, vscode 38 s, query 33 s, umami 30 s, zod 25 s). A warm hash of all of them took
-16 s one after another (t3code 5.3 s, query 3.7 s). The cli tier hashes its 10 projects in parallel
-at its start and again at its end, the lsp tier its 4 projects and the typings cache.
+**Snapshots and staged caches (lane H4).** No tier runs a compiler or a language server on a shared
+project dir; see "Gate fixes, round 2" for the details.
+
+- Every project, and the typings cache, is a read-only snapshot
+  (`~/.cache/perf-rearch/parity/snapshots/`): an rsync copy, made once per content and reused while
+  the source keeps it.
+- A run sees the snapshot at the project's own path: the CLI tier's overlay has it as its lower
+  dir, and the LSP tier binds it there. Paths in the output are unchanged, and another process
+  writing into the project changes nothing a run reads.
+- While the tier runs, inotify watches every directory of every snapshot, so a change is seen even
+  when it is undone at once.
+- New Go and JS cache entries are staged (`~/.cache/perf-rearch/parity/stage/`) and published only
+  when the tier ends with its inputs verified clean. A tier whose inputs changed makes the items of
+  that root ERROR and discards every staged entry.
+- The fuzz and corpus tiers write each case's inputs again before every process, and check them
+  after it (inotify while it runs, bytes when it ends).
 
 ## Tiers
 
@@ -113,12 +145,15 @@ Each config runs these variants:
 | `build` | `-b CFG --verbose --pretty false`, run twice (cold, then up to date); the wall clock at the start of each message is masked |
 
 What is compared: the exit code, stdout, stderr, and **every file the run writes** (sha256 of
-each). Each side runs on a fresh **overlayfs view of the project at its own path**:
-`unshare -rm`, then `mount -t overlay` with the project as the lower dir. The configured
-`outDir`, `declarationDir` and `tsBuildInfoFile` therefore stay as they are, paths in the
-output are the project's real paths, the project never changes, and the upper dir is exactly the
-set of written files, including the `.tsbuildinfo` that `--noEmit` still writes for
-composite/incremental configs, and files a second run rewrites or touches.
+each). Each side runs on a fresh **overlayfs view of the project's snapshot at the project's own
+path**: `unshare -rm`, then `mount -t overlay` with the snapshot as the lower dir (lane H4; before,
+the live project). The configured `outDir`, `declarationDir` and `tsBuildInfoFile` therefore stay
+as they are, paths in the output are the project's real paths, neither the project nor the snapshot
+ever changes, and the upper dir is exactly the set of written files, including the `.tsbuildinfo`
+that `--noEmit` still writes for composite/incremental configs, files a second run rewrites or
+touches, and an input a run overwrote or deleted (compared with Go's like any written file). Every
+tsc-rs process counts, also an attempt of a two-run side that ran again after a clock step: a
+crash or timeout in any of them sets `rsFailure` and makes the item a DIFF.
 
 There are 170 items over 23 configs:
 
@@ -141,7 +176,8 @@ of the pin, then the project's package manager with a frozen lockfile and `--ign
 svelte, its type generator). The repo's prepare scripts themselves pin the Node and npm binaries
 by hash and only write under the main checkout's `target/`, so they were not run here. A
 project's first existing dir is used, so the CLI tier prefers the baseline lane's dirs, which
-the benchmarks use. quick runs `noemit`, `emit` and `extdiag` on 8 configs (24 items).
+the benchmarks use. quick runs the 24 items of the quick manifest (`noemit`, `emit` and `extdiag`
+on 8 configs).
 
 ### tests: cargo suites and TestLocal (`parity_tests.py`)
 
@@ -472,7 +508,7 @@ Not every watch scenario keeps ATA on:
 
 | scenario | ATA |
 |---|---|
-| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose content is in their Go cache key ("Input identities"). Their refereed answers are on configured projects |
+| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose snapshot and npm are in their Go cache key ("Input identities"). Since lane H4 every server run starts from that snapshot (an overlay; what ATA's npm writes is thrown away), so a run no longer sees an earlier run's installs. npm itself still reads the registry over the network: that input is not keyed. Their refereed answers are on configured projects |
 | `pkgjson-overlay` | off (lane H2: its npm call raced the overlay steps) |
 | `ata-overlay` | on, deterministic: a private typings cache and the stand-in npm |
 
@@ -485,8 +521,11 @@ the inferred project, overlays and the watchers. For every server run (Go and ts
   offline and takes `ATA_NPM_DELAY_MS` (500) per call. `install types-registry@latest` writes the
   fixture's registry (`ata-fake-lib`, `ata-fake-two`), and `install @types/<x>@latest` copies the
   fixture's typings. It logs every call.
-- After every step the script waits until ATA is idle (`ataIdle`): no npm call in flight, none
-  started for `ATA_IDLE_MS` (1.5 s). It then logs the npm calls since the last wait as an item
+- After every step the script waits until ATA is idle (`ataIdle`). The barrier is the stand-in
+  npm's own log (lane H4): each call writes a start line and, when its work is done, a done line
+  with its pid. ATA is idle when every started call is done, its process has exited, and none started
+  for `ATA_IDLE_MS` (1.5 s). A wait that reaches `ATA_DEADLINE_MS` (60 s) fails that server run
+  (a timeout), never a success. The script then logs the npm calls since the last wait as an item
   (`<step> ata npm`, method `ata/npm`).
 
 The first draft sent its requests while npm ran, and both servers varied from run to run. A request
@@ -1042,7 +1081,89 @@ JS-AGREES). None of the 37 was MATCH in the base:
 - **New Go runs:** `ata-overlay` costs 4 Go runs of about 25 s when its cache entry is made. Since
   the keys are content keys, any change in a project tree now refills that project's entries.
 
-## Referees on the perf head (2026-11-05)
+## Gate fixes, round 2 (lane H4, 2026-11-05)
+
+Astra's re-review of H3 (`reviews/2026-11-05-astra-h3.md`, at `e55c5b993`) found 12 more false-good
+paths; its probes are in `~/.cache/perf-rearch/scratch/review-h3-astra/`. The rules this round holds
+the gate to:
+
+- **Evidence is structural.** Every oracle answer is validated against a schema before use, and every
+  cached item carries the exact inputs and settings that made it and is staged until its run verified
+  clean.
+- **Acceptance comes from accepted artifacts:** the base, the quick manifest and the grandfather
+  file, the last two at the accepted git ref, never from the candidate.
+- **Every tsc-rs process is judged on all its outcomes,** for every attempt: exit code or signal,
+  stdout and stderr, the files it writes, any input it changes, and its shutdown.
+- **A known-bad item is pinned to its exact failure.** Any change fails, nondeterminism always, and
+  an item that starts passing fails until its entry is removed.
+
+| # | finding | fix | where | commit |
+|---|---|---|---|---|
+| 1 | poisoned caches: entries published before the end-of-tier check, so A→B cached B under A and A→B→A escaped | every input is a read-only snapshot (rsync copy, once per content) seen at its own path; inotify on every snapshot dir while the tier runs, plus a stat-identity and content check at its end; cache entries carry their key material, are staged, and are published only after a clean check (else discarded); lspdiff and every server process see only the snapshots | `parity_inputs.py`, `parity_watch.py`, `parity_cli.py`, `parity_lsp.py`, `lspdiff.mjs`, `sandbox.mjs` | `d2996cc09`, `fdaab1abd` |
+| 2 | a timeout, then an exact Go-crash copy, was MATCH | the shortcut needs every attempt (retries and confirmations included) to equal Go's crash | `parity_fuzz.py` `judge` | `d2996cc09` |
+| 3 | a known-bad item could change failure, become nondeterministic or vanish | known-bad items must be present and match their entry exactly; nondeterminism is never excused; a stale entry fails | `parity_compare.py` `judge` | `6e59be5e3` |
+| 4 | grandfather matching by status and a detail substring | entries pin structured evidence: input identity, Go's result, attempt labels per mode, each attempt's fingerprint; strict schema; `parity_grandfather.py` regenerates the 35 entries from evidence runs | `parity_grandfather.py`, `parity-grandfathered.json` | `6e59be5e3`, see below |
+| 5 | an rs-only LSP element could borrow another element's unrefereed fields | an rs-only element needs JS's evidence for the whole element (key and residue, as often) | `referee.mjs` `judge` | `fdaab1abd` |
+| 6 | `success:true, body:{}` from tsserver was empty evidence | a response schema per command (`tsserver.mjs` `BODY`); a body that does not fit is a failed answer | `tsserver.mjs` | `fdaab1abd` |
+| 7 | the quick coverage came from the candidate's own definition | `parity-quick-manifest.json`, read at the accepted ref; the tiers run at least its items; a shrink in the checkout is printed and changes nothing | `parity_modes.py`, `parity_compare.py`, the tiers | `6e59be5e3`, `d2996cc09` |
+| 8 | fuzz and corpus did not see a compiler change its inputs | inputs written again before every process, watched with inotify while it runs and checked byte for byte after it; tsc-rs: rsFailure `input`; Go or JS: ERROR, never cached | `oracle.py`, `parity_fuzz.py` | `d2996cc09` |
+| 9 | an LSP crash or non-zero exit after the last answer passed; stderr not judged | a mandatory session result per server run (shutdown answer, exit code or signal, stderr crash lines, inputs changed); item `session end`; an unclean JS run is no evidence | `sandbox.mjs`, `client.mjs`, `tsserver.mjs`, `lspdiff.mjs` | `fdaab1abd` |
+| 10 | request identity was label plus occurrence | step, method and canonical params (keys sorted, root masked); a run that asks shared requests in another order is a DIFF (Go: GO-BROKEN; JS: no evidence) | `lspdiff.mjs` | `fdaab1abd` |
+| 11 | the ATA wait could succeed with npm running; ATA settings not keyed | the stand-in npm's start/done lines paired by pid, the process checked gone, the deadline a failure; `settings.mjs` holds every setting and parity_lsp.py keys all of them | `scenario.mjs`, `fake-npm.mjs`, `settings.mjs`, `parity_lsp.py` | `fdaab1abd` |
+| 12 | root's entry outside `items` was ignored | strict schema: unknown or misplaced keys make the file invalid, and compare fails loudly | `parity_grandfather.py` | `6e59be5e3` |
+
+### Decisions
+
+- **stderr of the language servers is checked for crash lines, not compared with Go's.** Both servers
+  log to stderr with timings and other wording (tsc-rs wrote 73 to 147 bytes in the probes, Go
+  none), so a byte comparison would fail on every run. A line matching `sandbox.mjs` `CRASH_RE`
+  (Go's `panic:`, `fatal error:`, goroutine traces and signal lines; Rust's `panicked at` and stack
+  overflow; an abort or core dump) always fails the session, whatever the exit code. The whole stream
+  is hashed into the session result.
+- **Shutdown.** The client must get an answer to `shutdown` without an error in
+  `LSPDIFF_SHUTDOWN_MS` (30 s), and after `exit` the server must exit by itself with code 0 in that
+  time; otherwise it is killed and the session is not clean. The client used to send `shutdown` with
+  `params: null`, which Go and tsc-rs both refuse with `InvalidParams: expected no params, got null`:
+  H3's client swallowed that, the session result found it. It now sends no params. A server's
+  child (ATA's npm) can keep the stderr pipe open after the server exited; the result waits for it at
+  most 2 s (`stderr.complete`). Exit took 13 to 160 ms for Go and up to 2.6 s for tsc-rs (fsevents)
+  at a load of 50 to 90.
+- **CLI written files.** A cli run that overwrites or deletes an input does so in the overlay's
+  upper dir, where it is a written file (or a whiteout) and is compared with Go's like any other. A
+  run never reaches the snapshot or the project. A project with an earlier build in its tree makes
+  such writes legitimately (Go makes the same ones).
+- **LSP inputs.** A server that writes into its project fails its session (rsFailure `input`). The
+  typings cache is writable in each server's overlay (ATA installs there), starts from the same
+  snapshot in every run, and what was written is only counted (`cacheWrites`). In fixture scenarios
+  (`fsevents`, `pkgjson-overlay`, `ata-overlay`) the scenario writes the fixture itself; after each
+  run the fixture must hold exactly what the script made it, or the session is not clean.
+- **Accepted ref for this lane.** The manifest is new and the grandfather file has a new format, so
+  neither is on `perf/first-principles` yet: this lane's gate runs pass `--accepted-ref` with its own
+  commit, which the output names. After the merge, the default ref has them.
+- **Base.** `base-current` (`head-efef52257-full`) stays. Its fuzz rows hold no attempts, since the
+  old harness did not run tsc-rs on Go-failed cases, so the 35 entries cannot come from it. They come
+  from two evidence runs of the base's own binary (`tsgo-head-efef52257-rel`, the same Go) under this
+  harness. The compare needs only the base's statuses, which say those 35 were known-bad (GO-FAIL). No
+  new base is needed.
+
+### Regenerating the grandfather entries
+
+```sh
+B=~/.cache/perf-rearch/bins/tsgo-head-efef52257-rel R=~/.cache/perf-rearch/parity/runs
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode full  --out $R/h4-gf-evidence-full
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode quick --out $R/h4-gf-evidence-quick
+scripts/perf-rearch/parity_grandfather.py regen --full $R/h4-gf-evidence-full --quick $R/h4-gf-evidence-quick \
+    --old $R/h3-head-efef52257-full-warm
+scripts/perf-rearch/parity_grandfather.py check
+```
+
+`evidence` runs the fuzz tier on exactly the listed cases, as the mode runs them, under the gate
+lock. `regen` keeps the item list and the reasons and rebuilds each entry from the rows. It refuses
+an item whose attempts differ from each other, whose row lacks the evidence, or whose quick and full
+rows disagree. `--old` prints, per item, whether the outcome kinds and Go's panic line agree with an
+older run's.
+
+<!-- H4-RESULTS -->
 
 ## Referees on the perf head (2026-11-05)
 
@@ -1219,13 +1340,17 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - **Inputs.** 10 projects (23 configs), 4 LSP projects plus the watch-small fixture, 42,727 test-case runs (30,000 fuzz plus
   12,727 corpus). Corpus cases with `@link`, `@symlink`, `@currentDirectory`, their own
   `tsconfig.json` or `..` paths are skipped by difffuzz's seed parser (TestLocal covers them).
-- **Project dirs owned by another lane.** The baseline lane owns most project dirs. Any change
-  there (an edit, a reinstall, a build into the tree) changes the tree hash and therefore the Go
-  cache key, never the result silently, and a change during a tier is an ERROR. But a changed input
-  can turn base MATCHes into new results, so rerun the base after one.
-- **Inputs outside the hashed trees.** The Go and tsc-rs binaries are keyed by their sha, and JS by
-  its package. The node that runs lspdiff, the kernel and the environment variables the harness
-  passes through (`PATH`, `HOME`) are not keyed.
+- **Project dirs owned by another lane.** The baseline lane owns most project dirs. Since lane H4
+  a run reads only snapshots of them, so an edit there during a run changes nothing the run sees; the
+  next run snapshots the new content, which changes the Go cache keys. A changed input can still
+  turn base MATCHes into new results, so rerun the base after one.
+- **Inputs outside the snapshots.** The Go and tsc-rs binaries are keyed by their sha, and JS by its
+  package. The node that runs lspdiff, the kernel and the environment variables the harness passes
+  through (`PATH`, `HOME`) are not keyed, and neither is the npm registry the user-npm watch
+  scenarios' ATA reads over the network (their npm's path and version are).
+- **Transient changes of a fixture scenario's dir by a server.** The fixture must hold exactly what
+  the script made it after each run, but a change a server makes and undoes inside its own run is not
+  seen there (the script writes the same dir; inotify cannot tell the writers apart).
 
 ## Files
 
@@ -1233,8 +1358,12 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `parity_cli.py`, `parity_tests.py`, `parity_lsp.py`, `parity_fuzz.py`: the tiers. Each prints
   its usage with `--help`.
 - `parity_compare.py`: `merge`, `compare` and `known`; `parity_modes.py`: what quick and full run
-  (`parity.sh` and `compare` read it); `parity_inputs.py`: the input content hashes;
-  `parity-grandfathered.json`: the known items excused from NEW and CRASH, with reasons.
+  and require (`parity.sh` and `compare` read it); `parity-quick-manifest.json`: the accepted quick
+  coverage; `parity_inputs.py`: content hashes, snapshots and staged caches; `parity_watch.py`: the
+  inotify watch; `parity-grandfathered.json`: the known-bad items pinned to their failure;
+  `parity_grandfather.py`: its schema, matcher, evidence runs and `regen`.
+- `parity_h4_test.py` and `vendor/lspdiff/selftest/h4-selftest.mjs`: lane H4's negative controls
+  (about 1 minute together).
 - `parity_referees.py`: GO-BROKEN, GO-PARTITION, JS-AGREES and the diagnostic parser;
   `parity_referees_test.py`: their self-test (fake compilers, every classification path, about 2
   minutes; `SELFTEST OK`).
@@ -1244,10 +1373,11 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
   `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
-  the normalizers and the JS-AGREES judge, `selftest/` their self-test) and
-  `vendor/difffuzz/` (feat/difffuzz 033e55442, unchanged).
+  the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process and its session result,
+  `settings.mjs` every setting, `selftest/` their self-tests) and `vendor/difffuzz/` (feat/difffuzz
+  033e55442; `oracle.py` checks the inputs since lane H4).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `js-cache/`,
-  `runs/`, `logs/` and `scratch/`.
+  `snapshots/`, `stage/`, `runs/`, `logs/` and `scratch/`.
 
 
 ## Clock steps on this machine (2026-11-04)
