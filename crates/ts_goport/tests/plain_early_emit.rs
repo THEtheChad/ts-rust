@@ -539,7 +539,7 @@ fn plain_early_emit_reports_failed_writes_as_the_barrier() {
         "dir at output",
         &["--declaration", "--sourceMap"],
         // A directory at an output path keeps the barrier
-        // (`plain_emit_outputs_are_regular_files`).
+        // (`program_emit::start_plain_emit`).
         Start::Late,
         Some(&dir_at_output),
     );

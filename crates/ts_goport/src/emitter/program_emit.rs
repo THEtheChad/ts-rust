@@ -11,6 +11,7 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use super::emitter::{DeclarationPrint, EmitOnly, Emitter, JsPrint, js_emit_checker_reason};
+use super::output_aliases;
 use super::phase_times::{self, Route};
 use crate::frontend::outputpaths::{ForceEmitPaths, OutputPaths};
 use crate::frontend::tspath::{Path, has_extension, path_is_relative, to_path};
@@ -158,23 +159,36 @@ fn emit_results_with(
         }
     }
 
-    let target = EmitterOptions::of(&options);
+    let mut target = EmitterOptions::of(&options);
     let source_files = get_source_files_to_emit(
         options.target_source_files.as_deref(),
         target.force_dts_emit(),
         target.force_js_emit(),
     );
+    let aliases = alias_sink(&source_files, target.emit_only, |_| {
+        target.force_emit_paths()
+    });
+    if let Some(aliases) = &aliases {
+        target.write_file = target
+            .write_file
+            .map(|write_file| aliases.recorder(write_file));
+    }
     phase_times::route(Route::StartAfterCheck, source_files.len());
     let pooled = start_emit_files_with_pool(&source_files, |_| target.clone(), wrap)
         .map(PendingPoolEmit::wait);
-    match pooled {
+    let mut results = match pooled {
         Some(results) => results,
-        None => run_emit_jobs(source_files, move |source_file| {
+        None => run_emit_jobs(source_files.clone(), move |source_file| {
             let result = wrap(&|| emit_source_file(source_file, &target));
             log_checker_emit(source_file);
             result
         }),
+    };
+    if let Some(aliases) = aliases {
+        aliases.finish(&source_files);
+        apply_deferred_outcomes(&source_files, &mut results, aliases.take());
     }
+    results
 }
 
 /// Adds the emit of `source_file` to the checker call log
@@ -226,28 +240,41 @@ enum PendingPlainFiles {
     Checkers(PendingCheckerJobs<EmitResult>),
 }
 
-/// One write of an emit, held until the check ends (`StartedPlainEmit`).
+/// One write of an emit that waits (`DeferredWrites`), with the real
+/// `WriteFile` that makes it.
 struct DeferredWrite {
+    write_file: WriteFile,
     file_name: String,
     text: String,
     data: WriteFileData,
 }
 
-/// The writes of a plain early emit, by source file.
+/// The writes of an emit that wait, by source file.
 ///
-/// Until `open` (the check and the global diagnostics reads ended), every
-/// write waits here and its emitter sees a success. `open` then makes the
-/// waiting writes on a few threads, each file's in its order (the source
-/// map then the JS file, then the declaration map then the d.ts file; a
-/// file's d.ts part writes only after its JS part ended,
-/// `Emitter::wait_for_js_part`). After `open`, a write of a file with no
-/// write waiting is made at once by its emitter, as in the barrier path,
-/// so it gets its own result; a write of a file whose earlier writes still
-/// wait goes behind them. The outcome of each write that waited is applied
-/// to its file's result at the end (`apply_deferred_outcomes`).
+/// Two kinds of write wait here:
+///
+/// - **Held** (the plain early emit, a sink made closed): until `open`
+///   (the check and the global diagnostics reads ended), every write
+///   waits and its emitter sees a success. `open` then makes the waiting
+///   writes on a few threads, each file's in its order (the source map
+///   then the JS file, then the declaration map then the d.ts file; a
+///   file's d.ts part writes only after its JS part ended,
+///   `Emitter::wait_for_js_part`). After `open`, a write of a file with no
+///   write waiting is made at once by its emitter, as in the barrier path,
+///   so it gets its own result; a write of a file whose earlier writes
+///   still wait goes behind them.
+/// - **Aliased** (`output_aliases`): a write of an output whose
+///   destination another output of the emit may share waits, open or not,
+///   until `finish`, which makes them one at a time in program file
+///   order, each file's in its order. So the outputs that share a file end
+///   as Go's would with its emit goroutines run in file order, on every
+///   run, and the writes to other files stay parallel.
+///
+/// The outcome of each write that waited is applied to its file's result
+/// at the end (`apply_deferred_outcomes`).
 struct DeferredWrites {
-    /// The real writes.
-    write_file: WriteFile,
+    /// The output names whose writes wait until `finish`.
+    aliased: FxHashSet<String>,
     state: Mutex<SinkState>,
 }
 
@@ -263,10 +290,12 @@ struct SinkState {
 
 #[derive(Default)]
 struct FileWrites {
-    /// The writes that wait, in order.
+    /// The held writes that wait, in order.
     pending: std::collections::VecDeque<DeferredWrite>,
-    /// A flush thread makes this file's waiting writes.
+    /// A flush thread makes this file's held writes.
     writing: bool,
+    /// The aliased writes, in order (`finish`).
+    aliased: Vec<DeferredWrite>,
     /// Each made write that waited: its file name and outcome.
     outcomes: Vec<(String, WriteOutcome)>,
     /// The TS5033 diagnostics of the failed writes that waited.
@@ -274,40 +303,73 @@ struct FileWrites {
 }
 
 impl DeferredWrites {
+    /// A sink whose `aliased` writes wait until `finish`; with `held`, the
+    /// other writes wait until `open`, else they are made at once.
+    fn new(aliased: FxHashSet<String>, held: bool) -> Arc<DeferredWrites> {
+        Arc::new(DeferredWrites {
+            aliased,
+            state: Mutex::new(SinkState {
+                open: !held,
+                ..SinkState::default()
+            }),
+        })
+    }
+
+    /// The `WriteFile` that the emitters write to the real `write_file`
+    /// with, through this sink.
+    fn recorder(self: &Arc<Self>, write_file: WriteFile) -> WriteFile {
+        let writes = Arc::clone(self);
+        Arc::new(
+            move |file_name: &str, text: &str, data: &mut WriteFileData| {
+                writes.write(&write_file, file_name, text, data)
+            },
+        )
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, SinkState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The `WriteFile` of the emitters.
-    fn write(&self, file_name: &str, text: &str, data: &mut WriteFileData) -> Result<(), String> {
+    /// The `WriteFile` of the emitters, over the real `write_file`.
+    fn write(
+        &self,
+        write_file: &WriteFile,
+        file_name: &str,
+        text: &str,
+        data: &mut WriteFileData,
+    ) -> Result<(), String> {
+        let aliased = self.aliased.contains(file_name);
         let mut state = self.lock();
         if state.closed {
             return Ok(());
         }
-        if state.open
+        if !aliased
+            && state.open
             && state
                 .files
                 .get(&data.source_file)
                 .is_none_or(|file| file.pending.is_empty() && !file.writing)
         {
             drop(state);
-            return (self.write_file)(file_name, text, data);
+            return write_file(file_name, text, data);
         }
-        state
-            .files
-            .entry(data.source_file)
-            .or_default()
-            .pending
-            .push_back(DeferredWrite {
-                file_name: file_name.to_owned(),
-                text: text.to_owned(),
-                data: data.clone(),
-            });
+        let write = DeferredWrite {
+            write_file: Arc::clone(write_file),
+            file_name: file_name.to_owned(),
+            text: text.to_owned(),
+            data: data.clone(),
+        };
+        let file = state.files.entry(data.source_file).or_default();
+        if aliased {
+            file.aliased.push(write);
+        } else {
+            file.pending.push_back(write);
+        }
         Ok(())
     }
 
-    /// Makes the writes that wait, on a few threads, and lets later writes
-    /// through (see the type). Returns when no write waits.
+    /// Makes the held writes, on a few threads, and lets later writes
+    /// through (see the type). Returns when no held write waits.
     fn open(&self) {
         let _flush_timer = phase_times::start_flush();
         let queue: Vec<Node> = {
@@ -355,12 +417,12 @@ impl DeferredWrites {
         });
     }
 
-    /// Makes the waiting writes of `node`, also those that its emitter
-    /// adds meanwhile, then lets its writes through.
+    /// Makes the held writes of `node`, also those that its emitter adds
+    /// meanwhile, then lets its writes through.
     fn flush_file(&self, node: Node) {
         let _timer = phase_times::start(phase_times::Phase::Write);
         loop {
-            let mut write = {
+            let write = {
                 let mut state = self.lock();
                 if state.closed {
                     return;
@@ -372,47 +434,79 @@ impl DeferredWrites {
                 };
                 write
             };
-            // The write gets the `WriteFileData` that its emitter made. The
-            // early emit runs only with the OS write (`os_write_file`),
-            // which reads none of it.
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                test_write_hook(&write.file_name);
-                (self.write_file)(&write.file_name, &write.text, &mut write.data)
-            }))
-            .unwrap_or_else(|payload| {
-                // No write after a panicking write: the panic goes on to
-                // `StartedPlainEmit`'s drop, which cancels and drains.
-                self.close();
-                resume_unwind(payload)
-            });
-            let mut state = self.lock();
-            // Another flush thread's write panicked and closed the writes
-            // (`close` clears `files`): stop without a second panic, so that
-            // panic is the one that goes on.
-            if state.closed {
+            if !self.make(node, write) {
                 return;
             }
-            let file = state.files.get_mut(&node).expect("a flushed file");
-            match result {
-                Ok(()) => file.outcomes.push((
-                    write.file_name,
-                    WriteOutcome::Written(write.data.skipped_dts_write),
-                )),
-                Err(err) => {
-                    // A source map is `<file>.map` (`outputpaths`), and Go's
-                    // TS5033 for it names the file it maps.
-                    let message_file = write
-                        .file_name
-                        .strip_suffix(".map")
-                        .unwrap_or(&write.file_name);
-                    file.failures.push(new_compiler_diagnostic(
-                        diag::Could_not_write_file_0_Colon_1,
-                        args![message_file, err],
-                    ));
-                    file.outcomes.push((write.file_name, WriteOutcome::Failed));
+        }
+    }
+
+    /// Makes the aliased writes, one at a time, in the order of `files`
+    /// (the emit's files, in program order), each file's in its order.
+    /// The caller calls it once every emit job of the sink ended, after
+    /// `open` for a held sink.
+    fn finish(&self, files: &[Node]) {
+        let _timer = phase_times::start(phase_times::Phase::Write);
+        for &node in files {
+            let writes = {
+                let mut state = self.lock();
+                if state.closed {
+                    return;
+                }
+                match state.files.get_mut(&node) {
+                    Some(file) => std::mem::take(&mut file.aliased),
+                    None => continue,
+                }
+            };
+            for write in writes {
+                if !self.make(node, write) {
+                    return;
                 }
             }
         }
+    }
+
+    /// Makes one write that waited and records its outcome for `node`.
+    /// False when the writes closed meanwhile.
+    fn make(&self, node: Node, mut write: DeferredWrite) -> bool {
+        // The write gets the `WriteFileData` that its emitter made.
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            test_write_hook(&write.file_name);
+            (write.write_file)(&write.file_name, &write.text, &mut write.data)
+        }))
+        .unwrap_or_else(|payload| {
+            // No write after a panicking write: the panic goes on to the
+            // owner (`StartedPlainEmit`'s drop cancels and drains).
+            self.close();
+            resume_unwind(payload)
+        });
+        let mut state = self.lock();
+        // Another flush thread's write panicked and closed the writes
+        // (`close` clears `files`): stop without a second panic, so that
+        // panic is the one that goes on.
+        if state.closed {
+            return false;
+        }
+        let file = state.files.get_mut(&node).expect("a file with writes");
+        match result {
+            Ok(()) => file.outcomes.push((
+                write.file_name,
+                WriteOutcome::Written(write.data.skipped_dts_write),
+            )),
+            Err(err) => {
+                // A source map is `<file>.map` (`outputpaths`), and Go's
+                // TS5033 for it names the file it maps.
+                let message_file = write
+                    .file_name
+                    .strip_suffix(".map")
+                    .unwrap_or(&write.file_name);
+                file.failures.push(new_compiler_diagnostic(
+                    diag::Could_not_write_file_0_Colon_1,
+                    args![message_file, err],
+                ));
+                file.outcomes.push((write.file_name, WriteOutcome::Failed));
+            }
+        }
+        true
     }
 
     /// Makes no write from now on, and drops every waiting write (a
@@ -430,11 +524,31 @@ impl DeferredWrites {
             state
                 .files
                 .values()
-                .all(|file| file.pending.is_empty() && !file.writing),
+                .all(|file| file.pending.is_empty() && !file.writing && file.aliased.is_empty()),
             "a deferred write was not made"
         );
         std::mem::take(&mut state.files)
     }
+}
+
+/// PORT: not in Go (determinism). The sink of an emit of `files` (each
+/// with its force flags) whose outputs may share a destination
+/// (`output_aliases`), or None when none do. A single-threaded emit makes
+/// its writes one at a time in its own job order (Go's
+/// `singleThreadedWorkGroup` order), and a signature emit writes no file,
+/// so neither needs one. Loading thread.
+fn alias_sink(
+    files: &[Node],
+    emit_only: EmitOnly,
+    force: impl Fn(Node) -> ForceEmitPaths,
+) -> Option<Arc<DeferredWrites>> {
+    if single_threaded() || emit_only == EmitOnly::BuilderSignature || files.len() < 2 {
+        // One file's outputs can still share a file; its writes run in
+        // order on one emitter, as Go's do.
+        return None;
+    }
+    let scan = output_aliases::scan(&output_aliases::output_paths(files, force));
+    (!scan.aliased.is_empty()).then(|| DeferredWrites::new(scan.aliased, false))
 }
 
 /// PORT: not in Go (tests, feature `test-hooks`).
@@ -458,38 +572,6 @@ fn test_write_hook(file_name: &str) {
 #[cfg(not(feature = "test-hooks"))]
 #[inline(always)]
 fn test_write_hook(_file_name: &str) {}
-
-/// PORT: not in Go (perf). True when no output path of the plain emit is
-/// a file system entry other than a regular file (a directory, a FIFO, a
-/// device, a socket, a symlink). The early emit holds its writes and makes
-/// them on a few threads after the check; a write that blocks (opening a
-/// FIFO with no reader) could hold back the other outputs that the
-/// barrier path writes. With such an entry the program keeps the barrier.
-/// Loading thread; it stats every output path.
-#[must_use]
-pub fn plain_emit_outputs_are_regular_files() -> bool {
-    let host = new_emit_host_without_checker();
-    get_source_files_to_emit(None, false, false)
-        .into_iter()
-        .all(|file| {
-            let paths =
-                get_output_paths_for_source_file(file, host.as_ref(), ForceEmitPaths::default());
-            [
-                paths.js_file_path(),
-                paths.source_map_file_path(),
-                paths.declaration_file_path(),
-                paths.declaration_map_path(),
-            ]
-            .into_iter()
-            .filter(|path| !path.is_empty())
-            .all(|path| {
-                // The same OS path the write uses (`os_path`), so a name that is
-                // not UTF-8 is checked where it will be written.
-                std::fs::symlink_metadata(crate::frontend::vfs::os_path(path))
-                    .map_or(true, |meta| meta.file_type().is_file())
-            })
-        })
-}
 
 /// Set when a plain early emit is cancelled (`StartedPlainEmit` dropped
 /// without a wait): its emit jobs that have not started yet return an
@@ -526,8 +608,10 @@ fn plain_emit_wrap(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
 /// file, `EmitOnly::All`, no `force_emit`, and a `write_file`. With the
 /// rules, `noEmit` and `noEmitOnError` are off, so `handle_no_emit_options`
 /// returns None, and `--singleThreaded` and a trace are off, so the jobs
-/// run in file order and write no trace event.
-pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
+/// run in file order and write no trace event. None, with nothing sent,
+/// when an output path is not a regular file (see the body): the emit
+/// then runs after the check.
+pub fn start_plain_emit(options: &EmitOptions) -> Option<StartedPlainEmit> {
     debug_assert!(
         options.target_source_files.is_none()
             && options.emit_only == EmitOnly::All
@@ -544,25 +628,27 @@ pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
         .write_file
         .clone()
         .expect("start_plain_emit: the early emit needs a WriteFile");
+    let source_files = get_source_files_to_emit(None, false, false);
+    // The early emit holds its writes and makes them on a few threads
+    // after the check; a write that blocks (opening a FIFO with no reader)
+    // could hold back the other outputs that the barrier path writes. So
+    // with an output path that exists and is not a regular file (a
+    // directory, a FIFO, a device, a socket, a symlink) the program keeps
+    // the barrier. The scan also finds the outputs that share a file
+    // (`output_aliases`), whose writes wait until the emit ends.
+    let scan = output_aliases::scan(&output_aliases::output_paths(&source_files, |_| {
+        ForceEmitPaths::default()
+    }));
+    if !scan.all_regular {
+        return None;
+    }
     PLAIN_EMIT_CANCELLED.store(false, std::sync::atomic::Ordering::Release);
-    let writes = Arc::new(DeferredWrites {
-        write_file: write_file.clone(),
-        state: Mutex::default(),
-    });
-    let record: WriteFile = {
-        let writes = Arc::clone(&writes);
-        Arc::new(
-            move |file_name: &str, text: &str, data: &mut WriteFileData| {
-                writes.write(file_name, text, data)
-            },
-        )
-    };
+    let writes = DeferredWrites::new(scan.aliased, true);
     let target = EmitterOptions {
         emit_only: options.emit_only,
         force_emit: options.force_emit,
-        write_file: Some(record),
+        write_file: Some(writes.recorder(write_file.clone())),
     };
-    let source_files = get_source_files_to_emit(None, false, false);
     phase_times::route(Route::StartPlainEarly, source_files.len());
     let files = match start_emit_files_with_pool(&source_files, |_| target.clone(), plain_emit_wrap)
     {
@@ -576,13 +662,13 @@ pub fn start_plain_emit(options: &EmitOptions) -> StartedPlainEmit {
             },
         )),
     };
-    StartedPlainEmit {
+    Some(StartedPlainEmit {
         files: Some(files),
         source_files,
         write_file,
         writes,
         fingerprint: crate::program::bind_thread_fingerprint(),
-    }
+    })
 }
 
 impl StartedPlainEmit {
@@ -626,6 +712,7 @@ impl StartedPlainEmit {
             PendingPlainFiles::Pool(pool) => pool.wait(),
             PendingPlainFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
         };
+        self.writes.finish(&self.source_files);
         apply_deferred_outcomes(&self.source_files, &mut results, self.writes.take());
         combine_emit_results(results)
     }
@@ -785,6 +872,9 @@ enum PendingBatch {
     Sent {
         has_file: Vec<bool>,
         files: PendingFiles,
+        /// The sink of the outputs that share a file (`alias_sink`), with
+        /// the files of the jobs in their order.
+        aliases: Option<(Arc<DeferredWrites>, Vec<Node>)>,
     },
 }
 
@@ -799,15 +889,23 @@ impl PendingEmitBatch {
     /// order: the result of `emit_batch_with`.
     #[must_use]
     pub fn wait(self) -> Vec<EmitResult> {
-        let (has_file, files) = match self.0 {
+        let (has_file, files, aliases) = match self.0 {
             PendingBatch::Done(results) => return results,
-            PendingBatch::Sent { has_file, files } => (has_file, files),
+            PendingBatch::Sent {
+                has_file,
+                files,
+                aliases,
+            } => (has_file, files, aliases),
         };
         let mut results = match files {
             PendingFiles::Pool(pool) => pool.wait(),
             PendingFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
+        };
+        if let Some((aliases, files)) = aliases {
+            aliases.finish(&files);
+            apply_deferred_outcomes(&files, &mut results, aliases.take());
         }
-        .into_iter();
+        let mut results = results.into_iter();
 
         // `combine_emit_results` of one result is that result.
         has_file
@@ -883,6 +981,17 @@ pub fn start_emit_batch_with(
     // batch replaces, so each checker does the same work in the same order.
     // With the pool, no trace is written (`emit_pool_enabled`), so there is
     // no trace event per target.
+    let aliases = alias_sink(&files, EmitOnly::All, |file| {
+        file_targets[&file].force_emit_paths()
+    });
+    if let Some(aliases) = &aliases {
+        for target in file_targets.values_mut() {
+            target.write_file = target
+                .write_file
+                .take()
+                .map(|write_file| aliases.recorder(write_file));
+        }
+    }
     phase_times::route(Route::StartBatch, files.len());
     let pooled = start_emit_files_with_pool(&files, |file| file_targets[&file].clone(), wrap);
     let jobs = match pooled {
@@ -906,6 +1015,7 @@ pub fn start_emit_batch_with(
     PendingEmitBatch(PendingBatch::Sent {
         has_file,
         files: jobs,
+        aliases: aliases.map(|aliases| (aliases, files)),
     })
 }
 
