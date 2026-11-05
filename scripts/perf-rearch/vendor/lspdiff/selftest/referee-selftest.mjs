@@ -195,10 +195,12 @@ if (!process.argv.includes("--unit")) {
   const at = (re) => r3.items.findIndex((it) => re.test(it.step));
   const [hang, crash] = [at(/^src\/a\.ts:5:16 references$/), at(/^src\/b\.ts:2:16 hover$/)];
   const before = r3.items.slice(0, hang);
-  const after = r3.items.slice(hang);
+  const after = r3.items.slice(hang).filter((it) => !it.method.startsWith("server/")); // answers, not the run-level items
   check("answers before Go's first crash or hang are MATCH", hang > 0 && before.every((it) => it.status === "MATCH"), JSON.stringify(before.filter((it) => it.status !== "MATCH").slice(0, 3)));
   check("a Go timeout makes the answers from there GO-BROKEN", after.length > 0 && after.every((it) => it.status === "GO-BROKEN" && /go2 timed out/.test(it.detail)), JSON.stringify(after.find((it) => it.status !== "GO-BROKEN" || !/go2 timed out/.test(it.detail))));
-  check("a Go crash is named in the detail from the crashed request on", crash > hang && r3.items.slice(crash).every((it) => /go crashed .*server exited \(3\)/.test(it.detail)), JSON.stringify(r3.items[crash]));
+  // The run-level items (server/session, server/order: lane H4) judge whole runs, not answers.
+  const answers3 = r3.items.slice(crash).filter((it) => !it.method.startsWith("server/"));
+  check("a Go crash is named in the detail from the crashed request on", crash > hang && answers3.length > 0 && answers3.every((it) => /go crashed .*server exited \(3\)/.test(it.detail)), JSON.stringify(r3.items[crash]));
   check("the GO-BROKEN answers were confirmed by one more tsc-rs run", /rs-confirm: \d+ answers/.test(r3.stdout));
 
   // ---- part 2b: negative controls through lspdiff (lane H3) ----------------------------------
@@ -214,7 +216,7 @@ if (!process.argv.includes("--unit")) {
   };
   const fjs = lspdiffWith("failing-js", ["--js-kinds", "textDocument/references"], { jsServer: failing, proxyRules: [rules[2]] });
   const fdrop = find(fjs.items, /^src\/a\.ts:5:16 references$/);
-  check("negative control: finding 1: a failing tsserver gives no JS-AGREES (dropped reference)", fdrop.length > 0 && fdrop.every((it) => it.status === "DIFF" && /JS failed/.test(it.js?.reason ?? "")), JSON.stringify(fdrop).slice(0, 300) + (fjs.error ?? ""));
+  check("negative control: finding 1: a failing tsserver gives no JS-AGREES (dropped reference)", fdrop.length > 0 && fdrop.every((it) => it.status === "DIFF" && /JS failed|is no evidence/.test(it.js?.reason ?? "")), JSON.stringify(fdrop).slice(0, 300) + (fjs.error ?? ""));
   // Finding 5: the confirming run is a complete tsc-rs run. Both sides are proxies (runs: go 1, go2
   // 2, rs 3, rs-confirm 4); Go's run 1 crashes late, so the later answers are GO-BROKEN and need a
   // confirming run. Run 4 changes an early MATCH answer, or crashes at the first hover.

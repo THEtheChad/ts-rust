@@ -338,7 +338,7 @@ def cli_projects(root):
 def run_cli(root, bins, projects, out, *extra):
     cmd = [sys.executable, '-I', str(HERE / 'parity_cli.py'), '--rs', str(bins['rs']), '--go', str(bins['go']),
            '--js', str(bins['js']), '--projects', str(projects), '--cache', str(root / 'go-cache'),
-           '--out', str(root / out), '--jobs', '4', *extra]
+           '--out', str(root / out), '--jobs', '4', '--snapshots', str(root / 'snapshots'), *extra]
     p = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'HOME': str(Path.home())})
     if p.returncode:
         print(p.stdout[-2000:], p.stderr[-2000:])
@@ -434,16 +434,20 @@ def fuzz(root, bins, state):
     parity_fuzz.WORK = root / 'fuzz-work'
     cache, js_cache, out = root / 'fuzz-cache', root / 'fuzz-js-cache', root / 'fuzz-out'
     cache.mkdir()
+    import parity_inputs
+    stage = parity_inputs.Stage('selftest-fuzz')
     for i, s in enumerate(names):
         status, sub, _, rs_runs = FUZZ_EXPECT[s]
         args = argparse.Namespace(corpus=True, go=str(bins['go']), rs=str(bins['rs']), js=str(bins['js']), timeout=3,
-                                  rs_runs=rs_runs, referees=True, referee_all=False, js_cache=js_cache)
-        _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, i)
+                                  rs_runs=rs_runs, referees=True, referee_all=False, js_cache=js_cache,
+                                  go_sha='selftest-go', js_identity='selftest-js')
+        _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, i, stage)
         extra = True
         if s == 'slow':
+            staged = stage.staged(cache)
             extra = row.get('referees', {}).get('partition', {}).get('failed') == [16] \
-                and not list(cache.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c16.pkl')) \
-                and list(cache.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c8.pkl'))
+                and not list(staged.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c16.pkl')) \
+                and list(staged.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c8.pkl'))
         if s == 'show':
             extra = row['referees']['partition'] == {'skipped': '--showConfig prints the checker count'}
         if s == 'nondet':
@@ -460,21 +464,36 @@ def fuzz(root, bins, state):
           parity_fuzz.diff_kind({'status': 'DIFF', 'detail': 'go-broken (x), tsc-rs timed out too'}) == 'go-broken (x), tsc-rs timed out too')
     before = len(calls(state))
     args.rs_runs, args.timeout = 2, 3
-    _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, names.index('jsagree'))
+    _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, names.index('jsagree'), stage)
     new = [c for c in calls(state)[before:] if not c.startswith('rs ')]
     check('corpus: second run: Go and JS results come from the cache', new == [] and row['status'] == 'JS-AGREES', (new, row))
     # Finding 8: a case whose content changed at the same index must not reuse Go's cached result.
     i = names.index('match')
     corpus[i] = {**corpus[i], 'files': {**corpus[i]['files'], 'a.ts': 'export const changed = 1;\n'}}
     before = len(calls(state))
-    parity_fuzz.run_case(args, corpus, cache, out, i)
+    parity_fuzz.run_case(args, corpus, cache, out, i, stage)
     go_calls = [c for c in calls(state)[before:] if c.startswith('go match')]
     check('negative control: finding 8: a changed fuzz/corpus case at the same index runs Go again', len(go_calls) == 2, go_calls)
+    stage.discard()
 
 
 # ---- parity_compare -------------------------------------------------------------------------
 
+def accepted_dir(root, manifest=None, grand=None):
+    """A directory of accepted artifacts for parity_compare --accepted-dir (the self-tests' stand-in for
+    the accepted git ref)."""
+    d = root / f'accepted-{len(list(root.glob("accepted-*")))}'
+    d.mkdir()
+    m = json.loads((HERE / 'parity-quick-manifest.json').read_text())
+    m.update({'cli': ['cli/query/core/noemit'], 'lsp': [], 'fuzz': {'seed': '1', 'count': 1500}}, **(manifest or {}))
+    (d / 'parity-quick-manifest.json').write_text(json.dumps(m))
+    (d / 'parity-grandfathered.json').write_text(json.dumps({'about': 'selftest', 'version': 2, 'items': grand or {}}))
+    return d
+
+
 def compare(root):
+    acc = accepted_dir(root)
+
     def write(d, mode, items):
         d.mkdir()
         (d / 'results.json').write_text(json.dumps({'meta': {'mode': mode}, 'tiers': {'cli': {'summary': {}, 'items': items}}}))
@@ -486,7 +505,8 @@ def compare(root):
                         'e': {'status': 'MATCH'}, 'f': {'status': 'MATCH'}, 'g': {'status': 'GO-BROKEN', 'detail': 'new'}})
     write(bad, 'full', {'a': {'status': 'MATCH'}, 'b': {'status': 'MATCH'}, 'c': {'status': 'MATCH'}, 'd': {'status': 'DIFF'},
                         'e': {'status': 'DIFF', 'detail': 'x'}, 'f': {'status': 'MATCH'}})
-    p = subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(base), str(cur)], capture_output=True, text=True)
+    p = subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(base), str(cur), '--accepted-dir', str(acc)],
+                       capture_output=True, text=True)
     lines = p.stdout.splitlines()
     check('compare: referee statuses are good (PARITY OK)', p.returncode == 0 and lines[-1] == 'PARITY OK', p.stdout)
     want = ['GO-BROKEN: Go itself is broken here (crash, timeout or runs that differ); tsc-rs is stable (2; 1 were MATCH in the base)',
@@ -499,11 +519,12 @@ def compare(root):
             '  DIFF        -> JS-AGREES    d: js']
     at = lines.index(want[0]) if want[0] in lines else -1
     check('compare: every item that left MATCH (and recovered and new ones) listed by status', lines[at:at + len(want)] == want, p.stdout)
-    p = subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(base), str(bad)], capture_output=True, text=True)
+    p = subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(base), str(bad), '--accepted-dir', str(acc)],
+                       capture_output=True, text=True)
     check('compare: GO-PARTITION in the base, DIFF now -> lost', p.returncode == 1 and 'LOST      e: DIFF x' in p.stdout, p.stdout)
     # Negative controls (lane H3): the reviewer's probes, with real item names too.
-    cmp = lambda b, c: subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(b), str(c)],  # noqa: E731
-                                      capture_output=True, text=True)
+    cmp = lambda b, c: subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(b), str(c),  # noqa: E731
+                                       '--accepted-dir', str(acc)], capture_output=True, text=True)
     nb, qe, qok, crash = root / 'cmp-newbad', root / 'cmp-quick-empty', root / 'cmp-quick', root / 'cmp-crash'
     write(nb, 'full', {'a': {'status': 'MATCH'}, 'b': {'status': 'MATCH'}, 'c': {'status': 'MATCH'}, 'd': {'status': 'DIFF'},
                        'e': {'status': 'GO-PARTITION'}, 'f': {'status': 'MATCH'}, 'lsp/crash': {'status': 'DIFF'}})
@@ -526,18 +547,8 @@ def compare(root):
                           'd': {'status': 'DIFF', 'rsFailure': 'timeout', 'detail': 'tsc-rs timeout'},
                           'e': {'status': 'GO-PARTITION'}, 'f': {'status': 'MATCH'}})
     p = cmp(base, crash)
-    check('negative control: finding 9: a tsc-rs timeout fails the gate even on a known diff', p.returncode == 1 and 'CRASH     d' in p.stdout, p.stdout)
-    gf = root / 'grandfathered.json'
-    gf.write_text(json.dumps({'items': {'d': {'status': 'DIFF', 'rsFailure': 'timeout', 'reason': 'Go times out too'}}}))
-    sys.path.insert(0, str(HERE))
-    import parity_compare
-    import contextlib
-    import io
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = parity_compare.compare(str(base), str(crash), gf)
-    check('compare: a grandfathered crash (listed with its status and reason) passes and is printed',
-          rc == 0 and 'GRANDFATHERED d: DIFF (Go times out too)' in buf.getvalue(), buf.getvalue())
+    check('negative control: finding 9: a tsc-rs timeout fails the gate even on a known diff',
+          p.returncode == 1 and 'KNOWN-BAD d: base DIFF, now DIFF, not as pinned (no grandfather entry)' in p.stdout, p.stdout)
 
 
 def lsp_keys(root):
@@ -545,12 +556,14 @@ def lsp_keys(root):
     project and with the project dir it resolved to."""
     import parity_inputs
     import parity_lsp
+    parity_inputs.SNAPSHOTS = root / 'lsp-snapshots'
     proj, other = root / 'lsp-proj', root / 'lsp-proj2'
     for d in (proj, other):
         (d / 'src').mkdir(parents=True)
         (d / 'src/a.ts').write_text('export const a = 1;\n')
     sess = parity_lsp.std('umami')
-    key = lambda r: parity_lsp.session_key(sess, r, parity_inputs.Snapshot(), 'src')  # noqa: E731
+    info = {'settings': {'LSPDIFF_SETTLE_MS': 1000}, 'scenarios': {}}
+    key = lambda r: parity_inputs.json_hash(parity_lsp.session_material(sess, r, parity_inputs.snapshot(r), None, 'src', info))  # noqa: E731
     k1 = key(proj)
     (proj / 'src/a.ts').write_text('export const a = "two";\n')
     check('negative control: finding 8: an lsp session key changes with a content edit of its project', key(proj) != k1)
