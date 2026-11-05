@@ -11,7 +11,10 @@ queue overflow marks every root. A directory created after the watch started is 
 inotify watches inodes, so a write through any path (a bind mount, an overlay upper copied up from
 it is not one) is seen. Watches cost about 1 KB of kernel memory each; /proc/sys/fs/inotify/
 max_user_watches (524,288 on MS-A2) bounds them. `available()` says whether inotify works here; the
-callers fall back to checking the inputs' identity after each process when it does not.
+callers fall back to checking the inputs' identity after each process when it does not, or when a
+Watch cannot be built (WatchError: the instance or watch limit; it leaves no fd or watch behind).
+Results are final only after finish() (dirty() and all_events() call it): it stops the reader thread,
+joins it, and drains the queue, so an event the reader had read but not parsed yet is never lost.
 """
 import ctypes
 import ctypes.util
@@ -75,23 +78,30 @@ class Watch:
 
     def __init__(self, roots, mask=CHANGES, keep=None):
         """keep(path): when given, only events on paths it accepts count, and all of them are listed in
-        `events` (a process's events on its input files)."""
+        `events` (a process's events on its input files). A WatchError (no inotify instance, the watch
+        limit) leaves nothing behind: the instance, its watches and the stop pipe are closed."""
         self.mask = mask
         self.keep = keep
         self.events = []
-        self.fd = _libc.inotify_init1(IN_NONBLOCK | IN_CLOEXEC)
-        if self.fd < 0:
-            raise WatchError(ctypes.get_errno(), 'inotify_init1 failed')
         self.wd = {}  # wd -> (root, directory)
         self.first = {}  # root -> the first event under it
         self.lock = threading.Lock()
-        self.parse_lock = threading.Lock()  # the thread and drain() both read the queue
-        self.stop_r, self.stop_w = os.pipe()
-        self.roots = [str(r) for r in roots]
-        for root in self.roots:
-            self._add_tree(root, root)
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
+        self.parse_lock = threading.Lock()  # the reader and drain() both read the queue
+        self.thread = None
+        self.fd = _libc.inotify_init1(IN_NONBLOCK | IN_CLOEXEC)
+        if self.fd < 0:
+            raise WatchError(ctypes.get_errno(), 'inotify_init1 failed')
+        self.stop_r = self.stop_w = None
+        try:
+            self.stop_r, self.stop_w = os.pipe()
+            self.roots = [str(r) for r in roots]
+            for root in self.roots:
+                self._add_tree(root, root)
+            self.thread = threading.Thread(target=self._loop, daemon=True)
+            self.thread.start()
+        except BaseException:
+            self._close_fds()  # closing the instance drops every watch it added
+            raise
 
     def _add(self, root, path):
         wd = _libc.inotify_add_watch(self.fd, os.fsencode(path), self.mask | IN_ONLYDIR | IN_DONT_FOLLOW)
@@ -129,7 +139,7 @@ class Watch:
         while True:
             ready, _, _ = select.select([self.fd, self.stop_r], [], [])
             if self.stop_r in ready and self.fd not in ready:
-                return
+                return  # finish() drains what is left
             with self.parse_lock:
                 try:
                     data = os.read(self.fd, 1 << 16)
@@ -165,36 +175,53 @@ class Watch:
                     self._mark(root, str(e))
 
     def drain(self):
-        """Reads every event queued so far (the thread does too; this makes the check synchronous)."""
+        """Reads every event queued so far, under the parse lock (so an event the reader already read is
+        parsed first). Final results come from finish(), which stops the reader first."""
         while True:
-            r, _, _ = select.select([self.fd], [], [], 0)
-            if not r:
-                return
             with self.parse_lock:
+                r, _, _ = select.select([self.fd], [], [], 0)
+                if not r:
+                    return
                 try:
                     data = os.read(self.fd, 1 << 16)
                 except (BlockingIOError, OSError):
                     return
                 self._parse(data)
 
-    def dirty(self):
+    def finish(self):
+        """Stops the reader, waits for it (it parses whatever it read), then reads the rest of the queue:
+        after this every event that reached the instance is in `first` and `events`. Idempotent."""
+        if self.thread is not None:
+            os.write(self.stop_w, b'x')
+            self.thread.join()
+            self.thread = None
         self.drain()
+
+    def dirty(self):
+        """{root: first event}, final (finish()); the watch stays open for close()."""
+        self.finish()
         with self.lock:
             return dict(self.first)
 
     def all_events(self):
-        self.drain()
+        self.finish()
         with self.lock:
             return list(self.events)
 
+    def _close_fds(self):
+        for name in ('fd', 'stop_r', 'stop_w'):
+            fd = getattr(self, name, None)
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                setattr(self, name, None)
+
     def close(self):
-        os.write(self.stop_w, b'x')
-        self.thread.join(5)
-        for fd in (self.fd, self.stop_r, self.stop_w):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        if self.fd is not None:
+            self.finish()
+        self._close_fds()
 
     def __enter__(self):
         return self

@@ -45,9 +45,10 @@ class Result:
         self.code, self.stdout, self.stderr, self.tree, self.secs = code, stdout, stderr, tree or {}, secs
         self.input_changes = input_changes or []
         self.inputs_after = inputs_after or {}
+        self.watch_error = None
 
-    def __setstate__(self, state):  # results pickled before input_changes and inputs_after
-        self.__dict__.update({'input_changes': [], 'inputs_after': {}, **state})
+    def __setstate__(self, state):  # results pickled before input_changes, inputs_after and watch_error
+        self.__dict__.update({'input_changes': [], 'inputs_after': {}, 'watch_error': None, **state})
 
     def fingerprint(self):
         """Exit code and the sha256 (16 hex digits) of stdout, stderr and the written files."""
@@ -91,33 +92,59 @@ def write_project(case, d):
     return {str(p.relative_to(d)): p.read_bytes() for p in d.rglob('*') if p.is_file()}
 
 
-def _input_changes(d, inputs, watch):
-    """What a run did to its inputs: (inotify events on input paths and every input whose bytes changed
-    or that is gone, {path: sha256 of what is there now or "deleted"})."""
+def _stat_ids(d, inputs):
+    """{path: (inode, size, mode, mtime, ctime)} of the inputs: any write to one, even of the same bytes,
+    sets its ctime, which user space cannot set back."""
+    out = {}
+    for rel in inputs:
+        try:
+            st = os.lstat(d / rel)
+            out[rel] = (st.st_ino, st.st_size, st.st_mode, st.st_mtime_ns, st.st_ctime_ns)
+        except OSError:
+            out[rel] = None
+    return out
+
+
+def _input_changes(d, inputs, watch, before):
+    """What a run did to its inputs: (inotify events on input paths, every input whose stat identity or
+    bytes changed or that is gone; {path: sha256 of what is there now or "deleted"}). The watch is
+    finished first (its reader stopped and joined, the queue drained), so no event is lost."""
     changes = list(dict.fromkeys(watch.all_events())) if watch is not None else []
     after = {}
+    now_ids = _stat_ids(d, inputs)
     for rel, data in inputs.items():
         p = d / rel
         if p.is_symlink() or not p.is_file():
             changes.append(f'deleted {rel}')
             after[rel] = 'deleted'
-        else:
-            now = p.read_bytes()
-            if now != data:
-                changes.append(f'modified {rel}')
-                after[rel] = hashlib.sha256(now).hexdigest()
+            continue
+        now = p.read_bytes()
+        if now != data:
+            changes.append(f'modified {rel}')
+            after[rel] = hashlib.sha256(now).hexdigest()
+        elif now_ids[rel] != before[rel]:
+            changes.append(f'rewritten {rel} (its stat identity changed)')
     return changes, after
 
 
 def run(binary, d, inputs, timeout, args=()):
     """One compiler run in d. inputs: {path: bytes} from write_project (checked, see the top comment),
-    or a set of paths (not checked)."""
+    or a set of paths (not checked). Without inotify, or when the watch cannot be built (the instance
+    or watch limit), the check falls back to the inputs' stat identity and bytes (`watch_error` says
+    why), which still sees every write: a write sets the ctime."""
     d = Path(d)
-    watch = None
-    if isinstance(inputs, dict) and parity_watch is not None:
-        top = str(d.resolve())
-        names = {os.path.join(top, rel) for rel in inputs}
-        watch = parity_watch.Watch([top], keep=lambda path: path in names)
+    watch, watch_error, before = None, None, None
+    if isinstance(inputs, dict):
+        before = _stat_ids(d, inputs)
+        if parity_watch is not None:
+            top = str(d.resolve())
+            names = {os.path.join(top, rel) for rel in inputs}
+            try:
+                watch = parity_watch.Watch([top], keep=lambda path: path in names)
+            except parity_watch.WatchError as e:
+                watch_error = str(e)
+        else:
+            watch_error = 'no inotify module'
     start = time.monotonic()
     # A CPU limit the kernel enforces, so a compiler on an exponential input still ends when this process is
     # killed before its own timeout fires (the new session keeps the caller's group kill from reaching it).
@@ -137,7 +164,7 @@ def run(binary, d, inputs, timeout, args=()):
     changes, after = [], {}
     if isinstance(inputs, dict):
         try:
-            changes, after = _input_changes(d, inputs, watch)
+            changes, after = _input_changes(d, inputs, watch, before)
         finally:
             if watch is not None:
                 watch.close()
@@ -147,7 +174,9 @@ def run(binary, d, inputs, timeout, args=()):
         if p.is_file() and rel not in inputs:
             tree[rel] = p.read_bytes()
             p.unlink()
-    return Result(code, out, err, tree, secs, changes, after)
+    r = Result(code, out, err, tree, secs, changes, after)
+    r.watch_error = watch_error
+    return r
 
 
 def crashed(r):
