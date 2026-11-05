@@ -369,6 +369,46 @@ def lsp_key_checks(root):
     check('finding 11: the ATA settings are in the lsp cache key', k1 != k2, (k1, k2))
 
 
+def variants_checks(root):
+    """Accumulated Go evidence (root's decision after H4): only the same binary, inputs, sources and
+    settings share Go answer variants."""
+    import parity_inputs as I
+    import parity_lsp as L
+    sess = next(x for x in L.FULL if x['name'] == 'hono-f12-p6')
+    info = {'settings': {'LSPDIFF_SETTLE_MS': 1000, 'LSPDIFF_REQUEST_TIMEOUT_MS': 300000}, 'scenarios': {}}
+    snap = I.Snap(root / 'snap', '/p/hono', 'a' * 64, 'x')
+    other = I.Snap(root / 'snap', '/p/hono', 'b' * 64, 'x')
+    m = lambda s, runs: L.session_material(sess, '/p/hono', s, None, 'src', info, [f'g{runs}'])  # noqa: E731
+    v = lambda mat, go: I.json_hash(L.variants_material(mat, go))  # noqa: E731
+    check('go variants: the record of 4 and of 8 Go runs of the same material is one', v(m(snap, 4), 'go1') == v(m(snap, 8), 'go1'))
+    check('go variants: negative control: another binary has another record', v(m(snap, 8), 'go1') != v(m(snap, 8), 'go2'))
+    check('go variants: negative control: another input has another record', v(m(snap, 8), 'go1') != v(m(other, 8), 'go1'))
+    cache = root / 'lsp'
+    for tag, mat in (('same', m(snap, 4)), ('input', m(other, 4))):
+        d = cache / f'hono-f12-p6-{tag:0<24}'
+        d.mkdir(parents=True)
+        (d / 'key.json').write_text(json.dumps(mat, sort_keys=True))
+        (d / 'go.jsonl').write_text('{}\n')
+    cur = m(snap, 8)
+    got = [d.name for d in L.prior_dirs(cache, 'hono-f12-p6', 'hono-f12-p6-' + 'c' * 24, cur)]
+    check('go variants: prior logs come from the same material at another run count, never another input',
+          got == ['hono-f12-p6-' + 'same'.ljust(24, '0')], got)
+    base = root / 'base'
+    (base / 'lsp').mkdir(parents=True)
+    sha = 'f' * 12
+    key = f'hono-f12-p6-{I.json_hash({"session": sess, "root": "/p/hono", "real": "/p/hono", "sources": sha, "env": {"LSPDIFF_SETTLE_MS": None, "LSPDIFF_REQUEST_TIMEOUT_MS": None}, "extra": ["g4"], "tree": snap.hash})[:24]}'
+    (base / 'lsp/results.json').write_text(json.dumps({'sessions': {'hono-f12-p6': {'key': key}}}))
+    go_dir = root / 'go'
+    (go_dir / 'lsp' / key).mkdir(parents=True)
+    (go_dir / 'lsp' / key / 'go.jsonl').write_text('{}\n')
+    logs, _ = L.legacy_prior(base, sess, '/p/hono', snap, info, go_dir, sha)
+    check('go variants: the base\'s Go logs are imported when its key is this run\'s content', len(logs) == 1, logs)
+    logs, why = L.legacy_prior(base, sess, '/p/hono', other, info, go_dir, sha)
+    check('go variants: negative control: the base\'s logs of another input are never imported', logs == [], why)
+    logs, why = L.legacy_prior(base, sess, '/p/hono', snap, info, go_dir, 'e' * 12)
+    check('go variants: negative control: nor of other scripting sources', logs == [], why)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--keep', action='store_true')
@@ -379,7 +419,7 @@ def main():
     root.mkdir(parents=True)
     try:
         for name, part in (('compare', compare_checks), ('fuzz', fuzz_checks), ('fuzz inputs', fuzz_input_checks),
-                           ('cli', cli_checks), ('lsp keys', lsp_key_checks)):
+                           ('cli', cli_checks), ('lsp keys', lsp_key_checks), ('go variants', variants_checks)):
             if args.only and args.only not in name:
                 continue
             sub = root / name.replace(' ', '-')

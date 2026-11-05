@@ -153,6 +153,42 @@ await part("finding 10", async () => {
   check("finding 10: the same requests in another order are a DIFF", items2.some((it) => it.status === "DIFF" && /order/.test(`${it.step} ${it.detail}`)), JSON.stringify(items2));
 });
 
+// ---- accumulated Go evidence (root's decision after H4) ---------------------------------------
+await part("go variants", async () => {
+  const root = join(ROOT, "variants");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "a.ts"), "export const a=1;");
+  const out = join(ROOT, "out-variants");
+  const dir = join(out, "variants-diff");
+  mkdirSync(dir, { recursive: true });
+  const refs = (order) => ({ step: "a.ts:1:14 references", method: "textDocument/references", params: { position: { line: 0, character: 13 } }, result: order.map((line) => ({ uri: "file:///p/a.ts", range: range(line) })) });
+  const hover = { step: "a.ts:1:14 hover", method: "textDocument/hover", params: { position: { line: 0, character: 13 } }, result: null };
+  const clean = JSON.stringify({ clean: true, why: [], exit: { code: 0, signal: null }, shutdown: "ok" });
+  for (const n of ["go", "go2", "rs", "rs2"]) {
+    writeFileSync(join(dir, `${n}.jsonl`), [hover, refs([1, 2])].map((e) => JSON.stringify(e)).join("\n") + "\n");
+    writeFileSync(join(dir, `${n}.session.json`), clean);
+  }
+  const prior = join(ROOT, "prior-go.jsonl"); // an earlier fill of the same material: the other order
+  writeFileSync(prior, [hover, refs([2, 1])].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const store = join(ROOT, "variants.json");
+  const run = (material, extra) => {
+    const r = spawnSync("node", [join(LSPDIFF, "lspdiff.mjs"), "diff", "--project", root, "--out", out, "--go-runs", "2", "--rs-runs", "2", "--reuse", "--go-variants-material", material, ...extra], { encoding: "utf8" });
+    const items = existsSync(join(dir, "items.json")) ? JSON.parse(readFileSync(join(dir, "items.json"), "utf8")) : [];
+    return { ref: items.find((it) => /references/.test(it.step)), hov: items.find((it) => /hover/.test(it.step)), out: r.stdout + r.stderr };
+  };
+  const M = JSON.stringify({ go: "sha-a", tree: "t1" });
+  const first = run(M, ["--go-prior", prior, "--go-variants-out", store]);
+  check("go variants: an answer an earlier fill of the same material gave makes the item GO-BROKEN", first.ref?.status === "GO-BROKEN" && /vary across fills/.test(first.ref.detail) && first.hov?.status === "MATCH", JSON.stringify(first.ref) + first.out.slice(-300));
+  const again = run(M, ["--go-variants", store, "--go-variants-out", store]);
+  check("go variants: the record is monotone (the earlier variant stays without its log)", again.ref?.status === "GO-BROKEN", JSON.stringify(again.ref));
+  const rec = JSON.parse(readFileSync(store, "utf8"));
+  check("go variants: the record holds both variants", Object.values(rec.variants).some((hs) => hs.length === 2), JSON.stringify(rec.variants));
+  const other = run(JSON.stringify({ go: "sha-b", tree: "t1" }), ["--go-variants", store]);
+  check("go variants: negative control: a record of another binary is never merged", other.ref?.status === "MATCH" && /not merged/.test(other.out), JSON.stringify(other.ref) + other.out.slice(-200));
+  const input = run(JSON.stringify({ go: "sha-a", tree: "t2" }), ["--go-variants", store]);
+  check("go variants: negative control: a record of another input is never merged", input.ref?.status === "MATCH" && /not merged/.test(input.out), JSON.stringify(input.ref));
+});
+
 // ---- finding 11: the ATA barrier never succeeds on its deadline -------------------------------
 await part("finding 11", async () => {
   const { PLUMBING } = await import(join(LSPDIFF, "settings.mjs"));

@@ -312,7 +312,7 @@
   "fuzz/1:5391": {
    "status": "DIFF",
    "rsFailure": null,
-   "reason": "Go's own --traceResolution race (the known diff 2 of main, like fuzz/1:23080): Go's resolver threads decide between 'does not exist according to earlier cached lookups.' and 'does not exist.' for one package.json lookup; tsc-rs always prints the second. Go's 8 default runs of this fill agree on the first, and Go varies at --checkers 2 and 12. If a Go fill sees the race at the defaults, the item is GO-BROKEN (good) and this entry is stale: remove it.",
+   "reason": "Regression tracking of a known output DIFF, not acceptance (root, 2026-11-05): this item is not good. Go's --traceResolution output for one package.json lookup reads 'File '<x>/package.json' does not exist according to earlier cached lookups.' in Go's default runs, and tsc-rs always prints 'File '<x>/package.json' does not exist.' instead, which suggests a cached-lookup path the port may lack (on root's compiler backlog). Go itself varies between the two forms at --checkers 2 and 12 and in older fills (the race of fuzz/1:23080). Any change of tsc-rs's or Go's output here fails the gate; if a Go fill shows the race at the defaults the item is GO-BROKEN and this entry is stale: remove it then.",
    "input": "70e039abf0113919",
    "go": {
     "status": "ok",

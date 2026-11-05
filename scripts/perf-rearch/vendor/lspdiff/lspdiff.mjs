@@ -41,6 +41,16 @@
 // no evidence. A Go cache entry without its session results is incomplete and runs again.
 // --go-stage <dir> / --js-stage <dir>: where new Go and JS logs are written (parity_lsp.py publishes
 // them into --go-cache / --js-cache once the tier verified clean); without one, they are not kept.
+// Accumulated Go evidence (root's decision after H4): any answer the pinned Go binary ever gave for
+// the same inputs and settings is a Go answer. --go-variants <file> is the record of every Go answer
+// variant seen per request identity (sha256 of the normalized answer), for one key material
+// (--go-variants-material: the Go binary, the content-hashed inputs, the session's definition, its
+// scripting sources and settings; parity_lsp.py makes it, without the run count). A record of other
+// material or another normalizer is not read. --go-prior <log> (repeatable) adds the answers of Go
+// logs from earlier fills of the same material. A request whose recorded variants include one this
+// fill's Go runs did not give is GO-BROKEN ("Go answers vary across fills"). --go-variants-out
+// <file> gets the union of the record, the priors and this fill's Go answers: a variant once seen
+// stays.
 // `node lspdiff.mjs info` prints the settings (settings.mjs) and the scenarios' ATA setup as JSON.
 // --server-logs writes each scenario run's window/logMessage stream to <out>/<run>.server.log.
 // --js <tsserver.js> adds the JS referee (referee.mjs, tsserver.mjs): when an answer is a DIFF of a
@@ -60,6 +70,7 @@
 // (default $TSC_RS_BIN or target/release/tsgo), --out <dir> (default /tmp/lspdiff/out),
 // --only go|rs (bench one server), --reuse (diff the answers saved by the last run),
 // --pulls all|no-diagnostics|none (background pulls per keystroke), --modes concurrent,one-at-a-time. Each server is run on its own, never both at once.
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -87,6 +98,10 @@ const { positionals, values: opt } = parseArgs({
     reuse: { type: "boolean", default: false },
     "go-cache": { type: "string" },
     "go-stage": { type: "string" },
+    "go-variants": { type: "string" },
+    "go-variants-out": { type: "string" },
+    "go-variants-material": { type: "string" },
+    "go-prior": { type: "string", multiple: true },
     "js-stage": { type: "string" },
     scenario: { type: "string" },
     "rs-runs": { type: "string", default: "1" },
@@ -311,6 +326,29 @@ if (mode === "diff") {
   const failureOf = (b) => (b ? (b.kind === "timeout" ? "timeout" : "crash") : undefined);
   // One run's answer at merged position p: its normalized answer, NOT_ASKED, or null when it ended.
   const at = (k, p, method) => (aligned[k][p] ? answer(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
+  // Accumulated Go evidence (see the top comment): request key -> Set of answer hashes.
+  const hash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const NORMALIZER = hash([normalize, canon, requestKeys].map(String).join("\n"));
+  const variants = new Map();
+  const addVariant = (k, h) => (variants.get(k) ?? variants.set(k, new Set()).get(k)).add(h);
+  const addLog = (log) => requestKeys(log).forEach((k, i) => addVariant(k, hash(answer(log[i], log[i].method))));
+  const vMaterial = opt["go-variants-material"];
+  if ((opt["go-variants"] || opt["go-variants-out"] || opt["go-prior"]) && !vMaterial) throw new Error("--go-variants needs --go-variants-material");
+  let priorVariants = 0;
+  if (opt["go-variants"] && existsSync(opt["go-variants"])) {
+    const rec = JSON.parse(readFileSync(opt["go-variants"], "utf8"));
+    if (rec.material === vMaterial && rec.normalizer === NORMALIZER) {
+      for (const [k, hs] of Object.entries(rec.variants)) for (const h of hs) addVariant(k, h);
+      priorVariants = Object.keys(rec.variants).length;
+    } else console.log(`go variants: ${opt["go-variants"]} has other ${rec.material === vMaterial ? "normalizer" : "material"}: not merged`);
+  }
+  for (const f of opt["go-prior"] ?? []) addLog(readLog(f));
+  if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${(opt["go-prior"] ?? []).length} prior logs`);
+  // The recorded variants at merged position p that none of this fill's Go runs gave.
+  const earlierOnly = (p, method) => {
+    const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answer(aligned[k][p], method))));
+    return [...(variants.get(order[p]) ?? [])].filter((h) => !seen.has(h));
+  };
   const mismatches = [];
   const unstable = [];
   const items = [];
@@ -347,8 +385,13 @@ if (mode === "diff") {
     const groups = new Map();
     for (const [k, a] of goAnswers) groups.set(a, [...(groups.get(a) ?? []), k]);
     const goEnded = goNames.filter((k) => ended(k, p));
-    if (goEnded.length || groups.size > 1) {
-      const detail = [goEnded.length && goEnded.map((k) => why(k)).join("; "), groups.size > 1 && `Go runs differ (${[...groups.values()].map((g) => g.join(",")).join(" | ")})`].filter(Boolean).join("; ");
+    const earlier = earlierOnly(p, method);
+    if (goEnded.length || groups.size > 1 || earlier.length) {
+      const detail = [
+        goEnded.length && goEnded.map((k) => why(k)).join("; "),
+        groups.size > 1 && `Go runs differ (${[...groups.values()].map((g) => g.join(",")).join(" | ")})`,
+        earlier.length && `Go answers vary across fills (${earlier.length} recorded variant${earlier.length === 1 ? "" : "s"} this fill did not give)`,
+      ].filter(Boolean).join("; ");
       items.push({ i: p, step, method, status: "GO-BROKEN", detail });
       unstable.push({ step, method, detail, rs: JSON.parse(r), rsEqualsGoRuns: groups.get(r) ?? [], go: Object.fromEntries([...groups].map(([a, ks]) => [ks.join(","), JSON.parse(a)])) });
       continue;
@@ -358,6 +401,15 @@ if (mode === "diff") {
     else if (r === NOT_ASKED) diff("only Go was asked this request (tsc-rs's earlier answers led the script elsewhere)", { go: JSON.parse(g) });
     else if (g === NOT_ASKED) diff("only tsc-rs was asked this request (Go's earlier answers led the script elsewhere)", { rs: JSON.parse(r) });
     else diff(undefined, { go: JSON.parse(g), rs: JSON.parse(r) });
+  }
+  // The record after this fill: monotone (a variant once seen stays).
+  if (opt["go-variants-out"]) {
+    for (const k of goNames) addLog(logs[k]);
+    const out = opt["go-variants-out"];
+    mkdirSync(join(out, ".."), { recursive: true });
+    const rec = { material: vMaterial, normalizer: NORMALIZER, variants: Object.fromEntries([...variants].map(([k, hs]) => [k, [...hs].sort()])) };
+    writeFileSync(`${out}.tmp`, JSON.stringify(rec));
+    renameSync(`${out}.tmp`, out);
   }
   // A tsc-rs run that ended early also gets an item of its own, so the crash is listed even where
   // Go ended at the same answer.

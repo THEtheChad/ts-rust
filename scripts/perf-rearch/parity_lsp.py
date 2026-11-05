@@ -124,9 +124,96 @@ def sessions(tier):
 # single parse worker (rs-schedule).
 # Go sessions per item set. Go's own answers vary between runs on some items (hono `references`
 # order: ls/crossproject.go handleCrossProject searches projects in goroutines; scenario watch
-# registrations), so every session runs Go four times and an answer any two runs disagree on is
-# GO-BROKEN. Part of the cache key, so caches filled with fewer runs are not reused.
+# registrations), so every session runs Go four times, and eight on multi-project workspaces (hono,
+# query), where the cross-project search races, and an answer any two runs disagree on is
+# GO-BROKEN. Part of the cache key, so caches filled with fewer runs are not reused (their answers
+# still count: accumulated Go evidence, below).
 GO_RUNS = 4
+MULTI_PROJECT = {'hono': 8, 'query': 8}
+
+
+def go_runs(sess):
+    return MULTI_PROJECT.get(sess['project'], GO_RUNS)
+
+
+# Accumulated Go evidence (root's decision after H4): any answer the pinned Go binary has given for the
+# same inputs and settings is a Go answer. variants_material is a session's key material without the
+# run count and the log format version, with the Go binary's full sha; the record of every Go answer
+# variant for it (lspdiff --go-variants) is go-cache/<go sha>/lsp-variants/<session>-<sha>.json,
+# staged and published like the logs, and only ever grows. Prior Go logs of the same material: the
+# other cache dirs of the session whose key.json is this material at another run count, and the
+# base's logs where the base's own key can be recomputed from this run's content hashes
+# (legacy_prior). Nothing of another binary, input, source or setting is merged.
+VARIANTS_VERSION = 1
+
+
+def variants_material(material, go_sha):
+    return {**{k: v for k, v in material.items() if k not in ('extra', 'version')}, 'go': go_sha, 'variants': VARIANTS_VERSION}
+
+
+def same_but_runs(a, b):
+    strip = lambda m: {k: v for k, v in m.items() if k != 'extra'}  # noqa: E731
+    return strip(a) == strip(b)
+
+
+def prior_dirs(cache_root, name, key, material):
+    """The other Go cache dirs of this session whose key.json is this material at another run count."""
+    out = []
+    for d in sorted(cache_root.glob(f'{name}-*')):
+        if d.name == key or d.name.count('-') != key.count('-'):
+            continue
+        try:
+            other = json.loads((d / 'key.json').read_text())
+        except (OSError, ValueError):
+            continue
+        if same_but_runs(other, json.loads(json.dumps(material))):
+            out.append(d)
+    return out
+
+
+# The base's lsp logs were made by the H3 harness (scripting sources of 0bfd0c4a6, its session_key).
+# Its key is recomputed from this run's content hashes; only when it equals the key the base run
+# recorded for the session are the base's Go logs the same binary (the go-cache dir is its sha), the
+# same project content, the same session and the same settings, and only then are they imported.
+# Standard sessions only: in the watch scenarios the typings cache was live and shared across runs.
+LEGACY_H3 = {'ref': '0bfd0c4a6', 'sources': ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs',
+                                             'ata-npm/npm', 'ata-npm/fake-npm.mjs'),
+             'env': ('LSPDIFF_SETTLE_MS', 'LSPDIFF_REQUEST_TIMEOUT_MS'), 'runs': 4}
+
+
+def legacy_sources_sha():
+    h = hashlib.sha256()
+    for name in sorted(LEGACY_H3['sources']):
+        r = subprocess.run(['git', '-C', str(HERE), 'show', f'{LEGACY_H3["ref"]}:scripts/perf-rearch/vendor/lspdiff/{name}'],
+                           capture_output=True)
+        if r.returncode:
+            return None
+        h.update(name.encode() + b'\0' + r.stdout)
+    return h.hexdigest()[:12]
+
+
+def legacy_prior(base, sess, root, project_snap, info, go_dir, legacy_sha):
+    """(the base's Go log files for the session, why) when the base's recorded key is this run's
+    material under the H3 formula, else ([], why not)."""
+    if base is None or sess.get('scenario') or project_snap is None or legacy_sha is None:
+        return [], 'no base, a scenario, or no H3 sources'
+    try:
+        recorded = json.loads((Path(base) / 'lsp/results.json').read_text())['sessions'][sess['name']]['key']
+    except (OSError, ValueError, KeyError):
+        return [], 'the base recorded no key for the session'
+    defaults = {'LSPDIFF_SETTLE_MS': 1000, 'LSPDIFF_REQUEST_TIMEOUT_MS': 300000}
+    if any(info['settings'][k] != defaults[k] for k in LEGACY_H3['env']):
+        return [], 'this run has other settings than the H3 defaults'
+    material = {'session': sess, 'root': str(root), 'real': project_snap.label, 'sources': legacy_sha,
+                'env': {k: None for k in LEGACY_H3['env']}, 'extra': [f'g{LEGACY_H3["runs"]}'], 'tree': project_snap.hash}
+    key = f'{sess["name"]}-{inputs.json_hash(material)[:24]}'
+    if key != recorded:
+        return [], f'the base key {recorded} is not this run\'s content ({key})'
+    logs = sorted((go_dir / 'lsp' / key).glob('go*.jsonl'))
+    return logs, f'{len(logs)} Go logs of the base ({key})'
+
+
+
 RS_RUNS = {'quick': [], 'full': ['--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1']}
 JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js'
 # The lspdiff sources that script a session, so Go's (and JS's) answers depend on them; the diff and
@@ -227,6 +314,7 @@ def main():
     ap.add_argument('--js', default=str(JS_TSSERVER), help='JS tsserver.js, the JS-AGREES referee')
     ap.add_argument('--no-js', action='store_true', help='no JS referee (statuses MATCH, GO-BROKEN, DIFF)')
     ap.add_argument('--js-all', action='store_true', help='run JS on every session: calibration and the report')
+    ap.add_argument('--base', help='the base run: its Go logs count as prior Go answers where its keys prove the same inputs')
     args = ap.parse_args()
     use_js = not args.no_js and Path(args.js).exists()
     js_error = None
@@ -238,7 +326,9 @@ def main():
             print(f'lsp: JS referee unavailable: {js_error}', flush=True)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    go_sha = sha256_file(args.go)[:16]
+    go_sha_full = sha256_file(args.go)
+    go_sha = go_sha_full[:16]
+    legacy_sha = legacy_sources_sha()
     items, sessions_info = {}, {}
     t0 = time.monotonic()
     src_sha = scenario_sources_sha()
@@ -285,18 +375,27 @@ def main():
                 mounts.append({'lower': str(typings_snap.path), 'target': typings_snap.label, 'writable': True})
         except inputs.SnapshotError as e:
             return {f'lsp/{name}': {'status': 'ERROR', 'detail': f'no snapshot: {e}'}}, None, f'lsp {name}: ERROR {e}'
-        material = session_material(sess, root, project_snap, typings_snap, src_sha, info, [f'g{GO_RUNS}'])
+        runs_go = go_runs(sess)
+        material = session_material(sess, root, project_snap, typings_snap, src_sha, info, [f'g{runs_go}'])
         js_material = session_material(sess, root, project_snap, typings_snap, js_src_sha, info)
         key = f'{name}-{inputs.json_hash(material)[:24]}'
         js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
-        go_cache, go_stage = key_dir(HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{key}', material, stage)
+        go_dir = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}'
+        go_cache, go_stage = key_dir(go_dir / 'lsp' / key, material, stage)
+        vmat = variants_material(material, go_sha_full)
+        vfile = go_dir / 'lsp-variants' / f'{name}-{inputs.json_hash(vmat)[:24]}.json'
+        priors = [f for d in prior_dirs(go_dir / 'lsp', name, key, material) for f in sorted(d.glob('go*.jsonl'))]
+        legacy, legacy_why = legacy_prior(args.base, sess, root, project_snap, info, go_dir, legacy_sha)
         sout = out / name
         sandbox = {'scratch': str(HOME / f'.cache/perf-rearch/parity/scratch/lsp-sandbox/{name}'), 'mounts': mounts}
         # A heap above Node's default: umami's 7 logs are 340 MB each, and JS adds one.
         cmd = [*outer(binds), 'node', '--max-old-space-size=12288', str(LSPDIFF), 'diff', '--project', str(root),
                '--files', str(sess['files']), '--go', args.go, '--rs', args.rs, '--out', str(sout),
                '--go-stage', str(go_stage), *(['--go-cache', str(go_cache)] if go_cache else []), *RS_RUNS[args.tier]]
-        cmd += ['--go-runs', str(GO_RUNS)]
+        cmd += ['--go-runs', str(runs_go), '--go-variants', str(stage.staged(vfile) if stage.staged(vfile).exists() else vfile),
+                '--go-variants-out', str(stage.staged(vfile)), '--go-variants-material', json.dumps(vmat, sort_keys=True)]
+        for f in [*priors, *legacy]:
+            cmd += ['--go-prior', str(f)]
         if use_js:
             js_cache, js_stage = key_dir(HOME / f'.cache/perf-rearch/parity/js-cache/{js_sha}/lsp/{js_key}', js_material, stage)
             cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]
@@ -331,7 +430,8 @@ def main():
         js_info = json.loads(js_file.read_text()) if js_file.exists() else {}
         runs = dict(re.findall(r'^(go\d*|rs[\w-]*)(?: \(.*\))?: \d+ answers in ([\d.]+) s', r.stdout, re.M))
         runs.update(re.findall(r'^(js|rs-confirm): \d+ answers in ([\d.]+) s', r.stdout, re.M))
-        sinfo = {'secs': secs, 'answers': len(rows), 'counts': dict(c), 'root': str(root), 'key': key,
+        sinfo = {'secs': secs, 'answers': len(rows), 'counts': dict(c), 'root': str(root), 'key': key, 'goRuns': runs_go,
+                 'variants': vfile.name, 'priors': [str(f) for f in priors], 'legacy': legacy_why,
                  'typings': typings_snap is not None, 'runSecs': {k: float(v) for k, v in runs.items()}}
         if js_info.get('ran'):
             sinfo['js'] = {'calibration': js_info.get('calibration', {}), 'decided': js_info.get('decided', 0),
