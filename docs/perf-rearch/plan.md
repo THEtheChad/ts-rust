@@ -649,3 +649,21 @@ once a **reconciliation step** is built and tested.
   - New brief rule: never write into the shared inputs.
   - An Astra re-review of H3 is running; the interim rule stays until it
     accepts.
+- **2026-11-05, Astra rejected H3** (`reviews/2026-11-05-astra-h3.md`).
+  - **Root's errors, reverted:** moving `base-current` to the H3 run, and the
+    `fuzz/1:25496` grandfather entry (written outside `items`, so it was
+    ignored anyway). The base is back at `head-efef52257-full`, and 1:25496
+    is an expected LOST until P1 merges.
+  - **H4 fixes the remaining 12 findings:**
+    - poisoned caches from mid-run input edits;
+    - a timeout hidden by the crash shortcut;
+    - known-bad base items must stay present and match exactly;
+    - grandfather matching on structured evidence;
+    - LSP element-field association;
+    - tsserver body schemas;
+    - a quick coverage manifest;
+    - fuzz input mutation;
+    - LSP crashes after the last answer;
+    - request identity with method and params;
+    - ATA completion barriers and settings in the key;
+    - grandfather schema validation.
