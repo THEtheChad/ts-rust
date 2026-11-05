@@ -5,7 +5,7 @@
 //
 // The shared shape of an answer is { scalars, sets, rest }:
 //   scalars  field -> value: one point each (hover display text, signature help indices, ...)
-//   sets     field -> { ordered, items: [[key, residue]] }: list answers. key holds every refereed
+//   sets     field -> { order, items: [[key, residue]] }: list answers. key holds every refereed
 //            field of an element (a location, a diagnostic's code, span and text, ...); residue the
 //            element's fields JS cannot referee (completion data, inlay hint part locations, ...).
 //   rest     everything of the answer outside scalars and sets that JS cannot referee
@@ -14,9 +14,11 @@
 //     outside the refereed fields has no referee);
 //   - per scalar that differs, JS's value equal to tsc-rs's;
 //   - per set, each element Go has and tsc-rs lacks absent from JS (JS has it at most as often as
-//     tsc-rs), and each element tsc-rs has and Go lacks present in JS (at least as often); for an
-//     ordered set whose shared elements are in another order, JS's order of tsc-rs's elements equal
-//     to tsc-rs's;
+//     tsc-rs), and each element tsc-rs has and Go lacks present in JS (at least as often);
+//   - per set whose order counts (order "fixed": every list but completion items, whose order
+//     lspdiff ignores too), the elements Go and tsc-rs both have in the same order. Order has no JS
+//     referee (tsserver.mjs assembles some lists itself, and the brief names pull-diagnostic order
+//     as unrefereed), so a changed order stays a DIFF;
 //   - at least one point (an answer that differs only where normalization looks away is not
 //     refereed).
 // Points where tsc-rs equals Go need nothing from JS.
@@ -110,7 +112,8 @@ function splitHover(value) {
   return m ? { display: m[1], doc: plainDoc(m[2]) } : { display: null, doc: plainDoc(value) };
 }
 
-const set = (items, ordered = false) => ({ ordered, items });
+// order "fixed": Go's order of the shared elements must be kept; "free": the list is a set.
+const set = (items, order = "fixed") => ({ order, items });
 const without = (o, keys) => {
   if (!o || typeof o !== "object") return o;
   const c = { ...o };
@@ -159,7 +162,7 @@ function diagnosticKey(d) {
 export const NORMALIZERS = {
   "textDocument/diagnostic": (r) => ({
     scalars: {},
-    sets: { items: set((r?.items ?? []).map((d) => [diagnosticKey(d), J(without(d, ["range", "severity", "code", "message", "tags", "relatedInformation", "source"]))]), true) },
+    sets: { items: set((r?.items ?? []).map((d) => [diagnosticKey(d), J(without(d, ["range", "severity", "code", "message", "tags", "relatedInformation", "source"]))])) },
     rest: J(without(r, ["items"])),
   }),
   "textDocument/hover": (r) => {
@@ -176,6 +179,7 @@ export const NORMALIZERS = {
             J({ label: i.label, kind: i.kind, sortText: i.sortText, insertText: i.insertText ?? null, source: i.labelDetails?.description ?? null }),
             J({ ...without(i, ["label", "kind", "sortText", "insertText", "labelDetails"]), labelDetail: i.labelDetails?.detail ?? null }),
           ]),
+          "free",
         ),
       },
       rest: J(without(Array.isArray(r) ? null : r, ["items", "isIncomplete", "itemDefaults"])),
@@ -208,7 +212,6 @@ export const NORMALIZERS = {
           J({ label: s.label, params: (s.parameters ?? []).map((p) => (Array.isArray(p.label) ? s.label.slice(...p.label) : p.label)), doc: plainDoc(markup(s.documentation)) }),
           J(without(s, ["label", "parameters", "documentation", "activeParameter"])),
         ]),
-        true,
       ),
     },
     rest: "null",
@@ -228,13 +231,12 @@ export const NORMALIZERS = {
           J({ at: `${h.position.line}:${h.position.character}`, label: inlayLabel(h.label), kind: h.kind ?? null, l: !!h.paddingLeft, r: !!h.paddingRight }),
           J({ parts: typeof h.label === "string" ? null : h.label.map((p) => (p.location ? locKey(p.location) : null)), ...without(h, ["position", "label", "kind", "paddingLeft", "paddingRight"]) }),
         ]),
-        true,
       ),
     },
     rest: "null",
   }),
-  "textDocument/documentSymbol": (r) => ({ scalars: {}, sets: { symbols: set(flattenSymbols(r, "", []), true) }, rest: "null" }),
-  "textDocument/semanticTokens/full": (r) => ({ scalars: {}, sets: { tokens: set(decodeTokens(r?.data ?? []).map((t) => [t, "null"]), true) }, rest: J(without(r, ["data"])) }),
+  "textDocument/documentSymbol": (r) => ({ scalars: {}, sets: { symbols: set(flattenSymbols(r, "", [])) }, rest: "null" }),
+  "textDocument/semanticTokens/full": (r) => ({ scalars: {}, sets: { tokens: set(decodeTokens(r?.data ?? []).map((t) => [t, "null"])) }, rest: J(without(r, ["data"])) }),
   "textDocument/foldingRange": (r) => ({
     scalars: {},
     sets: { ranges: set((r ?? []).map((f) => [`${f.startLine}:${f.startCharacter ?? "-"}-${f.endLine}:${f.endCharacter ?? "-"} ${f.kind ?? ""}`, J(without(f, ["startLine", "startCharacter", "endLine", "endCharacter", "kind"]))])) },
@@ -269,15 +271,12 @@ const count = (list) => {
 };
 const short = (s) => (s.length > 160 ? s.slice(0, 157) + "..." : s);
 
-// The refereed part of a normalized answer: scalars and set keys (unordered sets sorted), without
-// residues and rest. Two answers whose views are equal agree on every point JS could decide.
+// The refereed part of a normalized answer: scalars and set keys (sorted: order is not refereed),
+// without residues and rest. Two answers whose views are equal agree on every point JS could decide.
 export function refereedView(n) {
   if (!n) return null;
   const sets = {};
-  for (const [k, v] of Object.entries(n.sets)) {
-    const keys = v.items.map(([key]) => key);
-    sets[k] = v.ordered ? keys : keys.sort();
-  }
+  for (const [k, v] of Object.entries(n.sets)) sets[k] = v.items.map(([key]) => key).sort();
   return J({ scalars: n.scalars, sets });
 }
 
@@ -338,7 +337,7 @@ export function judge(go, rs, js) {
         return { agrees: false, points, reason: `${k} ${short(key)} differs outside the refereed fields` };
       }
     }
-    if (go.sets[k]?.ordered || rs.sets[k]?.ordered) {
+    if (go.sets[k]?.order === "fixed" || rs.sets[k]?.order === "fixed") {
       const shared = (items, other) => {
         const left = new Map(other);
         return items.map(([key]) => key).filter((key) => {
@@ -347,12 +346,7 @@ export function judge(go, rs, js) {
           return n > 0;
         });
       };
-      if (J(shared(gi, rc)) !== J(shared(ri, gc))) {
-        points.push(`${k} order`);
-        const rsKeys = ri.map(([key]) => key);
-        const jsOrder = shared(js.sets[k]?.items ?? [], count(rsKeys));
-        if (J(jsOrder) !== J(rsKeys)) fail(`${k} order: JS's order differs from tsc-rs's`);
-      }
+      if (J(shared(gi, rc)) !== J(shared(ri, gc))) return { agrees: false, points, reason: `${k}: the order differs from Go's (order has no JS referee)` };
     }
   }
   if (!points.length) return { agrees: false, points, reason: "no refereed point differs (the difference is outside the normalized fields)" };

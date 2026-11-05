@@ -3,8 +3,8 @@
 //
 //   node scripts/perf-rearch/vendor/lspdiff/selftest/referee-selftest.mjs [--unit]
 //
-// Part 1 (unit): the judge on hand-made answers: every rule of JS-AGREES, the residue and
-// "no refereed point" guards, ordered sets, the lib anchoring, and tsserver.mjs's conversions.
+// Part 1 (unit): the judge on hand-made answers: every rule of JS-AGREES, the residue,
+// "no refereed point" and order guards, the lib anchoring, and the semantic token legend.
 // Part 2 (fixture, skipped by --unit): lspdiff diff on a two-file project
 // (~/.cache/perf-rearch/parity/scratch/referee-selftest/), Go's LSP server against
 // selftest/proxy-lsp.mjs as "tsc-rs" (Go with some answers rewritten), with JS tsserver 6.0.3 as the
@@ -62,8 +62,13 @@ const hint = (label) => [{ position: { line: 0, character: 5 }, label: [{ value:
 check("inlay hints that differ in whitespace only: no refereed point", /no refereed point/.test(J("textDocument/inlayHint", hint(": unique symbol"), hint(": uniquesymbol"), hint(": unique symbol")).reason));
 const diag = (code, line) => ({ range: R(line, 0, line, 1), severity: 1, code, source: "ts", message: `m${code}` });
 const diags = (...d) => ({ kind: "full", items: d });
-check("diagnostic order: JS in tsc-rs's order agrees", J("textDocument/diagnostic", diags(diag(1, 0), diag(2, 1)), diags(diag(2, 1), diag(1, 0)), diags(diag(2, 1), diag(3, 2), diag(1, 0))).agrees);
-check("diagnostic order: JS in Go's order disagrees", !J("textDocument/diagnostic", diags(diag(1, 0), diag(2, 1)), diags(diag(2, 1), diag(1, 0)), diags(diag(1, 0), diag(2, 1))).agrees);
+check("diagnostic order has no referee, even when JS has tsc-rs's order", /order has no JS referee/.test(J("textDocument/diagnostic", diags(diag(1, 0), diag(2, 1)), diags(diag(2, 1), diag(1, 0)), diags(diag(2, 1), diag(1, 0))).reason));
+check(
+  "an extra diagnostic JS has, with the shared ones reordered: still DIFF",
+  /order has no JS referee/.test(J("textDocument/diagnostic", diags(diag(1, 0), diag(2, 1)), diags(diag(2, 1), diag(1, 0), diag(3, 2)), diags(diag(2, 1), diag(1, 0), diag(3, 2))).reason),
+);
+check("an extra diagnostic JS has, in Go's order: agrees", J("textDocument/diagnostic", diags(diag(1, 0)), diags(diag(1, 0), diag(3, 2)), diags(diag(1, 0), diag(3, 2))).agrees);
+check("completion item order is free", J("textDocument/completion", comp(item("a"), item("b")), comp(item("b"), item("a"), item("c")), comp(item("c"))).agrees);
 check("no normalizer: no referee", /no JS referee/.test(judge(null, null, null).reason));
 check("no JS answer at the step: undecided", /no JS answer/.test(judge(N(refs, [a1]), N(refs, [a2]), null).reason));
 // Lib anchoring: the line of `interface Console {` differs between Go's and JS's lib.dom.d.ts.
