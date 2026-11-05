@@ -598,3 +598,14 @@ once a **reconciliation step** is built and tested.
       stable.
   - **Not chosen:** a reviewed allowlist. Any other difference fails.
   - The harness lane H1 implements both alongside GO-PARTITION.
+- **2026-11-05, H1 merged.** The referees (GO-BROKEN, GO-PARTITION,
+  JS-AGREES) are live in the CLI, fuzz and corpus tiers
+  (`parity_referees.py`, self-test 96 checks).
+  - **Head full run:** PARITY OK. The 9 former fuzz GO-UNSTABLE items are now
+    GO-BROKEN.
+  - **zod refine N=8 is JS-AGREES, not GO-PARTITION:** it equals none of Go's
+    8 outputs. Its only difference from c4 is the TS2344 that JS lacks.
+  - **Backlog (better than Go):** on 9 fuzz cases tsc-rs copies Go's panics
+    on purpose (`strings: negative Repeat count`, nil pointer). Giving a real
+    answer there would be GO-BROKEN, which is good.
+  - **Review:** Astra will review H1 and H2 together once H2 lands.
