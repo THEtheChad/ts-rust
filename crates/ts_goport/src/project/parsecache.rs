@@ -182,13 +182,15 @@ pub fn new_parse_cache(options: RefCountCacheOptions) -> Rc<ParseCache> {
             let freeable = crate::ast::freeable_path(&key.path.0);
             let _owned_nodes = freeable.then(crate::ast::enter_freeable_parse);
             let opts = key.source_file_parse_options();
-            let content = fh.content();
+            // Loader v2 L1: the text is the file's shared text (no copy);
+            // the worker's text is the same `Arc` when the worker read it
+            // through the load's OS view.
+            let content = fh.shared_content();
             // PORT: during a program load a parse worker (`FilesParser`
             // prefetch) may have read and parsed this text already, as in
             // compiler/host.rs. A worker result is used only for the same
             // text, and its parse only when it equals the parse below.
-            let prefetched =
-                compiler::take_prefetched(&opts, key.script_kind, Some(content.as_str()));
+            let prefetched = compiler::take_prefetched(&opts, key.script_kind, Some(&*content));
             let file = match prefetched {
                 compiler::Prefetched::Parse(file) => file,
                 // The worker text has the same bytes (a static text: this
@@ -201,7 +203,7 @@ pub fn new_parse_cache(options: RefCountCacheOptions) -> Rc<ParseCache> {
                     // The text of a freeable version is shared with its
                     // store and goes with the version; another text is
                     // leaked, as in compiler/host.rs (`FileText::new`).
-                    let text = FileText::new(content, freeable);
+                    let text = FileText::from_shared(content, freeable);
                     parser::parse_source_file(&opts, text, key.script_kind)
                 }
             };

@@ -257,8 +257,10 @@ mod tests {
     }
 
     /// A name of the full text without its hashes: v0 crate hashes
-    /// (`std[7714dba5b6ef3665]::`, nightly builds). A legacy `::h0123...`
-    /// suffix (stable 1.95) stays: the short name is then a prefix.
+    /// (`std[7714dba5b6ef3665]::`, nightly builds; v0 prints the hash with
+    /// no leading zeros, so it can have fewer than 16 digits:
+    /// `goport_util[a095d9b593fa720]::`). A legacy `::h0123...` suffix
+    /// (stable 1.95) stays: the short name is then a prefix.
     fn without_hashes(name: &str) -> String {
         let mut out = String::new();
         let mut rest = name;
@@ -266,7 +268,8 @@ mod tests {
             out.push_str(head);
             match tail.split_once(']') {
                 Some((hash, after))
-                    if hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()) =>
+                    if (1..=16).contains(&hash.len())
+                        && hash.bytes().all(|b| b.is_ascii_hexdigit()) =>
                 {
                     rest = after;
                 }

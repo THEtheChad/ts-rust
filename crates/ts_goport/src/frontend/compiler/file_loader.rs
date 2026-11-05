@@ -261,7 +261,7 @@ pub fn process_all_program_files(
     single_threaded: bool,
 ) -> (ProcessedFiles, Option<GoError>) {
     let ProgramHosts { host } = hosts;
-    let mut times = super::load_dump::LoadTimes::start();
+    let mut times = super::load_times::LoadTimes::start();
     super::load_dump::begin_load();
     let compiler_options = opts.config.compiler_options().clone();
     // PERF (buildprog1): the root names are read from the config, as Go

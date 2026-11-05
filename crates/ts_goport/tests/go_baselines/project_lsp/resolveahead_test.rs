@@ -1512,7 +1512,8 @@ os_child_test! {
     /// call would find the new disk. `broken` has a
     /// package.json but no types file, and `not-installed` has no directory;
     /// no file of the program is in them, so the loader did not look them up
-    /// itself.
+    /// itself. The load adopted the taken answers' package.json lookups into
+    /// its own cache (`adopt_ahead_package_jsons`, keyed loads too).
     fn a_later_package_json_lookup_uses_the_taken_answers() {
         let root = make_project("pjlookup");
         write(
@@ -1541,12 +1542,13 @@ os_child_test! {
             .as_ref()
             .and_then(|resolver| resolver.as_default_resolver())
             .expect("the default resolver");
-        for name in [&broken, &not_installed] {
-            assert!(
-                resolver.package_json_info_cache.get(name).is_none(),
-                "the loader looked up {name} itself"
-            );
-        }
+        // The keyed load adopted the package.json lookups of the answers it
+        // took (as a first load does), so the loader's cache has the entry
+        // of `broken` as a serial load's cache has it.
+        assert!(
+            resolver.package_json_info_cache.get(&broken).is_some(),
+            "the taken answer's package.json lookup was not adopted"
+        );
         std::fs::remove_dir_all(format!("{root}/node_modules/broken")).unwrap();
         write(
             &root,
@@ -1653,4 +1655,707 @@ TMPDIR="$1/t" exec "$2" --exact "$3" --nocapture --test-threads=1"#;
     assert!(output.status.success(), "{text}");
     assert!(text.contains("test result: ok. 1 passed"), "{text}");
     assert!(!text.contains("skipped"), "{text}");
+}
+
+// Loader v2 L1: the per-load OS view (`vfs::loadview`) of `tsgo --lsp`, its
+// V-replay oracle and its load window. Their hooks are diagnostics, so
+// these tests run with the `diagnostics` cargo feature.
+#[cfg(feature = "diagnostics")]
+mod load_view {
+
+    use super::super::util::CREATED;
+    use super::*;
+    use ts_goport::frontend::compiler::load_view_scope::diag as scope_diag;
+    use ts_goport::frontend::vfs::loadview::{self, diag as view_diag};
+
+    /// A session whose host is the OS file system with the per-load OS view
+    /// under its overlays, as `tsgo --lsp` has. A session on the plain OS file
+    /// system (`os_session`) has no view: the tests use it for the serial
+    /// reference loads.
+    fn os_view_session(root: &str) -> Rc<Session> {
+        project::new_session(&SessionInit {
+            background_ctx: bg(),
+            options: Rc::new(SessionOptions {
+                current_directory: root.to_string(),
+                default_library_path: bundled::lib_path(),
+                typings_location: String::new(),
+                position_encoding: lsproto::PositionEncodingKind::UTF8,
+                watch_enabled: false,
+                logging_enabled: false,
+                ..projecttestutil::session_options(root)
+            }),
+            fs: bundled::wrap_fs(loadview::os_view_fs()),
+            client: None,
+            logger: None,
+            npm_executor: None,
+            spawner: None,
+            content_mapper_logger: None,
+            parse_cache: None,
+            content_mapped_parse_cache: None,
+        })
+    }
+
+    /// What a session's loads leave (`observe`, `observe_snapshot_fs`).
+    type Left = (Observed, Vec<String>);
+
+    /// Runs `steps` on the project in `root` with the view on or off, in
+    /// resolve-ahead `mode` (`None`: the default, with first-load ahead), and
+    /// returns what the loads left and the last view's counts.
+    fn run_view(
+        root: &str,
+        view: bool,
+        mode: Option<Mode>,
+        steps: &dyn Fn(&Rc<Session>, &str),
+    ) -> (Left, Option<(view_diag::ViewCounts, u64)>) {
+        resolve_ahead::set_mode(mode);
+        let session = if view {
+            os_view_session(root)
+        } else {
+            os_session(root)
+        };
+        steps(&session, root);
+        let left = (observe(&session, root), observe_snapshot_fs(&session, root));
+        let counts = scope_diag::last_counts();
+        resolve_ahead::set_mode(None);
+        drop(session);
+        (left, counts)
+    }
+
+    /// `make_project` with a fixed label per test: the paths of two runs are
+    /// the same, so their snapshot lines compare.
+    fn fresh_project(label: &str) -> String {
+        make_project(label)
+    }
+
+    os_child_test! {
+        /// L1: a first load through the per-load OS view, with nothing changing
+        /// on disk, leaves the same program, resolutions, metadata, seen files,
+        /// missing directories, cached files (with hashes), lookup cache, cached
+        /// directories and aliases as the serial loader with no view and no
+        /// resolve ahead. Repeated, since the workers race the loader.
+        fn a_first_load_through_the_view_equals_the_serial_load() {
+            let open_with_unsaved = |session: &Rc<Session>, root: &str| {
+                let text = format!("import {{ z }} from \"./newdir/z\";\n{INDEX}");
+                open(session, &file_uri(root, "src/index.ts"), &text);
+                program(session, &file_uri(root, "src/index.ts"));
+            };
+            let root = fresh_project("viewfirst");
+            let (serial, counts) = run_view(&root, false, Some(Mode::Off), &open_with_unsaved);
+            assert!(counts.is_none(), "a view on a session without a view host");
+            // The workers race the loader (on a busy machine they may fill
+            // nothing before it asks): every attempt must equal the serial load,
+            // and the test repeats until a demand found a worker's observation.
+            let mut worker_hits = 0;
+            for attempt in 0..20 {
+                let (left, counts) = run_view(&root, true, None, &open_with_unsaved);
+                assert_eq!(left.0, serial.0, "attempt {attempt}");
+                assert_eq!(left.1, serial.1, "attempt {attempt}");
+                let (counts, bypass) = counts.expect("no view attached");
+                assert_eq!(bypass, 0, "live OS calls bypassed the view: {counts:?}");
+                assert!(
+                    counts.hit.iter().sum::<u64>() + counts.miss.iter().sum::<u64>() > 0,
+                    "the loader made no demand through the view: {counts:?}"
+                );
+                worker_hits += counts.hit_worker.iter().sum::<u64>();
+                if worker_hits > 0 && attempt >= 2 {
+                    break;
+                }
+            }
+            // With one core there are no parse workers: the loader fills the view.
+            if ts_goport::program::available_cores() > 1 {
+                assert!(worker_hits > 0, "no demand found a worker's observation");
+            }
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
+    os_child_test! {
+        /// L1: a keyed second load (an edit, whose workers resolve the keys of
+        /// the first load) through the view, with the loader taking every
+        /// worker answer (`Mode::Force`), leaves the same state as the serial
+        /// loader (no resolve ahead), lookup cache included: under the view a
+        /// keyed load checks every lookup through the snapshot's cache.
+        fn a_keyed_second_load_through_the_view_equals_the_serial_load() {
+            let steps = |session: &Rc<Session>, root: &str| {
+                open_index(session, root);
+                add_import(session, root);
+                program(session, &file_uri(root, "src/index.ts"));
+            };
+            let root = fresh_project("viewsecond");
+            let (serial, _) = run_view(&root, false, Some(Mode::Off), &steps);
+            let (on, counts) = run_view(&root, true, Some(Mode::Force), &steps);
+            assert_eq!(on.0, serial.0);
+            assert_eq!(on.1, serial.1);
+            let stats = resolve_ahead::last_stats().expect("no resolve-ahead load");
+            assert!(stats.keys > 0 && stats.loader.taken > 0, "{stats:?}");
+            let (_, bypass) = counts.expect("no view attached");
+            assert_eq!(bypass, 0);
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
+    /// L1 V-replay oracle: a first load through the view whose disk changes
+    /// after its workers observed it (`Mode::Force`: the hook runs when the
+    /// workers are idle, before the loader starts), recorded; then the serial
+    /// loader (no resolve ahead) on the changed disk, replaying the recorded
+    /// view, must leave the same state. Returns (the recorded run, a fresh
+    /// serial load of the changed disk with no view) for the caller's checks.
+    fn replay_oracle(
+        label: &str,
+        prepare: &dyn Fn(&str),
+        change: &'static dyn Fn(&str),
+    ) -> (Left, Left) {
+        let steps = |session: &Rc<Session>, root: &str| open_index(session, root);
+        let root = fresh_project(label);
+        prepare(&root);
+        let hook_root = root.clone();
+        let changed = Rc::new(std::cell::Cell::new(false));
+        let hook_changed = changed.clone();
+        resolve_ahead::set_first_load(Some(true));
+        resolve_ahead::set_after_workers(Some(Rc::new(move || {
+            if !hook_changed.replace(true) {
+                change(&hook_root);
+            }
+        })));
+        scope_diag::keep_records(true);
+        let (recorded, counts) = run_view(&root, true, Some(Mode::Force), &steps);
+        let records = scope_diag::take_records();
+        scope_diag::keep_records(false);
+        resolve_ahead::set_after_workers(None);
+        resolve_ahead::set_first_load(None);
+        assert!(changed.get(), "the change hook did not run");
+        assert!(counts.is_some(), "no view attached");
+        assert!(!records.is_empty(), "no view recorded");
+        // The serial loader against the recorded view, with the same disk
+        // timeline: the project made again, and the change at the same point
+        // (after the root tasks, `Mode::Off`). Only the load reads V; what the
+        // session reads before the load (the config's file walk) is live in
+        // both runs.
+        let root = fresh_project(label);
+        prepare(&root);
+        let hook_root = root.clone();
+        let changed = Rc::new(std::cell::Cell::new(false));
+        let hook_changed = changed.clone();
+        resolve_ahead::set_after_workers(Some(Rc::new(move || {
+            if !hook_changed.replace(true) {
+                change(&hook_root);
+            }
+        })));
+        scope_diag::set_replay(Some(&records));
+        let (replayed, replay_counts) = run_view(&root, true, Some(Mode::Off), &steps);
+        scope_diag::set_replay(None);
+        resolve_ahead::set_after_workers(None);
+        assert!(changed.get(), "the replay's change hook did not run");
+        let (replay_counts, _) = replay_counts.expect("no replayed view");
+        assert_eq!(replay_counts.replay_miss, 0, "{replay_counts:?}");
+        assert_eq!(replayed.0, recorded.0, "the serial loader on V differs");
+        assert_eq!(replayed.1, recorded.1, "the serial loader on V differs");
+        // A fresh serial load of the changed disk, with no view.
+        let (fresh, _) = run_view(&root, false, Some(Mode::Off), &steps);
+        std::fs::remove_dir_all(&root).unwrap();
+        (recorded, fresh)
+    }
+
+    os_child_test! {
+        /// L1 V-replay oracle with a file deleted after a worker observed it:
+        /// the load equals the serial loader run against V (the replay), and
+        /// so keeps the file that the view saw, which a fresh serial load of
+        /// the changed disk does not have (the concurrent-change contract: the
+        /// result is serial-on-V, not serial on the final disk).
+        fn the_view_replay_oracle_holds_when_a_file_is_deleted() {
+            let (recorded, fresh) = replay_oracle("viewreplaydel", &|_| {}, &|root| {
+                std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
+            });
+            if ts_goport::program::available_cores() > 1 {
+                assert_ne!(recorded.0, fresh.0, "the view did not see the file before its deletion");
+            }
+        }
+    }
+
+    os_child_test! {
+        /// L1 V-replay oracle with a package that appears and a package.json
+        /// that changes after the workers observed the disk.
+        fn the_view_replay_oracle_holds_when_a_package_appears() {
+            replay_oracle("viewreplaynear", &|_| {}, &|root| {
+                write(
+                    root,
+                    "src/node_modules/pkg/package.json",
+                    r#"{ "name": "pkg", "version": "3.0.0", "types": "index.d.ts" }"#,
+                );
+                write(root, "src/node_modules/pkg/index.d.ts", "export declare const p: string;");
+                write(
+                    root,
+                    "node_modules/pkg/package.json",
+                    r#"{ "name": "pkg", "version": "1.0.1", "types": "index.d.ts" }"#,
+                );
+            });
+        }
+    }
+
+    os_child_test! {
+        /// L1 V-replay oracle with a node_modules symlink repointed after the
+        /// workers resolved through it.
+        fn the_view_replay_oracle_holds_when_a_symlink_changes() {
+            let prepare = |root: &str| {
+                let lib = std::path::Path::new(root).join("node_modules/@scope/lib");
+                std::fs::rename(&lib, std::path::Path::new(root).join("store-a")).unwrap();
+                write(
+                    root,
+                    "store-b/package.json",
+                    r#"{ "name": "@scope/lib", "version": "2.1.0", "exports": { ".": { "types": "./dist/other.d.ts" } } }"#,
+                );
+                write(root, "store-b/dist/other.d.ts", "export declare const m: boolean;");
+                std::os::unix::fs::symlink(std::path::Path::new(root).join("store-a"), &lib).unwrap();
+            };
+            replay_oracle("viewreplaylink", &prepare, &|root| {
+                let lib = std::path::Path::new(root).join("node_modules/@scope/lib");
+                std::fs::remove_file(&lib).unwrap();
+                std::os::unix::fs::symlink(std::path::Path::new(root).join("store-b"), &lib).unwrap();
+            });
+        }
+    }
+
+    #[test]
+    fn a_view_record_reads_back() {
+        // A view's record (`GOPORT_LOAD_VIEW_DUMP`) reads back as the same
+        // observations (its texts by hash).
+        use ts_goport::frontend::vfs::Fs as _;
+        let dir = std::env::temp_dir().join(format!("goport-view-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("d/a.ts"), "\u{feff}export const a = 1;").unwrap();
+        std::os::unix::fs::symlink(dir.join("d"), dir.join("link")).unwrap();
+        let root = dir.to_string_lossy().replace('\\', "/");
+        let view = loadview::LoadView::new();
+        let fs = loadview::ViewFs::worker(osvfs_fs(), view.clone());
+        assert!(fs.file_exists(&format!("{root}/d/a.ts")));
+        assert!(fs.directory_exists(&format!("{root}/link")));
+        assert!(!fs.file_exists(&format!("{root}/missing")));
+        assert_eq!(
+            fs.read_file(&format!("{root}/d/a.ts")),
+            ("export const a = 1;".to_string(), true)
+        );
+        assert_eq!(fs.read_file(&format!("{root}/d")), (String::new(), false));
+        let _ = fs.realpath(&format!("{root}/link/a.ts"));
+        let entries = fs.get_accessible_entries(&root);
+        assert_eq!(
+            entries.directories,
+            vec!["d".to_string(), "link".to_string()]
+        );
+        let mut record = Vec::new();
+        view.write_record(&mut record);
+        let back = loadview::LoadView::read_records(&record).unwrap();
+        assert_eq!(back.len(), 1);
+        let (a, b) = (view.observations(), back[0].observations());
+        assert_eq!(a.stats, b.stats);
+        assert_eq!(a.reads, b.reads);
+        assert_eq!(a.realpaths, b.realpaths);
+        assert_eq!(
+            a.entries
+                .iter()
+                .map(|(p, e)| (
+                    p.clone(),
+                    e.files.clone(),
+                    e.directories.clone(),
+                    e.symlinks.clone().map(|s| {
+                        let mut v: Vec<_> = s.into_iter().collect();
+                        v.sort();
+                        v
+                    })
+                ))
+                .collect::<Vec<_>>(),
+            b.entries
+                .iter()
+                .map(|(p, e)| (
+                    p.clone(),
+                    e.files.clone(),
+                    e.directories.clone(),
+                    e.symlinks.clone().map(|s| {
+                        let mut v: Vec<_> = s.into_iter().collect();
+                        v.sort();
+                        v
+                    })
+                ))
+                .collect::<Vec<_>>()
+        );
+        // A directory is not read speculatively, so the view has no read of it.
+        assert!(b.reads.iter().all(|(path, _)| !path.ends_with("/d")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Loader v2 L1: sessions with a client that records the watch calls.
+    // ---------------------------------------------------------------------------
+
+    /// What the language server shows after a session: the program's files,
+    /// missing files, metadata and resolutions, every semantic diagnostic, and
+    /// the active watch globs. Paths are relative to the root.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Shown {
+        files: Vec<String>,
+        missing_files: Vec<String>,
+        metadata: BTreeSet<String>,
+        resolutions: BTreeSet<String>,
+        diagnostics: Vec<String>,
+        watches: BTreeSet<String>,
+    }
+
+    fn shown(session: &Rc<Session>, root: &str, client: &projecttestutil::ClientMock) -> Shown {
+        let observed = observe(session, root);
+        let relative = |text: &str| text.replace(root, "<root>");
+        let p = program(session, &file_uri(root, "src/index.ts"));
+        let mut diagnostics: Vec<String> =
+            ts_goport::program::ls_program::get_semantic_diagnostics(
+                &p,
+                &projecttestutil::with_request_id(&bg()),
+                ts_goport::core::Node::NIL,
+            )
+            .iter()
+            .map(|d| relative(&ts_goport::frontend::compiler::load_dump::describe_diagnostic(d)))
+            .collect();
+        diagnostics.sort();
+        // The active watchers: each id's last watch call, less the unwatched.
+        let mut active: std::collections::BTreeMap<String, Vec<lsproto::FileSystemWatcher>> =
+            std::collections::BTreeMap::new();
+        for call in client.watch_files_calls() {
+            active.insert(call.id.0.clone(), call.watchers.clone());
+        }
+        for id in client.unwatch_files_calls() {
+            active.remove(&id.0);
+        }
+        let watches = active
+            .values()
+            .flatten()
+            .map(|w| relative(&format!("{:?} {:?}", w.glob_pattern, w.kind)))
+            .collect();
+        Shown {
+            files: observed.files,
+            missing_files: observed.missing_files,
+            metadata: observed.metadata,
+            resolutions: observed.resolutions,
+            diagnostics,
+            watches,
+        }
+    }
+
+    /// A session on the OS file system in `root` with a client that records the
+    /// watch calls, file watching on, with or without the OS view.
+    fn watched_session(root: &str, view: bool) -> (Rc<Session>, Rc<projecttestutil::ClientMock>) {
+        let client = Rc::new(projecttestutil::ClientMock::default());
+        let fs = if view {
+            bundled::wrap_fs(loadview::os_view_fs())
+        } else {
+            bundled::wrap_fs(osvfs_fs())
+        };
+        let session = project::new_session(&SessionInit {
+            background_ctx: bg(),
+            options: Rc::new(SessionOptions {
+                current_directory: root.to_string(),
+                default_library_path: bundled::lib_path(),
+                typings_location: String::new(),
+                position_encoding: lsproto::PositionEncodingKind::UTF8,
+                watch_enabled: true,
+                logging_enabled: false,
+                ..projecttestutil::session_options(root)
+            }),
+            fs,
+            client: Some(client.clone() as Rc<dyn ts_goport::project::Client>),
+            logger: None,
+            npm_executor: None,
+            spawner: None,
+            content_mapper_logger: None,
+            parse_cache: None,
+            content_mapped_parse_cache: None,
+        });
+        (session, client)
+    }
+
+    /// `lib/c.ts` deleted (only the resolution of "../lib/c" looks it up).
+    fn delete_c(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+        std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
+        vec![(DELETED, "lib/c.ts".to_string())]
+    }
+
+    /// A file's text changes (its export's type).
+    fn edit_a(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
+        write(root, "src/a.ts", "export const a: string = 1;");
+        vec![(CHANGED, "src/a.ts".to_string())]
+    }
+
+    /// A package `pkg2` behind a node_modules symlink to `store/a`, whose
+    /// `x` is `"A"`, and `src/sym.ts`, which needs `"A"` (Astra's repro).
+    /// `store/b` has `x: "B"`, `store/a2` the same files as `store/a`.
+    fn symlinked_pkg2(root: &str) {
+        for (store, value) in [("a", "A"), ("a2", "A"), ("b", "B")] {
+            write(
+                root,
+                &format!("store/{store}/package.json"),
+                r#"{ "name": "pkg2", "version": "1.0.0", "types": "index.d.ts" }"#,
+            );
+            write(
+                root,
+                &format!("store/{store}/index.d.ts"),
+                &format!("export declare const x: \"{value}\";"),
+            );
+        }
+        write(
+            root,
+            "src/sym.ts",
+            "import { x } from \"pkg2\";\nexport const y: \"A\" = x;\n",
+        );
+        point_pkg2(root, "a");
+    }
+
+    /// Points `node_modules/pkg2` at `store/<store>`.
+    fn point_pkg2(root: &str, store: &str) -> Vec<(lsproto::FileChangeType, String)> {
+        let link = std::path::Path::new(root).join("node_modules/pkg2");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(std::path::Path::new(root).join("store").join(store), &link)
+            .unwrap();
+        // A watcher of the program's files reports the files under the
+        // replaced link as deleted and created.
+        let mut events = Vec::new();
+        for name in [
+            "node_modules/pkg2",
+            "node_modules/pkg2/package.json",
+            "node_modules/pkg2/index.d.ts",
+        ] {
+            events.push((DELETED, name.to_string()));
+            events.push((CREATED, name.to_string()));
+        }
+        events
+    }
+
+    fn has_code(shown: &Shown, code: &str) -> bool {
+        shown.diagnostics.iter().any(|d| d.contains(code))
+    }
+
+    // -----------------------------------------------------------------------
+    // Loader v2 L1: a change during the load window, as in Go. Go registers
+    // the watchers after the load (project/session.go `updateWatch`); a
+    // change between its read and the client's watch acknowledgement is not
+    // seen until a later watch event reports its path. The base serial
+    // loader (a session with no view) and the view behave the same; the
+    // view's window starts at a worker's observation, which can be before
+    // the loader's demand.
+    // -----------------------------------------------------------------------
+
+    /// What a session on the project in `root` shows after it opens the
+    /// index (with or without the view), the change `change` made by `hook`
+    /// during its load window, and the watch registration; then after the
+    /// client's watch events for the change. `force` makes the change after
+    /// the parse workers observed the disk and before the loader's demands
+    /// (`Mode::Force`); otherwise it is made after the load, before the
+    /// watch registration.
+    fn lost_then_seen(
+        root: &str,
+        view: bool,
+        force: bool,
+        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+    ) -> (Shown, Shown) {
+        let uri = file_uri(root, "src/index.ts");
+        let reported = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let hook = {
+            let root = root.to_string();
+            let reported = reported.clone();
+            Rc::new(move || {
+                if reported.borrow().is_empty() {
+                    *reported.borrow_mut() = change(&root);
+                }
+            }) as Rc<dyn Fn()>
+        };
+        if force {
+            resolve_ahead::set_mode(Some(Mode::Force));
+            resolve_ahead::set_first_load(Some(true));
+            resolve_ahead::set_after_workers(Some(hook.clone()));
+        }
+        let (session, client) = watched_session(root, view);
+        open(&session, &uri, INDEX);
+        program(&session, &uri);
+        resolve_ahead::set_after_workers(None);
+        resolve_ahead::set_mode(None);
+        resolve_ahead::set_first_load(None);
+        if !force {
+            // After the load, before the watch registration (a background
+            // task of the snapshot update).
+            hook();
+        }
+        session.wait_for_background_tasks();
+        let lost = shown(&session, root, &client);
+        // The client's watcher reports the change later.
+        let events: Vec<(lsproto::FileChangeType, String)> = reported
+            .borrow()
+            .iter()
+            .map(|(kind, name)| (*kind, file_uri(root, name)))
+            .collect();
+        assert!(!events.is_empty(), "the change did not run");
+        let events: Vec<(lsproto::FileChangeType, &str)> = events
+            .iter()
+            .map(|(kind, uri)| (*kind, uri.as_str()))
+            .collect();
+        super::super::util::watch(&session, &events);
+        program(&session, &uri);
+        session.wait_for_background_tasks();
+        let seen = shown(&session, root, &client);
+        drop(session);
+        (lost, seen)
+    }
+
+    /// A fresh serial session (no view, no resolve ahead) of the disk in
+    /// `root`.
+    fn fresh_serial(root: &str) -> Shown {
+        resolve_ahead::set_mode(Some(Mode::Off));
+        let (session, client) = watched_session(root, false);
+        open(&session, &file_uri(root, "src/index.ts"), INDEX);
+        program(&session, &file_uri(root, "src/index.ts"));
+        session.wait_for_background_tasks();
+        let fresh = shown(&session, root, &client);
+        resolve_ahead::set_mode(None);
+        drop(session);
+        fresh
+    }
+
+    /// The disk before and after `change` (fresh serial sessions), and
+    /// `lost_then_seen` with and without the view in the same project path.
+    fn change_in_the_window(
+        label: &str,
+        force: bool,
+        prepare: &dyn Fn(&str),
+        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+    ) -> Shown {
+        let root = fresh_project(label);
+        prepare(&root);
+        let before = fresh_serial(&root);
+        let _ = change(&root);
+        let after = fresh_serial(&root);
+        assert_ne!(before, after, "the change shows nothing");
+        let sides: &[bool] = if force { &[true] } else { &[true, false] };
+        for &view in sides {
+            assert_eq!(fresh_project(label), root);
+            prepare(&root);
+            let (lost, seen) = lost_then_seen(&root, view, force, change);
+            assert_eq!(
+                lost, before,
+                "view {view}: the change was seen before its watch event"
+            );
+            assert_eq!(
+                seen, after,
+                "view {view}: the watch event did not bring the change"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+        after
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: a file deleted after the
+        /// load read it and before the watch registration stays in the
+        /// program until its watch event arrives; then the program loses it.
+        fn a_file_deleted_after_the_load_is_seen_with_its_watch_event() {
+            let after = change_in_the_window("winafterdel", false, &|_| {}, &delete_c);
+            assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
+        }
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: an edited file.
+        fn a_file_edited_after_the_load_is_seen_with_its_watch_event() {
+            let _ = change_in_the_window("winafteredit", false, &|_| {}, &edit_a);
+        }
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: a repointed node_modules
+        /// symlink (A to B: TS2322 once the watch events arrive).
+        fn a_symlink_repointed_after_the_load_is_seen_with_its_watch_events() {
+            let after = change_in_the_window("winaftersym", false, &symlinked_pkg2, &|root| {
+                point_pkg2(root, "b")
+            });
+            assert!(has_code(&after, "TS2322"), "{:?}", after.diagnostics);
+        }
+    }
+
+    os_child_test! {
+        /// The view's window starts at a worker's observation: a file deleted
+        /// after a worker read it and before the loader's demand stays in the
+        /// program until its watch event, as a change after Go's read does.
+        fn a_file_deleted_after_a_worker_observed_it_is_seen_with_its_watch_event() {
+            let after = change_in_the_window("winobsdel", true, &|_| {}, &delete_c);
+            assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
+        }
+    }
+
+    /// Waits up to `seconds` for `done`.
+    fn wait_until(seconds: u64, done: impl Fn() -> bool) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        while std::time::Instant::now() < until {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        done()
+    }
+
+    os_child_test! {
+        /// Astra L1 round 3, finding 1: a load's view goes when the load
+        /// ends, except the references of workers that still run a
+        /// resolution of its job, which go when they return. Here every
+        /// resolve-ahead worker of a keyed load is held inside the job
+        /// across the load's end (`hold_in_job`), and a third load runs
+        /// meanwhile, whose ended job waits to be freed behind them: only
+        /// the views of the jobs with held workers stay alive (`live_views`,
+        /// `jobs_held`, diagnostics only) until the workers are let go.
+        fn a_view_held_by_a_worker_goes_when_the_worker_returns() {
+            use ts_goport::frontend::vfs::loadview::diag::live_views;
+            if ts_goport::program::available_cores() == 1 {
+                // No resolve-ahead workers on one core.
+                return;
+            }
+            watchdog(60);
+            let root = fresh_project("viewfree");
+            let session = os_view_session(&root);
+            open_index(&session, &root);
+            session.wait_for_background_tasks();
+            assert!(
+                wait_until(10, || live_views() == 0),
+                "the first load's view is still alive: {}",
+                live_views()
+            );
+            resolve_ahead::hold_in_job(true);
+            add_import(&session, &root);
+            program(&session, &file_uri(&root, "src/index.ts"));
+            session.wait_for_background_tasks();
+            let stats = resolve_ahead::last_stats().expect("no resolve-ahead load");
+            assert!(stats.keys > 0, "not a keyed load: {stats:?}");
+            // A third load while the workers are held in the second's job: no
+            // worker starts its job, which ends with the load and waits to be
+            // freed behind them; it must not keep the third view.
+            edit_index(&session, &root, 3, "import { b } from \"./sub/b\";\n");
+            program(&session, &file_uri(&root, "src/index.ts"));
+            session.wait_for_background_tasks();
+            // The loads have ended; their scopes, parse pools and jobs let go
+            // of their views. Only the jobs with held workers keep theirs: the
+            // second load's, and the third's too when one of its workers
+            // started before that load ended (a busy machine). The free
+            // thread can be behind: wait for it.
+            assert!(
+                wait_until(10, || {
+                    let held = resolve_ahead::jobs_held() as u64;
+                    held >= 1 && live_views() == held
+                }),
+                "views alive: {}, jobs with held workers: {}",
+                live_views(),
+                resolve_ahead::jobs_held()
+            );
+            resolve_ahead::hold_in_job(false);
+            assert!(
+                wait_until(10, || live_views() == 0),
+                "the view outlived the workers: {}",
+                live_views()
+            );
+            drop(session);
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
 }

@@ -1,0 +1,161 @@
+diff --git a/crates/ts_goport/src/frontend/vfs/osvfs.rs b/crates/ts_goport/src/frontend/vfs/osvfs.rs
+index d9088f134..f65411101 100644
+--- a/crates/ts_goport/src/frontend/vfs/osvfs.rs
++++ b/crates/ts_goport/src/frontend/vfs/osvfs.rs
+@@ -293,6 +293,80 @@ fn simple_to_lower(r: char) -> char {
+     }
+ }
+ 
++
++// SPIKE (L1 round 3 window measurement, never merged): every OS call with
++// its time on the observation log (`GOPORT_LOAD_OBS_LOG`).
++pub fn obs_clock_ns() -> u64 {
++    static START: OnceLock<std::time::Instant> = OnceLock::new();
++    START.get_or_init(std::time::Instant::now).elapsed().as_nanos() as u64
++}
++
++pub fn obs_line(line: std::fmt::Arguments<'_>) {
++    obs_write(line, true);
++}
++
++fn obs_write(line: std::fmt::Arguments<'_>, flush: bool) {
++    use std::io::Write;
++    static LOG: OnceLock<Option<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>> = OnceLock::new();
++    let log = LOG.get_or_init(|| {
++        let file = std::env::var("GOPORT_LOAD_OBS_LOG").ok()?;
++        std::fs::OpenOptions::new().create(true).append(true).open(file).ok()
++            .map(|f| std::sync::Mutex::new(std::io::BufWriter::new(f)))
++    });
++    if let Some(log) = log {
++        let mut log = log.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        let _ = log.write_fmt(line);
++        let _ = log.write_all(b"\n");
++        if flush {
++            let _ = log.flush();
++        }
++    }
++}
++
++thread_local! {
++    /// The loading thread's OS calls of the load in progress (`obs_begin`).
++    static OBS_BUF: std::cell::RefCell<Option<Vec<(u64, &'static str, String)>>> = const { std::cell::RefCell::new(None) };
++}
++
++/// Starts recording this thread's OS calls (the load on it).
++pub fn obs_begin() {
++    OBS_BUF.with(|b| *b.borrow_mut() = Some(Vec::with_capacity(65536)));
++}
++
++static OBS_PENDING: std::sync::Mutex<Vec<(u64, u64, Vec<(u64, &'static str, String)>)>> =
++    std::sync::Mutex::new(Vec::new());
++
++/// Ends the recording of a load (`t0`, `t1`: its span) and keeps it for the
++/// log after the next watch registration (`obs_watch`).
++pub fn obs_end(t0: u64, t1: u64) {
++    let Some(calls) = OBS_BUF.with(|b| b.borrow_mut().take()) else { return };
++    OBS_PENDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((t0, t1, calls));
++}
++
++/// The watch registration ended: writes the pending loads, then `watch`.
++pub fn obs_watch() {
++    use std::fmt::Write as _;
++    let at = obs_clock_ns();
++    let pending = std::mem::take(&mut *OBS_PENDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
++    let mut text = String::new();
++    for (t0, t1, calls) in pending {
++        let _ = writeln!(text, "load {:.3} {:.3}", t0 as f64 / 1e6, t1 as f64 / 1e6);
++        for (ns, kind, path) in calls {
++            let _ = writeln!(text, "os {kind} {:.3} loader {path}", ns as f64 / 1e6);
++        }
++    }
++    let _ = write!(text, "watch {:.3}", at as f64 / 1e6);
++    obs_line(format_args!("{text}"));
++}
++
++fn obs_os(kind: &'static str, path: &str) {
++    OBS_BUF.with(|b| {
++        if let Some(calls) = b.borrow_mut().as_mut() {
++            calls.push((obs_clock_ns(), kind, path.to_string()));
++        }
++    });
++}
++
+ impl Fs for OsFs {
+     // Go: os.go:89 CaseSensitivity
+     fn use_case_sensitive_file_names(&self) -> bool {
+@@ -301,6 +375,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:97 ReadFile (ts#64832)
+     fn read_file(&self, path: &str) -> (String, bool) {
++        obs_os("read", path);
+         if is_network_path(path) {
+             return (String::new(), false);
+         }
+@@ -309,6 +384,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:105 DirectoryExists (ts#64832)
+     fn directory_exists(&self, path: &str) -> bool {
++        obs_os("stat", path);
+         if is_network_path(path) {
+             return false;
+         }
+@@ -317,6 +393,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:113 FileExists (ts#64832)
+     fn file_exists(&self, path: &str) -> bool {
++        obs_os("stat", path);
+         if is_network_path(path) {
+             return false;
+         }
+@@ -325,6 +402,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:121 GetAccessibleEntries (ts#64832)
+     fn get_accessible_entries(&self, path: &str) -> Entries {
++        obs_os("entries", path);
+         if is_network_path(path) {
+             return Entries::default();
+         }
+@@ -333,6 +411,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:129 Stat (ts#64832)
+     fn stat(&self, path: &str) -> Option<FileInfo> {
++        obs_os("stat", path);
+         if is_network_path(path) {
+             return None;
+         }
+@@ -341,6 +420,7 @@ impl Fs for OsFs {
+ 
+     // Go: os.go:137 Realpath
+     fn realpath(&self, path: &str) -> String {
++        obs_os("realpath", path);
+         os_fs_realpath(path)
+     }
+ 
+diff --git a/crates/ts_goport/src/project/projectcollectionbuilder.rs b/crates/ts_goport/src/project/projectcollectionbuilder.rs
+index 098e0455a..2777989aa 100644
+--- a/crates/ts_goport/src/project/projectcollectionbuilder.rs
++++ b/crates/ts_goport/src/project/projectcollectionbuilder.rs
+@@ -2566,7 +2566,11 @@ impl ProjectCollectionBuilder {
+                     project.borrow_mut().host = Some(host);
+                     // PORT: no mutable borrow is held while the program is
+                     // built (the compiler host reads the project).
++                    let spike_t0 = crate::frontend::vfs::osvfs::obs_clock_ns();
++                    crate::frontend::vfs::osvfs::obs_begin();
+                     let result = project.borrow().create_program();
++                    let spike_t1 = crate::frontend::vfs::osvfs::obs_clock_ns();
++                    crate::frontend::vfs::osvfs::obs_end(spike_t0, spike_t1);
+                     // tsgo#4712
+                     let (new_host, content_mappers) = {
+                         let p = project.borrow();
+diff --git a/crates/ts_goport/src/project/session.rs b/crates/ts_goport/src/project/session.rs
+index 94506b21a..206a1705a 100644
+--- a/crates/ts_goport/src/project/session.rs
++++ b/crates/ts_goport/src/project/session.rs
+@@ -3012,6 +3012,7 @@ impl Session {
+             errors.borrow_mut().extend(retried);
+         }
+ 
++        crate::frontend::vfs::osvfs::obs_watch();
+         let errors = errors.into_inner();
+         if !errors.is_empty() {
+             // Go: fmt.Errorf("errors updating watches: %v", errors) (no %w).

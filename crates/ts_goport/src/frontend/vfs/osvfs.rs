@@ -301,6 +301,8 @@ impl Fs for OsFs {
 
     // Go: os.go:97 ReadFile (ts#64832)
     fn read_file(&self, path: &str) -> (String, bool) {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         if is_network_path(path) {
             return (String::new(), false);
         }
@@ -309,6 +311,8 @@ impl Fs for OsFs {
 
     // Go: os.go:105 DirectoryExists (ts#64832)
     fn directory_exists(&self, path: &str) -> bool {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         if is_network_path(path) {
             return false;
         }
@@ -317,6 +321,8 @@ impl Fs for OsFs {
 
     // Go: os.go:113 FileExists (ts#64832)
     fn file_exists(&self, path: &str) -> bool {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         if is_network_path(path) {
             return false;
         }
@@ -325,6 +331,8 @@ impl Fs for OsFs {
 
     // Go: os.go:121 GetAccessibleEntries (ts#64832)
     fn get_accessible_entries(&self, path: &str) -> Entries {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         if is_network_path(path) {
             return Entries::default();
         }
@@ -333,6 +341,8 @@ impl Fs for OsFs {
 
     // Go: os.go:129 Stat (ts#64832)
     fn stat(&self, path: &str) -> Option<FileInfo> {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         if is_network_path(path) {
             return None;
         }
@@ -341,6 +351,8 @@ impl Fs for OsFs {
 
     // Go: os.go:137 Realpath
     fn realpath(&self, path: &str) -> String {
+        #[cfg(feature = "diagnostics")]
+        super::loadview::diag::note_os_call();
         os_fs_realpath(path)
     }
 

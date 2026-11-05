@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# L1 dump-equality proof (loader v2, the per-load OS view): each scenario runs with the
+# view's bin ("on") and with the base commit's bin ("off": no view; the base is the other
+# side of the A/B, not a switch)
+# (3 times each, 6 for autoimport, fsmut and edit sessions; S1A_REPS sets the default;
+# interleaved) and once with GOPORT_RESOLVE_AHEAD=0 (the serial loader, no
+# resolve ahead at all), and compares record by record (dump-sections.py): the load dumps
+# section by section, and the whole message stream (every message in both directions, in
+# order, raw; load-dump-session.mjs <out>.stream). A record that varies between the two
+# S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
+# A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]". S1A_ONLY=<regex> runs the
+# cases whose name matches.
+# usage: l1-dumps.sh <tsgo bin> <base tsgo bin> <out dir>  (S1A_ONLY=<regex> picks cases; L1_REPS (2), L1_REPS_VARY (3): runs per side)
+set -u
+bin=$(realpath "$1"); base=$(realpath "$2"); mkdir -p "$3"; out=$(realpath "$3")
+here=$(cd "$(dirname "$0")" && pwd)
+P=~/.cache/perf-rearch/projects
+U=~/.cache/lspdiff/projects/umami
+cases=(
+  "umami-open open $U"
+  "tspattern-open open $P/ts-pattern - FILE=src/index.ts"
+  "hono-open open $P/hono - FILE=src/hono.ts"
+  "query-open open $P/query/packages/query-core"
+  "t3web-open open $P/t3code/apps/web"
+  "umami-second second $U $P/ts-pattern"
+  "t3-second second $P/t3code/apps/web $P/t3code/apps/server"
+  "umami-unsaved unsaved $U"
+  "hono-unsaved unsaved $P/hono - FILE=src/hono.ts"
+  "umami-pkgjson pkgjson $U"
+  "query-pkgjson pkgjson $P/query/packages/query-core"
+  "umami-edit edit $U"
+  "umami-autoimport autoimport $U"
+  "t3web-autoimport autoimport $P/t3code/apps/web"
+  "umami-cancel cancel $U"
+  "tspattern-fsmut fsmut $P/ts-pattern - FILE=src/index.ts"
+  "umami-fsmut fsmut $U"
+  "hono-edit edit $P/hono - FILE=src/hono.ts"
+)
+fail=0
+for c in "${cases[@]}"; do
+  read -r name scen root root2 f1 f2 <<<"$c"
+  [[ ${root2:-} == - ]] && root2=
+  file=${f1#FILE=}; file2=${f2#FILE2=}
+  # More runs where the session has work that varies without S1a (background auto-import,
+  # keyed second loads): a record that varies between the off runs is inconclusive, and
+  # more off runs make fewer records so.
+  # Their later step also waits 4 s (S1A_SETTLE_MS) so the first load's background work
+  # (the auto-import registry) settles: a faster first load otherwise moves that work into
+  # another snapshot, which is timing, not state (shown with and without the wait).
+  case $scen in autoimport|fsmut|edit) reps=${L1_REPS_VARY:-3}; settle=${S1A_SETTLE_MS:-4000} ;; *) reps=${L1_REPS:-2}; settle=0 ;; esac
+  [[ -n ${S1A_ONLY:-} && ! $name =~ $S1A_ONLY ]] && continue
+  offs=(); ons=()
+  for rep in $(seq 1 "$reps"); do
+    for v in 1 0; do
+      S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_LOAD_TIMES=1 GOPORT_RESOLVE_AHEAD_STATS=1 node "$here/load-dump-session.mjs" "$( [[ $v == 1 ]] && echo "$bin" || echo "$base" )" "$out/$name-$v-$rep" "$scen" "$root" ${root2:-} || echo "ERROR $name $v-$rep"
+      if [[ $v == 1 ]]; then ons+=("$out/$name-$v-$rep"); else offs+=("$out/$name-$v-$rep"); fi
+    done
+  done
+  S1A_SETTLE_MS=$settle S1A_FILE=$file S1A_FILE2=$file2 GOPORT_RESOLVE_AHEAD=0 node "$here/load-dump-session.mjs" "$base" "$out/$name-serial" "$scen" "$root" ${root2:-} || echo "ERROR $name serial"
+  stats=$(python3 -I -c 'import json,re,sys
+for f in sys.argv[1:]:
+    s=json.load(open(f))["stderr"]
+    print(" | ".join(re.sub(r"goport load-view: t0=[\d.]+ t1=[\d.]+ ","",l)[:220] for l in s.splitlines() if "goport load-view:" in l))' "$out/$name-1-1.json")
+  # The verdict: record by record (dump-sections.py), for the dumps (section by section)
+  # and for the whole message stream (every message in order, raw).
+  python3 -I "$here/dump-sections.py" dumps --off "${offs[@]/%/.dump}" --on "${ons[@]/%/.dump}" --serial "$out/$name-serial.dump" > "$out/$name.dump-verdict"
+  python3 -I "$here/dump-sections.py" stream --off "${offs[@]/%/.stream}" --on "${ons[@]/%/.stream}" --serial "$out/$name-serial.stream" > "$out/$name.stream-verdict"
+  # Also every view-on run against the serial loader alone (the serial run given as both
+  # reference runs, so every record must match it exactly). Under the view a keyed load checks
+  # every lookup through the snapshot's cache, so it equals the serial loader, where the
+  # view-off keyed loads differ from it (pre-existing).
+  python3 -I "$here/dump-sections.py" dumps --off "$out/$name-serial.dump" "$out/$name-serial.dump" --on "${ons[@]/%/.dump}" > "$out/$name.dump-vs-serial"
+  python3 -I "$here/dump-sections.py" stream --off "$out/$name-serial.stream" "$out/$name-serial.stream" --on "${ons[@]/%/.stream}" > "$out/$name.stream-vs-serial"
+  echo "  on vs serial: dump $(tail -1 "$out/$name.dump-vs-serial") ($(grep -c '^  FAIL' "$out/$name.dump-vs-serial") fail records), stream $(tail -1 "$out/$name.stream-vs-serial")"
+  dv=$(tail -1 "$out/$name.dump-verdict"); sv=$(tail -1 "$out/$name.stream-verdict")
+  inc=$(grep -c 'INCONCLUSIVE' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | awk -F: '{s+=$2} END {print s}')
+  exc=$(grep -c 'EXCLUDED' "$out/$name.dump-verdict" | awk -F: '{s+=$NF} END {print s}')
+  ser=$(grep -c '^  SERIAL FAIL' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | awk -F: '{s+=$2} END {print s}')
+  if [[ $dv == "RECORDS OK" && $sv == "RECORDS OK" ]]; then
+    echo "OK $name ($reps on, $reps off): dump $dv, stream $sv; $inc inconclusive, $exc excluded records; serial differences: $ser (dump lines $(wc -l < "$out/$name-0-1.dump"))"
+  else
+    echo "FAIL $name: dump $dv, stream $sv"; fail=1
+    grep -h '^  FAIL\|^FAIL' "$out/$name.dump-verdict" "$out/$name.stream-verdict" | head -20 | sed 's/^/    /'
+  fi
+  { grep -h 'INCONCLUSIVE' "$out/$name.dump-verdict" "$out/$name.stream-verdict" || true; } | cut -c1-220 | sed 's/^/    /' | head -8
+  gzip -f "$out/$name"-*.dump "$out/$name"-*.stream
+  echo "  stats(on, run a): $stats"
+done
+[[ $fail == 0 ]] && echo "L1 RECORDS OK" || echo "L1 RECORDS FAIL"

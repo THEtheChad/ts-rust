@@ -105,6 +105,8 @@ thread_local! {
     /// `wrap_fs(osvfs_fs())` of this thread. The wrapper has no state, so
     /// one value per thread is the same as a new one per call.
     static WRAPPED_OS_FS: std::cell::OnceCell<Rc<dyn Fs>> = const { std::cell::OnceCell::new() };
+    /// `wrap_fs(loadview::os_view_fs())` of this thread (loader v2 L1).
+    static WRAPPED_VIEW_FS: std::cell::OnceCell<Rc<dyn Fs>> = const { std::cell::OnceCell::new() };
 }
 
 // Go: embed.go:42 wrapFS
@@ -113,6 +115,11 @@ thread_local! {
 pub fn wrap_fs(fs: Rc<dyn Fs>) -> Rc<dyn Fs> {
     if Rc::ptr_eq(&fs, &osvfs_fs()) {
         return WRAPPED_OS_FS.with(|os| os.get_or_init(|| Rc::new(WrappedFs { fs })).clone());
+    }
+    if crate::frontend::vfs::loadview::existing_os_view_fs()
+        .is_some_and(|view| Rc::ptr_eq(&fs, &view))
+    {
+        return WRAPPED_VIEW_FS.with(|os| os.get_or_init(|| Rc::new(WrappedFs { fs })).clone());
     }
     Rc::new(WrappedFs { fs })
 }
@@ -123,8 +130,12 @@ pub fn wrap_fs(fs: Rc<dyn Fs>) -> Rc<dyn Fs> {
 /// so the loader can use the text that a parse worker read.
 // PORT: not in Go (the Go loader reads each file once, on its own task).
 pub fn is_wrapped_os_fs(fs: &Rc<dyn Fs>) -> bool {
+    // Loader v2 L1: the OS file system with the per-load OS view under the
+    // bundled wrapper (`loadview::os_view_fs`) is the OS file system: the
+    // view answers what the OS answers, and its workers read the OS.
     !os_override_installed()
-        && WRAPPED_OS_FS.with(|os| os.get().is_some_and(|os| Rc::ptr_eq(os, fs)))
+        && (WRAPPED_OS_FS.with(|os| os.get().is_some_and(|os| Rc::ptr_eq(os, fs)))
+            || WRAPPED_VIEW_FS.with(|os| os.get().is_some_and(|os| Rc::ptr_eq(os, fs))))
 }
 
 impl Fs for WrappedFs {
@@ -152,6 +163,16 @@ impl Fs for WrappedFs {
             };
         }
         self.fs.read_file(path)
+    }
+
+    // PORT: not in Go (`Fs::read_file_shared`). A bundled path is the
+    // default (a copy of the embedded text); another goes to `fs`.
+    fn read_file_shared(&self, path: &str) -> Option<crate::frontend::vfs::SharedText> {
+        if split_path(path).is_some() {
+            let (text, ok) = self.read_file(path);
+            return ok.then(|| crate::frontend::vfs::SharedText::new(text));
+        }
+        self.fs.read_file_shared(path)
     }
 
     // Go: embed.go:66 DirectoryExists

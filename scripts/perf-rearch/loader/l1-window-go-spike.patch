@@ -1,0 +1,207 @@
+diff --git a/tsc/internal/project/projectcollectionbuilder.go b/tsc/internal/project/projectcollectionbuilder.go
+index 99872b4..ea71c47 100644
+--- a/tsc/internal/project/projectcollectionbuilder.go
++++ b/tsc/internal/project/projectcollectionbuilder.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/microsoft/TypeScript/tsc/internal/project/logging"
+ 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+ 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
++	"github.com/microsoft/TypeScript/tsc/internal/vfs/osvfs"
+ )
+ 
+ type projectLoadKind int
+@@ -1511,7 +1512,9 @@ func (b *ProjectCollectionBuilder) updateProgram(entry dirty.Value[*Project], lo
+ 				oldProgram := project.Program
+ 				oldCheckerPool := project.checkerPool
+ 				project.host = newCompilerHost(project, b, logger.Fork("CompilerHost"))
++				spikeT0 := osvfs.ObsClockNs()
+ 				result := project.CreateProgram()
++				osvfs.ObsLoad(spikeT0, osvfs.ObsClockNs())
+ 				var watchedFiles []tspath.RootedFilePath
+ 				for _, mapper := range project.CommandLine.ContentMappers() {
+ 					if mapper.Package != "" && mapper.ContributionID == "" && mapper.PackageDirectory != "" {
+diff --git a/tsc/internal/project/session.go b/tsc/internal/project/session.go
+index 9af28b8..4fc4ae4 100644
+--- a/tsc/internal/project/session.go
++++ b/tsc/internal/project/session.go
+@@ -31,6 +31,7 @@ import (
+ 	"github.com/microsoft/TypeScript/tsc/internal/project/logging"
+ 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
+ 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
++	"github.com/microsoft/TypeScript/tsc/internal/vfs/osvfs"
+ )
+ 
+ type UpdateReason int
+@@ -1525,6 +1526,9 @@ func (s *Session) updateWatch[T any](ctx context.Context, oldWatcher, newWatcher
+ 				callCtx, callCancel := context.WithTimeout(ctx, watchRequestTimeout)
+ 				err := s.client.WatchFiles(callCtx, id, []*lsproto.FileSystemWatcher{watcher})
+ 				callCancel()
++				if err == nil {
++					osvfs.ObsRegistered(string(id))
++				}
+ 				if err != nil {
+ 					watchErrors = append(watchErrors, err)
+ 				} else if s.logger != nil {
+@@ -1699,6 +1703,7 @@ func (s *Session) updateWatches(oldSnapshot *Snapshot, newSnapshot *Snapshot) er
+ 		}
+ 	}
+ 
++	osvfs.ObsWatch()
+ 	if len(errors) > 0 {
+ 		return fmt.Errorf("errors updating watches: %v", errors)
+ 	} else if s.options.LoggingEnabled {
+diff --git a/tsc/internal/vfs/osvfs/obs.go b/tsc/internal/vfs/osvfs/obs.go
+new file mode 100644
+index 0000000..137e021
+--- /dev/null
++++ b/tsc/internal/vfs/osvfs/obs.go
+@@ -0,0 +1,97 @@
++package osvfs
++
++// SPIKE (ts-rust L1 window measurement, never merged): every OS call of the
++// OS file system with the time before it, written to GOPORT_LOAD_OBS_LOG after
++// the watch registration that follows (Session.updateWatches), in the format
++// of ts-rust's base spike (scripts/perf-rearch/loader/l1-window.py `base`):
++// `load <t0> <t1>` per program load, `os <kind> <ms> loader <path>` per call
++// (every goroutine: Go has no loader thread), `watch <ms> <registrations>`.
++
++import (
++	"fmt"
++	"os"
++	"strings"
++	"sync"
++	"time"
++)
++
++var (
++	obsStart = time.Now()
++	obsFile  = func() *os.File {
++		name := os.Getenv("GOPORT_LOAD_OBS_LOG")
++		if name == "" {
++			return nil
++		}
++		f, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
++		if err != nil {
++			return nil
++		}
++		return f
++	}()
++	obsMu    sync.Mutex
++	obsCalls []obsCall
++	obsLoads [][2]int64
++	obsRegs  []string
++)
++
++// ObsRegistered counts a watch registration the client answered
++// (client.WatchFiles in Session.updateWatch) for the next ObsWatch.
++func ObsRegistered(id string) {
++	if obsFile == nil {
++		return
++	}
++	obsMu.Lock()
++	obsRegs = append(obsRegs, strings.ReplaceAll(id, " ", "_"))
++	obsMu.Unlock()
++}
++
++type obsCall struct {
++	ns   int64
++	kind string
++	path string
++}
++
++// ObsClockNs is the observation clock (monotonic ns since the start).
++func ObsClockNs() int64 { return int64(time.Since(obsStart)) }
++
++func obsOS(kind string, path string) {
++	if obsFile == nil {
++		return
++	}
++	ns := ObsClockNs()
++	obsMu.Lock()
++	obsCalls = append(obsCalls, obsCall{ns, kind, path})
++	obsMu.Unlock()
++}
++
++// ObsLoad keeps the span of a program load for the next ObsWatch.
++func ObsLoad(t0, t1 int64) {
++	if obsFile == nil {
++		return
++	}
++	obsMu.Lock()
++	obsLoads = append(obsLoads, [2]int64{t0, t1})
++	obsMu.Unlock()
++}
++
++// ObsWatch: the watch registration ended. Writes the loads and calls kept
++// since the last one, then `watch <ms> <registrations answered> <their ids>`.
++func ObsWatch() {
++	if obsFile == nil {
++		return
++	}
++	at := ObsClockNs()
++	obsMu.Lock()
++	loads, calls, regs := obsLoads, obsCalls, obsRegs
++	obsLoads, obsCalls, obsRegs = nil, nil, nil
++	obsMu.Unlock()
++	var b strings.Builder
++	for _, l := range loads {
++		fmt.Fprintf(&b, "load %.3f %.3f\n", float64(l[0])/1e6, float64(l[1])/1e6)
++	}
++	for _, c := range calls {
++		fmt.Fprintf(&b, "os %s %.3f loader %s\n", c.kind, float64(c.ns)/1e6, c.path)
++	}
++	fmt.Fprintf(&b, "watch %.3f %d %s\n", float64(at)/1e6, len(regs), strings.Join(regs, ","))
++	_, _ = obsFile.WriteString(b.String())
++}
+diff --git a/tsc/internal/vfs/osvfs/os.go b/tsc/internal/vfs/osvfs/os.go
+index 6ad2eb1..0abfbd4 100644
+--- a/tsc/internal/vfs/osvfs/os.go
++++ b/tsc/internal/vfs/osvfs/os.go
+@@ -95,6 +95,7 @@ func (vfs *osFS) CaseSensitivity() tspath.CaseSensitivity {
+ var errNetworkPath = errors.New("network paths are not supported")
+ 
+ func (vfs *osFS) ReadFile(path tspath.RootedFilePath) (contents string, ok bool) {
++	obsOS("read", path.AsString())
+ 	if nativepath.IsNetworkPath(path.AsString()) {
+ 		return "", false
+ 	}
+@@ -103,6 +104,7 @@ func (vfs *osFS) ReadFile(path tspath.RootedFilePath) (contents string, ok bool)
+ }
+ 
+ func (vfs *osFS) DirectoryExists(path tspath.RootedDirectoryPath) bool {
++	obsOS("stat", path.AsString())
+ 	if nativepath.IsNetworkPath(path.AsString()) {
+ 		return false
+ 	}
+@@ -111,6 +113,7 @@ func (vfs *osFS) DirectoryExists(path tspath.RootedDirectoryPath) bool {
+ }
+ 
+ func (vfs *osFS) FileExists(path tspath.RootedFilePath) bool {
++	obsOS("stat", path.AsString())
+ 	if nativepath.IsNetworkPath(path.AsString()) {
+ 		return false
+ 	}
+@@ -119,6 +122,7 @@ func (vfs *osFS) FileExists(path tspath.RootedFilePath) bool {
+ }
+ 
+ func (vfs *osFS) GetAccessibleEntries(path tspath.RootedDirectoryPath) (entries vfs.Entries) {
++	obsOS("entries", path.AsString())
+ 	if nativepath.IsNetworkPath(path.AsString()) {
+ 		return entries
+ 	}
+@@ -127,6 +131,7 @@ func (vfs *osFS) GetAccessibleEntries(path tspath.RootedDirectoryPath) (entries
+ }
+ 
+ func (vfs *osFS) Stat(path tspath.RootedPath) vfs.FileInfo {
++	obsOS("stat", path.AsString())
+ 	if nativepath.IsNetworkPath(path.AsString()) {
+ 		return nil
+ 	}
+@@ -135,6 +140,7 @@ func (vfs *osFS) Stat(path tspath.RootedPath) vfs.FileInfo {
+ }
+ 
+ func (vfs *osFS) Realpath(path tspath.RootedPath) tspath.RootedPath {
++	obsOS("realpath", path.AsString())
+ 	defer blockingOpSema.Acquire()()
+ 	return osFSRealpath(path)
+ }

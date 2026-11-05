@@ -345,11 +345,12 @@ pub struct AheadLink {
     /// that log is on (`log_missing`).
     pub missing: RefCell<Vec<(String, String, ResolutionMode)>>,
     pub log_missing: bool,
-    /// S1a: a first-load link (compiler/resolve_ahead.rs `FirstLoadJob`):
-    /// the text of a package.json that the check read in this load. Each
+    /// The text of a package.json that the check read in this load. Each
     /// package.json lookup of a taken answer then goes into the loader's
     /// package.json cache as the read that the loader's own lookup would
-    /// have made (`adopt_ahead_package_jsons`). `None` for other loads.
+    /// have made (`adopt_ahead_package_jsons`), in first loads (S1a) and
+    /// keyed loads alike, so the cache does not depend on which answers
+    /// arrived in time. `None`: no adoption (tests).
     pub package_json_text: Option<AheadText>,
     /// The package.json files that `adopt_ahead_package_jsons` gave the
     /// loader's cache in this load: each is copied once, and the first read
@@ -361,7 +362,7 @@ pub struct AheadLink {
 /// (`AheadLink::package_json_text`).
 pub type AheadText = Rc<dyn Fn(&str) -> Option<Arc<str>>>;
 
-/// S1a: puts each package.json lookup of a taken first-load answer in the
+/// Puts each package.json lookup of a taken resolve-ahead answer in the
 /// loader's package.json cache `cache` as a pending read (Go `InfoCache.Set`
 /// of the loader's own `getPackageJsonInfo`: the first entry wins), with the
 /// text that the check read on the snapshot (`AheadLink::package_json_text`),

@@ -246,8 +246,8 @@ pub struct ResolveAheadHost {
     /// snapshot's lookup cache, as the loader's own calls would, so the
     /// lookups of answers that the loader did not take leave no trace.
     pub first_load: Box<dyn FnOnce()>,
-    /// The text of a package.json that the check read in this load, for a
-    /// first-load link (`AheadLink::package_json_text`).
+    /// The text of a package.json that the check read in this load
+    /// (`AheadLink::package_json_text`).
     pub package_json_text: AheadText,
     /// Keeps the keys of this load for the next load.
     pub keep_keys: Box<dyn FnOnce(Arc<KeyList>)>,
@@ -335,6 +335,9 @@ pub struct ResolveAhead {
     job: Option<Arc<Job>>,
     /// The job is a first-load job (`FirstLoadJob`).
     first_load: bool,
+    /// The loader checks every lookup of an answer through the snapshot's
+    /// lookup cache (a first load, or any load under the OS view).
+    validated: bool,
     keep_keys: Option<Box<dyn FnOnce(Arc<KeyList>)>>,
     /// The module keys and the package scope keys of the previous load.
     previous_keys: (usize, usize),
@@ -381,11 +384,19 @@ impl ResolveAhead {
                     stats: Arc::default(),
                     config: config.clone(),
                     inject_panic: INJECT_PANIC.with(Cell::get),
+                    os_view: std::sync::Mutex::new(crate::frontend::vfs::loadview::current()),
                 })
             });
         let first_load = first_load && job.is_some();
+        // Loader v2 L1: under the load's OS view, a keyed load checks its
+        // answers as a first load does: every lookup that the snapshot's
+        // lookup cache has no answer for is made through it (a view hit),
+        // and the job's lookups are not attached. The cache then holds a
+        // serial load's lookups, whichever answers arrived in time.
+        let validated =
+            job.is_some() && (first_load || crate::frontend::vfs::loadview::current().is_some());
         if let Some(job) = &job {
-            if first_load {
+            if validated {
                 (host.first_load)();
             } else {
                 (host.attach)(job.stats.clone());
@@ -415,7 +426,11 @@ impl ResolveAhead {
             scopes: RefCell::default(),
             missing: RefCell::default(),
             log_missing: debug_log_enabled(),
-            package_json_text: first_load.then_some(host.package_json_text),
+            // Every load adopts the package.json lookups of the answers it
+            // takes (keyed loads too): the loader's package.json cache then
+            // holds a serial load's entries whichever answers arrived in
+            // time.
+            package_json_text: Some(host.package_json_text),
             adopted: RefCell::default(),
         });
         // A first-load job has no keys: its parse workers make the answers,
@@ -432,6 +447,7 @@ impl ResolveAhead {
         ResolveAhead {
             job,
             first_load,
+            validated,
             keep_keys: Some(host.keep_keys),
             previous_keys,
         }
@@ -479,7 +495,7 @@ impl ResolveAhead {
         // it would after a first load with no job.
         self.end_job(
             Some(Box::new((link.answers.take(), link.queue.take()))),
-            rejected || self.first_load,
+            rejected || self.validated,
         );
         if worker_panic {
             debug_log(format_args!(
@@ -564,22 +580,7 @@ impl FirstLoadJob {
     pub fn worker_resolver(&self) -> DefaultResolver {
         let job = &self.0;
         let view = &job.view;
-        let fs = Rc::new(AheadFs {
-            os: wrap_fs(osvfs_fs()),
-            job: job.clone(),
-        });
-        let directory_exists = {
-            let fs = fs.clone();
-            Rc::new(move |path: &str| fs.directory_exists_unlogged(path))
-                as Rc<dyn Fn(&str) -> bool>
-        };
-        begin_ahead_thread(
-            &view.current_directory,
-            view.use_case_sensitive_file_names,
-            FxHashMap::default(),
-            FxHashSet::default(),
-            directory_exists,
-        );
+        let fs = begin_ahead_fs(job, FxHashMap::default(), FxHashSet::default());
         let package_jsons = Rc::new(new_info_cache(
             &view.current_directory,
             view.use_case_sensitive_file_names,
@@ -896,6 +897,14 @@ impl Workers {
         // store in a shard now ends before this takes the lock, and a later
         // one sees `closed`.
         job.stats.wait_for_stores();
+        // The load's view goes with the load. A worker that still runs a
+        // resolution of the job holds its own reference until it returns.
+        drop(
+            job.os_view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
         let mut state = lock_state(self);
         if state
             .job
@@ -945,14 +954,89 @@ impl Workers {
     }
 }
 
+/// Tests (diagnostics): while held (`hold_in_job`), a worker that starts a
+/// job waits there, holding the job and its view, before it takes a key.
+#[cfg(feature = "diagnostics")]
+static HOLD_IN_JOB: (std::sync::Mutex<bool>, std::sync::Condvar) =
+    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+/// Tests (diagnostics): holds the workers that start a job (`on`), or
+/// lets them go.
+#[cfg(feature = "diagnostics")]
+pub fn hold_in_job(on: bool) {
+    *HOLD_IN_JOB
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = on;
+    HOLD_IN_JOB.1.notify_all();
+}
+
+/// Tests (diagnostics): the jobs that held workers wait in (one entry per
+/// waiting worker, by the job's address).
+#[cfg(feature = "diagnostics")]
+static HELD_JOBS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+/// Tests (diagnostics): the distinct jobs with a worker held in them
+/// (`hold_in_job`); each such worker holds its load's view.
+#[cfg(feature = "diagnostics")]
+#[must_use]
+pub fn jobs_held() -> usize {
+    let mut jobs = HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    jobs.sort_unstable();
+    jobs.dedup();
+    jobs.len()
+}
+
+#[cfg(feature = "diagnostics")]
+fn diag_hold_in_job(job: &Arc<Job>) {
+    let id = Arc::as_ptr(job) as usize;
+    let mut held = HOLD_IN_JOB
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !*held {
+        return;
+    }
+    HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(id);
+    while *held {
+        held = HOLD_IN_JOB
+            .1
+            .wait(held)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+    let mut jobs = HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(at) = jobs.iter().position(|&held| held == id) {
+        jobs.swap_remove(at);
+    }
+}
+
+/// The ended loads whose data may wait behind new jobs (`run_worker`).
+const MAX_ENDED: usize = 4;
+
 /// A worker: runs each posted job once and frees the data of ended loads.
-/// A new job goes before the data to free.
+/// A new job goes before the data to free, unless `MAX_ENDED` ended loads
+/// wait.
 fn run_worker(workers: &'static Workers) {
     let mut ran = 0;
     loop {
         let task = {
             let mut state = lock_state(workers);
             loop {
+                // Bounded retention: past `MAX_ENDED` ended loads, their
+                // frees go before a new job.
+                if state.ended.len() >= MAX_ENDED
+                    && let Some(ended) = state.ended.pop()
+                {
+                    break Task::Free(ended);
+                }
                 if state.generation != ran
                     && let Some(job) = &state.job
                 {
@@ -1071,19 +1155,37 @@ struct Job {
     /// `inject_worker_panic` (tests): each worker panics in the job,
     /// outside its resolutions, after it resolved its keys.
     inject_panic: bool,
+    /// Loader v2 L1: the per-load OS view of the job's load
+    /// (`vfs::loadview`), which the workers read through and fill.
+    /// The load ends with it (`Workers::end`): a worker that still runs a
+    /// resolution holds its own reference until that returns.
+    os_view: std::sync::Mutex<Option<Arc<crate::frontend::vfs::loadview::LoadView>>>,
 }
 
-/// A worker's part of `job`: resolves the next key until none is left, the
-/// job ends or a worker failed it (`run_task`). A resolution that panics (a Go panic) panics on the loader
-/// too when it resolves the same key; the worker ends that key with no
-/// answer and leaves the job. A panic outside the resolutions fails the
-/// job (`run_task`). The worker's resolver and its caches are freed here,
-/// on the worker.
-fn run_job(job: &Arc<Job>) {
+impl Job {
+    /// A worker's OS file system for this job: the OS file system of its
+    /// thread, under the load's OS view when there is one.
+    fn worker_os(&self) -> Rc<dyn Fs> {
+        let view = self
+            .os_view
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        crate::frontend::vfs::loadview::worker_fs(view.as_ref())
+    }
+}
+
+/// A worker's file system for `job` (`AheadFs`), after it makes this thread
+/// an ahead thread of the job (`begin_ahead_thread`) with the kept
+/// package.json `reads` and `kept` files.
+fn begin_ahead_fs(
+    job: &Arc<Job>,
+    reads: FxHashMap<String, Option<u128>>,
+    kept: FxHashSet<String>,
+) -> Rc<AheadFs> {
     let view = &job.view;
-    let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
     let fs = Rc::new(AheadFs {
-        os: wrap_fs(osvfs_fs()),
+        os: job.worker_os(),
         job: job.clone(),
     });
     let directory_exists = {
@@ -1097,6 +1199,21 @@ fn run_job(job: &Arc<Job>) {
         kept,
         directory_exists,
     );
+    fs
+}
+
+/// A worker's part of `job`: resolves the next key until none is left, the
+/// job ends or a worker failed it (`run_task`). A resolution that panics (a Go panic) panics on the loader
+/// too when it resolves the same key; the worker ends that key with no
+/// answer and leaves the job. A panic outside the resolutions fails the
+/// job (`run_task`). The worker's resolver and its caches are freed here,
+/// on the worker.
+fn run_job(job: &Arc<Job>) {
+    let view = &job.view;
+    let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
+    let fs = begin_ahead_fs(job, reads, kept);
+    #[cfg(feature = "diagnostics")]
+    diag_hold_in_job(job);
     let fs: Rc<dyn Fs> = fs;
     let mut resolver = job.config.new_resolver(fs, Some(package_jsons.clone()));
     resolver.caches.shared = Some(SharedResolutionLink {
@@ -1674,6 +1791,7 @@ mod tests {
                 current_directory: root.to_string(),
             }),
             inject_panic,
+            os_view: std::sync::Mutex::default(),
         })
     }
 

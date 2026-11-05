@@ -53,7 +53,7 @@ same-file = "=1.0.6"
 # `process`: prctl(PR_SET_THP_DISABLE) in thp_guard.rs. `signal`: the
 # signal mask at start in bin/tsgo.rs (`unblock_go_signals`).
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "=0.31.3", default-features = false, features = ["process", "signal"] }
+nix = { version = "=0.31.3", default-features = false, features = ["process", "resource", "signal", "time"] }
 
 [features]
 default = ["jemalloc"]
@@ -75,7 +75,11 @@ test-hooks = ["goport_core/test-hooks"]
 # Diagnostic and verification output (see goport_core's `diagnostics`), for
 # the perf-rearch tools: `scripts/run-cargo-capped.sh build --release -p
 # ts_goport --features diagnostics --bin tsgo`. Never in a shipped build.
-diagnostics = ["goport_core/diagnostics"]
+# It also turns on goport_util's: the loader v2 load view's counters, live-OS
+# bypass count, observation log, call trace, V-replay oracle and test hooks,
+# whose tests (go_baselines project_lsp/resolveahead_test.rs `load_view`) run
+# only with it.
+diagnostics = ["goport_core/diagnostics", "goport_util/diagnostics"]
 
 [lints]
 workspace = true

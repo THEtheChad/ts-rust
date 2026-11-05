@@ -961,6 +961,27 @@ impl FileText {
         }
     }
 
+    /// `new` for a text that is shared already: no copy. A static text
+    /// keeps the `Arc` alive for good (its handle is leaked), as `new`
+    /// leaks the text.
+    // PORT: not in Go (perf, loader v2 L1).
+    #[must_use]
+    pub fn from_shared(text: Arc<str>, freeable: bool) -> Self {
+        if freeable {
+            FileText::Shared(text)
+        } else {
+            let leaked: &'static Arc<str> = Box::leak(Box::new(text));
+            FileText::Static(leaked)
+        }
+    }
+
+    /// True when both texts are one allocation (no compare needed).
+    #[inline]
+    #[must_use]
+    pub fn same_allocation(a: &str, b: &str) -> bool {
+        a.len() == b.len() && std::ptr::eq(a.as_ptr(), b.as_ptr())
+    }
+
     /// The `'static` text of a static file, or `None` for a shared text.
     #[inline]
     #[must_use]

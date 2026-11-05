@@ -60,6 +60,16 @@ pub trait Fs {
     // If the file fails to be read, ok will be false.
     fn read_file(&self, path: &str) -> (String, bool);
 
+    /// `read_file` as a shared text with its xxh3-128 hash, `None` when the
+    /// read fails. The OS view (`loadview::ViewFs`) gives the text that its
+    /// workers read with no copy; every other file system makes it from
+    /// `read_file`.
+    // PORT: not in Go (perf, loader v2 L1).
+    fn read_file_shared(&self, path: &str) -> Option<super::SharedText> {
+        let (text, ok) = self.read_file(path);
+        ok.then(|| super::SharedText::new(text))
+    }
+
     fn write_file(&self, path: &str, data: &str) -> Result<(), FsError>;
 
     // AppendFile appends data to the file at path, creating it if it does not exist.
@@ -345,6 +355,20 @@ pub struct Common {
     pub is_reparse_point: Option<fn(&str) -> bool>,
 }
 
+/// Go `Common.FileExists` of a stat result (internal.go:59): it exists and
+/// is not a directory. The per-load OS view (`loadview`) answers
+/// `file_exists` from its stat with it.
+#[must_use]
+pub fn stat_is_file(stat: &Option<FileInfo>) -> bool {
+    matches!(stat, Some(stat) if !stat.is_dir())
+}
+
+/// Go `Common.DirectoryExists` of a stat result (internal.go:64).
+#[must_use]
+pub fn stat_is_dir(stat: &Option<FileInfo>) -> bool {
+    matches!(stat, Some(stat) if stat.is_dir())
+}
+
 // Go: internal.go:20 RootLength
 pub fn root_length(p: &str) -> i32 {
     let l = get_encoded_root_length(p);
@@ -388,14 +412,12 @@ impl Common {
 
     // Go: internal.go:59 FileExists
     pub fn file_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if !stat.is_dir())
+        stat_is_file(&self.stat(path))
     }
 
     // Go: internal.go:64 DirectoryExists
     pub fn directory_exists(&self, path: &str) -> bool {
-        let stat = self.stat(path);
-        matches!(stat, Some(stat) if stat.is_dir())
+        stat_is_dir(&self.stat(path))
     }
 
     // Go: internal.go:69 GetAccessibleEntries

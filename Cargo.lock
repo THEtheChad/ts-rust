@@ -188,6 +188,7 @@ dependencies = [
  "rustix",
  "ryu-js",
  "unicode-normalization",
+ "xxhash-rust",
 ]
 
 [[package]]

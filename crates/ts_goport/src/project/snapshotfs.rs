@@ -675,8 +675,9 @@ impl SnapshotFSBuilder {
         path: &tspath::Path,
         source: &Rc<dyn FileHandle>,
     ) -> Option<Rc<dyn FileHandle>> {
-        let file = new_cached_file(file_name, source.shared_content());
-        file.borrow().file_base.hash.set(source.hash());
+        // Go: newCachedFile(fileName, source.Content(), source.Hash())
+        // PORT: the file keeps the source's text and hash (no copy, no hash).
+        let file = new_cached_file_hashed(file_name, source.shared_content(), source.hash());
         let (entry, loaded) = self.cache_files.load_or_store(path.clone(), file);
         let entry = entry?;
         if !loaded && path.0.contains("/node_modules/") {

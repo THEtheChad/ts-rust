@@ -60,7 +60,11 @@ pub fn run_lsp(args: &[String]) -> i32 {
         Some(crate::pprof::begin_profiling(&pprof_dir.borrow(), stderr))
     };
 
-    let fs = bundled::wrap_fs_exported(osvfs::osvfs_fs());
+    // Loader v2 L1: the program loads read the OS through a per-load view
+    // under the overlays and the snapshot caches (`vfs::loadview`).
+    // PORT: Go passes `osvfs.FS()` (cmd/tsc/lsp.go); the view answers what
+    // it answers.
+    let fs = bundled::wrap_fs_exported(crate::frontend::vfs::loadview::os_view_fs());
     let default_library_path = bundled::lib_path_exported();
     // ts#64836: a rooted directory, or empty (ATA off) without a user
     // cache directory. Go passes it as is (cmd/tsc/lsp.go:60).

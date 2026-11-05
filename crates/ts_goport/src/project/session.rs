@@ -3012,6 +3012,10 @@ impl Session {
             errors.borrow_mut().extend(retried);
         }
 
+        // Loader v2 L1 diagnostics: the end of the watch registration, for the
+        // observation-to-watch window (`GOPORT_LOAD_OBS_LOG`).
+        #[cfg(feature = "diagnostics")]
+        crate::frontend::vfs::loadview::diag::note_watch_registered();
         let errors = errors.into_inner();
         if !errors.is_empty() {
             // Go: fmt.Errorf("errors updating watches: %v", errors) (no %w).

@@ -1,7 +1,7 @@
 //! Loader diagnostics for the perf work (perf/first-principles, stage S0):
 //!
-//! - `GOPORT_LOAD_TIMES=1`: one line per program load on stderr with the
-//!   loader's phase times (`LoadTimes`).
+//! - `GOPORT_LOAD_TIMES=1` (cargo feature `diagnostics`, load_times.rs): one
+//!   line per program load on stderr with the loader's phase times.
 //! - `GOPORT_LOAD_DUMP=<file>`: a canonical text dump of the observable
 //!   effects of each program load, appended to `<file>`. Two loads with the
 //!   same effects give the same text. Sections:
@@ -27,7 +27,6 @@
 use crate::frontend::prelude::*;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
-use std::time::Instant;
 
 /// The file of `GOPORT_LOAD_DUMP`, if set.
 fn dump_file() -> Option<&'static str> {
@@ -44,15 +43,6 @@ fn dump_file() -> Option<&'static str> {
 #[must_use]
 pub fn dump_enabled() -> bool {
     dump_file().is_some()
-}
-
-/// True when `GOPORT_LOAD_TIMES` is set (not `0`).
-#[must_use]
-pub fn times_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("GOPORT_LOAD_TIMES").is_ok_and(|value| !value.is_empty() && value != "0")
-    })
 }
 
 thread_local! {
@@ -194,52 +184,4 @@ pub fn describe_module(module: &crate::program::ResolvedModule) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     )
-}
-
-/// The loader's phase times of one load (`GOPORT_LOAD_TIMES`).
-pub struct LoadTimes {
-    start: Instant,
-    last: Instant,
-    phases: Vec<(&'static str, f64)>,
-}
-
-impl LoadTimes {
-    /// Starts the timer of a load, or `None` when the times are off.
-    #[must_use]
-    pub fn start() -> Option<Self> {
-        times_enabled().then(|| {
-            let now = Instant::now();
-            LoadTimes {
-                start: now,
-                last: now,
-                phases: Vec::new(),
-            }
-        })
-    }
-
-    /// Ends the phase `name` now.
-    pub fn mark(&mut self, name: &'static str) {
-        let now = Instant::now();
-        self.phases
-            .push((name, now.duration_since(self.last).as_secs_f64() * 1e3));
-        self.last = now;
-    }
-
-    /// Writes the line of the load, with `extra` after the phases.
-    pub fn report(self, files: usize, extra: &str) {
-        use std::io::Write;
-        let mut line = format!(
-            "goport load-times: files={files} total={:.2}ms",
-            self.start.elapsed().as_secs_f64() * 1e3
-        );
-        for (name, ms) in &self.phases {
-            let _ = write!(line, " {name}={ms:.2}ms");
-        }
-        if !extra.is_empty() {
-            line.push(' ');
-            line.push_str(extra);
-        }
-        line.push('\n');
-        let _ = std::io::stderr().write_all(line.as_bytes());
-    }
 }
