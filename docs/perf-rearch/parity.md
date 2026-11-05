@@ -1128,6 +1128,16 @@ the gate to:
   child (ATA's npm) can keep the stderr pipe open after the server exited; the result waits for it at
   most 2 s (`stderr.complete`). Exit took 13 to 160 ms for Go and up to 2.6 s for tsc-rs (fsevents)
   at a load of 50 to 90.
+- **Fuzz inputs: what counts as a change.** A write, truncation, chmod, create, delete or rename of an
+  input (inotify `IN_MODIFY`, `IN_ATTRIB`, create, delete and move events), and any input whose bytes
+  differ at the end. Not `IN_CLOSE_WRITE`: the first full run on the P1 base had 34 false input
+  changes (21 ERROR, 13 DIFF; about 1 process in 2,000) from it. Another thread's child holds a copy
+  of a write fd it inherited at fork and closes it at exec, after an unrelated run's watch started;
+  `parity_h4_test.py` reproduces that with a forked child. That run also found one real case:
+  `fuzz/1:4232`, where Go emits over an input `.js` (allowJs). What a process leaves in place of an
+  input is part of its result (`oracle.Result.inputs_after`, in the key), so tsc-rs must leave exactly
+  what Go leaves; any other change by tsc-rs is rsFailure `input`, and a change a Go or JS process
+  undoes again is an ERROR.
 - **CLI written files.** A cli run that overwrites or deletes an input does so in the overlay's
   upper dir, where it is a written file (or a whiteout) and is compared with Go's like any other. A
   run never reaches the snapshot or the project. A project with an earlier build in its tree makes
@@ -1178,7 +1188,117 @@ an item whose attempts differ from each other, whose row lacks the evidence, or 
 rows disagree. `--old` prints, per item, whether the outcome kinds and Go's panic line agree with an
 older run's.
 
-<!-- H4-RESULTS -->
+### Negative controls
+
+`parity_h4_test.py` (27 checks) and `vendor/lspdiff/selftest/h4-selftest.mjs` (15 checks) run each
+probe of the review as the reviewer ran it, plus one check for each new mechanism's own bypass. They
+ran on this lane's head and on `e55c5b993` with the two files copied in (`git archive e55c5b993
+scripts/perf-rearch` in `scratch/h4/old-e55c5b993/`):
+
+| check | `e55c5b993` | H4 |
+|---|---|---|
+| 1: a project edited while Go runs (cache-probe-v2, through the real tier) | FAIL (run 2 MATCH from the poisoned cache) | ok |
+| 1: an input changed and put back while the tier runs | FAIL (GO-UNSTABLE, not ERROR) | ok (ERROR) |
+| 1: the next run makes Go's result again | FAIL | ok |
+| bypass: a staged entry of an invalidated run is never published | FAIL (published) | ok |
+| 2: timeout, then an exact Go-crash copy (retry-crash) | FAIL (MATCH) | ok (DIFF, rsFailure timeout) |
+| 3: a known-bad item turns rs-nondet | FAIL (passes) | ok |
+| 3: a known-bad item disappears | FAIL (passes) | ok (NOT RUN) |
+| 3: a known-bad item no entry pins | FAIL (passes) | ok |
+| 3: a GO-UNSTABLE base item that is a DIFF now (`fuzz/1:5391`) | FAIL (passes) | ok |
+| bypass: a stale entry (its item is good now) | FAIL (printed, passes) | ok |
+| 4: another crash with the same panic text | FAIL (GRANDFATHERED) | ok |
+| 4: an entry without its evidence | FAIL (matches anything) | ok (INVALID) |
+| 4: the same failure on another input | FAIL | ok |
+| 5: a definition target borrowing another target's range | FAIL (JS-AGREES) | ok |
+| 6: `success:true, body:{}` (references, hover; the judge on it) | FAIL ×3 | ok |
+| 7: quick against a shrunk definition | FAIL (passes) | ok (NOT RUN) |
+| bypass: a shrunk manifest is printed item by item | FAIL | ok |
+| 8: an overwritten input (mutate-input) | FAIL (not seen) | ok |
+| 8: an input changed and put back; an input deleted | FAIL ×2 (MATCH) | ok |
+| 9: panic and exit 70 after the last answer (late-crash) | FAIL (all MATCH) | ok |
+| 9: a panic line with exit 0; no exit after `exit` | FAIL ×2 | ok |
+| 9: a server that writes into its project | FAIL | ok (rsFailure input; project untouched) |
+| 10: other params under the same label (alignment); another order | FAIL ×2 (MATCH) | ok |
+| 11: the ATA wait at its deadline (ata-probe) | FAIL (success) | ok (throws, timeout) |
+| 11: ATA settings in the cache key; every setting in settings.mjs | FAIL ×2 | ok |
+| 12: an entry outside `items`; an unknown key | FAIL ×2 (no INVALID) | ok |
+
+On `e55c5b993` the 23 finding and bypass checks of Python had 21 FAIL, and JS 12 FAIL of 14 (what
+passes there: the two controls, `finding 3: fails another way` and `finding 9: control`). Four more
+checks guard this lane's own input check (on `e55c5b993` they raise: no input check): a late close
+of an fd a forked child inherited is no change, an emit that overwrites an input exactly as Go does
+is MATCH, one that does it otherwise is rsFailure input, and one that does not make Go's overwrite is
+a DIFF.
+The H1 to H3 self-tests pass too: `parity_referees_test.py` `SELFTEST OK`, `referee-selftest.mjs`
+`referee self-test OK` (after following the new APIs: run-level items are not answers, an unclean JS
+run is "no evidence").
+
+### Gate runs (P1 base)
+
+`tsgo-head-a8392a002-rel` (sha256 `dc0d697a68e2…`, the binary of `base-current` =
+`p1-head-a8392a002-full`) against `base-current`, harness `00afc1f40` (`--accepted-ref` that
+commit), the tests tier on this lane's checkout (perf/first-principles `71ab48913` plus this lane).
+
+| run | dir (`runs/`) | wall | result |
+|---|---|---|---|
+| full, evidence-warm Go caches | `h4-p1-a8392a002-full-2` | 29 min (15:03 to 15:32 UTC, load 3 to 22) | **PARITY FAIL: 1 lost**, `lsp/hono-f12-p6/0476` (below) |
+| quick | `h4-p1-a8392a002-quick` | 8 min | **PARITY OK**: 142,785 compared, all 141,056 base items the accepted manifest requires, 0 not run, 2 grandfathered |
+
+Full, per tier:
+
+| tier | wall | result |
+|---|---|---|
+| cli | 307 s (snapshot check 147 s, end check 26 s) | 170 MATCH |
+| tests | 213 s | 139,900 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731 IGNORED |
+| lsp | 143 s (snapshots 20 s, end check 7 s) | 2,627 MATCH, 30 GO-BROKEN, 1 DIFF; every `session end` item (13) MATCH |
+| fuzz | 727 s (base 541 s at load 30) | 29,955 MATCH, 36 DIFF (all grandfathered), 8 GO-BROKEN, 1 JS-AGREES |
+| corpus | 695 s (its Go cache refilled: the run before was stopped in it) | 12,727 MATCH |
+
+The compare: 187,174 items, 185,443 base items required, 1 lost, 0 not run, 0 known-bad not as
+pinned, 0 new not good, 36 grandfathered (exactly as pinned), 0 stale entries, 0 recovered, 5 newly
+good by a referee:
+
+- **LOST `lsp/hono-f12-p6/0476`** (`references` at `method-not-allowed/index.ts:116:31`). The base has
+  it GO-BROKEN: `Go runs differ (go | go2,go3,go4)`. In this lane's Go fill (new keys) Go's 4 runs
+  agreed, on an order tsc-rs does not give; tsc-rs gave the same order in its 3 runs, and both sides
+  list the same 30 locations. It is the cross-project search order of Go's goroutines
+  (`ls/crossproject.go`; H2: "the 22 GO-BROKEN references of hono differ between Go's runs only in
+  order"), which 4 runs did not catch this time. It is not a harness pass or a tsc-rs change, and it is
+  not excused: root decides (more Go runs on hono, or a new base).
+- **GO-BROKEN from MATCH (4):** `watch-umami-f12` and `watch-narrow-umami-f12`, items 0012 (`load
+  watch events`) and 0050 (`end watch ids`). Go's 4 runs differ there: the background-task race of
+  the umami first load ("Watch scenarios").
+- **JS-AGREES (1): `fuzz/1:19122`**, GO-PARTITION in the base. In this fill Go varies at `--checkers`
+  1, 3, 4 and 6, and JS 6.0.3 sides with tsc-rs on both TS1435 points.
+- **Grandfathered (36):** the 35 entries (26 timeouts where Go times out too, 9 reproduced Go
+  crashes) and `fuzz/1:5391`, each with every attempt's fingerprint as pinned.
+
+**The first full run on the P1 base** (`h4-p1-a8392a002-full`, stopped in its corpus tier) is the
+reason for `00afc1f40`: 21 ERROR and 13 DIFF fuzz items from false input changes (`IN_CLOSE_WRITE`,
+see "Decisions"), and `fuzz/1:4232`, where Go overwrites an input. A full run before root moved the
+base (`h4-head-efef52257-full`, on the old base and binary) was stopped after its cli and tests tiers.
+
+### Cost
+
+- **Snapshots, cold:** 488 s for all 13 roots (12 GB, about 750,000 files), 4 at a time at a load of
+  52 (t3code 425 s, query 320 s, umami 199 s, vscode 174 s, the others under 2 min). Made once per
+  content; disk 14 GB.
+- **Snapshots, warm, per tier run:** checking that a snapshot is still the source's content and
+  unchanged (the source's stat-cached hash and the snapshot's stat identity): cli 97 to 147 s for its 10
+  roots, lsp 20 s for its 5. At the end: cli 26 s, lsp 7 s (inotify plus a stat-identity and content
+  check). Watching about 100,000 dirs with inotify costs no measurable time.
+- **Staging:** a rename per new cache entry at the end of a tier; nothing on a warm run.
+- **Fuzz and corpus:** each process rewrites its case dir and runs under an inotify watch with a
+  byte check after it. Fuzz 727 s against the base's 541 s, at a lower load (20 against 30): about
+  +30%. Warm corpus, alone at a load of 7 to 14: 179 s (the base 134 s, H3 147 s, each at another load).
+- **LSP:** a user and mount namespace per server and an overlay per input: lsp 143 s against the
+  base's 169 s. The `session end` item adds nothing measurable; the shutdown waits are those of
+  before (exit took 13 to 160 ms for Go, up to 2.6 s for tsc-rs).
+- **Quick:** 8 min (cli 42 s, lsp 147 s, fuzz 61 s, tests 166 s).
+- **New Go fills:** every Go cache key changed (versions, snapshots, settings), so the first run of
+  this harness refills them: about 25 min of fuzz and 12 min of corpus Go runs, 4 Go runs per lsp
+  session.
 
 ## Referees on the perf head (2026-11-05)
 
