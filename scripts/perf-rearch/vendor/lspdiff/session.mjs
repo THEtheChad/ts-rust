@@ -52,10 +52,16 @@ export function removeTail(client, doc, length) {
 }
 
 // Runs the session and returns [{ step, method, params, result, error }]. ATA is off: its typings
-// would join an inferred project whenever its npm call returns (see initializeParams).
+// would join an inferred project whenever its npm call returns (see initializeParams). When the
+// server crashes or times out, the error carries the answers so far as `log`.
 export async function runSession(cmd, root, files, { positions = 4, stderr, env } = {}) {
-  const client = await startServer(cmd, root, { stderr, env, ata: false });
   const log = [];
+  let client;
+  try {
+    client = await startServer(cmd, root, { stderr, env, ata: false });
+  } catch (e) {
+    throw Object.assign(e, { log });
+  }
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
     log.push({ step, method, params, result: r.result, error: r.error, ms: r.ms });
@@ -117,6 +123,8 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
     await ask(`${name} after typing hover`, "textDocument/hover", { textDocument: { uri: d.uri }, position: hoverAt });
     removeTail(client, d, TYPED.length);
     await ask(`${name} after undo diagnostic`, "textDocument/diagnostic", { textDocument: { uri: d.uri } });
+  } catch (e) {
+    throw Object.assign(e, { log });
   } finally {
     await client.shutdown();
   }

@@ -22,22 +22,26 @@ and reused, so a run starts only tsc-rs. Standard sessions run with ATA off (ven
 client.mjs initializeParams). In full, tsc-rs runs three times: twice as is and once with
 GOPORT_PARSE_THREADS=1. An item is judged in this order (docs/perf-rearch/parity.md, "JS tsserver as
 the LSP referee"):
-1. tsc-rs determinism: an answer on which a later tsc-rs run differs from the first is a DIFF with
-   detail rs-nondet or rs-schedule, even when one run matches Go.
-2. GO-BROKEN: Go's own sessions differ on the answer (Go's references order and scenario
-   registrations race across its goroutines). This is the old GO-UNSTABLE: in full, where step 1
-   ran, it is GO-BROKEN; in quick, where tsc-rs ran once, it stays GO-UNSTABLE (not compared).
+1. tsc-rs determinism: a tsc-rs run that crashed or timed out, or an answer on which a later tsc-rs
+   run differs from the first, is a DIFF (detail "tsc-rs: ...", rs-nondet or rs-schedule), even
+   when one run matches Go.
+2. GO-BROKEN: a Go run crashed or timed out before the answer (vendor/lspdiff client.mjs: no answer
+   in LSPDIFF_REQUEST_TIMEOUT_MS, default 300 s), or Go's own runs differ on it (Go's references
+   order and scenario registrations race across its goroutines). The last case is the old
+   GO-UNSTABLE status, which the lsp tier no longer reports. A Go crash is cached, a timeout is not.
 3. JS-AGREES: a DIFF of a kind JS referees (referee.mjs REFEREED_KINDS), on which JS tsserver 6.0.3
    (tsserver.mjs; --js, default ~/.cache/perf-rearch/js-tsc) sides with tsc-rs on every point where
    tsc-rs differs from Go. JS replays the session only when the session has such a DIFF; its log is
    cached in ~/.cache/perf-rearch/parity/js-cache/<tsserver sha>/lsp/<session>-<project
-   fingerprint>-<sources sha>/. With one tsc-rs run (quick), tsc-rs runs once more to confirm.
+   fingerprint>-<sources sha>/.
+   With one tsc-rs run (quick), an answer that would be GO-BROKEN or JS-AGREES needs one more tsc-rs
+   run (rs-confirm) that gives it again; otherwise it is a DIFF rs-nondet.
 4. Otherwise DIFF (the item's js.reason says why JS did not decide, when it ran).
 --js-all runs JS on every session: it records JS's view of every item that is not MATCH (also
 GO-BROKEN ones, for the report) and the calibration (per kind: on how many answers where tsc-rs
 equals Go JS's normalized answer equals Go's too) in results.json "jsCalibration".
 Items: lsp/<session>/<index> <step> (index: the answer's place in the session). Status MATCH,
-GO-BROKEN, JS-AGREES, DIFF, GO-UNSTABLE (quick); a session that fails is one ERROR item. Output:
+GO-BROKEN, JS-AGREES, DIFF; a session that fails is one ERROR item. Output:
 DIR/results.json and DIR/<session>/ (lspdiff's files: mismatches.json, summary.json, rs.jsonl,
 js.json, js.jsonl when JS ran).
 """
@@ -90,7 +94,7 @@ SESSIONS = {
 # Go sessions per item set. Go's own answers vary between runs on some items (hono `references`
 # order: ls/crossproject.go handleCrossProject searches projects in goroutines; scenario watch
 # registrations), so every session runs Go four times and an answer any two runs disagree on is
-# GO-UNSTABLE. Part of the cache key, so caches filled with fewer runs are not reused.
+# GO-BROKEN. Part of the cache key, so caches filled with fewer runs are not reused.
 GO_RUNS = 4
 RS_RUNS = {'quick': [], 'full': ['--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1']}
 JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js'
@@ -183,11 +187,6 @@ def main():
         got = {}
         for row in rows:
             item = {'status': row['status'], 'method': row['method']}
-            if row['status'] == 'GO-UNSTABLE' and args.tier == 'full':
-                # Step 2: Go's runs differ and tsc-rs's three runs agree (step 1 made rs-nondet and
-                # rs-schedule DIFFs before this).
-                item['status'] = 'GO-BROKEN'
-                item['detail'] = 'Go runs differ'
             if row.get('detail'):
                 item['detail'] = row['detail']
             if row.get('js'):

@@ -2,6 +2,10 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+// A request the server does not answer in this time ends the run: the server is killed and the
+// request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
+const REQUEST_TIMEOUT_MS = Number(process.env.LSPDIFF_REQUEST_TIMEOUT_MS ?? 300000);
+
 export class LspClient {
   // cmd: [binary, ...args]. Server-to-client requests get a fixed answer, see onServerRequest.
   constructor(cmd, { cwd, env, stderr } = {}) {
@@ -15,10 +19,18 @@ export class LspClient {
     this.lastMessageAt = performance.now();
     this.buf = Buffer.alloc(0);
     this.exited = new Promise((resolve) => this.proc.on("exit", (code, signal) => resolve({ code, signal })));
+    this.dead = null; // why the server is gone, once it is
+    this.stderrTail = "";
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
-    this.proc.stderr.on("data", (chunk) => stderr?.write(chunk));
+    this.proc.stderr.on("data", (chunk) => {
+      this.stderrTail = (this.stderrTail + chunk.toString("utf8")).slice(-2000);
+      stderr?.write(chunk);
+    });
+    this.proc.stdin.on("error", () => {}); // writes after a crash: the exit handler reports it
     this.proc.on("exit", (code, signal) => {
-      for (const p of this.pending.values()) p.reject(new Error(`server exited (${code ?? signal}) during ${p.method}`));
+      this.dead ??= `server exited (${code ?? signal})`;
+      const panic = /^panic: .*$/m.exec(this.stderrTail)?.[0];
+      for (const p of this.pending.values()) p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
       this.pending.clear();
     });
   }
@@ -45,6 +57,7 @@ export class LspClient {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
+      clearTimeout(p.timer);
       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start });
       return;
     }
@@ -82,7 +95,16 @@ export class LspClient {
   request(method, params) {
     const id = this.nextId++;
     const start = performance.now();
-    const promise = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject, method, start }));
+    if (this.dead) return Promise.reject(new Error(`${this.dead} before ${method}`));
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        this.dead = `server timed out (no answer to ${method} in ${REQUEST_TIMEOUT_MS} ms)`;
+        reject(Object.assign(new Error(this.dead), { timeout: true }));
+        this.proc.kill("SIGKILL");
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(id, { resolve, reject, method, start, timer });
+    });
     promise.id = id;
     this.#write({ jsonrpc: "2.0", id, method, params });
     return promise;

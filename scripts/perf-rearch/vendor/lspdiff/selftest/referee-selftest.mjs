@@ -14,7 +14,11 @@
 //   - a hover rewritten to a type nobody prints is DIFF, with JS's reason;
 //   - a references answer that drops a location JS has is DIFF ("go-only ...: JS has it");
 //   - a rewrite JS agrees with on run 1 only is DIFF rs-nondet (the confirming tsc-rs run);
-//   - every answer the proxy leaves alone is MATCH, and --js-all writes the calibration.
+//   - every answer the proxy leaves alone is MATCH, and --js-all writes the calibration;
+//   - with the proxy as Go instead (and Go's server as tsc-rs): a Go run that crashes (exits at a
+//     hover) and one that hangs (never answers a references request; LSPDIFF_REQUEST_TIMEOUT_MS 5 s)
+//     make every answer from there GO-BROKEN, confirmed by one more tsc-rs run, and the answers
+//     before stay MATCH.
 // Exit 0 and "referee self-test OK", or exit 1 with the failed checks.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -99,13 +103,15 @@ if (!process.argv.includes("--unit")) {
     { method: "textDocument/references", file: "src/a.ts", word: "value", edit: "drop-location", uri: "src/b.ts" },
     { method: "textDocument/hover", file: "src/a.ts", word: "value", edit: "hover-replace", from: '"one" | "zero"', to: '"zero" | "one"', runs: [1] },
   ];
-  const lspdiff = (tag, extra) => {
+  const proxy = join(HERE, "proxy-lsp.mjs");
+  const lspdiff = (tag, extra, { asGo = false, proxyRules = rules, env = {} } = {}) => {
     const state = join(out, `${tag}.runs`);
     mkdirSync(out, { recursive: true });
+    const [goSide, rsSide] = asGo ? [proxy, go] : [go, proxy];
     const stdout = execFileSync(
       process.execPath,
-      [join(HERE, "../lspdiff.mjs"), "diff", "--project", root, "--file", "src/a.ts", "--file", "src/b.ts", "--positions", "20", "--go", go, "--rs", join(HERE, "proxy-lsp.mjs"), "--out", join(out, tag), "--js", DEFAULT_TSSERVER, ...extra],
-      { env: { ...process.env, LSPDIFF_PROXY_GO: go, LSPDIFF_PROXY_RULES: JSON.stringify(rules), LSPDIFF_PROXY_STATE: state }, encoding: "utf8", maxBuffer: 1 << 26 },
+      [join(HERE, "../lspdiff.mjs"), "diff", "--project", root, "--file", "src/a.ts", "--file", "src/b.ts", "--positions", "20", "--go", goSide, "--rs", rsSide, "--out", join(out, tag), "--js", DEFAULT_TSSERVER, ...extra],
+      { env: { ...process.env, LSPDIFF_PROXY_GO: go, LSPDIFF_PROXY_RULES: JSON.stringify(proxyRules), LSPDIFF_PROXY_STATE: state, ...env }, encoding: "utf8", maxBuffer: 1 << 26 },
     );
     const dir = join(out, tag, "referee-selftest-diff");
     return { stdout, items: JSON.parse(readFileSync(join(dir, "items.json"), "utf8")), js: existsSync(join(dir, "js.json")) ? JSON.parse(readFileSync(join(dir, "js.json"), "utf8")) : null };
@@ -131,6 +137,20 @@ if (!process.argv.includes("--unit")) {
   check("with the default kinds, the hover is DIFF (hover is not refereed)", pick2.length > 0 && pick2.every((it) => it.status === "DIFF"), JSON.stringify(pick2));
   const dropped2 = find(r2.items, /^src\/a\.ts:5:16 references$/);
   check("with the default kinds, the dropped reference is still DIFF", dropped2.length > 0 && dropped2.every((it) => it.status === "DIFF"), JSON.stringify(dropped2));
+  // Go broken: the proxy is Go (runs 1 and 2 are Go's: --go-runs 2); Go's own server is tsc-rs.
+  const goRules = [
+    { method: "textDocument/hover", file: "src/b.ts", word: "again", edit: "crash", runs: [1] },
+    { method: "textDocument/references", file: "src/a.ts", word: "value", edit: "hang", runs: [2] },
+  ];
+  const r3 = lspdiff("go-broken", [], { asGo: true, proxyRules: goRules, env: { LSPDIFF_REQUEST_TIMEOUT_MS: "5000" } });
+  const at = (re) => r3.items.findIndex((it) => re.test(it.step));
+  const [hang, crash] = [at(/^src\/a\.ts:5:16 references$/), at(/^src\/b\.ts:2:16 hover$/)];
+  const before = r3.items.slice(0, hang);
+  const after = r3.items.slice(hang);
+  check("answers before Go's first crash or hang are MATCH", hang > 0 && before.every((it) => it.status === "MATCH"), JSON.stringify(before.filter((it) => it.status !== "MATCH").slice(0, 3)));
+  check("a Go timeout makes the answers from there GO-BROKEN", after.length > 0 && after.every((it) => it.status === "GO-BROKEN" && /go2 timed out/.test(it.detail)), JSON.stringify(after.find((it) => it.status !== "GO-BROKEN" || !/go2 timed out/.test(it.detail))));
+  check("a Go crash is named in the detail from the crashed request on", crash > hang && r3.items.slice(crash).every((it) => /go crashed .*server exited \(3\)/.test(it.detail)), JSON.stringify(r3.items[crash]));
+  check("the GO-BROKEN answers were confirmed by one more tsc-rs run", /rs-confirm: \d+ answers/.test(r3.stdout));
 }
 
 console.log(failed.length ? `referee self-test FAILED: ${failed.length} checks` : "referee self-test OK");

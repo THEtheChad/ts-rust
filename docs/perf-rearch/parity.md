@@ -25,8 +25,9 @@ default the worktree that holds the script). Every other tier runs `<tsgo bin>`.
 ## Tiers
 
 Each item is MATCH (tsc-rs equals Go's default run), one of the referee statuses GO-BROKEN,
-GO-PARTITION and JS-AGREES (cli, fuzz and corpus; see "Referees"), DIFF, GO-UNSTABLE (lsp: two Go
-runs disagree, so the item is not compared; cli, fuzz and corpus only with `--no-referees`), GO-FAIL
+GO-PARTITION and JS-AGREES (cli, fuzz and corpus, see "Referees"; lsp has GO-BROKEN and JS-AGREES,
+see "JS tsserver as the LSP referee"), DIFF, GO-UNSTABLE (two Go runs disagree, so the item is not
+compared; cli, fuzz and corpus only with `--no-referees`, lsp no longer), GO-FAIL
 (fuzz and corpus with `--no-referees`: Go timed out or panicked), ERROR (harness), SKIP, or for
 tests PASS / FAIL / FLAKY /
 IGNORED / UNRUN. The good statuses are MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, PASS and FLAKY.
@@ -186,9 +187,9 @@ tsc-rs once. `--server-logs` (lspdiff) writes each scenario run's `window/logMes
 quick runs the same sessions as full, minus hono, watch-umami, watch-narrow-umami, watch-hono and
 second-project, so quick compares directly against a full base.
 
-**Referees.** An answer where Go's runs differ is GO-BROKEN in full (GO-UNSTABLE in quick), and a
-DIFF of a refereed kind can be JS-AGREES, decided by JS tsserver 6.0.3. See "JS tsserver as the LSP
-referee".
+**Referees.** An answer after a Go crash or timeout, or where Go's runs differ, is GO-BROKEN, and
+a DIFF of a refereed kind can be JS-AGREES, decided by JS tsserver 6.0.3. See "JS tsserver as the
+LSP referee".
 
 ### fuzz: fixed-seed difffuzz batch (`parity_fuzz.py`, `vendor/difffuzz`)
 
@@ -211,9 +212,9 @@ multi-checker program and the output writer).
 ## Referees (`parity_referees.py`; Chad, 2026-11-04)
 
 The brief's "Goal" allows three kinds of difference from Go's default run (4 checkers), each decided
-mechanically. They apply to the cli, fuzz and corpus tiers; the lsp tier keeps MATCH / DIFF /
-GO-UNSTABLE (its checker pool is not covered by the partition rule, and it has no JS referee). An
-item that is not MATCH is judged in this order:
+mechanically. They apply to the cli, fuzz and corpus tiers. The lsp tier has GO-BROKEN and
+JS-AGREES in the same order, but no GO-PARTITION: the partition rule does not cover its checker
+pool (see "JS tsserver as the LSP referee"). An item that is not MATCH is judged in this order:
 
 1. **tsc-rs determinism.** Two tsc-rs runs that differ are a DIFF (`rs-nondet`), whatever Go does.
    Where a tier ran tsc-rs once (quick, corpus), it runs it once more before it reports any of the
@@ -229,8 +230,8 @@ item that is not MATCH is judged in this order:
    *Mapping:* the Go cache keeps GO-FAIL (fuzz: a timeout or crash in any Go run) and
    GO-UNSTABLE (runs differ) as before; they are now properties of the Go result, and the case's
    status is GO-BROKEN, MATCH or DIFF from them. On cli, Go's two runs differing used to be the item
-   status GO-UNSTABLE; it is now GO-BROKEN (or DIFF). GO-UNSTABLE and GO-FAIL as item statuses are
-   left only on lsp and under `--no-referees` (the `js` mode). GO-BROKEN is judged at the default
+   status GO-UNSTABLE; it is now GO-BROKEN (or DIFF). The same holds on lsp. GO-UNSTABLE and
+   GO-FAIL as item statuses are left only under `--no-referees` (the `js` mode). GO-BROKEN is judged at the default
    settings only: a Go race at some `--checkers N` is not GO-BROKEN (see step 3).
 3. **GO-PARTITION.** Go runs with `--checkers N` for N in {1, 2, 3, 4, 6, 8, 12, 16}, as often per
    N as the tier runs its default (2, or 8 with `--traceResolution`), normalized the same way.
@@ -446,14 +447,27 @@ the like) is involved.
 
 `parity_lsp.py` judges each answer in this order:
 
-1. **tsc-rs determinism.** In full, tsc-rs runs three times, and a later run that differs from the
-   first is a DIFF (`rs-nondet`, `rs-schedule`), whatever Go and JS say. In quick (one tsc-rs run),
-   an answer that would become JS-AGREES needs one more tsc-rs session (`rs-confirm`) that gives it
-   again; otherwise it is a DIFF `rs-nondet: the run made to confirm JS-AGREES differs from run 1`.
-2. **GO-BROKEN.** This maps from the old GO-UNSTABLE: Go's 4 sessions differ on the answer. In full
-   it is GO-BROKEN (good), because step 1 already ran and tsc-rs's three runs agree. In quick it
-   stays GO-UNSTABLE (not compared), because tsc-rs ran once. A Go crash makes the whole session
-   an ERROR, as before. JS is not asked here: GO-BROKEN comes first.
+1. **tsc-rs determinism.** A tsc-rs run that crashed or timed out (detail `tsc-rs: rs crashed
+   after N answers (...)`), or a later tsc-rs run that differs from the first (`rs-nondet`,
+   `rs-schedule`), makes a DIFF whatever Go and JS say. A tsc-rs run that ended early also adds an
+   item of its own, `<run> server`. In full, tsc-rs runs three times. In quick (one plain run), an
+   answer that would be GO-BROKEN or JS-AGREES needs one more tsc-rs session (`rs-confirm`) that
+   gives it again, as on the other tiers. Otherwise it is a DIFF
+   `rs-nondet: the run made to confirm ... differs from run 1`.
+2. **GO-BROKEN.** A Go run crashed (the server exited; its `panic:` line is in the detail when
+   stderr had one) or timed out before the answer, or Go's 4 runs differ on it. The detail says
+   which: `go crashed after 63 answers (server exited (3) during textDocument/hover)`,
+   `go2 timed out after 31 answers (...)`, or `Go runs differ (go,go3 | go2,go4)`. Every answer
+   after a crash or timeout is GO-BROKEN, because that Go run has no answer there. A request
+   counts as timed out when it gets no answer in `LSPDIFF_REQUEST_TIMEOUT_MS` (default 300 s,
+   `client.mjs`). The server is then killed, and the session's answers so far are kept.
+   *Mapping:* "Go's runs differ" is the old GO-UNSTABLE item status. The lsp tier no longer reports
+   GO-UNSTABLE, in full or in quick. A Go crash used to make the whole session one ERROR item, and
+   an unanswered request hung the tier until its hour limit. Now both are per-answer GO-BROKEN. A
+   Go crash is cached (`<run>.broken.json` beside the run's log in the Go cache). A timeout is not
+   cached: it depends on the load, so the next run retries it. JS is not asked here: GO-BROKEN
+   comes first. `--js-all` records, for the report, which Go runs JS's normalized answer equals,
+   and whether it equals tsc-rs's.
 3. **JS-AGREES.** The answer is a DIFF of a refereed kind (below), and JS sides with tsc-rs on every
    point where tsc-rs's normalized answer differs from Go's. `detail` says how many points JS
    decided and names the first three (`JS sides with tsc-rs on 1 point: display: ...`).
@@ -464,9 +478,9 @@ JS replays a session only when the session has a DIFF of a refereed kind that pa
 run with no such DIFF (every run so far), JS costs nothing. `--js-all` replays every session,
 records JS's view of every item that is not MATCH, and writes the calibration to
 `results.json` `jsCalibration`. `--no-js` turns the referee off. In comparisons against the base,
-JS-AGREES and GO-BROKEN count as good, and every item whose status became one of them is listed
-in its own section. That listing is `parity_compare.py`'s referee section from lane H1: this lane
-adds only the LSP statuses and does not change the shared compare code.
+JS-AGREES and GO-BROKEN count as good. Every item whose status became one of them is listed in its
+own section, with those that were MATCH in the base counted and listed first. This is lane H1's
+referee section of `parity_compare.py`, with the same status names: the lsp tier adds none.
 
 ### The driver (`tsserver.mjs`)
 
@@ -654,7 +668,11 @@ prints `referee self-test OK`.
   - a references answer that drops a location JS has is DIFF (`go-only ...: JS has it`);
   - a rewrite made only in run 1 is DIFF `rs-nondet` through the confirming run;
   - every other answer is MATCH, and `--js-all` writes the calibration;
-  - with the default kinds, the hover stays DIFF (hover is not refereed).
+  - with the default kinds, the hover stays DIFF (hover is not refereed);
+  - with the proxy as Go, and Go's own server as tsc-rs, a Go run that crashes (it exits at a
+    hover) and one that hangs (never answers a references request; timeout 5 s) make every answer
+    from there GO-BROKEN, naming the crash and the timeout. One confirming tsc-rs run checks them,
+    and the answers before stay MATCH.
 
 ## Referees on the perf head (2026-11-05)
 

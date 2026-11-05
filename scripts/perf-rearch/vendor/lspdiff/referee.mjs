@@ -383,26 +383,34 @@ export function alignJs(goLog, jsLog) {
   });
 }
 
-// The JS step of the LSP tier, on lspdiff's items ({ i, step, method, status, detail }), in place.
-// logs: { go, rs, ... } (lspdiff's logs). runJs(): JS's log (from its cache or a tsserver run).
-// rerunRs(): one more tsc-rs log, asked only when an item would become JS-AGREES and tsc-rs ran
-// once (its determinism comes first); answerKey(entry, method): lspdiff's comparison key of an answer. all: run JS even without a DIFF to referee, and
-// record JS's answer on every item (calibration, and the report on GO-UNSTABLE items).
-// Returns { ran, calibration: { method: { goEqual, jsEqual, noJs } }, decided }.
-export async function applyJsReferee({ items, logs, root, runJs, rerunRs, answerKey, all = false, kinds = REFEREED_KINDS } = {}) {
+// The JS step of the LSP tier, on lspdiff's items ({ i, step, method, status, detail }): sets
+// `it.js` (JS's verdict) and returns the items JS agrees with; lspdiff confirms tsc-rs's
+// determinism and sets their status. logs: { go, go2, ..., rs, ... } (lspdiff's logs).
+// runJs(): JS's log (from its cache or a tsserver run). all: run JS even without a DIFF to referee,
+// and record JS's view of every item (calibration, and the report on GO-BROKEN items).
+// Returns { ran, calibration: { method: { goEqual, jsEqual, noJs } }, agreeing }.
+export async function applyJsReferee({ items, logs, root, runJs, all = false, kinds = REFEREED_KINDS } = {}) {
   kinds ??= REFEREED_KINDS;
   const candidates = items.filter((it) => it.status === "DIFF" && !it.detail && kinds.has(it.method));
-  if (!(all ? items.some((it) => hasNormalizer(it.method)) : candidates.length)) return { ran: false, calibration: {}, decided: 0 };
+  if (!(all ? items.some((it) => hasNormalizer(it.method)) : candidates.length)) return { ran: false, calibration: {}, agreeing: [] };
   const jsLog = await runJs();
   const js = alignJs(logs.go, jsLog);
   const calibration = {};
-  const verdicts = new Map();
+  const agreeing = [];
   for (const it of items) {
-    if (!hasNormalizer(it.method)) continue;
+    if (!hasNormalizer(it.method) || it.i >= logs.rs.length) continue;
     // Without `all`, only the candidates (normalizing umami's MATCH answers takes 30 s).
     if (!all && !candidates.includes(it)) continue;
-    const [g, r] = [normalize(it.method, logs.go[it.i], { root }), normalize(it.method, logs.rs[it.i], { root })];
     const j = js[it.i] ? normalize(it.method, js[it.i], { root, libDir: JS_LIBS }) : null;
+    const r = normalize(it.method, logs.rs[it.i], { root });
+    if (it.status === "GO-BROKEN") {
+      // Report only (GO-BROKEN comes before JS-AGREES): which of Go's runs JS equals, and tsc-rs.
+      const goRuns = Object.keys(logs).filter((k) => /^go\d*$/.test(k) && it.i < logs[k].length);
+      const sameAs = (n) => (k) => sameNormalized(normalize(it.method, logs[k][it.i], { root }), n);
+      it.js = j ? { equalsRs: sameNormalized(r, j), equalsGoRuns: goRuns.filter(sameAs(j)), rsEqualsGoRuns: goRuns.filter(sameAs(r)) } : { reason: "no JS answer at this step" };
+      continue;
+    }
+    const g = normalize(it.method, logs.go[it.i], { root });
     if (it.status === "MATCH") {
       const c = (calibration[it.method] ??= { goEqual: 0, jsEqual: 0, noJs: 0 });
       c.goEqual++;
@@ -410,34 +418,10 @@ export async function applyJsReferee({ items, logs, root, runJs, rerunRs, answer
       else if (sameNormalized(g, j)) c.jsEqual++;
       continue;
     }
-    if (it.status === "GO-UNSTABLE") {
-      // Report only (GO-BROKEN comes before JS-AGREES): which of Go's runs JS equals, and tsc-rs.
-      const goRuns = Object.keys(logs).filter((k) => /^go\d*$/.test(k));
-      const same = (k) => sameNormalized(normalize(it.method, logs[k][it.i], { root }), j);
-      it.js = j
-        ? { equalsRs: sameNormalized(r, j), equalsGoRuns: goRuns.filter(same), rsEqualsGoRuns: goRuns.filter((k) => sameNormalized(normalize(it.method, logs[k][it.i], { root }), r)) }
-        : { reason: "no JS answer at this step" };
-      continue;
-    }
+    if (it.status !== "DIFF" || it.i >= logs.go.length) continue;
     const v = judge(g, r, j);
-    verdicts.set(it, v);
     it.js = { agrees: v.agrees, refereed: kinds.has(it.method), ...(v.reason ? { reason: v.reason } : {}), points: v.points.slice(0, 20), ...(v.points.length > 20 ? { morePoints: v.points.length - 20 } : {}) };
+    if (v.agrees && candidates.includes(it)) agreeing.push(it);
   }
-  let agreeing = candidates.filter((it) => verdicts.get(it)?.agrees);
-  if (agreeing.length && rerunRs) {
-    const again = await rerunRs();
-    for (const it of agreeing) {
-      if (answerKey(again[it.i], it.method) !== answerKey(logs.rs[it.i], it.method)) {
-        it.detail = "rs-nondet: the run made to confirm JS-AGREES differs from run 1";
-        delete it.js.agrees;
-      }
-    }
-    agreeing = agreeing.filter((it) => !it.detail);
-  }
-  for (const it of agreeing) {
-    it.status = "JS-AGREES";
-    const n = it.js.points.length + (it.js.morePoints ?? 0);
-    it.detail = `JS sides with tsc-rs on ${n} point${n === 1 ? "" : "s"}: ${it.js.points.slice(0, 3).join("; ")}`;
-  }
-  return { ran: true, calibration, decided: agreeing.length, jsAnswers: jsLog.length };
+  return { ran: true, calibration, agreeing, jsAnswers: jsLog.length };
 }

@@ -7,6 +7,8 @@
 // The run number counts up in LSPDIFF_PROXY_STATE (a file), so a rule can make runs differ.
 //   hover-replace  { from, to }: replace text in the hover's markdown
 //   drop-location  { uri }: drop the locations whose uri ends with uri
+//   crash          the server exits (code 3) when the request arrives
+//   hang           the request is never answered (the client's timeout ends the run)
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -50,15 +52,18 @@ function wordAt(uri, p) {
   return line.slice(s, e);
 }
 
+// The rules that apply to a request ({ method, params }).
+function matching(req) {
+  if (!req?.params?.position) return [];
+  const uri = req.params.textDocument.uri;
+  const word = wordAt(uri, req.params.position);
+  return rules.filter((r) => r.method === req.method && fileURLToPath(uri).endsWith(r.file) && r.word === word && (!r.runs || r.runs.includes(run)));
+}
+
 function rewrite(msg) {
   const req = asked.get(msg.id);
   asked.delete(msg.id);
-  if (!req?.params?.position) return msg;
-  const uri = req.params.textDocument.uri;
-  const word = wordAt(uri, req.params.position);
-  for (const r of rules) {
-    if (r.method !== req.method || !fileURLToPath(uri).endsWith(r.file) || r.word !== word) continue;
-    if (r.runs && !r.runs.includes(run)) continue;
+  for (const r of matching(req)) {
     if (r.edit === "hover-replace" && msg.result?.contents) msg.result.contents.value = msg.result.contents.value.replace(r.from, r.to);
     if (r.edit === "drop-location" && Array.isArray(msg.result)) msg.result = msg.result.filter((l) => !(l.uri ?? l.targetUri).endsWith(r.uri));
   }
@@ -67,7 +72,13 @@ function rewrite(msg) {
 
 process.stdin.on("data", framer((msg) => {
   if (msg.method === "textDocument/didOpen") docs.set(msg.params.textDocument.uri, msg.params.textDocument.text);
-  if (msg.id !== undefined && msg.method) asked.set(msg.id, { method: msg.method, params: msg.params });
+  if (msg.id !== undefined && msg.method) {
+    const req = { method: msg.method, params: msg.params };
+    const edits = matching(req).map((r) => r.edit);
+    if (edits.includes("crash")) process.exit(3);
+    if (edits.includes("hang")) return;
+    asked.set(msg.id, req);
+  }
   write(server.stdin, msg);
 }));
 process.stdin.on("end", () => server.stdin.end());

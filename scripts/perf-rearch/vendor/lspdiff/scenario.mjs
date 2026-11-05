@@ -446,19 +446,28 @@ SCENARIOS["fsevents-narrow"] = { ...SCENARIOS.fsevents, workspace: "src" };
 SCENARIOS["watch-narrow"] = { ...SCENARIOS.watch, workspace: "src" };
 
 // Runs a scenario on one server and returns its log ([{ step, method, params, result, error }]).
-// A fixture scenario first writes its fixture into `root`.
+// A fixture scenario first writes its fixture into `root`. When the server crashes or times out,
+// the error carries the answers so far as `log`.
 // serverLog: a file that gets the server's window/logMessage stream (lspdiff --server-logs).
 export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog } = {}) {
   const scenario = SCENARIOS[name];
   if (!scenario) throw new Error(`unknown scenario ${name}`);
   if (scenario.fixture) writeFixture(scenario.fixture, root);
-  const client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env });
+  let client;
+  try {
+    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env });
+  } catch (e) {
+    if (scenario.fixture) rmSync(root, { recursive: true, force: true });
+    throw Object.assign(e, { log: [] });
+  }
   const s = new Script(client, root);
   try {
     await scenario.run(s, { files });
     await s.checkpoint("end");
     // The raw ids, sorted: the only item where the watcher counter is not masked.
     s.log.push({ step: "end watch ids", method: "watch/ids", result: [...new Set(s.ids)].sort(), ms: 0 });
+  } catch (e) {
+    throw Object.assign(e, { log: s.log });
   } finally {
     await client.shutdown();
     if (serverLog) {
