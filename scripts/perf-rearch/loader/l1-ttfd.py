@@ -3,7 +3,7 @@
 LSP servers on one project, with the servers' own phase times, and a sample manifest. It also
 keeps, per run, the loader v2 L0 lines of a tsc-rs server with GOPORT_LOAD_TIMES=1: the phases
 (wall, utime, stime, minflt of the loading thread for setup, run_queue, finish, collect, publish,
-bind), the load view's counts and the reconciliation's cost; summary.md has their medians.
+bind) and the load view's counts; summary.md has their medians.
 
 usage: python3 -I l1-ttfd.py --out DIR --runs N [--project DIR] [--file REL] LABEL=CMD [LABEL=CMD ...]
   CMD is a server binary, or ENV=VAL,...:BIN to run BIN with those variables.
@@ -68,7 +68,7 @@ def run_one(label, cmd):
 
 lines_extra = []
 def l0(err):
-    """The L0 numbers of the first load: phase walls and thread CPU, view counts, reconcile."""
+    """The L0 numbers of the first load: phase walls and thread CPU, view counts."""
     r = {}
     m = re.search(r"goport load-phases: (.*)", err)
     phases = dict(re.findall(r"(\w+)=\[([^\]]*)\]", m.group(1))) if m else {}
@@ -88,11 +88,6 @@ def l0(err):
         kv = dict(re.findall(r"(\w+)=([-\d.]+)", v.group(1)))
         for k in ("hit_rate", "demands", "hits", "worker_hits", "misses", "late", "bypass", "races"):
             if k in kv: r[f"view_{k}"] = float(kv[k])
-    c = re.search(r"goport load-view-reconcile: (.*)", err)
-    if c:
-        kv = dict(re.findall(r"(\w+)=([-\d.]+)", c.group(1)))
-        for k in ("wall", "checked", "changed", "events", "threads"):
-            if k in kv: r[f"reconcile_{k}"] = float(kv[k])
     return r
 
 done = {}
@@ -135,7 +130,7 @@ for label, _ in sides:
 lines.append("")
 cols = ["loader_wall", "loader_utime", "loader_stime", "setup_wall", "run_queue_wall", "run_queue_utime", "run_queue_stime",
         "run_queue_minflt", "collect_wall", "publish_wall", "bind_wall", "view_hit_rate", "view_worker_hits", "view_misses",
-        "view_late", "view_bypass", "reconcile_wall", "reconcile_checked", "reconcile_events"]
+        "view_late", "view_bypass"]
 lines.append("| label | " + " | ".join(cols) + " |")
 lines.append("|---|" + "---|" * len(cols))
 for label, _ in sides:
