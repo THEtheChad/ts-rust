@@ -31,6 +31,17 @@
 // run (rs-confirm). That run is a complete tsc-rs run: every answer of it (MATCH ones too) is
 // compared with run 1, and an answer it lacks or changes, a request it adds, and its crash or
 // timeout are DIFFs (rs-nondet).
+// Lane H4: a request's identity is its step name, its method and its canonical params (keys sorted,
+// the root masked), with its occurrence among equal ones; and every run must ask the requests it
+// shares with the merged order in that order (a run that does not is a DIFF "<run> request order" for
+// tsc-rs, GO-BROKEN for Go, and no evidence for JS). Every server run ends with a session result
+// (sandbox.mjs: exit code or signal, stderr crash lines, inputs changed, shutdown), and the item
+// "session end" judges them all: DIFF (rsFailure crash, or input when it changed its inputs) when a
+// tsc-rs run's is not clean, GO-BROKEN when a Go run's is not; a JS run whose session is not clean is
+// no evidence. A Go cache entry without its session results is incomplete and runs again.
+// --go-stage <dir> / --js-stage <dir>: where new Go and JS logs are written (parity_lsp.py publishes
+// them into --go-cache / --js-cache once the tier verified clean); without one, they are not kept.
+// `node lspdiff.mjs info` prints the settings (settings.mjs) and the scenarios' ATA setup as JSON.
 // --server-logs writes each scenario run's window/logMessage stream to <out>/<run>.server.log.
 // --js <tsserver.js> adds the JS referee (referee.mjs, tsserver.mjs): when an answer is a DIFF of a
 // refereed kind (and passed step 1), JS tsserver replays the same session once and an
@@ -55,9 +66,10 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
-import { SCENARIOS, runScenario } from "./scenario.mjs";
+import { SCENARIOS, runScenario, scenarioInfo } from "./scenario.mjs";
 import { applyJsReferee } from "./referee.mjs";
 import { runSession } from "./session.mjs";
+import { SETTINGS } from "./settings.mjs";
 
 const { positionals, values: opt } = parseArgs({
   allowPositionals: true,
@@ -74,6 +86,8 @@ const { positionals, values: opt } = parseArgs({
     only: { type: "string" },
     reuse: { type: "boolean", default: false },
     "go-cache": { type: "string" },
+    "go-stage": { type: "string" },
+    "js-stage": { type: "string" },
     scenario: { type: "string" },
     "rs-runs": { type: "string", default: "1" },
     "go-runs": { type: "string", default: "2" },
@@ -89,6 +103,10 @@ const { positionals, values: opt } = parseArgs({
   },
 });
 const mode = positionals[0];
+if (mode === "info") {
+  console.log(JSON.stringify({ settings: SETTINGS, scenarios: scenarioInfo() }));
+  process.exit(0);
+}
 if (!["diff", "bench"].includes(mode) || !opt.project) {
   console.error("usage: lspdiff.mjs diff|bench --project <dir> [options]; see the header of this file");
   process.exit(2);
@@ -105,6 +123,7 @@ const servers = { go: [opt.go, "--lsp", "--stdio"], rs: [opt.rs, "--lsp", "--std
 const stderr = opt.verbose ? process.stderr : undefined;
 const outDir = join(opt.out, `${root.split("/").pop()}-${mode}${mode === "bench" && opt.pulls !== "all" ? `-${opt.pulls}` : ""}${scenario ? `-${scenario}` : ""}`);
 mkdirSync(outDir, { recursive: true });
+writeFileSync(join(outDir, "settings.json"), JSON.stringify(SETTINGS));
 console.log(`project ${root}\nfiles: ${files.map((f) => rel(root, f)).join(", ")}`);
 
 // Only what must differ between two runs: timing, the project root, and orders Go itself
@@ -118,15 +137,37 @@ function normalize(value, method) {
   return v;
 }
 
-// The identity of each request of a log: its step name and how many requests of that name came
-// before it in the same log.
+// A value as canonical JSON: object keys sorted, the project root masked.
+function canon(v) {
+  const sort = (x) => (Array.isArray(x) ? x.map(sort) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])])) : x);
+  return JSON.stringify(sort(JSON.parse(JSON.stringify(v ?? null).replaceAll(root, "<root>"))));
+}
+
+// The identity of each request of a log (lane H4): its step name, method and canonical params, and how
+// many requests with that identity came before it in the same log.
 function requestKeys(log) {
   const seen = new Map();
   return log.map((e) => {
-    const n = seen.get(e.step) ?? 0;
-    seen.set(e.step, n + 1);
-    return `${n}\u0000${e.step}`;
+    const id = `${e.step}\u0000${e.method}\u0000${canon(e.params)}`;
+    const n = seen.get(id) ?? 0;
+    seen.set(id, n + 1);
+    return `${n}\u0000${id}`;
   });
+}
+
+// Where a log asks the requests it shares with `order` in another relative order: the first such pair
+// as text, or null.
+function orderBreak(order, log) {
+  const index = new Map(order.map((k, i) => [k, i]));
+  let last = -1;
+  let lastStep;
+  for (const [i, k] of requestKeys(log).entries()) {
+    const p = index.get(k);
+    if (p === undefined) continue;
+    if (p < last) return `it asked ${JSON.stringify(log[i].step)} after ${JSON.stringify(lastStep)}`;
+    [last, lastStep] = [p, log[i].step];
+  }
+  return null;
 }
 
 // The request identities of all logs in one order: the first log's, with each request that only a
@@ -183,20 +224,23 @@ if (mode === "diff") {
     scenario
       ? runScenario(cmd, scenario, root, { files, stderr, env, serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
       : runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
-  // { log, broken }: a crash or a timeout ends the run with the answers it gave.
+  // { log, broken, session }: a crash or a timeout ends the run with the answers it gave; session is
+  // the server's result (sandbox.mjs), mandatory for every run.
   const runLogged = async (name, cmd, env) => {
     const start = performance.now();
     let log;
     let fail;
+    let session;
     try {
-      log = await runOne(name, cmd, env);
+      ({ log, session } = await runOne(name, cmd, env));
     } catch (e) {
       if (!e.log) throw e;
       log = e.log;
+      session = e.session ?? { clean: false, why: [`no session result (${String(e.message).slice(0, 200)})`] };
       fail = { kind: e.timeout ? "timeout" : "crash", reason: String(e.message).slice(0, 300), at: e.log.length };
     }
-    console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s${fail ? ` (${fail.kind}: ${fail.reason})` : ""}`);
-    return { log, broken: fail };
+    console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s${fail ? ` (${fail.kind}: ${fail.reason})` : ""}${session.clean ? "" : `; session: ${session.why.join("; ")}`}`);
+    return { log, broken: fail, session };
   };
   const saveLog = (dir, name, log) => {
     mkdirSync(dir, { recursive: true });
@@ -208,30 +252,42 @@ if (mode === "diff") {
     return text ? text.split("\n").map((l) => JSON.parse(l)) : [];
   };
   const readBroken = (dir, name) => (existsSync(join(dir, `${name}.broken.json`)) ? JSON.parse(readFileSync(join(dir, `${name}.broken.json`), "utf8")) : undefined);
+  const readSession = (dir, name) => JSON.parse(readFileSync(join(dir, `${name}.session.json`), "utf8"));
+  // A cached run: its log and its session result (a log without one is incomplete: run it again).
+  const cachedRun = (dir, name) => dir && existsSync(join(dir, `${name}.jsonl`)) && existsSync(join(dir, `${name}.session.json`));
+  const saveRun = (dir, name, r) => {
+    mkdirSync(dir, { recursive: true });
+    if (r.broken) writeFileSync(join(dir, `${name}.broken.json`), JSON.stringify(r.broken));
+    writeFileSync(join(dir, `${name}.session.json`), JSON.stringify(r.session));
+    saveLog(dir, name, r.log);
+  };
+  // name -> the run's session result (sandbox.mjs).
+  const sessions = {};
   for (const [name, cmd] of Object.entries(runs)) {
     const isGo = name.startsWith("go");
-    if (goCache && isGo && existsSync(join(goCache, `${name}.jsonl`))) {
-      logs[name] = readLog(join(goCache, `${name}.jsonl`));
-      broken[name] = readBroken(goCache, name);
-      console.log(`${name}: ${logs[name].length} answers from ${join(goCache, `${name}.jsonl`)}`);
+    const from = isGo && [opt["go-stage"], goCache].find((d) => cachedRun(d, name));
+    if (from) {
+      logs[name] = readLog(join(from, `${name}.jsonl`));
+      broken[name] = readBroken(from, name);
+      sessions[name] = readSession(from, name);
+      console.log(`${name}: ${logs[name].length} answers from ${join(from, `${name}.jsonl`)}`);
       continue;
     }
     if (opt.reuse) {
       logs[name] = readLog(join(outDir, `${name}.jsonl`));
       broken[name] = readBroken(outDir, name);
+      sessions[name] = readSession(outDir, name);
       continue;
     }
     const r = await runLogged(name, cmd, envs[name]);
     logs[name] = r.log;
     broken[name] = r.broken;
+    sessions[name] = r.session;
     if (r.broken) writeFileSync(join(outDir, `${name}.broken.json`), JSON.stringify(r.broken));
+    writeFileSync(join(outDir, `${name}.session.json`), JSON.stringify(r.session));
     writeFileSync(join(outDir, `${name}.jsonl`), logs[name].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    // A crash is Go's answer and is cached; a timeout depends on the load and is not.
-    if (goCache && isGo && r.broken?.kind !== "timeout") {
-      mkdirSync(goCache, { recursive: true });
-      if (r.broken) writeFileSync(join(goCache, `${name}.broken.json`), JSON.stringify(r.broken));
-      saveLog(goCache, name, logs[name]);
-    }
+    // A crash is Go's answer and is staged; a timeout depends on the load and is not.
+    if (opt["go-stage"] && isGo && r.broken?.kind !== "timeout") saveRun(opt["go-stage"], name, r);
   }
   // Answers are aligned by request identity: the n-th request of a step name in one run is the n-th
   // of that name in every run (requestKeys). Some requests depend on earlier answers (session.mjs:
@@ -245,6 +301,8 @@ if (mode === "diff") {
   const rsNames = Object.keys(logs).filter((k) => !goNames.includes(k));
   const order = mergeOrder([...goNames, ...rsNames].map((k) => logs[k]));
   const aligned = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, alignTo(order, log)]));
+  // Every run asks the requests it shares with the others in the same relative order.
+  const orderBroken = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, orderBreak(order, log)]).filter(([, v]) => v));
   // Where a run that crashed or timed out ended: after the merged position of its last answer.
   const endOf = (k, log = aligned[k]) => log.reduce((last, e, p) => (e ? p : last), -1);
   const ends = Object.fromEntries(Object.keys(logs).map((k) => [k, endOf(k)]));
@@ -306,34 +364,57 @@ if (mode === "diff") {
   for (const k of rsNames.filter((k) => broken[k])) {
     items.push({ i: n, step: `${k} server`, method: "server/exit", status: "DIFF", detail: `tsc-rs ${why(k)}`, rsFailure: failureOf(broken[k]) });
   }
+  // Request order and session results (lane H4): one item each, after every answer.
+  const orderItem = (names, status) => {
+    const bad = names.filter((k) => orderBroken[k]);
+    if (bad.length) items.push({ i: n, step: `${bad.join(",")} request order`, method: "server/order", status, detail: bad.map((k) => `${k}: ${orderBroken[k]}`).join("; ") });
+  };
+  orderItem(rsNames, "DIFF");
+  orderItem(goNames, "GO-BROKEN");
+  const sessionItem = (extra = {}) => {
+    const all = { ...sessions, ...extra };
+    const bad = (names) => names.filter((k) => all[k] && !all[k].clean);
+    const rsBad = bad(Object.keys(all).filter((k) => !/^go\d*$/.test(k)));
+    const goBad = bad(goNames);
+    const why = (ks) => ks.map((k) => `${k}: ${all[k].why.join(", ")}`).join("; ");
+    const it = items.find((x) => x.step === "session end") ?? items[items.push({ i: n, step: "session end", method: "server/session" }) - 1];
+    delete it.rsFailure;
+    if (rsBad.length) Object.assign(it, { status: "DIFF", detail: `tsc-rs ${why(rsBad)}${goBad.length ? `; Go ${why(goBad)}` : ""}`, rsFailure: rsBad.some((k) => all[k].inputs?.modified?.length) ? "input" : "crash" });
+    else if (goBad.length) Object.assign(it, { status: "GO-BROKEN", detail: `Go ${why(goBad)}` });
+    else Object.assign(it, { status: "MATCH", detail: undefined });
+  };
+  sessionItem();
   // Step 3, JS-AGREES (referee.mjs): JS's verdict on each DIFF of a refereed kind.
   let jsRef;
   if (opt.js) {
     const jsCache = opt["js-cache"];
     const runJs = async () => {
-      const cached = jsCache && join(jsCache, "js.jsonl");
       let log;
       let jsBroken;
-      if (cached && existsSync(cached)) {
-        log = readLog(cached);
-        jsBroken = readBroken(jsCache, "js");
-        console.log(`js: ${log.length} answers from ${cached}`);
+      let jsSession;
+      const from = [opt["js-stage"], jsCache].find((d) => cachedRun(d, "js"));
+      if (from) {
+        log = readLog(join(from, "js.jsonl"));
+        jsBroken = readBroken(from, "js");
+        jsSession = readSession(from, "js");
+        console.log(`js: ${log.length} answers from ${join(from, "js.jsonl")}`);
       } else if (opt.reuse && existsSync(join(outDir, "js.jsonl"))) {
         log = readLog(join(outDir, "js.jsonl"));
         jsBroken = readBroken(outDir, "js");
+        jsSession = readSession(outDir, "js");
       } else {
         const res = await runLogged("js", { tsserver: opt.js });
-        log = res.log;
+        ({ log, session: jsSession } = res);
         jsBroken = res.broken;
         writeFileSync(join(outDir, "js.jsonl"), log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+        writeFileSync(join(outDir, "js.session.json"), JSON.stringify(jsSession));
         if (jsBroken) writeFileSync(join(outDir, "js.broken.json"), JSON.stringify(jsBroken));
-        // A crash is JS's answer and is cached with its log; a timeout depends on the load and is not.
-        if (jsCache && jsBroken?.kind !== "timeout") {
-          mkdirSync(jsCache, { recursive: true });
-          if (jsBroken) writeFileSync(join(jsCache, "js.broken.json"), JSON.stringify(jsBroken));
-          saveLog(jsCache, "js", log);
-        }
+        // A crash is JS's answer and is staged with its log; a timeout depends on the load and is not.
+        if (opt["js-stage"] && jsBroken?.kind !== "timeout") saveRun(opt["js-stage"], "js", res);
       }
+      // A JS run that broke the request order or whose session is not clean is no evidence at all.
+      const unusable = orderBreak(order, log) ?? (jsSession.clean ? null : `its session: ${jsSession.why.join(", ")}`);
+      if (unusable) return { answers: order.map(() => undefined), broken: `the JS run is no evidence: ${unusable}` };
       const answers = alignTo(order, log);
       const jsEnd = endOf("js", answers);
       // Past the point where the JS run ended there is no JS answer (never an empty one).
@@ -351,11 +432,15 @@ if (mode === "diff") {
   if (pending.length && rsRuns === 1 && !Object.keys(envs).length) {
     const confirm = await runLogged("rs-confirm", servers.rs);
     writeFileSync(join(outDir, "rs-confirm.jsonl"), confirm.log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    writeFileSync(join(outDir, "rs-confirm.session.json"), JSON.stringify(confirm.session));
+    sessionItem({ "rs-confirm": confirm.session });
+    const confirmOrder = orderBreak(order, confirm.log);
+    if (confirmOrder) items.push({ i: n, step: "rs-confirm request order", method: "server/order", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run ${confirmOrder}` });
     const c = alignTo(order, confirm.log);
     const cEnd = endOf("rs-confirm", c);
     const extra = confirm.log.length - c.filter(Boolean).length;
     for (const it of items) {
-      if (it.method === "server/exit") continue;
+      if (it.i >= n) continue; // the run-level items (server, order, session)
       const p = it.i;
       const cAns = c[p] ? answer(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd) ? null : NOT_ASKED;
       if (cAns === at("rs", p, it.method)) continue;

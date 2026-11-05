@@ -16,16 +16,27 @@ workspace folder is umami/src), watch-hono-f12 and second-project-query. Up to -
 side by side. quick's
 sessions are all full sessions, so a quick run compares with a full base.
 
-Go's four sessions per item set (go.jsonl to go4.jsonl, GO_RUNS) are kept in ~/.cache/perf-rearch/parity/
-go-cache/<go sha>/lsp/<session>-<key>/ and reused, so a run starts only tsc-rs. The key (session_key)
-is the sha of what the session reads and how it runs: the session's definition (project, files,
-positions, scenario), the resolved project dir (its realpath) and the content of its whole tree
-(parity_inputs.tree_hash), for scenarios also the typings cache their ATA reads
-(~/.cache/typescript/7.1), the lspdiff sources that script the session (SESSION_SOURCES), the
-harness settings that change answers (LSPDIFF_SETTLE_MS, LSPDIFF_REQUEST_TIMEOUT_MS) and GO_RUNS. The
-trees are hashed when the tier starts and again when it ends; a session whose inputs changed while
-the tier ran is an ERROR. Standard sessions run with ATA off (vendor/lspdiff
-client.mjs initializeParams). In full, tsc-rs runs three times: twice as is and once with
+Go's four sessions per item set (go.jsonl to go4.jsonl with their session results, GO_RUNS) are
+kept in ~/.cache/perf-rearch/parity/go-cache/<go sha>/lsp/<session>-<key>/ and reused, so a run starts
+only tsc-rs. The key (session_key) is the sha of what the session reads and how it runs: the
+session's definition (project, files, positions, scenario), the project's path and the content of
+its snapshot (parity_inputs.Inputs), for scenarios with ATA on the user's npm also the snapshot of the
+typings cache (~/.cache/typescript/7.1) and the npm on PATH, the lspdiff sources that script the
+session (SESSION_SOURCES), every lspdiff setting (vendor/lspdiff/settings.mjs, read with `lspdiff.mjs
+info`: the settle and quiet waits, the request and shutdown timeouts, the ATA idle window, npm delay
+and deadline) and GO_RUNS. The cache dir's key.json holds that material, and a dir whose key.json is
+other material is not read. New Go and JS logs go to a staging dir (lspdiff --go-stage/--js-stage)
+and are published only when the tier verified its inputs clean; lspdiff's settings.json must equal
+the keyed settings. Standard sessions run with ATA off (vendor/lspdiff client.mjs initializeParams).
+
+Inputs (lane H4): every project and the typings cache are read-only snapshots, made before the
+first session and watched with inotify while the tier runs. lspdiff runs in a user and mount
+namespace with each snapshot bound read-only at its own path (so the file texts it sends are the
+snapshot's), and every server process (Go, tsc-rs, JS) in a namespace of its own with a fresh
+overlay of the snapshots (vendor/lspdiff/sandbox.mjs, LSPDIFF_SANDBOX): a server that writes into
+its project fails its session ("session end": DIFF with rsFailure input for tsc-rs), and the typings
+cache starts from the same snapshot in every run, whatever ATA wrote before. A change to a snapshot
+while the tier runs makes its sessions ERROR and discards the staged logs. In full, tsc-rs runs three times: twice as is and once with
 GOPORT_PARSE_THREADS=1. An item is judged in this order (docs/perf-rearch/parity.md, "JS tsserver as
 the LSP referee"):
 1. tsc-rs determinism: a tsc-rs run that crashed or timed out, or an answer on which a later tsc-rs
@@ -57,6 +68,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -66,6 +78,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # python3 -I leaves the script dir out
 import parity_inputs as inputs  # noqa: E402
+import parity_modes as modes  # noqa: E402
 import parity_referees as referees  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -91,13 +104,22 @@ QUICK = [std('umami'), std('ts-pattern'),
          scen('fsevents', 'fsevents'), scen('fsevents-narrow', 'fsevents-narrow'), scen('pkgjson-overlay', 'pkgjson-overlay'),
          scen('watch-ts-pattern-f12', 'watch', 'ts-pattern'), scen('unsaved-ts-pattern', 'unsaved', 'ts-pattern'),
          scen('ata-overlay', 'ata-overlay')]
-SESSIONS = {
-    'quick': QUICK,
-    'full': QUICK[:2] + [std('hono')] + QUICK[2:] + [
-        scen('watch-umami-f12', 'watch', 'umami'), scen('watch-narrow-umami-f12', 'watch-narrow', 'umami'),
-        scen('watch-hono-f12', 'watch', 'hono'),
-        scen('second-project-query', 'second-project', 'query')],
-}
+FULL = QUICK[:2] + [std('hono')] + QUICK[2:] + [
+    scen('watch-umami-f12', 'watch', 'umami'), scen('watch-narrow-umami-f12', 'watch-narrow', 'umami'),
+    scen('watch-hono-f12', 'watch', 'hono'),
+    scen('second-project-query', 'second-project', 'query')]
+
+
+def sessions(tier):
+    """The sessions of a tier: every one for full; for quick, the quick manifest's (it may name only
+    sessions that full runs too, so a quick run compares with a full base)."""
+    if tier == 'full':
+        return FULL
+    names = modes.working_manifest().lsp
+    unknown = names - {s['name'] for s in FULL}
+    if unknown:
+        sys.exit(f'parity_lsp: the quick manifest names sessions that do not exist: {sorted(unknown)}')
+    return [s for s in FULL if s['name'] in names]
 # The tsc-rs runs per session: lspdiff options. full: two plain runs (rs-nondet) and one with a
 # single parse worker (rs-schedule).
 # Go sessions per item set. Go's own answers vary between runs on some items (hono `references`
@@ -109,7 +131,9 @@ RS_RUNS = {'quick': [], 'full': ['--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THR
 JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js'
 # The lspdiff sources that script a session, so Go's (and JS's) answers depend on them; the diff and
 # referee code (lspdiff.mjs, referee.mjs) and the bench scripts do not change a cached answer.
-SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'ata-npm/npm', 'ata-npm/fake-npm.mjs')
+SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
+                   'ata-npm/npm', 'ata-npm/fake-npm.mjs')
+CACHE_VERSION = 2  # bump when the form of the cached logs changes (2: lane H4, session results, snapshots)
 
 
 def scenario_sources_sha(extra=()):
@@ -121,20 +145,67 @@ def scenario_sources_sha(extra=()):
 
 
 TYPINGS = HOME / '.cache/typescript/7.1'  # the ATA typings cache of a server with the default XDG_CACHE_HOME
-HARNESS_ENV = ('LSPDIFF_SETTLE_MS', 'LSPDIFF_REQUEST_TIMEOUT_MS')
+LSPDIFF = HERE / 'vendor/lspdiff/lspdiff.mjs'
+# lspdiff in a user and mount namespace with each snapshot bound read-only at its path: $1 snapshot,
+# $2 path, then the next pair, then the command.
+def outer(binds):
+    script = [f'mount --bind "${{{2 * k + 1}}}" "${{{2 * k + 2}}}" && mount -o remount,bind,ro "${{{2 * k + 2}}}"' for k in range(len(binds))]
+    return ['unshare', '-rm', '--', 'sh', '-c', ' && '.join([*script, f'shift {2 * len(binds)}', 'exec "$@"']), 'outer',
+            *[x for b in binds for x in b]]
 
 
-def session_key(sess, root, snapshot, sources_sha, extra=()):
-    """The cache key of a session's Go (or JS) logs: 24 hex digits over everything its answers depend
-    on (see the top comment). A fixture session's root is its scratch dir, rewritten from
-    fixtures.mjs (in the sources) before every server run, so its tree is not hashed."""
-    material = {'session': sess, 'root': str(root), 'real': os.path.realpath(root), 'sources': sources_sha,
-                'env': {k: os.environ.get(k) for k in HARNESS_ENV}, 'extra': list(extra)}
-    if sess['project'] is not FIXTURE:
-        material['tree'] = snapshot.of(root)
-    if sess.get('scenario') and TYPINGS.is_dir():
-        material['typings'] = snapshot.of(TYPINGS)
-    return inputs.json_hash(material)[:24]
+def lspdiff_info():
+    """lspdiff's effective settings and scenarios (`lspdiff.mjs info`), as the sessions will see them."""
+    r = subprocess.run(['node', str(LSPDIFF), 'info'], capture_output=True, text=True, check=True)
+    return json.loads(r.stdout)
+
+
+def npm_identity():
+    """The npm on PATH that ATA runs in the scenarios with the user's typings: its realpath and version."""
+    npm = shutil.which('npm')
+    if not npm:
+        return None
+    v = subprocess.run([npm, '--version'], capture_output=True, text=True)
+    return {'path': os.path.realpath(npm), 'version': v.stdout.strip()}
+
+
+def uses_user_typings(sess, info):
+    sc = info['scenarios'].get(sess.get('scenario') or '', {})
+    return bool(sess.get('scenario')) and sc.get('ata') and sc.get('typings') == 'user'
+
+
+def session_material(sess, root, project_snap, typings_snap, sources_sha, info, extra=()):
+    """The key material of a session's Go (or JS) logs (see the top comment). A fixture session's root
+    is its scratch dir, rewritten from fixtures.mjs (in the sources) before every server run, so it has
+    no snapshot."""
+    material = {'version': CACHE_VERSION, 'session': sess, 'root': str(root), 'sources': sources_sha,
+                'settings': info['settings'], 'extra': list(extra)}
+    if project_snap is not None:
+        material.update(real=project_snap.label, tree=project_snap.hash)
+    if typings_snap is not None:
+        material.update(typings=typings_snap.hash, npm=npm_identity())
+    return material
+
+
+def key_dir(cache, material, stage):
+    """The cache dir for lspdiff to read, when its key.json holds this material (else None), and the
+    staging dir it writes to (with key.json)."""
+    staged = stage.stage_dir(cache)
+    staged.mkdir(parents=True, exist_ok=True)
+    (staged / 'key.json').write_text(json.dumps(material, sort_keys=True))
+    try:
+        ok = json.loads((cache / 'key.json').read_text()) == json.loads(json.dumps(material))
+    except (OSError, ValueError):
+        ok = False
+    return (cache if ok else None), staged
+
+
+def _snapshot_error(snaps, root):
+    try:
+        snaps.of(root)
+    except inputs.SnapshotError as e:
+        return str(e)
+    return None
 
 
 def sha256_file(path):
@@ -165,46 +236,85 @@ def main():
         except (OSError, ValueError) as e:  # no JS 6.0.3: no JS referee
             use_js, js_error = False, str(e)
             print(f'lsp: JS referee unavailable: {js_error}', flush=True)
-    snapshot = inputs.Snapshot()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     go_sha = sha256_file(args.go)[:16]
-    items, sessions = {}, {}
+    items, sessions_info = {}, {}
     t0 = time.monotonic()
     src_sha = scenario_sources_sha()
     js_src_sha = scenario_sources_sha(('tsserver.mjs',))
     js_sha = js_sha if use_js else None
+    info = lspdiff_info()
+    stage = inputs.Stage('lsp')
+    snaps = inputs.Inputs()
+    chosen = [sess for sess in sessions(args.tier) if re.search(args.only, sess['name'])]
+    roots = {}
+    for sess in chosen:
+        if sess['project'] is FIXTURE:
+            roots[sess['name']] = HOME / f'.cache/perf-rearch/parity/scratch/lsp-{sess["name"]}'
+        else:
+            roots[sess['name']] = next((Path(os.path.expanduser(d)) for d in PROJECTS[sess['project']]
+                                        if Path(os.path.expanduser(d)).is_dir()), None)
+    need = {str(r) for name, r in roots.items() if r is not None and next(s for s in chosen if s['name'] == name)['project'] is not FIXTURE}
+    if any(uses_user_typings(sess, info) for sess in chosen):
+        TYPINGS.mkdir(parents=True, exist_ok=True)
+        need.add(str(TYPINGS))
+    snap_start = time.monotonic()
+    with ThreadPoolExecutor(4) as pool:  # every snapshot before the first session, then the watch
+        errs = dict(zip(sorted(need), pool.map(lambda r: _snapshot_error(snaps, r), sorted(need))))
+    snaps.watch()
+    snap_secs = round(time.monotonic() - snap_start, 1)
+    print(f'lsp: {len(snaps.snaps)} snapshots in {snap_secs}s; {snaps.watch_error or "watched with inotify"}', flush=True)
 
     def run_one(sess):
         """One session: (its items, its summary, the line to print)."""
         name, project, scenario = sess['name'], sess['project'], sess.get('scenario')
-        if project is FIXTURE:
-            root = HOME / f'.cache/perf-rearch/parity/scratch/lsp-{name}'
-        else:
-            root = next((Path(os.path.expanduser(d)) for d in PROJECTS[project] if Path(os.path.expanduser(d)).is_dir()), None)
-            if root is None:
-                return {f'lsp/{name}': {'status': 'SKIP', 'detail': 'project not prepared'}}, None, f'lsp {name}: SKIP'
-        key = f'{name}-{session_key(sess, root, snapshot, src_sha, [f"g{GO_RUNS}"])}'
-        js_key = f'{name}-{session_key(sess, root, snapshot, js_src_sha)}'
-        cache = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{key}'
+        root = roots[name]
+        if root is None:
+            return {f'lsp/{name}': {'status': 'SKIP', 'detail': 'project not prepared'}}, None, f'lsp {name}: SKIP'
+        project_snap = typings_snap = None
+        binds, mounts = [], []
+        try:
+            if project is not FIXTURE:
+                project_snap = snaps.of(root)
+                binds.append((str(project_snap.path), project_snap.label))
+                mounts.append({'lower': str(project_snap.path), 'target': project_snap.label, 'writable': False})
+            if uses_user_typings(sess, info):
+                typings_snap = snaps.of(TYPINGS)
+                binds.append((str(typings_snap.path), typings_snap.label))
+                mounts.append({'lower': str(typings_snap.path), 'target': typings_snap.label, 'writable': True})
+        except inputs.SnapshotError as e:
+            return {f'lsp/{name}': {'status': 'ERROR', 'detail': f'no snapshot: {e}'}}, None, f'lsp {name}: ERROR {e}'
+        material = session_material(sess, root, project_snap, typings_snap, src_sha, info, [f'g{GO_RUNS}'])
+        js_material = session_material(sess, root, project_snap, typings_snap, js_src_sha, info)
+        key = f'{name}-{inputs.json_hash(material)[:24]}'
+        js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
+        go_cache, go_stage = key_dir(HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{key}', material, stage)
         sout = out / name
+        sandbox = {'scratch': str(HOME / f'.cache/perf-rearch/parity/scratch/lsp-sandbox/{name}'), 'mounts': mounts}
         # A heap above Node's default: umami's 7 logs are 340 MB each, and JS adds one.
-        cmd = ['node', '--max-old-space-size=12288', str(HERE / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root),
+        cmd = [*outer(binds), 'node', '--max-old-space-size=12288', str(LSPDIFF), 'diff', '--project', str(root),
                '--files', str(sess['files']), '--go', args.go, '--rs', args.rs, '--out', str(sout),
-               '--go-cache', str(cache), *RS_RUNS[args.tier]]
+               '--go-stage', str(go_stage), *(['--go-cache', str(go_cache)] if go_cache else []), *RS_RUNS[args.tier]]
         cmd += ['--go-runs', str(GO_RUNS)]
         if use_js:
-            cmd += ['--js', args.js, '--js-cache', str(HOME / f'.cache/perf-rearch/parity/js-cache/{js_sha}/lsp/{js_key}')]
+            js_cache, js_stage = key_dir(HOME / f'.cache/perf-rearch/parity/js-cache/{js_sha}/lsp/{js_key}', js_material, stage)
+            cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]
             cmd += ['--js-all'] if args.js_all else []
         cmd += ['--scenario', scenario] if scenario else ['--positions', str(sess['positions'])]
         start = time.monotonic()
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                           env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
         secs = round(time.monotonic() - start, 1)
         (out / f'{name}.log').write_text(r.stdout + r.stderr)
         produced = sout / f'{root.name}-diff{"-" + scenario if scenario else ""}' / 'items.json'
         if r.returncode or not produced.exists():
             return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'lspdiff exit {r.returncode}: {r.stderr[-300:]}'}},
-                    {'secs': secs, 'error': True}, f'lsp {name}: ERROR (exit {r.returncode}) {secs}s')
+                    {'secs': secs, 'error': True, 'root': str(root)}, f'lsp {name}: ERROR (exit {r.returncode}) {secs}s')
+        used = json.loads((produced.parent / 'settings.json').read_text())
+        if used != info['settings']:
+            return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'lspdiff ran with other settings than its key: {used}'}},
+                    {'secs': secs, 'error': True, 'root': str(root)}, f'lsp {name}: ERROR (settings)')
         rows = json.loads(produced.read_text())
         got = {}
         for row in rows:
@@ -221,41 +331,51 @@ def main():
         js_info = json.loads(js_file.read_text()) if js_file.exists() else {}
         runs = dict(re.findall(r'^(go\d*|rs[\w-]*)(?: \(.*\))?: \d+ answers in ([\d.]+) s', r.stdout, re.M))
         runs.update(re.findall(r'^(js|rs-confirm): \d+ answers in ([\d.]+) s', r.stdout, re.M))
-        info = {'secs': secs, 'answers': len(rows), 'counts': dict(c), 'root': str(root), 'key': key,
-                'runSecs': {k: float(v) for k, v in runs.items()}}
+        sinfo = {'secs': secs, 'answers': len(rows), 'counts': dict(c), 'root': str(root), 'key': key,
+                 'typings': typings_snap is not None, 'runSecs': {k: float(v) for k, v in runs.items()}}
         if js_info.get('ran'):
-            info['js'] = {'calibration': js_info.get('calibration', {}), 'decided': js_info.get('decided', 0),
-                          'cached': bool(re.search(r'^js: \d+ answers from ', r.stdout, re.M))}
-        return got, info, f'lsp {name}: {dict(c)} {secs}s'
+            sinfo['js'] = {'calibration': js_info.get('calibration', {}), 'decided': js_info.get('decided', 0),
+                           'cached': bool(re.search(r'^js: \d+ answers from ', r.stdout, re.M))}
+        return got, sinfo, f'lsp {name}: {dict(c)} {secs}s'
 
-    chosen = [sess for sess in SESSIONS[args.tier] if re.search(args.only, sess['name'])]
     # Sessions run side by side (each server run is its own process; fixture sessions have their own
     # scratch dirs). Most of a scenario's time is the settle wait at its checkpoints.
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {pool.submit(run_one, sess): sess['name'] for sess in chosen}
         for f in as_completed(futures):
-            got, info, line = f.result()
+            got, sinfo, line = f.result()
             items.update(got)
-            if info is not None:
-                sessions[futures[f]] = info
+            if sinfo is not None:
+                sessions_info[futures[f]] = sinfo
             print(line, flush=True)
-    changed = snapshot.verify()
+    verify_start = time.monotonic()
+    changed = snaps.verify()
+    verify_secs = round(time.monotonic() - verify_start, 1)
     for sess in chosen:
-        info = sessions.get(sess['name'], {})
-        why = next((w for r, w in changed.items() if r == info.get('root') or (sess.get('scenario') and r == str(TYPINGS))), None)
-        if why and info.get('root'):
+        sinfo = sessions_info.get(sess['name'], {})
+        why = next((w for r, w in changed.items() if r == sinfo.get('root') or (sinfo.get('typings') and r == str(TYPINGS))), None)
+        if why:
             for k in [k for k in items if k.startswith(f'lsp/{sess["name"]}/')]:
                 items[k] = {'status': 'ERROR', 'detail': why, 'was': items[k]}
             print(f'lsp {sess["name"]}: ERROR {why}', flush=True)
+    for root, err in errs.items():
+        if err:
+            print(f'lsp: no snapshot of {root}: {err}', flush=True)
+    if changed:
+        print(f'lsp: inputs changed ({len(changed)} roots): {stage.discard()} staged files discarded', flush=True)
+    else:
+        print(f'lsp: {stage.publish()} cache files published', flush=True)
     counts = Counter(v['status'] for v in items.values())
-    summary = {'tier': args.tier, 'rs': args.rs, 'goSha': go_sha, 'counts': dict(counts), 'sessions': sessions,
-               'inputs': snapshot.hashes, **({'jsError': js_error} if js_error else {}),
-               'wallSecs': round(time.monotonic() - t0, 1)}
+    summary = {'tier': args.tier, 'rs': args.rs, 'goSha': go_sha, 'counts': dict(counts), 'sessions': sessions_info,
+               'inputs': snaps.hashes, 'snapshots': {r: x.as_json() for r, x in snaps.snaps.items()},
+               'watch': snaps.watch_error or 'inotify', 'changed': changed, 'settings': info['settings'],
+               'secs': {'snapshots': snap_secs, 'verify': verify_secs},
+               **({'jsError': js_error} if js_error else {}), 'wallSecs': round(time.monotonic() - t0, 1)}
     if use_js:
         summary['jsSha'] = js_sha
         calib = {}
-        for info in sessions.values():
-            for method, c in info.get('js', {}).get('calibration', {}).items():
+        for sinfo in sessions_info.values():
+            for method, c in sinfo.get('js', {}).get('calibration', {}).items():
                 acc = calib.setdefault(method, {'goEqual': 0, 'jsEqual': 0, 'noJs': 0})
                 for k in acc:
                     acc[k] += c.get(k, 0)
