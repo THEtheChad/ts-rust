@@ -2,8 +2,7 @@
 seen even when it is undone before the tier ends.
 
 `Watch(roots)` adds a watch on every directory under each root (symlinks not followed) for every
-event that changes an entry: a write (IN_MODIFY, IN_CLOSE_WRITE: a file opened for writing), a
-metadata change (IN_ATTRIB: chmod, chown, touch, a hard link), a create, delete or rename in the
+event that changes an entry: a write or truncation (IN_MODIFY), a metadata change (IN_ATTRIB: chmod, chown, touch, a hard link), a create, delete or rename in the
 directory, and the directory's own delete or move. Reads and opens for reading are not watched,
 and an overlayfs mount never writes its lower dir, so a compiler that reads an input makes no
 event. A thread reads the events; `dirty()` is {root: the first event seen under it}. An event
@@ -38,7 +37,12 @@ IN_ONLYDIR = 0x01000000
 IN_DONT_FOLLOW = 0x02000000
 IN_NONBLOCK = 0o4000
 IN_CLOEXEC = 0o2000000
-CHANGES = (IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
+# IN_CLOSE_WRITE is not watched: it says that a file opened for writing was closed, not that it
+# changed (a write is IN_MODIFY, a truncation too). And it comes late and from elsewhere: a thread
+# that forks while another thread has a file open for writing gives the child a copy of that fd,
+# which the child closes at exec, after the writer closed its own; in a 12-thread fuzz tier that made
+# a close-write event on a just-written input in about 1 case in 1,000.
+CHANGES = (IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
            | IN_DELETE_SELF | IN_MOVE_SELF)
 NAMES = {IN_MODIFY: 'modify', IN_ATTRIB: 'attrib', IN_CLOSE_WRITE: 'close-write', IN_MOVED_FROM: 'moved-from',
          IN_MOVED_TO: 'moved-to', IN_CREATE: 'create', IN_DELETE: 'delete', IN_DELETE_SELF: 'delete-self',

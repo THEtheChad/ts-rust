@@ -9,7 +9,10 @@ Inputs (parity gate, lane H4): write_project returns {path: bytes} of every inpu
 run() with that map watches the project's directories with inotify while the compiler runs and
 checks every input's bytes when it ends. A write to an input (even one undone before the end), a
 chmod, a delete or a rename is in the result's `input_changes`; a run that changed none has [].
-Callers restore the inputs (write_project again) before each run.
+What the run left in place of a changed input is `inputs_after` ({path: sha256 of the new bytes, or
+"deleted"}), and it is part of the result's key: an emit that overwrites an input (Go does on some
+allowJs cases) is output, compared like the written files. Callers restore the inputs
+(write_project again) before each run.
 """
 import difflib
 import hashlib
@@ -38,21 +41,24 @@ except ImportError:  # difffuzz on its own: inputs checked by content only
 
 
 class Result:
-    def __init__(self, code, stdout=b'', stderr=b'', tree=None, secs=0.0, input_changes=None):
+    def __init__(self, code, stdout=b'', stderr=b'', tree=None, secs=0.0, input_changes=None, inputs_after=None):
         self.code, self.stdout, self.stderr, self.tree, self.secs = code, stdout, stderr, tree or {}, secs
         self.input_changes = input_changes or []
+        self.inputs_after = inputs_after or {}
 
-    def __setstate__(self, state):  # results pickled before input_changes
-        self.__dict__.update({'input_changes': [], **state})
+    def __setstate__(self, state):  # results pickled before input_changes and inputs_after
+        self.__dict__.update({'input_changes': [], 'inputs_after': {}, **state})
 
     def fingerprint(self):
         """Exit code and the sha256 (16 hex digits) of stdout, stderr and the written files."""
         sha = lambda b: hashlib.sha256(b).hexdigest()[:16]
-        tree = hashlib.sha256(json.dumps(sorted((k, sha(v)) for k, v in self.tree.items())).encode()).hexdigest()[:16]
+        tree = hashlib.sha256(json.dumps(sorted((k, sha(v)) for k, v in self.tree.items())
+                                         + sorted(['input', k, v] for k, v in self.inputs_after.items())).encode()).hexdigest()[:16]
         return {'code': self.code, 'stdout': sha(self.stdout), 'stderr': sha(self.stderr), 'written': tree}
 
     def key(self):
-        return (self.code, self.stdout, self.stderr, tuple(sorted(self.tree.items())))
+        base = (self.code, self.stdout, self.stderr, tuple(sorted(self.tree.items())))
+        return (*base, tuple(sorted(self.inputs_after.items()))) if self.inputs_after else base
 
     def text(self):
         out = f'exit: {self.code}\n--- stdout\n{self.stdout.decode(errors="replace")}'
@@ -86,16 +92,21 @@ def write_project(case, d):
 
 
 def _input_changes(d, inputs, watch):
-    """What a run did to its inputs: inotify events on input paths, and every input whose bytes changed
-    or that is gone."""
+    """What a run did to its inputs: (inotify events on input paths and every input whose bytes changed
+    or that is gone, {path: sha256 of what is there now or "deleted"})."""
     changes = list(dict.fromkeys(watch.all_events())) if watch is not None else []
+    after = {}
     for rel, data in inputs.items():
         p = d / rel
         if p.is_symlink() or not p.is_file():
             changes.append(f'deleted {rel}')
-        elif p.read_bytes() != data:
-            changes.append(f'modified {rel}')
-    return changes
+            after[rel] = 'deleted'
+        else:
+            now = p.read_bytes()
+            if now != data:
+                changes.append(f'modified {rel}')
+                after[rel] = hashlib.sha256(now).hexdigest()
+    return changes, after
 
 
 def run(binary, d, inputs, timeout, args=()):
@@ -123,10 +134,10 @@ def run(binary, d, inputs, timeout, args=()):
         out, err = proc.communicate()
         code = 'timeout'
     secs = time.monotonic() - start
-    changes = []
+    changes, after = [], {}
     if isinstance(inputs, dict):
         try:
-            changes = _input_changes(d, inputs, watch)
+            changes, after = _input_changes(d, inputs, watch)
         finally:
             if watch is not None:
                 watch.close()
@@ -136,7 +147,7 @@ def run(binary, d, inputs, timeout, args=()):
         if p.is_file() and rel not in inputs:
             tree[rel] = p.read_bytes()
             p.unlink()
-    return Result(code, out, err, tree, secs, changes)
+    return Result(code, out, err, tree, secs, changes, after)
 
 
 def crashed(r):

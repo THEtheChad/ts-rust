@@ -238,6 +238,40 @@ def fuzz_checks(root):
           and [a.get('inputs', '')[:7] for a in row.get('attempts', [])] == ['changed', 'changed'], row)
 
 
+def fuzz_input_checks(root):
+    """The input check's own false results: parallel writers and forks (an fd inherited across fork
+    and closed at exec), and an emit that overwrites an input as Go's does."""
+    import oracle
+    from concurrent.futures import ThreadPoolExecutor
+    # The mechanism of the 34 false input changes of the first H4 full run: another thread's child
+    # holds a copy of a write fd it inherited at fork and closes it later (here: a forked child that
+    # exits after the watch started), so the file gets its last close, IN_CLOSE_WRITE, while the run
+    # that never touched it is watched.
+    case = {'name': 'h4-race', 'files': {'a.ts': 'export const a = 1;\n'}, 'options': {'noEmit': True}, 'args': []}
+    d = root / 'race'
+    inputs = oracle.write_project(case, d)
+    fd = os.open(d / 'a.ts', os.O_WRONLY)
+    pid = os.fork()
+    if pid == 0:  # the child: holds the inherited fd for a moment, then exits (its last close)
+        import time
+        time.sleep(0.3)
+        os._exit(0)
+    os.close(fd)
+    res = oracle.run(script(root / 'sleeper', 'import time\ntime.sleep(0.8)\n'), d, inputs, 10)
+    os.waitpid(pid, 0)
+    check('inputs: a late close of an fd another thread\'s child inherited is no input change', res.input_changes == [], res.input_changes)
+    js = {'name': 'h4-overwrite', 'files': {'a.js': 'var a = 1;\n'}, 'options': {'allowJs': True}, 'args': []}
+    go = script(root / 'go-overwrite', 'open("a.js", "w").write("var a = 2;\\n")\nprint("emitted")\n')
+    row = run_case(root, fuzz_args({'go': go, 'rs': go}, root, timeout=10), js)
+    check('inputs: an emit that overwrites an input exactly as Go\'s does is MATCH', row['status'] == 'MATCH', row)
+    other = script(root / 'rs-overwrite-other', 'open("a.js", "w").write("var a = 3;\\n")\nprint("emitted")\n')
+    row = run_case(root, fuzz_args({'go': go, 'rs': other}, root, timeout=10), {**js, 'name': 'h4-overwrite-2'})
+    check('inputs: overwriting an input otherwise than Go is a failure', row['status'] == 'DIFF' and row.get('rsFailure') == 'input', row)
+    plain = script(root / 'rs-no-overwrite', 'print("emitted")\n')
+    row = run_case(root, fuzz_args({'go': go, 'rs': plain}, root, timeout=10), {**js, 'name': 'h4-overwrite-3'})
+    check('inputs: not making Go\'s overwrite is a DIFF', row['status'] == 'DIFF', row)
+
+
 # ---- cli tier: snapshots and staged caches (finding 1) ------------------------------------------
 
 def cli_project(root, name):
@@ -344,7 +378,8 @@ def main():
     shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True)
     try:
-        for name, part in (('compare', compare_checks), ('fuzz', fuzz_checks), ('cli', cli_checks), ('lsp keys', lsp_key_checks)):
+        for name, part in (('compare', compare_checks), ('fuzz', fuzz_checks), ('fuzz inputs', fuzz_input_checks),
+                           ('cli', cli_checks), ('lsp keys', lsp_key_checks)):
             if args.only and args.only not in name:
                 continue
             sub = root / name.replace(' ', '-')

@@ -31,9 +31,11 @@ not MATCH also records the case identity (`input`, case_key) and Go's default re
 
 Inputs (lane H4): before every process (Go, tsc-rs, JS) the case dir is written again from the
 case, and oracle.run watches it while the process runs and checks every input file's bytes after it
-(vendor/difffuzz/oracle.py). A tsc-rs process that writes, deletes or renames an input is a failure
-(rsFailure "input"); a Go or JS process that does is a harness ERROR, and its result is never
-cached. Go's and JS's results are staged (parity_inputs.Stage, with their key material) and
+(vendor/difffuzz/oracle.py). What a process leaves in place of an input it overwrote or deleted is
+part of its result (Go emits over an input .js on some allowJs cases): tsc-rs must leave exactly what
+Go leaves. A tsc-rs process that changes its inputs in any other way, or changes one and puts it
+back, is a failure (rsFailure "input"); a Go or JS process that changes one and puts it back is a
+harness ERROR, and its result is never cached. Go's and JS's results are staged (parity_inputs.Stage, with their key material) and
 published to the caches only when the tier ends with its results written.
 
 Per case: MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES or DIFF (sig: difffuzz's signature, diag:,
@@ -153,6 +155,7 @@ class Case:
         self.args, self.cache, self.js_cache, self.cid, self.case = args, cache, js_cache, cid, case
         self.d, self.extra, self.go_count, self.ckey, self.stage = d, extra, go_count, ckey, stage
         self.go_secs = 0.0
+        self.go = None  # Go's default result, once known
         self.attempts = []
         self.results = []
 
@@ -161,24 +164,32 @@ class Case:
         return oracle.run(binary, self.d, inputs, timeout, extra)
 
     def run_other(self, binary, timeout, extra, who):
-        """A Go or JS process; InputModified when it changed its inputs."""
+        """A Go or JS process. What it left in place of an input it overwrote or deleted is part of its
+        result (oracle inputs_after: Go emits over an input on some allowJs cases); InputModified
+        when it changed an input and put it back (a change that is no output)."""
         r = self._run(binary, timeout, extra)
-        if r.input_changes:
-            raise InputModified(f'{who} changed its inputs: {"; ".join(r.input_changes[:5])}')
+        if r.input_changes and not r.inputs_after:
+            raise InputModified(f'{who} changed its inputs and put them back: {"; ".join(r.input_changes[:5])}')
         return r
 
     def run_rs(self, timeout, why):
         r = self._run(self.args.rs, timeout, self.extra)
         outcome = 'timeout' if r.code == 'timeout' else 'crash' if referees.crashed(r) else f'exit {r.code}'
+        go_after = self.go.inputs_after if self.go is not None else {}
+        if not r.input_changes:
+            inputs = 'intact'
+        elif r.inputs_after and r.inputs_after == go_after:  # the same overwrite as Go's: output
+            inputs = 'as Go: ' + ', '.join(sorted(r.inputs_after))
+        else:
+            inputs = 'changed: ' + '; '.join(r.input_changes[:5])
         self.attempts.append({'why': why, 'secs': round(r.secs, 2), 'timeout': timeout, 'outcome': outcome,
-                              **r.fingerprint(),
-                              'inputs': 'intact' if not r.input_changes else 'changed: ' + '; '.join(r.input_changes[:5])})
+                              **r.fingerprint(), 'inputs': inputs})
         self.results.append(r)
         return r
 
     def failure(self):
         """'input', 'timeout' or 'crash' when an attempt changed its inputs, timed out or crashed, else None."""
-        if any(a['inputs'] != 'intact' for a in self.attempts):
+        if any(a['inputs'].startswith('changed') for a in self.attempts):
             return 'input'
         outcomes = [a['outcome'] for a in self.attempts]
         return 'timeout' if 'timeout' in outcomes else 'crash' if 'crash' in outcomes else None
@@ -217,7 +228,7 @@ def go_evidence(go, go_status):
 
 
 def attempts_text(c):
-    return ', '.join(f'{a["why"]} {a["outcome"]}{"" if a["inputs"] == "intact" else " " + a["inputs"]} '
+    return ', '.join(f'{a["why"]} {a["outcome"]}{"" if a["inputs"] == "intact" else " inputs " + a["inputs"]} '
                      f'({a["secs"]} s of {a["timeout"]:g})' for a in c.attempts)
 
 
@@ -281,6 +292,7 @@ def run_case(args, corpus, cache, out, i, stage):
 
 def _run_case(c, args, case, out, i):
     go, go_status, go_secs = go_cached(c, c.go_count, c.cache / f'{c.cid}-{c.ckey}.v{CACHE_VERSION}.r{c.go_count}.pkl')
+    c.go = go
     rs_secs = 0.0
     if go_status and not args.referees:
         return i, {'status': go_status}, go_secs, rs_secs
