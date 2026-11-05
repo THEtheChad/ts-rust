@@ -61,7 +61,7 @@ class Script {
 
   async ask(step, method, params) {
     const r = await this.client.request(method, params);
-    this.log.push({ step, method, params, result: r.result, error: r.error, ms: r.ms });
+    this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
     return r;
   }
 

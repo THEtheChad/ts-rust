@@ -9,28 +9,26 @@
 // Conversions are mechanical: tsserver positions are 1-based { line, offset } in UTF-16 code
 // units, LSP positions 0-based { line, character } in UTF-16 code units; JS's bundled libs
 // (<typescript>/lib/lib.*.d.ts) are Go's bundled:///libs/lib.*.d.ts. A request kind with no
-// tsserver equivalent (codeAction, the watch items) is answered { noReferee: true } without asking.
+// tsserver equivalent (codeAction, the watch items) is a failed answer without asking.
+//
+// A failed answer is { failed: <why> } in the session log (session.mjs and scenario.mjs keep the field,
+// and so does the JS cache): tsserver answered success:false (also its "No content available."), sent
+// a malformed message or none, gave a response without the body the mapping needs, exited, timed out
+// (LSPDIFF_REQUEST_TIMEOUT_MS), or its configure step failed. referee.mjs never takes a failed answer
+// as evidence. Only prepareRename's refusal is an LSP error answer, as Go's is.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 
 export const DEFAULT_TSSERVER = join(process.env.HOME ?? "", ".cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js");
+const REQUEST_TIMEOUT_MS = Number(process.env.LSPDIFF_REQUEST_TIMEOUT_MS ?? 300000);
 
-// The identity of a tsserver for its cache: tsserver.js is a shim that loads _tsserver.js, which
-// loads typescript.js; all three are hashed.
-export function tsserverSha(path = DEFAULT_TSSERVER) {
-  const h = createHash("sha256");
-  const lib = dirname(path);
-  for (const f of [basename(path), "_tsserver.js", "typescript.js"]) {
-    try {
-      h.update(f + "\0" + readFileSync(join(lib, f)));
-    } catch {}
-  }
-  return h.digest("hex").slice(0, 16);
-}
+// Why tsserver gave no usable answer: a failed answer, never evidence.
+export class JsFailure extends Error {}
+// prepareRename's refusal: an LSP error answer with Go's message (not a failure).
+class LspError extends Error {}
 
 // Go's inferred-project options (project/project.go NewInferredProject), so a file in no tsconfig
 // gets the same program on both servers.
@@ -152,6 +150,7 @@ const SEVERITY = { error: 1, warning: 2, message: 3, suggestion: 4 };
 const HIGHLIGHT = { none: 1, definition: 2, reference: 2, writtenReference: 3 };
 const SCRIPT_KIND = { typescript: "TS", typescriptreact: "TSX", javascript: "JS", javascriptreact: "JSX" };
 
+const J = (v) => JSON.stringify(v ?? null);
 const pos = (p) => ({ line: p.line - 1, character: p.offset - 1 });
 const loc = (p) => ({ line: p.line + 1, offset: p.character + 1 });
 const range = (s, e) => ({ start: pos(s), end: pos(e) });
@@ -229,10 +228,19 @@ export class TsserverClient {
     this.exited = new Promise((resolve) => this.proc.on("exit", (code, signal) => resolve({ code, signal })));
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
     this.proc.stderr.on("data", (chunk) => stderr?.write(chunk));
-    this.proc.on("exit", (code, signal) => {
-      for (const p of this.pending.values()) p.reject(new Error(`tsserver exited (${code ?? signal}) during ${p.command}`));
-      this.pending.clear();
-    });
+    this.proc.stdin.on("error", () => {}); // writes after an exit: the exit handler reports it
+    this.dead = null; // why every later answer fails
+    this.proc.on("exit", (code, signal) => this.#die(`tsserver exited (${code ?? signal})`));
+  }
+
+  // From here on every request fails with `why`, and the pending ones now.
+  #die(why) {
+    this.dead ??= why;
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new JsFailure(`${this.dead} during ${p.command}`));
+    }
+    this.pending.clear();
   }
 
   #onData(chunk) {
@@ -242,9 +250,22 @@ export class TsserverClient {
       if (headerEnd < 0) return;
       const length = Number(/Content-Length: *(\d+)/i.exec(this.buf.subarray(0, headerEnd).toString("ascii"))?.[1]);
       if (this.buf.length < headerEnd + 4 + length) return;
+      if (!Number.isInteger(length)) {
+        this.#die("tsserver sent a message without a Content-Length");
+        this.proc.kill("SIGKILL");
+        return;
+      }
       const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
       this.buf = this.buf.subarray(headerEnd + 4 + length);
-      this.#onMessage(JSON.parse(body));
+      let msg;
+      try {
+        msg = JSON.parse(body);
+      } catch {
+        this.#die(`tsserver sent malformed JSON: ${body.slice(0, 120)}`);
+        this.proc.kill("SIGKILL");
+        return;
+      }
+      this.#onMessage(msg);
     }
   }
 
@@ -254,6 +275,7 @@ export class TsserverClient {
       const p = this.pending.get(msg.request_seq);
       if (!p) return;
       this.pending.delete(msg.request_seq);
+      clearTimeout(p.timer);
       p.resolve(msg);
       return;
     }
@@ -268,8 +290,15 @@ export class TsserverClient {
   // One tsserver command; resolves with the response message. Commands without a response
   // (open, change, close, watchChange) are written with send().
   #command(command, args) {
+    if (this.dead) return Promise.reject(new JsFailure(`${this.dead} before ${command}`));
     const seq = ++this.seq;
-    const promise = new Promise((resolve, reject) => this.pending.set(seq, { resolve, reject, command }));
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#die(`tsserver timed out (no response to ${command} in ${REQUEST_TIMEOUT_MS} ms)`);
+        this.proc.kill("SIGKILL");
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(seq, { resolve, reject, command, timer });
+    });
     this.#write({ seq, type: "request", command, arguments: args });
     return promise;
   }
@@ -282,9 +311,13 @@ export class TsserverClient {
     this.proc.stdin.write(JSON.stringify(msg) + "\n");
   }
 
+  // The body of a successful response; JsFailure for success:false (its message too, "No content
+  // available." included) or a response without a body.
   async #body(command, args) {
     const r = await this.#command(command, args);
-    return r.success ? r.body : undefined;
+    if (r?.success !== true) throw new JsFailure(`${command}: success ${J(r?.success)}${r?.message ? `: ${r.message}` : ""}`);
+    if (r.body === undefined) throw new JsFailure(`${command}: a response without a body`);
+    return r.body;
   }
 
   file(uri) {
@@ -373,14 +406,17 @@ export class TsserverClient {
 
   // An LSP request: resolves like LspClient's ({ id, method, result, error, ms }), with `raw`, the
   // tsserver bodies the result came from.
+  // A failed answer is { failed } (JsFailure, or any other error of the mapping), never a result.
   async request(method, params) {
     const start = performance.now();
     const raw = {};
     let result;
+    if (this.dead && method !== "shutdown") return { method, failed: this.dead, raw, ms: 0 };
     try {
       result = await this.#answer(method, params ?? {}, raw);
     } catch (e) {
-      return { method, error: { message: String(e?.message ?? e) }, raw, ms: performance.now() - start };
+      if (e instanceof LspError) return { method, error: { message: e.message }, raw, ms: performance.now() - start };
+      return { method, failed: String(e?.message ?? e), raw, ms: performance.now() - start };
     }
     return { method, result, raw, ms: performance.now() - start };
   }
@@ -398,7 +434,7 @@ export class TsserverClient {
         this.pullRelated = !!caps.relatedInformation;
         const prefs = { ...(p.initializationOptions?.userPreferences?.unstable ?? {}) };
         delete prefs.disableAutomaticTypeAcquisition;
-        await this.#command("configure", {
+        const configured = await this.#command("configure", {
           hostInfo: "lspdiff",
           // Go's defaults where tsserver's differ (ls/lsutil/userpreferences.go
           // NewDefaultUserPreferences; rename.go: prefix and suffix text unless turned off).
@@ -413,7 +449,11 @@ export class TsserverClient {
             provideRefactorNotApplicableReason: true,
           },
         });
-        await this.#command("compilerOptionsForInferredProjects", { options: INFERRED_OPTIONS });
+        const inferred = await this.#command("compilerOptionsForInferredProjects", { options: INFERRED_OPTIONS });
+        // A tsserver with other settings than Go's would answer other questions: every answer fails.
+        for (const [step, r] of [["configure", configured], ["compilerOptionsForInferredProjects", inferred]]) {
+          if (r?.success !== true) this.dead ??= `${step} failed: ${r?.message ?? J(r?.success)}`;
+        }
         return { capabilities: {} };
       }
       case "shutdown":
@@ -506,7 +546,7 @@ export class TsserverClient {
       case "textDocument/prepareRename": {
         const r = await ask("rename", { ...at, findInStrings: false, findInComments: false });
         // Go answers an element it cannot rename with an error carrying the same message.
-        if (r?.info && !r.info.canRename && r.info.localizedErrorMessage) throw new Error(r.info.localizedErrorMessage);
+        if (r?.info && !r.info.canRename && r.info.localizedErrorMessage) throw new LspError(r.info.localizedErrorMessage);
         if (!r?.info?.canRename) return null;
         return { range: range(r.info.triggerSpan.start, r.info.triggerSpan.end), placeholder: r.info.displayName };
       }
@@ -528,17 +568,17 @@ export class TsserverClient {
       case "completionItem/resolve": {
         const d = p.data ?? {};
         const at2 = d.tsserver;
-        if (!at2) return p;
+        if (!at2) throw new JsFailure("completionItem/resolve: the item has no tsserver position");
         const list = await ask("completionEntryDetails", { file: at2.file, line: at2.line, offset: at2.offset, entryNames: [{ name: d.name, ...(d.source ? { source: d.source } : {}), ...(d.entryData ? { data: d.entryData } : {}) }] });
         const det = list?.[0];
-        if (!det) return p;
+        if (!det) throw new JsFailure("completionEntryDetails gave no entry");
         const edits = (det.codeActions ?? []).flatMap((a) => a.changes.filter((c) => c.fileName === at2.file).flatMap((c) => c.textChanges.map((t) => ({ range: range(t.start, t.end), newText: t.newText }))));
         const doc = docMarkdown(det.documentation, det.tags);
         const detail = det.codeActions?.length ? det.codeActions.map((a) => a.description).join("\n") : parts(det.displayParts);
         return { ...p, detail, ...(doc ? { documentation: { kind: "markdown", value: doc } } : {}), ...(edits.length ? { additionalTextEdits: edits } : {}) };
       }
       default:
-        return { noReferee: true };
+        throw new JsFailure(`${method} has no tsserver equivalent`);
     }
   }
 
