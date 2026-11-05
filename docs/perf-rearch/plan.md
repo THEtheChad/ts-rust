@@ -623,3 +623,13 @@ once a **reconciliation step** is built and tested.
     relation-budget bound.
   - **Then:** an Astra review, the validation campaign, C3, and the policy
     decision per trigger (CountBound is the first candidate).
+- **2026-11-05, H2 merged.** JS tsserver 6.0.3 is the LSP referee, driven
+  over its own protocol (`vendor/lspdiff/tsserver.mjs`, `referee.mjs`).
+  - **Calibrated kinds (JS = Go ≥ 90% on Go-equal answers):** prepareRename,
+    definition, rename, references, diagnostic, documentHighlight. The rest
+    have no JS referee.
+  - **LSP GO-BROKEN** covers a Go crash or timeout, and Go's 4 runs
+    disagreeing (it replaces GO-UNSTABLE).
+  - **pkgjson-overlay:** ATA is now off (root, `7e8a0fd0f`). LSP tier rerun:
+    0 lost, 35 GO-BROKEN, 2,566 MATCH.
+  - Astra reviews H1 and H2 together next.
