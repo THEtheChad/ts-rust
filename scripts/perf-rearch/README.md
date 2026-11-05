@@ -58,10 +58,12 @@ scripts/perf-rearch/bench.sh table ~/.cache/perf-rearch/baseline/cli ~/.cache/pe
 ```
 
 Run anything longer than 10 minutes under systemd, so a session end does not
-kill it, with a log that ends `DONE` or `FAIL rc=N`:
+kill it, in `app-batch.slice` at nice 10 so it does not outrank the agents for
+CPU, with a log that ends `DONE` or `FAIL rc=N`:
 
 ```sh
-systemd-run --user --collect -p MemoryMax=20G -p MemorySwapMax=0 --unit=pr-bench \
+systemd-run --user --collect --slice=app-batch.slice --nice=10 \
+  -p MemoryMax=20G -p MemorySwapMax=0 --unit=pr-bench \
   --working-directory=$PWD --setenv=PATH=$PATH --setenv=HOME=$HOME \
   bash -c 'scripts/perf-rearch/bench.sh cli ... --out D > D.log 2>&1 && echo DONE >> D.log || echo "FAIL rc=$?" >> D.log'
 ```

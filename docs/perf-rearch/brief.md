@@ -140,13 +140,18 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   - Trust deltas under 2% only with all three handled.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
-  `systemd-run --user --collect -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
+  `systemd-run --user --collect --slice=app-batch.slice --nice=10 -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
   So do your own scripts that read the whole tree or large logs.
 - **systemd environment:** units don't inherit your shell. Pass
   `--setenv=PATH=$PATH --setenv=HOME=$HOME` (for cargo, rustup and node)
   and any `TS_*`/`GOPORT_*` variables you rely on, or the job fails
   (lanes E3 and the LSP audit lost runs to this).
-- **Long jobs:** longer than 10 minutes, run under `systemd-run --user --collect`,
+- **CPU priority:** every `systemd-run` (services and `--scope`) passes
+  `--slice=app-batch.slice --nice=10`. Without them the job leaves your
+  agent's cgroup and outranks every agent on the host for CPU (AGENTS.md,
+  "Detached job priority").
+- **Long jobs:** longer than 10 minutes, run under
+  `systemd-run --user --collect --slice=app-batch.slice --nice=10`,
   with a log that ends `DONE` or `FAIL rc=<N>`. You are a subagent: when you
   end your turn, your background jobs stop. Block in the foreground until a
   job ends (Bash timeout up to 600000 ms, with an `until grep` loop).
