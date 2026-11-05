@@ -702,3 +702,10 @@ once a **reconciliation step** is built and tested.
   - **Backlog (compiler):** on `--traceResolution`, tsc-rs always prints
     "does not exist." where Go's default prints "does not exist according to
     earlier cached lookups.". The port may be missing a cached-lookup path.
+- **2026-11-05, H4 merged.** Full gate: PARITY OK, 0 lost
+  (`runs/h4-p1-a8392a002-full-3`), now `base-current`.
+  - **Accumulated Go evidence:** an answer-variant record per key material.
+    The merge is monotone; base logs are imported only when their key matches.
+  - **Go runs:** 8 on the multi-project sessions (hono and query).
+  - **`fuzz/1:5391`:** pinned as a known output DIFF.
+  - **Interim rule:** stays until Astra accepts the gate.

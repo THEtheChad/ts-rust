@@ -6,14 +6,15 @@
 //   npm install --ignore-scripts @types/<x>@<tag>... ...   copies $ATA_STORE/types/<x>/ to
 //                                                          node_modules/@types/<x>/ for each package
 // in the current directory (the server's typings location). Each call appends two JSON lines to
-// $ATA_NPM_LOG: { start, args } and { done, args } (the scenario waits for the "done" lines).
+// $ATA_NPM_LOG: { start, pid, args } and, when its work is done, { done, pid, args, code } (the
+// scenario's barrier pairs them by pid and waits for the process to exit).
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
 const log = (entry) => process.env.ATA_NPM_LOG && appendFileSync(process.env.ATA_NPM_LOG, JSON.stringify(entry) + "\n");
-log({ start: true, args });
-Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.ATA_NPM_DELAY_MS ?? 500));
+log({ start: true, pid: process.pid, args });
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.ATA_NPM_DELAY_MS)); // set by scenario.mjs from settings.mjs
 const store = process.env.ATA_STORE;
 let code = 0;
 if (args[0] === "install") {
@@ -29,5 +30,5 @@ if (args[0] === "install") {
     else code = 1;
   }
 } else code = 1;
-log({ done: true, args, code });
+log({ done: true, pid: process.pid, args, code });
 process.exit(code);

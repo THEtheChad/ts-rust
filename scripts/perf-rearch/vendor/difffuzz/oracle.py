@@ -4,8 +4,18 @@ Both compilers run in the same directory, one after the other, with the same arg
 (`-p tsconfig.json --pretty false`, then the case's extra 'args'), so paths in messages are the same. Files that a run writes
 (emit) are collected and removed before the next run. A result is compared on exit code,
 stdout, stderr and the written files, byte for byte.
+
+Inputs (parity gate, lane H4): write_project returns {path: bytes} of every input file it wrote, and
+run() with that map watches the project's directories with inotify while the compiler runs and
+checks every input's bytes when it ends. A write to an input (even one undone before the end), a
+chmod, a delete or a rename is in the result's `input_changes`; a run that changed none has [].
+What the run left in place of a changed input is `inputs_after` ({path: sha256 of the new bytes, or
+"deleted"}), and it is part of the result's key: an emit that overwrites an input (Go does on some
+allowJs cases) is output, compared like the written files. Callers restore the inputs
+(write_project again) before each run.
 """
 import difflib
+import hashlib
 import json
 import math
 import os
@@ -24,12 +34,31 @@ CODE_RE = re.compile(r'\b(error|warning|message) (TS\d+)')
 POS_RE = re.compile(r'^(.*?)\((\d+),(\d+)\): ')
 
 
+try:
+    import parity_watch  # the parity gate's inotify wrapper (scripts/perf-rearch), when on the path
+except ImportError:  # difffuzz on its own: inputs checked by content only
+    parity_watch = None
+
+
 class Result:
-    def __init__(self, code, stdout=b'', stderr=b'', tree=None, secs=0.0):
+    def __init__(self, code, stdout=b'', stderr=b'', tree=None, secs=0.0, input_changes=None, inputs_after=None):
         self.code, self.stdout, self.stderr, self.tree, self.secs = code, stdout, stderr, tree or {}, secs
+        self.input_changes = input_changes or []
+        self.inputs_after = inputs_after or {}
+
+    def __setstate__(self, state):  # results pickled before input_changes and inputs_after
+        self.__dict__.update({'input_changes': [], 'inputs_after': {}, **state})
+
+    def fingerprint(self):
+        """Exit code and the sha256 (16 hex digits) of stdout, stderr and the written files."""
+        sha = lambda b: hashlib.sha256(b).hexdigest()[:16]
+        tree = hashlib.sha256(json.dumps(sorted((k, sha(v)) for k, v in self.tree.items())
+                                         + sorted(['input', k, v] for k, v in self.inputs_after.items())).encode()).hexdigest()[:16]
+        return {'code': self.code, 'stdout': sha(self.stdout), 'stderr': sha(self.stderr), 'written': tree}
 
     def key(self):
-        return (self.code, self.stdout, self.stderr, tuple(sorted(self.tree.items())))
+        base = (self.code, self.stdout, self.stderr, tuple(sorted(self.tree.items())))
+        return (*base, tuple(sorted(self.inputs_after.items()))) if self.inputs_after else base
 
     def text(self):
         out = f'exit: {self.code}\n--- stdout\n{self.stdout.decode(errors="replace")}'
@@ -59,11 +88,36 @@ def write_project(case, d):
         p.write_bytes(text.encode('utf-8', 'surrogateescape'))
     if 'tsconfig.json' not in case['files']:  # a case may bring its own (mutated) tsconfig.json text
         (d / 'tsconfig.json').write_text(json.dumps(tsconfig(case), indent=2) + '\n')
-    return {str(p.relative_to(d)) for p in d.rglob('*') if p.is_file()}
+    return {str(p.relative_to(d)): p.read_bytes() for p in d.rglob('*') if p.is_file()}
+
+
+def _input_changes(d, inputs, watch):
+    """What a run did to its inputs: (inotify events on input paths and every input whose bytes changed
+    or that is gone, {path: sha256 of what is there now or "deleted"})."""
+    changes = list(dict.fromkeys(watch.all_events())) if watch is not None else []
+    after = {}
+    for rel, data in inputs.items():
+        p = d / rel
+        if p.is_symlink() or not p.is_file():
+            changes.append(f'deleted {rel}')
+            after[rel] = 'deleted'
+        else:
+            now = p.read_bytes()
+            if now != data:
+                changes.append(f'modified {rel}')
+                after[rel] = hashlib.sha256(now).hexdigest()
+    return changes, after
 
 
 def run(binary, d, inputs, timeout, args=()):
+    """One compiler run in d. inputs: {path: bytes} from write_project (checked, see the top comment),
+    or a set of paths (not checked)."""
     d = Path(d)
+    watch = None
+    if isinstance(inputs, dict) and parity_watch is not None:
+        top = str(d.resolve())
+        names = {os.path.join(top, rel) for rel in inputs}
+        watch = parity_watch.Watch([top], keep=lambda path: path in names)
     start = time.monotonic()
     # A CPU limit the kernel enforces, so a compiler on an exponential input still ends when this process is
     # killed before its own timeout fires (the new session keeps the caller's group kill from reaching it).
@@ -80,13 +134,20 @@ def run(binary, d, inputs, timeout, args=()):
         out, err = proc.communicate()
         code = 'timeout'
     secs = time.monotonic() - start
+    changes, after = [], {}
+    if isinstance(inputs, dict):
+        try:
+            changes, after = _input_changes(d, inputs, watch)
+        finally:
+            if watch is not None:
+                watch.close()
     tree = {}
     for p in sorted(d.rglob('*')):
         rel = str(p.relative_to(d))
         if p.is_file() and rel not in inputs:
             tree[rel] = p.read_bytes()
             p.unlink()
-    return Result(code, out, err, tree, secs)
+    return Result(code, out, err, tree, secs, changes, after)
 
 
 def crashed(r):

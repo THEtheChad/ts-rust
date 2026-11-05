@@ -13,17 +13,85 @@
 //
 // A failed answer is { failed: <why> } in the session log (session.mjs and scenario.mjs keep the field,
 // and so does the JS cache): tsserver answered success:false (also its "No content available."), sent
-// a malformed message or none, gave a response without the body the mapping needs, exited, timed out
+// a malformed message or none, gave a response whose body does not have the schema of its command
+// (BODY below, lane H4: every field the mapping reads, with its type), exited, timed out
 // (LSPDIFF_REQUEST_TIMEOUT_MS), or its configure step failed. referee.mjs never takes a failed answer
 // as evidence. Only prepareRename's refusal is an LSP error answer, as Go's is.
-import { spawn } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
+import { ServerProcess } from "./sandbox.mjs";
+import { SETTINGS } from "./settings.mjs";
 
 export const DEFAULT_TSSERVER = join(process.env.HOME ?? "", ".cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js");
-const REQUEST_TIMEOUT_MS = Number(process.env.LSPDIFF_REQUEST_TIMEOUT_MS ?? 300000);
+const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
+
+// ---- response schemas (lane H4) ------------------------------------------------------------
+// A schema is a type name, [schema] (an array of it), { key: schema } (an object with at least those
+// keys; "key?" may be absent or undefined) or a function (value) -> bool. check() returns the first
+// path where a value does not fit, or null. Extra keys are allowed: the mapping never reads them.
+const isInt = (v) => Number.isInteger(v);
+const LOC = { line: isInt, offset: isInt };
+const SPAN = { start: LOC, end: LOC };
+const FILE_SPAN = { file: "string", start: LOC, end: LOC };
+const PARTS = (v) => v === undefined || typeof v === "string" || (Array.isArray(v) && v.every((p) => p && typeof p.text === "string"));
+const TAGS = (v) => v === undefined || (Array.isArray(v) && v.every((t) => t && typeof t.name === "string" && PARTS(t.text)));
+const NAV = { text: "string", kind: "string", spans: (v) => Array.isArray(v) && v.length > 0 && v.every((x) => check(SPAN, x) === null), "nameSpan?": SPAN, "childItems?": (v) => Array.isArray(v) && v.every((x) => check(NAV, x) === null) };
+const INLAY = { position: LOC, kind: "string", "text?": "string", "displayParts?": [{ text: "string", "span?": FILE_SPAN }], "whitespaceBefore?": "boolean", "whitespaceAfter?": "boolean" };
+const DIAG = { start: LOC, end: LOC, text: "string", code: isInt, category: "string", "reportsUnnecessary?": "boolean", "reportsDeprecated?": "boolean", "relatedInformation?": [{ "span?": FILE_SPAN, message: "string" }] };
+export const BODY = {
+  syntacticDiagnosticsSync: [DIAG],
+  semanticDiagnosticsSync: [DIAG],
+  suggestionDiagnosticsSync: [DIAG],
+  "encodedSemanticClassifications-full": { spans: (v) => Array.isArray(v) && v.length % 3 === 0 && v.every(isInt) },
+  provideInlayHints: [(v) => check(INLAY, v) === null && (typeof v.text === "string" || Array.isArray(v.displayParts))],
+  navtree: NAV,
+  getOutliningSpans: [{ textSpan: SPAN, kind: "string" }],
+  quickinfo: { displayString: "string", start: LOC, end: LOC, documentation: PARTS, tags: TAGS },
+  definitionAndBoundSpan: { definitions: [{ ...FILE_SPAN, "contextStart?": LOC, "contextEnd?": LOC }], textSpan: SPAN },
+  typeDefinition: [FILE_SPAN],
+  implementation: [FILE_SPAN],
+  references: { refs: [{ ...FILE_SPAN, "isDefinition?": "boolean" }] },
+  documentHighlights: [{ file: "string", highlightSpans: [{ start: LOC, end: LOC, kind: "string" }] }],
+  signatureHelp: {
+    items: [{ prefixDisplayParts: PARTS, suffixDisplayParts: PARTS, separatorDisplayParts: PARTS, documentation: PARTS, parameters: [{ displayParts: PARTS, documentation: PARTS }] }],
+    selectedItemIndex: isInt,
+    argumentIndex: isInt,
+  },
+  rename: (v) => {
+    if (!v || typeof v !== "object" || !v.info || typeof v.info.canRename !== "boolean") return false;
+    if (!v.info.canRename) return typeof v.info.localizedErrorMessage === "string";
+    return check({ info: { displayName: "string", triggerSpan: SPAN }, locs: [{ file: "string", locs: [{ start: LOC, end: LOC, "prefixText?": "string", "suffixText?": "string" }] }] }, v) === null;
+  },
+  completionInfo: { isMemberCompletion: "boolean", entries: [{ name: "string", kind: "string", sortText: "string", "insertText?": "string", "kindModifiers?": "string", "source?": "string", "hasAction?": "boolean" }] },
+  completionEntryDetails: [{ name: "string", displayParts: PARTS, "documentation?": PARTS, "tags?": TAGS, "codeActions?": [{ description: "string", changes: [{ fileName: "string", textChanges: [{ start: LOC, end: LOC, newText: "string" }] }] }] }],
+};
+
+export function check(schema, v, path = "body") {
+  if (typeof schema === "function") return schema(v) ? null : path;
+  if (typeof schema === "string") return typeof v === schema ? null : `${path} (${v === null ? "null" : typeof v}, not ${schema})`;
+  if (Array.isArray(schema)) {
+    if (!Array.isArray(v)) return `${path} (not an array)`;
+    for (const [i, x] of v.entries()) {
+      const bad = check(schema[0], x, `${path}[${i}]`);
+      if (bad) return bad;
+    }
+    return null;
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return `${path} (not an object)`;
+  for (const [k, sub] of Object.entries(schema)) {
+    const optional = k.endsWith("?");
+    const key = optional ? k.slice(0, -1) : k;
+    if (v[key] === undefined) {
+      if (optional) continue;
+      return `${path}.${key} (missing)`;
+    }
+    const bad = check(sub, v[key], `${path}.${key}`);
+    if (bad) return bad;
+  }
+  return null;
+}
 
 // Why tsserver gave no usable answer: a failed answer, never evidence.
 export class JsFailure extends Error {}
@@ -217,7 +285,8 @@ export class TsserverClient {
       "--locale",
       "en",
     ];
-    this.proc = spawn(process.execPath, args, { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    this.server = new ServerProcess([process.execPath, ...args], { cwd, env, stderr });
+    this.proc = this.server.proc;
     this.seq = 0;
     this.pending = new Map(); // seq -> { resolve, reject, command }
     this.events = []; // tsserver events, as LspClient's events (never a watch registration)
@@ -225,9 +294,8 @@ export class TsserverClient {
     this.buf = Buffer.alloc(0);
     this.docs = new Map(); // uri -> { path, text }
     this.watchers = new Map(); // id -> { path, dir, recursive, real }
-    this.exited = new Promise((resolve) => this.proc.on("exit", (code, signal) => resolve({ code, signal })));
+    this.exited = this.server.exited;
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
-    this.proc.stderr.on("data", (chunk) => stderr?.write(chunk));
     this.proc.stdin.on("error", () => {}); // writes after an exit: the exit handler reports it
     this.dead = null; // why every later answer fails
     this.proc.on("exit", (code, signal) => this.#die(`tsserver exited (${code ?? signal})`));
@@ -312,11 +380,15 @@ export class TsserverClient {
   }
 
   // The body of a successful response; JsFailure for success:false (its message too, "No content
-  // available." included) or a response without a body.
+  // available." included), a response without a body, or a body that does not fit its command's
+  // schema (BODY; a command without one is a failure too).
   async #body(command, args) {
     const r = await this.#command(command, args);
     if (r?.success !== true) throw new JsFailure(`${command}: success ${J(r?.success)}${r?.message ? `: ${r.message}` : ""}`);
     if (r.body === undefined) throw new JsFailure(`${command}: a response without a body`);
+    if (!BODY[command]) throw new JsFailure(`${command}: no response schema`);
+    const bad = check(BODY[command], r.body);
+    if (bad) throw new JsFailure(`${command}: a malformed response: ${bad}`);
     return r.body;
   }
 
@@ -612,12 +684,24 @@ export class TsserverClient {
     return { position: pos(h.position), label, ...(kind ? { kind } : {}), ...(h.whitespaceBefore ? { paddingLeft: true } : {}), ...(h.whitespaceAfter ? { paddingRight: true } : {}) };
   }
 
+  // Ends the session: tsserver's `exit` command, then it must exit by itself with code 0 in
+  // LSPDIFF_SHUTDOWN_MS. The session result (sandbox.mjs) has every outcome; lspdiff takes JS's answers
+  // as evidence only from a clean session.
   async shutdown() {
-    this.#send("exit", {});
+    const shutdown = this.dead ? `not asked: ${this.dead}` : "ok";
+    if (!this.dead) this.#send("exit", {});
     this.proc.stdin.end();
-    const timer = setTimeout(() => this.proc.kill("SIGKILL"), 5000);
-    await this.exited;
+    let killed = false;
+    const asked = performance.now();
+    const timer = setTimeout(() => {
+      killed = this.proc.exitCode === null && this.proc.signalCode === null;
+      if (killed) this.proc.kill("SIGKILL");
+    }, SETTINGS.LSPDIFF_SHUTDOWN_MS);
+    const { signal } = await this.server.exited;
     clearTimeout(timer);
+    const forced = killed && signal === "SIGKILL"; // it was still running, and our kill ended it
+    const exitMs = Math.round(performance.now() - asked);
+    return this.server.result({ shutdown, forced, exitMs });
   }
 }
 

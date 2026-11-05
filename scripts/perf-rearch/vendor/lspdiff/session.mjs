@@ -12,8 +12,13 @@ export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 // its own protocol (tsserver.mjs, the referee; its ATA is always off).
 export async function startServer(cmd, root, { stderr, watch = false, ata = true, env } = {}) {
   const client = cmd.tsserver ? new TsserverClient(cmd.tsserver, { cwd: root, stderr, env }) : new LspClient(cmd, { cwd: root, stderr, env });
-  const init = await client.request("initialize", initializeParams(root, { watch, ata }));
-  if (init.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
+  let init;
+  try {
+    init = await client.request("initialize", initializeParams(root, { watch, ata }));
+  } catch (e) {
+    throw Object.assign(e, { session: await client.shutdown() });
+  }
+  if (init.error) throw Object.assign(new Error(`initialize failed: ${JSON.stringify(init.error)}`), { session: await client.shutdown() });
   client.notify("initialized", {});
   return client;
 }
@@ -51,10 +56,11 @@ export function removeTail(client, doc, length) {
   });
 }
 
-// Runs the session and returns [{ step, method, params, result, error, failed }] (failed: JS
-// tsserver gave no usable answer, tsserver.mjs). ATA is off: its typings would join an inferred
-// project whenever its npm call returns (see initializeParams). When the server crashes or times out,
-// the error carries the answers so far as `log`.
+// Runs the session and returns { log: [{ step, method, params, result, error, failed }], session }
+// (failed: JS tsserver gave no usable answer, tsserver.mjs; session: the server's result, every
+// outcome of its process and its shutdown, sandbox.mjs). ATA is off: its typings would join an
+// inferred project whenever its npm call returns (see initializeParams). When the server crashes or
+// times out, the error carries the answers so far as `log` and the session as `session`.
 // Two requests depend on earlier answers: rename (only after a prepareRename that gave a result) and
 // the quick fixes (for the first 3 diagnostics of the file). Each server's log has the requests it was
 // asked, so the logs need not have the same length; lspdiff.mjs aligns them by request identity (the
@@ -65,7 +71,7 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
   try {
     client = await startServer(cmd, root, { stderr, env, ata: false });
   } catch (e) {
-    throw Object.assign(e, { log });
+    throw Object.assign(e, { log, session: e.session });
   }
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
@@ -129,9 +135,7 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
     removeTail(client, d, TYPED.length);
     await ask(`${name} after undo diagnostic`, "textDocument/diagnostic", { textDocument: { uri: d.uri } });
   } catch (e) {
-    throw Object.assign(e, { log });
-  } finally {
-    await client.shutdown();
+    throw Object.assign(e, { log, session: await client.shutdown() });
   }
-  return log;
+  return { log, session: await client.shutdown() };
 }
