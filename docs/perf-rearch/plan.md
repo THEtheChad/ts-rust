@@ -498,3 +498,11 @@ once a **reconciliation step** is built and tested.
     (whole process vs per group), design the finding-5 diagnostic
     collection, and propose validation. Astra reviews its design.
   - C3 waits for D1's outcome.
+- **2026-11-04, Chad: drop L1's recovery and match Go.**
+  - Astra rejected round 2 (`reviews/2026-11-04-astra-l1-r2.md`): 4 P1 and 3 P2,
+    several of them caused by the recovery itself.
+  - Go has no recovery (`project/session.go` `updateWatch`). It misses a change
+    between its read and the watch ack, as the base serial loader does.
+  - **L1 round 3:** delete the reconciliation, keep V as the only LSP load
+    path, and compare V's observation-to-registration window with the base's.
+  - This replaces the "Default with recovery" decision.
