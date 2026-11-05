@@ -23,8 +23,8 @@ MAX_LOAD = float(os.environ.get("MAX_LOAD", "1.5"))
 REPEAT_LOAD = float(os.environ.get("REPEAT_LOAD", "3"))
 OTHER_CORES = float(os.environ.get("OTHER_CORES", "1.0"))
 CLI_SCENARIOS = ["noemit", "emit", "emit-js", "emit-cjs", "single", "icount", "icount-emit", "icount-emit-js",
-                 "icount-emit-cjs", "incr", "build"]
-LSP_SCENARIOS = ["concurrent", "probe", "ttfd"]
+                 "icount-emit-cjs", "incr", "incr-edit", "build"]
+LSP_SCENARIOS = ["concurrent", "probe", "ttfd", "open12"]
 
 USAGE = """\
 usage: scripts/perf-rearch/bench.sh <command> [options]
@@ -52,6 +52,12 @@ cli options
                                icount-emit, icount-emit-js, icount-emit-cjs (the emit scenarios, single-threaded)
                        incr    noemit + --incremental with build info in scratch: one cold build, then N warm
                                (no change) rebuilds; the warm ones are measured
+                       incr-edit  noemit + --incremental, warm rebuild after ONE edit (window 2): per run, in a
+                               scratch copy per label: restore, untimed cold build, edit, timed rebuild. Edits are the
+                               ones of cleanup/walk_cost.sh (an exported const appended to a widely imported file:
+                               query-core utils.ts, umami lib/types.ts, hono types.ts; project `synth85` is the
+                               85-file project of tests/multi_program.rs, Shape.x number -> string). The cell's
+                               output column compares the .tsbuildinfo too.
                        build   -b CFG on a scratch copy of the repo (node_modules linked): cold build (copy
                                reset before each run) and warm no-change rebuild, as build-cold and build-warm
   --single-ref       also run --singleThreaded for the reference label
@@ -62,6 +68,8 @@ lsp options (project umami unless --project DIR)
                        concurrent  scripts/lspdiff bench, concurrent mode, typing at --intervals (120,250,500 ms/key)
                        probe       scripts/lspdiff/probe-edit.mjs --edits 20 --cpu on a .tsx and a .ts file
                        ttfd        time to first diagnostics: spawn, initialize, open one file, pull diagnostics
+  --scenarios open12  (window 2) first diagnostic request after 12 didOpens on --project (hono's parity checkout),
+                     scripts/perf-rearch/window2/open12.mjs; the cell's wall is that request
   --intervals a,b    ms per key for concurrent (default 120,250,500)
   --edit-files a,b   files for probe (default umami's BoardCloneForm.tsx and useFunnelQuery.ts)
 
@@ -396,6 +404,9 @@ def cli(args):
     out = Path(args.out or HOME / f".cache/perf-rearch/runs/{time.strftime('%Y%m%d-%H%M')}-cli")
     rec = Recorder(out)
     scratch = out / "scratch"
+    if "synth85" in names:  # the C1 fixture, not a shared input: generated in the scratch dir
+        write_synth85(scratch / "synth85-src", "x: number", "1")
+        projects["synth85"] = {"repo": str(scratch / "synth85-src"), "cfg": "tsconfig.json"}
     go = dict(bins).get(ref, str(GO_DEFAULT))
     meta = {"bins": bins, "ref": ref, "runs": args.runs, "max_load": MAX_LOAD, "repeat_load": REPEAT_LOAD,
             "host": os.uname().nodename, "kernel": os.uname().release, "nproc": os.cpu_count(),
@@ -475,6 +486,9 @@ def cli(args):
                     return [b] + base + ["--noEmit", "--incremental"] + comp + [
                                          "--tsBuildInfoFile", str(scratch / f"incr-{name}-{lab}.tsbuildinfo")]
                 variants.append(("incr-warm", [l for l, _ in bins], incr_argv, "incr", repo))
+            elif scen == "incr-edit":
+                INCR_COMP[name] = comp
+                variants.append(("incr-edit", [l for l, _ in bins], None, "incr-edit", repo))
             elif scen == "build":
                 variants.append(("build-cold", [l for l, _ in bins], None, "build-cold", repo))
                 variants.append(("build-warm", [l for l, _ in bins], None, "build-warm", repo))
@@ -499,6 +513,65 @@ def label_env(args, lab, variant):
     return env
 
 
+
+INCR_EDITS = {  # project -> (edited file, text appended), as cleanup/walk_cost.sh
+    "query": ("packages/query-core/src/utils.ts", "\nexport const w2WalkProbe = 1;\n"),
+    "umami": ("src/lib/types.ts", "\nexport const w2WalkProbe = 1;\n"),
+    "hono": ("src/types.ts", "\nexport const w2WalkProbe = 1;\n"),
+}
+
+
+def write_synth85(root, member, x):
+    """The 85-file project of tests/multi_program.rs (cleanup/walk_cost.sh `synth`); a.ts holds the edited member."""
+    root = Path(root)
+    (root / "src").mkdir(parents=True, exist_ok=True)
+
+    def w(p, t):
+        (root / p).write_text(t)
+    w("tsconfig.json", '{"compilerOptions":{"incremental":true,"noEmit":true,"strict":true,"skipLibCheck":true,'
+                       '"types":[]},"include":["src"]}')
+    for i in range(40):
+        w(f"src/b{i}.ts", f'import {{ make }} from "./a";\nexport const v{i} = make();\n')
+        w(f"src/c{i}.ts", f'import {{ v{i} }} from "./b{i}";\nexport const n{i}: number = v{i}.x;\n')
+    w("src/u.ts", 'export const u: number = "u";\n')
+    w("src/g.ts", "export const g = 1;\ndeclare global {\n    var gv: number;\n}\n")
+    w("src/ug.ts", "export const ug: number = gv;\n")
+    w("src/d.d.ts", 'import { v0 } from "./b0";\nexport declare const d: typeof v0;\n')
+    w("src/a.ts", f"export interface Shape {{ {member} }}\nexport const make = (): Shape => ({{ x: {x} }});\n")
+
+
+_ie_orig = {}
+INCR_COMP = {}  # project -> the --composite/--declaration flags of the incr scenario (set by cli)
+
+
+def incr_edit_prep(name, lab, b, scratch, repo, cfg, args):
+    """Untimed setup of one incr-edit run: the label's own copy restored, a cold incremental build, then the one
+    edit. Returns (argv, cwd) of the timed rebuild. The copy and the build info sit under scratch/<label>/, so the
+    paths inside the build info are the same for every label."""
+    d = scratch / lab / f"ie-{name}"
+    info = scratch / lab / f"ie-{name}.tsbuildinfo"
+    if name == "synth85":
+        edited = d / "src/a.ts"
+        d.mkdir(parents=True, exist_ok=True)
+        write_synth85(d, "x: number", "1")
+        edit = lambda: write_synth85(d, "x: string", '"1"')
+    else:
+        rel, extra = INCR_EDITS[name]
+        edited = d / rel
+        if not d.exists():
+            scratch_copy(str(repo), str(d))
+            _ie_orig[(name, lab)] = edited.read_text()
+        edited.write_text(_ie_orig[(name, lab)])
+        edit = lambda: edited.write_text(_ie_orig[(name, lab)] + extra)
+    comp = INCR_COMP.get(name, ["--composite", "false"])
+    argv = [b, "-p", cfg, "--pretty", "false", "--noEmit", "--incremental"] + comp + ["--tsBuildInfoFile", str(info)]
+    info.parent.mkdir(parents=True, exist_ok=True)
+    info.unlink(missing_ok=True)
+    subprocess.run(argv, cwd=d, capture_output=True, timeout=args.timeout)  # cold build (untimed)
+    edit()
+    return argv, d
+
+
 def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, repo):
     runs = args.icount_runs if variant.startswith("icount") else args.runs
     need = {lab: runs - rec.count(variant, name, lab) for lab, _ in bins}
@@ -510,6 +583,8 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
         """Returns (argv, cwd) for one run of lab, after the untimed setup of the scenario."""
         if pre == "incr":
             return argv_fn(b, lab), cwd
+        if pre == "incr-edit":
+            return incr_edit_prep(name, lab, b, scratch, repo, proj["cfg"], args)
         if pre in ("build-cold", "build-warm"):
             copy = scratch / f"build-{name}-{lab}"
             if pre == "build-cold" or not copy.exists():
@@ -545,6 +620,9 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
                           lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"))
             if variant.startswith("emit") or variant.startswith("icount-emit"):
                 r["emit_hash"] = tree_hash(scratch / f"{variant}-{name}-{lab}")
+            if variant == "incr-edit":
+                ib = scratch / lab / f"ie-{name}.tsbuildinfo"
+                r["emit_hash"] = hashlib.sha256(ib.read_bytes()).hexdigest()[:16] if ib.exists() else None
             out = r.pop("_out")
             if i == 0:
                 (rec.out / "outputs").mkdir(exist_ok=True)
@@ -576,6 +654,8 @@ def lsp(args):
             cells = [(f"probe-{Path(f).suffix[1:]}", f) for f in args.edit_files.split(",")]
         elif scen == "concurrent":
             cells = [(f"concurrent-{i}", i) for i in args.intervals.split(",")]
+        elif scen == "open12":
+            cells = [("open12", None)]
         else:
             raise SystemExit(f"unknown scenario {scen}")
         for variant, param in cells:
@@ -605,6 +685,13 @@ def lsp_one(variant, param, b, lab, project, d, ref):
         (d / "stdout.txt").write_text(p.stdout + p.stderr)
         r = json.loads(p.stdout.strip().splitlines()[-1])
         return {"wall": r["ttfd_ms"] / 1000, "cpu": r.get("cpu_ms", 0) / 1000, "maxrss_mb": r.get("maxrss_mb"),
+                "metrics": r, "rc": p.returncode}
+    if variant == "open12":
+        p, wall = node_run([str(HERE / "window2/open12.mjs"), b, str(project)])
+        (d / "stdout.txt").write_text(p.stdout + p.stderr)
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+        # The cell's "wall" is the first request after the 12 didOpens.
+        return {"wall": r["first_ms"] / 1000, "cpu": r.get("cpu_ms", 0) / 1000, "maxrss_mb": r.get("maxrss_mb"),
                 "metrics": r, "rc": p.returncode}
     if variant.startswith("probe-"):
         logs = d / "server.log"
