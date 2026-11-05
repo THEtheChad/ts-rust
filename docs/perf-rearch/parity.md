@@ -1140,25 +1140,40 @@ the gate to:
 - **Accepted ref for this lane.** The manifest is new and the grandfather file has a new format, so
   neither is on `perf/first-principles` yet: this lane's gate runs pass `--accepted-ref` with its own
   commit, which the output names. After the merge, the default ref has them.
-- **Base.** `base-current` (`head-efef52257-full`) stays. Its fuzz rows hold no attempts, since the
-  old harness did not run tsc-rs on Go-failed cases, so the 35 entries cannot come from it. They come
-  from two evidence runs of the base's own binary (`tsgo-head-efef52257-rel`, the same Go) under this
-  harness. The compare needs only the base's statuses, which say those 35 were known-bad (GO-FAIL). No
-  new base is needed.
+- **Base.** `base-current` is `p1-head-a8392a002-full` (root moved it after P1 merged; PARITY OK under
+  the H3 gate). Its fuzz rows hold the old attempt records (outcome only, no fingerprints, no case
+  identity), so the entries cannot come from it. They come from two evidence runs of the base's own
+  binary (`tsgo-head-a8392a002-rel`, sha `dc0d697a68e2…`, the same Go) under this harness. The compare
+  needs only the base's statuses, which say which items are known-bad. No new base is needed.
+- **Known-bad means any status that is not good**, the old GO-UNSTABLE and GO-FAIL included. Under
+  the new referees an old GO-UNSTABLE item is GO-BROKEN while Go's runs still differ, and otherwise
+  judged like any item; an old GO-FAIL item where tsc-rs crashes or times out too is a DIFF with an
+  rsFailure. An item the old harness called GO-UNSTABLE that is now an output DIFF of tsc-rs fails as
+  KNOWN-BAD until an entry pins it.
+- **`fuzz/1:5391`** is such an item, and the one output DIFF of the base. It is the
+  `--traceResolution` race of `fuzz/1:23080` (Base on main, known diff 2): Go's resolver threads
+  decide whether a line reads `File '<x>/package.json' does not exist according to earlier cached
+  lookups.` or `... does not exist.`, and tsc-rs always prints the second form. In the base's Go fill
+  the 8 default runs agreed on the first form, while Go at `--checkers` 2 and 12 varied between its own
+  runs (`referees.partition.unstable`), so the item is a DIFF and not GO-BROKEN. The lane pins it as
+  an output DIFF (rsFailure null): tsc-rs's attempts and Go's stdout fingerprint must stay as they
+  are. If a later Go fill sees the race at the default settings, the item becomes GO-BROKEN and the
+  entry goes stale: remove it then. Root decides whether the entry stays.
 
 ### Regenerating the grandfather entries
 
 ```sh
-B=~/.cache/perf-rearch/bins/tsgo-head-efef52257-rel R=~/.cache/perf-rearch/parity/runs
-scripts/perf-rearch/parity_grandfather.py evidence $B --mode full  --out $R/h4-gf-evidence-full
-scripts/perf-rearch/parity_grandfather.py evidence $B --mode quick --out $R/h4-gf-evidence-quick
-scripts/perf-rearch/parity_grandfather.py regen --full $R/h4-gf-evidence-full --quick $R/h4-gf-evidence-quick \
-    --old $R/h3-head-efef52257-full-warm
+B=~/.cache/perf-rearch/scratch/p1/tsgo-head-a8392a002-rel R=~/.cache/perf-rearch/parity/runs
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode full  --out $R/h4-gf-evidence-p1-full  --add fuzz/1:5391
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode quick --out $R/h4-gf-evidence-p1-quick --add fuzz/1:5391
+scripts/perf-rearch/parity_grandfather.py regen --full $R/h4-gf-evidence-p1-full --quick $R/h4-gf-evidence-p1-quick \
+    --old $R/p1-head-a8392a002-full --add 'fuzz/1:5391=<reason>'
 scripts/perf-rearch/parity_grandfather.py check
 ```
 
 `evidence` runs the fuzz tier on exactly the listed cases, as the mode runs them, under the gate
-lock. `regen` keeps the item list and the reasons and rebuilds each entry from the rows. It refuses
+lock. `regen` keeps the item list and the reasons, adds the `--add` items, and rebuilds each entry
+from the rows. It refuses
 an item whose attempts differ from each other, whose row lacks the evidence, or whose quick and full
 rows disagree. `--old` prints, per item, whether the outcome kinds and Go's panic line agree with an
 older run's.

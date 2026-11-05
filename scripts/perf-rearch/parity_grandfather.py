@@ -3,15 +3,18 @@
 not good, each pinned to its exact failure by structured evidence.
 
 usage: parity_grandfather.py check [FILE]
-       parity_grandfather.py evidence BIN --mode quick|full --out RUN [--from FILE]
+       parity_grandfather.py evidence BIN --mode quick|full --out RUN [--from FILE] [--add ITEM ...]
        parity_grandfather.py regen --full RUN [--quick RUN] [--old RUN] [--from FILE] [--out FILE]
+                                   [--add ITEM=REASON ...]
 
 An entry excuses its item (parity_compare.py) only while the item fails exactly as recorded:
-  status, rsFailure   the item's status and how tsc-rs failed (crash or timeout);
+  status, rsFailure   the item's status (DIFF) and how tsc-rs failed: crash, timeout, or null for
+                      an output DIFF (tsc-rs answers, but not as Go's cached default run does);
   input               the case's content identity (parity_fuzz.case_key: every file, the options,
                       the arguments, the directory, the oracle's argv, the timeout, the Go runs);
-  go                  what Go's cached default result is: its status (GO-FAIL), outcome (timeout,
-                      crash or exit N) and panic line;
+  go                  what Go's cached default result is: its status (GO-FAIL, GO-UNSTABLE or ok),
+                      outcome (timeout, crash or exit N), panic line, and the sha256 of its stdout
+                      and of its written files (not stderr: a Go crash trace holds addresses);
   attempt             the fingerprint every tsc-rs attempt must have: outcome, exit code (negative:
                       a signal; "timeout"), sha256 of stdout, of stderr and of the written files, and
                       whether the inputs stayed intact;
@@ -59,9 +62,9 @@ REPO_PATH = 'scripts/perf-rearch/parity-grandfathered.json'
 VERSION = 2
 ITEM = re.compile(r'^(fuzz/\d+:\d+|corpus/[^\s]+)$')
 HEX16 = re.compile(r'^[0-9a-f]{16}$')
-ENTRY = {'status': str, 'rsFailure': str, 'reason': str, 'input': str, 'go': dict, 'attempt': dict, 'attempts': dict,
+ENTRY = {'status': str, 'rsFailure': (str, type(None)), 'reason': str, 'input': str, 'go': dict, 'attempt': dict, 'attempts': dict,
          'evidence': str}
-GO = {'status': str, 'outcome': str, 'panic': (str, type(None))}
+GO = {'status': str, 'outcome': str, 'panic': (str, type(None)), 'stdout': str, 'written': str}
 ATTEMPT = {'outcome': str, 'code': (int, str), 'stdout': str, 'stderr': str, 'written': str, 'inputs': str}
 LABEL = re.compile(r'^(run\d+( retry)?|confirm)$')
 
@@ -90,8 +93,10 @@ def validate(data, origin):
         _typed(where, e, ENTRY)
         _typed(f'{where}.go', e['go'], GO)
         _typed(f'{where}.attempt', e['attempt'], ATTEMPT)
-        if e['status'] != 'DIFF' or e['rsFailure'] not in ('crash', 'timeout'):
-            raise ArtifactError(f'{where}: only a DIFF where tsc-rs crashed or timed out can be grandfathered')
+        if e['status'] != 'DIFF' or e['rsFailure'] not in ('crash', 'timeout', None):
+            raise ArtifactError(f'{where}: only a DIFF can be grandfathered (rsFailure crash, timeout or null)')
+        if not all(HEX16.match(e['go'][k]) for k in ('stdout', 'written')):
+            raise ArtifactError(f'{where}.go: malformed fingerprints')
         if not e['reason'].strip() or not HEX16.match(e['input']):
             raise ArtifactError(f'{where}: an empty reason or a malformed input identity')
         a = e['attempt']
@@ -151,8 +156,11 @@ def _rows(run):
 
 
 def _entry(item, row, quick_row, reason, evidence):
-    if row is None or row.get('status') != 'DIFF' or row.get('rsFailure') not in ('crash', 'timeout'):
-        raise ArtifactError(f'{item}: not a DIFF with an rsFailure in the evidence run: {row}')
+    if row is None or row.get('status') != 'DIFF' or row.get('rsFailure') not in ('crash', 'timeout', None):
+        raise ArtifactError(f'{item}: not a DIFF in the evidence run: {row}')
+    why = f'{row.get("sig") or ""} {row.get("detail") or ""}'
+    if 'rs-nondet' in why or 'rs-schedule' in why:
+        raise ArtifactError(f'{item}: tsc-rs is nondeterministic here: never pinned')
     for k in ('input', 'go', 'attempts'):
         if k not in row:
             raise ArtifactError(f'{item}: the evidence row has no {k} (made by a harness before lane H4)')
@@ -164,14 +172,19 @@ def _entry(item, row, quick_row, reason, evidence):
         if quick_row.get('input') != row['input'] or quick_row.get('go') != row['go'] or quick_row.get('status') != 'DIFF':
             raise ArtifactError(f'{item}: the quick and full evidence rows disagree')
         attempts['quick'] = [a['why'] for a in quick_row['attempts']]
-    return {'status': 'DIFF', 'rsFailure': row['rsFailure'], 'reason': reason, 'input': row['input'], 'go': row['go'],
+    return {'status': 'DIFF', 'rsFailure': row.get('rsFailure'), 'reason': reason, 'input': row['input'], 'go': row['go'],
             'attempt': prints[0], 'attempts': attempts, 'evidence': evidence}
 
 
 def regen(args):
     src = Path(args.src)
     old = json.loads(src.read_text())
-    listed = old.get('items', {})
+    listed = dict(old.get('items', {}))
+    for spec in args.add or []:
+        item, _, reason = spec.partition('=')
+        if not reason.strip():
+            raise ArtifactError(f'--add {spec}: give ITEM=REASON')
+        listed[item] = {'reason': reason}
     full, full_meta = _rows(args.full)
     quick, quick_meta = _rows(args.quick) if args.quick else ({}, {})
     if quick and quick_meta.get('mode') != 'quick' or full_meta.get('mode') != 'full':
@@ -208,7 +221,7 @@ def evidence(args):
     """A fuzz run of exactly the listed cases (see the top comment)."""
     import parity_compare
     from parity_modes import MODES
-    listed = json.loads(Path(args.src).read_text()).get('items', {})
+    listed = [*json.loads(Path(args.src).read_text()).get('items', {}), *(args.add or [])]
     cases = sorted(int(k.split(':')[1]) for k in listed if re.match(r'^fuzz/1:\d+$', k))
     if len(cases) != len(listed):
         raise ArtifactError('evidence runs only fuzz cases of seed 1; the file lists others')
@@ -252,10 +265,12 @@ def main():
     e.add_argument('--mode', required=True, choices=('quick', 'full'))
     e.add_argument('--out', required=True)
     e.add_argument('--from', dest='src', default=str(GRANDFATHERED))
+    e.add_argument('--add', action='append', help='ITEM: one more case to run')
     r = sub.add_parser('regen')
     r.add_argument('--full', required=True)
     r.add_argument('--quick')
     r.add_argument('--old')
+    r.add_argument('--add', action='append', help='ITEM=REASON: one more item to pin (a known-bad base item)')
     r.add_argument('--from', dest='src', default=str(GRANDFATHERED))
     r.add_argument('--out', default=str(GRANDFATHERED))
     args = ap.parse_args()

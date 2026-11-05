@@ -54,7 +54,8 @@ ROW_795 = {'status': 'DIFF', 'rsFailure': 'crash', 'sig': 'oracle:crash',
                      'tsc-rs crash: panic: runtime error: invalid memory address or nil pointer dereference; attempts: run1 crash '
                      '(0.01 s of 60), run2 crash (0.01 s of 60)'}
 PRINT = {'outcome': 'crash', 'code': 2, 'stdout': '0' * 16, 'stderr': '1' * 16, 'written': '2' * 16, 'inputs': 'intact'}
-GO_795 = {'status': 'GO-FAIL', 'outcome': 'crash', 'panic': 'panic: runtime error: invalid memory address or nil pointer dereference'}
+GO_795 = {'status': 'GO-FAIL', 'outcome': 'crash', 'panic': 'panic: runtime error: invalid memory address or nil pointer dereference',
+          'stdout': '4' * 16, 'written': '5' * 16}
 ENTRY_795 = {'status': 'DIFF', 'rsFailure': 'crash', 'reason': 'tsc-rs reproduces Go\'s crash on purpose', 'input': 'a' * 16,
              'go': GO_795, 'attempt': PRINT, 'attempts': {'full': ['run1', 'run2'], 'quick': ['run1']}, 'evidence': 'selftest'}
 OLD_795 = {'status': 'DIFF', 'rsFailure': 'crash', 'reason': 'tsc-rs reproduces Go\'s crash on purpose',
@@ -94,7 +95,7 @@ def run_compare(root, name, base, cur, mode='full', grand=None, old_grand=None, 
 
 def compare_checks(root):
     k = 'fuzz/1:25496'
-    entry = {**ENTRY_795, 'rsFailure': 'timeout', 'go': {'status': 'ok', 'outcome': 'exit 2', 'panic': None},
+    entry = {**ENTRY_795, 'rsFailure': 'timeout', 'go': {'status': 'ok', 'outcome': 'exit 2', 'panic': None, 'stdout': '6' * 16, 'written': '7' * 16},
              'attempt': {**PRINT, 'outcome': 'timeout', 'code': 'timeout'}}
     old = {'items': {k: {'status': 'DIFF', 'rsFailure': 'timeout', 'reason': 'x', 'detailContains': ''}}}
     rc, out = run_compare(root, 'nondet', {k: ROW_25496}, {k: {'status': 'DIFF', 'sig': 'rs-nondet:diag:+TS2322'}},
@@ -107,6 +108,12 @@ def compare_checks(root):
     check('finding 3: a known-bad item that fails another way fails', rc == 1, out)
     rc, out = run_compare(root, 'unpinned', {k: ROW_25496}, {k: {'status': 'DIFF', 'sig': 'diag:+TS2322'}}, grand={}, old_grand={'items': {}})
     check('finding 3: a known-bad item that no entry pins fails', rc == 1, out)
+    # Root's case (fuzz/1:5391 in the P1 run): a base item the old harness called GO-UNSTABLE that is
+    # now an output DIFF of tsc-rs.
+    rc, out = run_compare(root, 'go-unstable', {'fuzz/1:5391': {'status': 'GO-UNSTABLE'}},
+                          {'fuzz/1:5391': {'status': 'DIFF', 'sig': "diag:File '_' does not exist according to ear>File '_' does not exist."}})
+    check('finding 3: a GO-UNSTABLE base item that is a DIFF now fails unless pinned (fuzz/1:5391 in the P1 run)',
+          rc == 1 and 'KNOWN-BAD' in out, out)
     rc, out = run_compare(root, 'stale', {k: ROW_25496}, {k: {'status': 'MATCH'}}, grand={k: entry}, old_grand=old)
     check('bypass: a stale grandfather entry (its item is good now) fails the gate', rc == 1 and 'STALE GRANDFATHER' in out, out)
 

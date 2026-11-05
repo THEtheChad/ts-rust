@@ -208,9 +208,12 @@ class Case:
 
 
 def go_evidence(go, go_status):
-    """Go's default result as a grandfather entry pins it."""
+    """Go's default result as a grandfather entry pins it (stderr left out: a Go crash trace holds
+    addresses that change from run to run)."""
     outcome = 'timeout' if go.code == 'timeout' else 'crash' if referees.crashed(go) else f'exit {go.code}'
-    return {'status': go_status or 'ok', 'outcome': outcome, 'panic': referees._panic_line(go)}
+    fp = go.fingerprint()
+    return {'status': go_status or 'ok', 'outcome': outcome, 'panic': referees._panic_line(go),
+            'stdout': fp['stdout'], 'written': fp['written']}
 
 
 def attempts_text(c):
