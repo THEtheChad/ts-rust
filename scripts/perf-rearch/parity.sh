@@ -34,8 +34,11 @@
 # Output: --out (default ~/.cache/perf-rearch/parity/runs/<time>-<mode>-<bin sha>): meta.json,
 # <tier>/ (results.json and details: cli/items/<item>/diff.txt, fuzz/diffs/<case>/, lsp/<session>/),
 # <tier>.log, and results.json (all tiers). With --base it ends with `parity_compare.py compare`:
-# a failure is any item that was good in the base and is not now (PARITY FAIL, exit 1). Items
-# that became good by a referee are listed by status, every one.
+# a failure (PARITY FAIL, exit 1) is any item that was good in the base and is not now, a base item
+# that this mode runs and the run lacks (a quick run against a full base must have every quick item;
+# a run with --tiers fails on the tiers it left out), a new item that is not good, an item on which
+# tsc-rs crashed or timed out (unless parity-grandfathered.json lists it), or an ERROR. Items that
+# became good by a referee are listed by status, every one.
 # The base on main: ~/.cache/perf-rearch/parity/base-main/.
 #
 # One gate run at a time (a lock: the scratch paths are fixed so that paths in output agree with the
@@ -72,8 +75,10 @@ while (($#)); do
   esac
 done
 case $mode in
-quick) : "${tiers:=cli tests lsp fuzz}"; rs_runs=1; fuzz_count=1500 ;;
-full) : "${tiers:=cli tests lsp fuzz corpus}"; rs_runs=2; fuzz_count=30000 ;;
+quick | full) # the mode's tiers, tsc-rs runs and fuzz count: parity_modes.py (parity_compare.py checks a run against it)
+  user_tiers=$tiers
+  eval "$(python3 -I "$here/parity_modes.py" shell "$mode")" || exit 2
+  [[ -z $user_tiers ]] || tiers=$user_tiers ;;
 js) tiers=js ;;
 esac
 sha=$(sha256sum "$bin" | cut -c1-64)
