@@ -37,13 +37,26 @@ side runs again, up to CLOCK_ATTEMPTS times; when every attempt saw a step, the 
 
 Go's result is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/cli), keyed
 by the Go binary, project path, project fingerprint (commit and node_modules mtimes), config and
-arguments. When the cache is made Go runs twice; an item
-where Go's two runs differ is GO-UNSTABLE (not compared). tsc-rs runs --rs-runs times (default 1 for
-quick, 2 for full); two tsc-rs runs that differ are a DIFF (rs-nondet) even when one matches Go.
+arguments. When the cache is made Go runs twice. tsc-rs runs --rs-runs times (default 1 for quick,
+2 for full).
 
 Compared per item: exit code, stdout, stderr and the written file tree (sha256 of each file).
-Status: MATCH, DIFF, GO-UNSTABLE, ERROR, SKIP. Output: DIR/results.json ({"items": {"cli/<project>/
-<config>/<variant>": {...}}}) and DIR/items/<item>/ (rs output and a diff against Go) for each DIFF.
+Status: MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, DIFF, ERROR, SKIP. An item that is not MATCH
+is judged in the order of parity_referees.py:
+  1. two tsc-rs runs that differ: DIFF (rs-nondet), even when one matches Go;
+  2. Go's two runs differ, or Go crashed or timed out: GO-BROKEN when tsc-rs neither crashes nor
+     times out (else DIFF);
+  3. Go with --checkers N, N in parity_referees.CHECKERS (twice per N, cached as <key>.p1-c<N>.json
+     next to the default result): GO-PARTITION when Go's outputs differ across N and tsc-rs equals
+     one (detail: the N); not for -b and showconfig items (parity_referees.blocker);
+  4. JS tsc (--js, `node <js>`, once, cached in ~/.cache/perf-rearch/parity/js-cache/<js sha>/cli):
+     JS-AGREES when JS sides with tsc-rs on every point where tsc-rs and Go differ;
+  5. DIFF (detail: go-partition-miss and the JS check's reason when they ran, then the difference).
+A GO-BROKEN, GO-PARTITION or JS-AGREES item with --rs-runs 1 runs tsc-rs once more first. Each such
+item's row has `referees` (what the checks found) and `defaultDiff`. --no-referees (the js mode)
+gives the old statuses: GO-UNSTABLE where Go's runs differ, DIFF otherwise. Output: DIR/results.json
+({"items": {"cli/<project>/<config>/<variant>": {...}}}) and DIR/items/<item>/ (rs output and a diff
+against Go) for each DIFF.
 """
 import argparse
 import difflib
@@ -64,6 +77,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))  # python3 -I does not put the script's dir on the path
+import parity_referees as referees  # noqa: E402
+
 HOME = Path.home()
 SCRATCH = HOME / '.cache/perf-rearch/parity/scratch'
 ENV = {k: v for k, v in os.environ.items() if not k.startswith(('GOPORT_', 'TSGO_', 'TS_'))}
@@ -75,6 +91,8 @@ OVERLAY = ['unshare', '-rm', '--', 'sh', '-c',
            'mount -t overlay overlay -o "lowerdir=$1,upperdir=$2,workdir=$3" "$1" && cd "$4" && shift 4 && exec "$@"',
            'overlay']
 CACHE_VERSION = 4  # bump when a change of this file changes Go's cached results
+PARTITION_VERSION = 1  # the same, for the per-N Go results of the partition check
+JS_CACHE_VERSION = 1  # the same, for JS tsc's results
 # A side whose wall clock stepped by more than CLOCK_STEP_NS runs again (see the top comment).
 CLOCK_STEP_NS = 5_000_000
 CLOCK_ATTEMPTS = 6
@@ -285,6 +303,120 @@ def compare(go_runs, rs_runs):
     return None
 
 
+def run_key(runs):
+    """A hashable form of a side (one or two runs): equal exactly when compare() finds no difference."""
+    return json.dumps([r.key() for r in runs])
+
+
+def cached_side(it, cfile, cmd, count=2, cache_timeouts=True):
+    """A side of an item run `count` times (the first one kept), cached in cfile:
+    (runs, why the runs differ or None)."""
+    if cfile.exists():
+        gc = json.loads(cfile.read_text())
+    else:
+        sides = [it.run_side(cmd) for _ in range(count)]
+        unstable = next((compare(sides[0], o) for o in sides[1:] if compare(sides[0], o)), None)
+        gc = {'item': it.name, 'cmd': cmd, 'runs': [r.to_json() for r in sides[0]], 'unstable': unstable}
+        if cache_timeouts or not any(r.code == 'timeout' for side in sides for r in side):
+            cfile.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cfile.with_suffix(f'.tmp{os.getpid()}')
+            tmp.write_text(json.dumps(gc))
+            tmp.replace(cfile)
+    runs = [Run.from_json(r) for r in gc['runs']]
+    if it.variant == 'extdiag':  # caches written before the padding rule (idempotent)
+        for r in runs:
+            r.stdout = mask_stats(r.stdout)
+    return runs, gc['unstable']
+
+
+class Tier:
+    """Runs and judges the items of one CLI tier run (see the top comment for the order of checks)."""
+
+    def __init__(self, args, rs_cmd, rs_runs, go_sha, cache, out):
+        self.args, self.rs_cmd, self.rs_runs, self.go_sha, self.cache, self.out = args, rs_cmd, rs_runs, go_sha, cache, out
+        self.js_sha = referees.js_sha(args.js) if args.referees else None
+        self.js_cache = HOME / f'.cache/perf-rearch/parity/js-cache/{self.js_sha}/cli'
+
+    def key(self, it, *extra):
+        return hashlib.sha256(json.dumps([*extra, str(it.project['root']), it.project['fingerprint'],
+                                          it.config, it.variant, it.args()]).encode()).hexdigest()[:24]
+
+    def run_item(self, it):
+        key = self.key(it, CACHE_VERSION, self.go_sha)
+        go_runs, go_unstable = cached_side(it, self.cache / f'{key}.json', [self.args.go])
+        rs_all = [it.run_side(self.rs_cmd) for _ in range(self.rs_runs)]
+        clear(it.scratch)
+        row = {'goSecs': round(sum(r.secs for r in go_runs), 1),
+               'rsSecs': [round(sum(r.secs for r in runs), 1) for runs in rs_all]}
+        diffs = [compare(go_runs, runs) for runs in rs_all]
+        nondet = next((compare(rs_all[0], runs) for runs in rs_all[1:] if compare(rs_all[0], runs)), None)
+        status, detail, extra = self.judge(it, key, go_runs, go_unstable, rs_all, diffs[0], nondet)
+        clear(it.scratch)
+        row.update(status=status, **({'detail': detail} if detail else {}), **extra)
+        if it.clock_retries:
+            row['clockRetries'] = it.clock_retries
+        if status == 'DIFF':
+            self.write_diff(it, go_runs, rs_all, diffs, nondet)
+        return row
+
+    def judge(self, it, key, go_runs, go_unstable, rs_all, diff, nondet):
+        """(status, detail, extra row fields) in the order of parity_referees."""
+        label = self.args.label_rs
+        if nondet:
+            return 'DIFF', f'rs-nondet: {nondet}', {}
+        if not go_unstable and not diff:
+            return 'MATCH', None, {}
+        if not self.args.referees:
+            if go_unstable:
+                return 'GO-UNSTABLE', f'Go runs differ: {go_unstable}; {label} {"equals" if not diff else "differs from"} Go run 1', {}
+            return 'DIFF', diff, {}
+        reason = referees.go_broken_reason(go_runs, go_unstable)
+        if reason:
+            (status, detail), extra = referees.judge_broken(reason, rs_all[0]), {}
+        else:
+            status, detail, info = referees.referee(
+                it.args(), lambda n: self.go_at_n(it, key, n), lambda: self.js_side(it), go_runs, rs_all[0],
+                run_key(rs_all[0]), self.args.referee_all)
+            extra = {'referees': info, 'defaultDiff': diff}
+            if status == 'DIFF':
+                detail = f'{detail}: {diff}' if detail else diff
+        if status in referees.REFEREED and len(rs_all) < 2:  # determinism first: one more tsc-rs run
+            again = compare(rs_all[0], it.run_side(self.rs_cmd))
+            if again:
+                return 'DIFF', f'rs-nondet: {again}', extra
+        return status, detail, extra
+
+    def go_at_n(self, it, key, n):
+        runs, unstable = cached_side(it, self.cache / f'{key}.p{PARTITION_VERSION}-c{n}.json',
+                                     [self.args.go, *referees.go_args(n)], cache_timeouts=False)
+        if any(r.code == 'timeout' for r in runs):
+            return referees.FAILED
+        return referees.UNSTABLE if unstable else run_key(runs)
+
+    def js_side(self, it):
+        """JS tsc's side (one run: it is single-threaded), cached unless it timed out."""
+        cfile = self.js_cache / f'{self.key(it, JS_CACHE_VERSION, self.js_sha)}.json'
+        runs, _ = cached_side(it, cfile, ['node', self.args.js], count=1, cache_timeouts=False)
+        return runs
+
+    def write_diff(self, it, go_runs, rs_all, diffs, nondet):
+        label, rs_cmd = self.args.label_rs, self.rs_cmd
+        d = self.out / 'items' / it.name.replace('/', '__')
+        d.mkdir(parents=True, exist_ok=True)
+        bad = next(runs for runs, df in zip(rs_all, diffs + [nondet]) if df) if any(diffs) else rs_all[-1]
+        (d / 'rs.json').write_text(json.dumps([r.to_json() for r in bad], indent=1))
+        (d / 'cmd.txt').write_text(f'cd {it.project["root"] / it.config.get("cwd", ".")} && {shlex.join([*rs_cmd, *it.args()])}'
+                                   f'   # writes into the project: run it on a copy or an overlay\n')
+        text = ''
+        for k, (g, r) in enumerate(zip(go_runs, bad)):
+            text += text_diff(g.stdout, r.stdout, f'go run{k + 1} stdout', f'{label} stdout')
+            text += text_diff(g.stderr, r.stderr, f'go run{k + 1} stderr', f'{label} stderr')
+            for n in sorted(set(g.tree) | set(r.tree)):
+                if g.tree.get(n) != r.tree.get(n):
+                    text += f'file {n}: go {g.tree.get(n, "-")[:12]} {label} {r.tree.get(n, "-")[:12]}\n'
+        (d / 'diff.txt').write_text(text)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--rs', required=True)
@@ -298,6 +430,11 @@ def main():
     ap.add_argument('--cache')
     ap.add_argument('--label-rs', default='tsc-rs')
     ap.add_argument('--list', action='store_true')
+    ap.add_argument('--js', default=str(referees.JS_TSC), help='JS tsc for JS-AGREES (run with node)')
+    ap.add_argument('--referees', action=argparse.BooleanOptionalAction, default=True,
+                    help='GO-BROKEN, GO-PARTITION and JS-AGREES (off for the js mode: GO-UNSTABLE and DIFF as before)')
+    ap.add_argument('--referee-all', action='store_true',
+                    help='run the JS check even where GO-PARTITION decided (recorded in referees.js)')
     args = ap.parse_args()
     rs_cmd = shlex.split(args.rs)
     rs_runs = args.rs_runs or (1 if args.tier == 'quick' else 2)
@@ -331,6 +468,7 @@ def main():
             print(n, 'SKIP')
         return
     out.mkdir(parents=True, exist_ok=True)
+    tier = Tier(args, rs_cmd, rs_runs, go_sha, cache, out)
     results = dict(skipped)
     lock = threading.Lock()
     counts = Counter(r['status'] for r in skipped.values())
@@ -338,7 +476,7 @@ def main():
 
     def one(it):
         try:
-            row = run_item(it)
+            row = tier.run_item(it)
         except Exception as e:  # a harness error, never a match
             row = {'status': 'ERROR', 'detail': repr(e)[:400]}
         with lock:
@@ -346,60 +484,6 @@ def main():
             counts[row['status']] += 1
             print(f'{row["status"]:<11} {it.name} {row.get("detail", "")} '
                   f'(go {row.get("goSecs", "-")}s, rs {row.get("rsSecs", "-")}s)', flush=True)
-
-    def run_item(it):
-        key = hashlib.sha256(json.dumps([CACHE_VERSION, go_sha, str(it.project['root']), it.project['fingerprint'],
-                                         it.config, it.variant,
-                                         it.args()]).encode()).hexdigest()[:24]
-        cfile = cache / f'{key}.json'
-        if cfile.exists():
-            gc = json.loads(cfile.read_text())
-        else:
-            g1 = it.run_side([args.go])
-            g2 = it.run_side([args.go])
-            gc = {'item': it.name, 'runs': [r.to_json() for r in g1], 'unstable': compare(g1, g2)}
-            cfile.parent.mkdir(parents=True, exist_ok=True)
-            tmp = cfile.with_suffix(f'.tmp{os.getpid()}')
-            tmp.write_text(json.dumps(gc))
-            tmp.replace(cfile)
-        go_runs = [Run.from_json(r) for r in gc['runs']]
-        if it.variant == 'extdiag':  # caches written before the padding rule (idempotent)
-            for r in go_runs:
-                r.stdout = mask_stats(r.stdout)
-        go_secs = round(sum(r.secs for r in go_runs), 1)
-        rs_all = [it.run_side(rs_cmd) for _ in range(rs_runs)]
-        clear(it.scratch)
-        rs_secs = [round(sum(r.secs for r in runs), 1) for runs in rs_all]
-        row = {'goSecs': go_secs, 'rsSecs': rs_secs}
-        if it.clock_retries:
-            row['clockRetries'] = it.clock_retries
-        diffs = [compare(go_runs, runs) for runs in rs_all]
-        nondet = next((compare(rs_all[0], runs) for runs in rs_all[1:] if compare(rs_all[0], runs)), None)
-        if gc['unstable']:
-            row.update(status='GO-UNSTABLE', detail=f'Go runs differ: {gc["unstable"]}; '
-                                                      f'{args.label_rs} {"equals" if not diffs[0] else "differs from"} Go run 1')
-        elif nondet:
-            row.update(status='DIFF', detail=f'rs-nondet: {nondet}')
-        elif diffs[0]:
-            row.update(status='DIFF', detail=diffs[0])
-        else:
-            row.update(status='MATCH')
-        if row['status'] == 'DIFF':
-            d = out / 'items' / it.name.replace('/', '__')
-            d.mkdir(parents=True, exist_ok=True)
-            bad = next(runs for runs, df in zip(rs_all, diffs + [nondet]) if df) if any(diffs) else rs_all[-1]
-            (d / 'rs.json').write_text(json.dumps([r.to_json() for r in bad], indent=1))
-            (d / 'cmd.txt').write_text(f'cd {it.project["root"] / it.config.get("cwd", ".")} && {shlex.join([*rs_cmd, *it.args()])}'
-                                       f'   # writes into the project: run it on a copy or an overlay\n')
-            text = ''
-            for k, (g, r) in enumerate(zip(go_runs, bad)):
-                text += text_diff(g.stdout, r.stdout, f'go run{k + 1} stdout', f'{args.label_rs} stdout')
-                text += text_diff(g.stderr, r.stderr, f'go run{k + 1} stderr', f'{args.label_rs} stderr')
-                for n in sorted(set(g.tree) | set(r.tree)):
-                    if g.tree.get(n) != r.tree.get(n):
-                        text += f'file {n}: go {g.tree.get(n, "-")[:12]} {args.label_rs} {r.tree.get(n, "-")[:12]}\n'
-            (d / 'diff.txt').write_text(text)
-        return row
 
     with ThreadPoolExecutor(args.jobs) as pool:
         list(pool.map(one, items))
