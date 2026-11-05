@@ -382,6 +382,9 @@ export const SCENARIOS = {
 
   "pkgjson-overlay": {
     fixture: "watch-small",
+    // ATA off: its npm call raced the overlay steps (Go and tsc-rs alike; lane H2), and this
+    // scenario tests package.json overlays, not type acquisition.
+    ata: false,
     async run(s) {
       const a = SMALL_A;
       const pkg = JSON.parse(readFileSync(s.abs("package.json"), "utf8"));
@@ -455,7 +458,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   if (scenario.fixture) writeFixture(scenario.fixture, root);
   let client;
   try {
-    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env });
+    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
     throw Object.assign(e, { log: [] });
