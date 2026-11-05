@@ -52,6 +52,16 @@ def js_sha(js):
 
 # ---- step 2: GO-BROKEN ----------------------------------------------------------------------
 
+def _panic_line(r):
+    return next((ln for ln in r.stderr.decode('utf-8', 'replace').splitlines() if ln.startswith('panic: ')), None)
+
+
+def crashed(r):
+    """A crash: oracle.crashed (a Rust or Go panic trace, exit 70, a signal), or a Go-style
+    `panic: ` line on stderr without the trace, which is how tsc-rs reproduces a Go crash."""
+    return oracle.crashed(r) or _panic_line(r) is not None
+
+
 def go_broken_reason(go_runs, unstable):
     """Why Go's default result is broken, or None. go_runs: Go's (first) side; unstable: why its
     repeated runs differ, or None."""
@@ -60,8 +70,8 @@ def go_broken_reason(go_runs, unstable):
     for r in go_runs:
         if r.code == 'timeout':
             return 'Go timed out'
-        if oracle.crashed(r):
-            panic = next((ln for ln in r.stderr.decode('utf-8', 'replace').splitlines() if ln.startswith('panic: ')), None)
+        if crashed(r):
+            panic = _panic_line(r)
             return f'Go crash: {panic[:160]}' if panic else f'Go {oracle.crash_sig(r)}'
     return None
 
@@ -72,8 +82,9 @@ def judge_broken(reason, rs_runs):
     for r in rs_runs:
         if r.code == 'timeout':
             return 'DIFF', f'go-broken ({reason}), tsc-rs timed out too'
-        if oracle.crashed(r):
-            return 'DIFF', f'go-broken ({reason}), tsc-rs {oracle.crash_sig(r)}'
+        if crashed(r):
+            panic = _panic_line(r)
+            return 'DIFF', f'go-broken ({reason}), tsc-rs ' + (f'crash: {panic[:120]}' if panic else oracle.crash_sig(r))
     return GO_BROKEN, reason
 
 
@@ -291,7 +302,7 @@ def _point(d):
 def js_delta(go_side, rs_side, js_side):
     """Step 4: (True, detail, info) when JS sides with tsc-rs on every point where tsc-rs and Go
     differ, else (False, failure, info). info['points'] lists the points JS decided (cut at 50)."""
-    if js_side is None or len(js_side) != len(go_side) or any(j.code == 'timeout' or oracle.crashed(j) for j in js_side):
+    if js_side is None or len(js_side) != len(go_side) or any(j.code == 'timeout' or crashed(j) for j in js_side):
         return False, 'JS tsc failed (timeout or crash)', {}
     if len(go_side) != len(rs_side):
         return False, 'run count', {}

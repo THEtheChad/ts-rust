@@ -137,6 +137,10 @@ def units():
     rs_crash = run('', 70, err=b"thread 'main' panicked at src/x.rs:1:1:\n")
     check('broken: tsc-rs crashes -> DIFF', R.judge_broken('r', [rs_crash])[0] == 'DIFF')
     check('broken: tsc-rs times out -> DIFF', R.judge_broken('r', [run('', 'timeout')])[0] == 'DIFF')
+    mimic = run('', 2, err=b'panic: strings: negative Repeat count\n\n\tcrates/x.rs\n')
+    check('broken: tsc-rs reproduces a Go panic (no trace) -> DIFF',
+          R.judge_broken('r', [mimic]) == ('DIFF', 'go-broken (r), tsc-rs crash: panic: strings: negative Repeat count'),
+          R.judge_broken('r', [mimic]))
 
 
 # ---- the fakes -------------------------------------------------------------------------------
@@ -157,6 +161,7 @@ SPEC = {
     'unstable': {'go': {'d': {'alt': ['x\n', 'y\n']}, '*': 'x\n'}, 'rs': {'*': 'x\n'}},
     'gocrash': {'go': {'*': GO_CRASH}, 'rs': {'*': 'fine\n'}},
     'bothcrash': {'go': {'*': GO_CRASH}, 'rs': {'*': {'out': '', 'err': "thread 'main' panicked at src/x.rs:1:1:\n", 'code': 70}}},
+    'mimic': {'go': {'*': GO_CRASH}, 'rs': {'*': {'out': '', 'err': 'panic: boom\n', 'code': 2}}},
     'jsagree': {'go': {'*': {'out': DIAG_GO, 'code': 2}}, 'rs': {'*': {'out': DIAG_RS, 'code': 2}},
                 'js': {'*': {'out': DIAG_RS + 'src/z.ts(9,9): error TS7031: Elsewhere.\n', 'code': 2}}},
     'jsexit': {'go': {'*': {'out': DIAG_GO, 'code': 2}}, 'rs': {'*': {'out': 'src/a.ts(2,1): error TS2322: Common.\n', 'code': 2}},
@@ -247,6 +252,7 @@ CLI_EXPECT = {  # item -> (status, detail substring, check of the row or None)
     'unstable/noemit': ('GO-BROKEN', 'Go runs differ', None),
     'gocrash/noemit': ('GO-BROKEN', 'Go crash', None),
     'bothcrash/noemit': ('DIFF', 'go-broken', None),
+    'mimic/noemit': ('DIFF', 'tsc-rs crash: panic: boom', None),
     'jsagree/noemit': ('JS-AGREES', '1 go-only, 1 rs-only', None),
     'jsexit/noemit': ('JS-AGREES', '1 go-only', None),
     'jsgoonly/noemit': ('DIFF', "JS also prints Go's TS2344", None),
@@ -332,6 +338,7 @@ FUZZ_EXPECT = {  # scenario -> (status, detail substring, extra case args, rs ru
     'unstable': ('GO-BROKEN', 'GO-UNSTABLE', [], 2),
     'gocrash': ('GO-BROKEN', 'GO-FAIL: Go crash', [], 2),
     'bothcrash': ('DIFF', 'go-broken', [], 2),
+    'mimic': ('DIFF', 'tsc-rs crash: panic: boom', [], 2),
     'jsagree': ('JS-AGREES', '1 go-only, 1 rs-only', [], 2),
     'jsexit': ('JS-AGREES', '1 go-only', [], 2),
     'jsgoonly': ('DIFF', "JS also prints Go's TS2344", [], 2),
