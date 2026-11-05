@@ -537,3 +537,16 @@ once a **reconciliation step** is built and tested.
   - **Separate small lane later:** Go shares diagnostic pointers where tsc-rs
     clones values (`ast/misc.rs:963`), so a mutation after collection is
     visible only in Go.
+- **2026-11-04, L1 round 4** (`6a766283b`): Astra's three round-3 fixes are in,
+  and parity quick is OK.
+  - **Window, paired V − base, with matching timestamps:** material on umami
+    (p90 +78 ms) and not material on hono. The cause is the workers'
+    prefetch order.
+  - **Measuring Go's own window next**, with an instrumented Go build. Go is
+    the reference.
+    - Not material against Go: merge L1.
+    - Material against Go: choose between capping the prefetch age and
+      bounding prefetch distance.
+  - **pkgjson-overlay `rs-nondet`** (8 items under heavy load) predates L1.
+    The delayed `workspace/diagnostic/refresh` arrives after the client moves
+    on. Backlog: make the harness wait for it.
