@@ -14,11 +14,12 @@ workspace folder is umami/src), watch-hono-f12 and second-project-query. Up to -
 side by side. quick's
 sessions are all full sessions, so a quick run compares with a full base.
 
-Go's two sessions per item set (go.jsonl, go2.jsonl) are kept in ~/.cache/perf-rearch/parity/
-go-cache/<go sha>/lsp/<session>-<project fingerprint>[-<scenario sources sha>]/ (parity_cli.fingerprint:
-commit, node_modules mtimes; scenarios also key on the sha of the lspdiff sources) and reused, so a
-run starts only tsc-rs. An answer on which Go's two sessions differ is GO-UNSTABLE (scenarios: four
-Go sessions, go.jsonl to go4.jsonl, since Go's registrations race across its background goroutines). In full, tsc-rs
+Go's four sessions per item set (go.jsonl to go4.jsonl, GO_RUNS) are kept in ~/.cache/perf-rearch/parity/
+go-cache/<go sha>/lsp/<session>-<project fingerprint>-<lspdiff sources sha>/ (parity_cli.fingerprint:
+commit, node_modules mtimes; the sha of the vendored lspdiff sources, since they script the session)
+and reused, so a run starts only tsc-rs. Standard sessions run with ATA off (vendor/lspdiff
+client.mjs initializeParams). An answer on which any two of Go's sessions differ is GO-UNSTABLE (Go's
+references order and scenario registrations race across its goroutines). In full, tsc-rs
 runs three times: twice as is and once with GOPORT_PARSE_THREADS=1; an answer on which a later run
 differs from the first is a DIFF with detail rs-nondet or rs-schedule, even when one run matches
 Go. Items: lsp/<session>/<index> <step> (index: the answer's place in the session). Status MATCH,
@@ -71,6 +72,11 @@ SESSIONS = {
 }
 # The tsc-rs runs per session: lspdiff options. full: two plain runs (rs-nondet) and one with a
 # single parse worker (rs-schedule).
+# Go sessions per item set. Go's own answers vary between runs on some items (hono `references`
+# order: ls/crossproject.go handleCrossProject searches projects in goroutines; scenario watch
+# registrations), so every session runs Go four times and an answer any two runs disagree on is
+# GO-UNSTABLE. Part of the cache key, so caches filled with fewer runs are not reused.
+GO_RUNS = 4
 RS_RUNS = {'quick': [], 'full': ['--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1']}
 
 
@@ -111,18 +117,19 @@ def main():
         name, project, scenario = sess['name'], sess['project'], sess.get('scenario')
         if project is FIXTURE:
             root = HOME / f'.cache/perf-rearch/parity/scratch/lsp-{name}'
-            key = f'{name}-fixture-{src_sha}'
+            key = f'{name}-fixture-{src_sha}-g{GO_RUNS}'
         else:
             root = next((Path(os.path.expanduser(d)) for d in PROJECTS[project] if Path(os.path.expanduser(d)).is_dir()), None)
             if root is None:
                 return {f'lsp/{name}': {'status': 'SKIP', 'detail': 'project not prepared'}}, None, f'lsp {name}: SKIP'
-            key = f'{name}-{fingerprint(root)}' + (f'-{src_sha}' if scenario else '')
+            key = f'{name}-{fingerprint(root)}-{src_sha}-g{GO_RUNS}'
         cache = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}/lsp/{key}'
         sout = out / name
         cmd = ['node', str(HERE / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root),
                '--files', str(sess['files']), '--go', args.go, '--rs', args.rs, '--out', str(sout),
                '--go-cache', str(cache), *RS_RUNS[args.tier]]
-        cmd += ['--scenario', scenario, '--go-runs', '4'] if scenario else ['--positions', str(sess['positions'])]
+        cmd += ['--go-runs', str(GO_RUNS)]
+        cmd += ['--scenario', scenario] if scenario else ['--positions', str(sess['positions'])]
         start = time.monotonic()
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         secs = round(time.monotonic() - start, 1)
