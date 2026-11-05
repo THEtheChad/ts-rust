@@ -82,7 +82,7 @@ but its workers read the late part of the serial order much earlier than that. T
 window against the base serial loader; Go reads in parallel parse tasks too, so its own
 window is not the serial one (not measured here).
 
-**Fix options (not implemented; Chad decides):**
+**Fix options (not implemented; Chad decides; option 1 done in round 5, below):**
 1. **Measure Go's window first.** The bar is Go's behavior. A Go oracle build with the same
    probe (time before each `vfs` call, log after `updateWatch`) would show whether Go's
    parallel parse tasks already observe as early as V's workers. If so, no change is needed.
@@ -95,6 +95,71 @@ window is not the serial one (not measured here).
    expected order, within K files of its demand cursor. That keeps observation times close to
    the demand times without loader OS calls, at the cost of less parallel prefetch (needs a
    measurement of the loss).
+
+## Go's window (round 5: the bar is Go)
+Chad chose fix option 1: Go is the reference for races, not the base serial loader. The pinned
+Go LSP oracle (`3e9236361fa9`, built as the oracle is: in `tsc/`, `CGO_ENABLED=0 go build
+-trimpath ./cmd/tsc`; the unpatched build has the oracle's size) with
+`scripts/perf-rearch/loader/l1-window-go-spike.patch` (never merged): `osFS`'s six methods take the
+time and path before the OS call (every goroutine), `project.CreateProgram` gives the load span,
+and the end of `Session.updateWatches` (each `client.WatchFiles` has its `registerCapability`
+answer) writes the log. Same boundary as round 4 on all three sides: the first `updateWatches`
+end after the load. Both servers register the root-files and auto-import watchers there and the
+program-files watcher in the next one (umami: Go 5–7 ms later, V 16–20, base 12–15; hono
+under 3 ms); `--watch 2` moves the V − Go deltas by under 11 ms and changes no verdict. Go's two `updateWatches` can write out of time
+order, so `l1-window.py` takes the earliest watch end after the load and the earliest call per
+path. Hono has two projects, which Go loads concurrently and tsc-rs one after the other: its main
+rows take every load before the watch (`--loads all`, the same 20,535 paths on all sides).
+
+Idle (load < 1.5), 5 rounds interleaved view, base, Go per project, one session
+(`l1-window-runs.sh`; results `~/.cache/perf-rearch/l1/window3/`). Binaries: view
+`tsgo-l1-rel-diag-ed815b9bb-win2` (round 4's), base `tsgo-basewin-0f2570052-spike`, Go
+`go-window/tsgo-go-window`. Same criterion: material if the paired p90 is over +50 ms or more
+than 5% of the paths are over +100 ms.
+
+| paired delta, ms | n | p50 | p90 | p99 | max | > +50 | > +100 | verdict |
+|---|---|---|---|---|---|---|---|---|
+| umami V − Go, reads | 25,030 | +96.0 | **+167.6** | +214.0 | +217.9 | 18,866 | 11,941 (47.7%) | MATERIAL |
+| umami V − Go, all kinds | 137,114 | +105.3 | **+169.8** | +206.2 | +218.5 | 112,437 | 73,381 (53.5%) | MATERIAL |
+| hono V − Go, reads | 4,205 | +9.1 | +30.5 | +56.4 | +62.1 | 97 | 0 | not material |
+| hono V − Go, all kinds | 20,535 | +9.0 | +41.0 | +61.9 | +63.1 | 1,018 | 0 | not material |
+| umami base − Go, all kinds | 137,114 | +121.6 | +263.8 | +324.9 | +366.4 | 95,390 | 75,345 (55.0%) | MATERIAL |
+| umami V − base, all kinds | 137,500 | −5.9 | +78.3 | +108.8 | +182.3 | 33,265 | 3,354 (2.4%) | MATERIAL |
+| hono base − Go, all kinds | 20,535 | +4.5 | +45.5 | +65.5 | +66.9 | 1,111 | 0 | not material |
+
+Hono with the first load only (Go's first load span holds both projects' calls): V − Go all
+kinds p90 +53.8 (material by 3.8 ms), reads p90 +45.8; the V − base rows equal round 4's within
+2 ms (umami all kinds p90 +78.3 here against +78.2).
+
+Each side's own window (ms, the 5 runs pooled, all kinds):
+
+| | load | load end → watch | n | p10 | p50 | p90 | max |
+|---|---|---|---|---|---|---|---|
+| umami V | 248–285 | 12.8–16.2 | 137,500 | 196.4 | 232.2 | 269.6 | 299.7 |
+| umami base | 371–494 | 13.9–15.7 | 137,500 | 124.9 | 242.9 | 382.4 | 507.8 |
+| umami Go | 219–249 | 9.2–10.4 | 137,152 | 67.1 | 120.4 | 213.9 | 259.6 |
+| hono V (all loads) | 78–92 | 4.3–5.1 | 20,535 | 37.9 | 43.2 | 83.0 | 96.0 |
+| hono base (all loads) | 83–95 | 3.8–4.5 | 20,535 | 30.9 | 44.6 | 84.4 | 99.0 |
+| hono Go (all loads) | 78–94 | 2.9–3.8 | 20,535 | 23.5 | 38.2 | 80.5 | 98.1 |
+
+**Verdict: V − Go is material on umami** (p90 +170 ms, 53.5% of the paths over +100 ms), not
+material on hono.
+
+**Why.** Go's load makes its OS calls while its parse and resolve tasks grow the program: on
+umami its observations are spread over the load (ms into it: p10 28, p50 122, p90 171, the
+median at 52% of the load), and the load ends about 60 ms after the p90 call. V's workers make
+the same calls early (p10 16, p50 48, p90 82 ms, 90% within the first 31% of the load), and the
+serial loader then takes about 180 more ms on the prefetched answers before the load ends. The
+base is behind Go too, by more at p90 (+264): its serial demand is spread like Go's (median at
+45% of the load), but its load is 371–494 ms. Go's call order is far from the serial order
+(median rank shift 0.33 of the load against 0.07 between V and the base).
+
+**For options 2 and 3.** Both move V's observations toward the loader's demand. An estimate of
+that limit (each path placed at the base serial loader's relative position in V's load span,
+paired with Go): p50 +34, p90 +142, 26.9% over +100 ms, still material. The estimate assumes V's
+loader keeps the serial order scaled to its own span; it is not a measurement. Under it, neither
+option alone meets the criterion against Go, because the serial order itself differs from Go's
+and the rest of V's load runs after its last OS call.
 
 ## Memory (umami RSS after the first load, release builds, idle)
 `l1-rss.mjs`, VmRSS at 1, 5 and 12 s after the first diagnostics (steady): base `422caac19`
