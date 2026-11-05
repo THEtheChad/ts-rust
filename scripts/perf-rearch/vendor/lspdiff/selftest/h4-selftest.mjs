@@ -114,6 +114,9 @@ await part("finding 9", async () => {
   check("round 3: a stray line on stdout at EOF fails the session (probe eof rs-garbage)", sessionBad(garbage.items, (it) => it.status === "DIFF" && /no whole message/.test(it.detail)), JSON.stringify(bad(garbage.items)) + garbage.out.slice(-300));
   const short = lspdiff("eof-short", fake("rs-short-frame", "", '  sys.stdout.write("Content-Length: 100\\r\\n\\r\\n{\\"jsonrpc\\":"); sys.stdout.flush(); sys.exit(0)'));
   check("round 3: a truncated frame at EOF fails the session (probe eof rs-short-frame)", sessionBad(short.items, (it) => it.status === "DIFF" && /no whole message/.test(it.detail)), JSON.stringify(bad(short.items)));
+  // Recheck 2026-11-05: a child that inherited stdout writes after the server exits (probe late-eof).
+  const lateChild = lspdiff("eof-late", fake("rs-late-child", "import os", '  pid=os.fork()\n  if pid==0:\n   time.sleep(2.5); sys.stdout.write("debug: late child output\\n"); sys.stdout.flush(); os._exit(0)\n  sys.exit(0)'));
+  check("recheck: stdout held open by a child past the exit fails the session (probe late-eof)", sessionBad(lateChild.items, (it) => it.status === "DIFF" && /EOF|no whole message/.test(it.detail)), JSON.stringify(bad(lateChild.items)) + lateChild.out.slice(-300));
   const stray = lspdiff("stray-header", fake("rs-stray", "sys.stdout.write('debug: starting\\n')", "  sys.exit(0)"));
   check("round 3: stray output in front of a header is a protocol error", bad(stray.items).some((it) => it.status === "DIFF" && /stray bytes|protocol/.test(it.detail ?? "")), JSON.stringify(bad(stray.items).slice(0, 2)));
   const ok = lspdiff("clean", fake("rs-ok", "", "  sys.exit(0)"));

@@ -172,9 +172,12 @@ export class LspClient {
     const { signal } = await this.server.exited;
     clearTimeout(timer);
     const forced = killed && signal === "SIGKILL"; // it was still running, and our kill ended it
+    // stdout must really end (EOF), not just go quiet: a child that inherited it can still write.
+    // An expired wait is no evidence of a clean end (Astra recheck, 2026-11-05).
     let eof;
-    await Promise.race([this.stdoutEnded, new Promise((r) => (eof = setTimeout(r, 2000)))]);
+    const ended = await Promise.race([this.stdoutEnded.then(() => true), new Promise((r) => (eof = setTimeout(() => r(false), 2000)))]);
     clearTimeout(eof);
+    if (!ended) this.malformed ??= "stdout did not reach EOF within 2000 ms of the server's exit (a child process still holds it)";
     if (this.buf.length) this.malformed ??= `stdout ended with ${this.buf.length} bytes that are no whole message: ${JSON.stringify(this.buf.subarray(0, 80).toString("latin1"))}`;
     const exitMs = Math.round(performance.now() - asked);
     return this.server.result({ shutdown, forced, exitMs, extra: this.malformed ? [`protocol: ${this.malformed}`] : [] });

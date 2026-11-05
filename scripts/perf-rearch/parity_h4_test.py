@@ -337,12 +337,16 @@ def watch_checks(root):
         case2 = {'name': 'h4-limit', 'files': {'a.ts': 'export const a = 1;\n', 'sub/b.ts': 'export const b = 2;\n'},
                  'options': {'noEmit': True}, 'args': []}
         d2 = root / 'limit'
-        res = oracle.run(str(rewrite), d2, oracle.write_project(case2, d2), 10)
+        try:
+            oracle.run(str(rewrite), d2, oracle.write_project(case2, d2), 10)
+            unavailable = False
+        except oracle.WatchUnavailable:
+            unavailable = True
     finally:
         W._libc.inotify_add_watch = orig
     check('round 3: finding 6: a watch that cannot be built leaks no fd (probe watch-limit)', raised and after == before, (raised, before, after))
-    check('round 3: finding 6: the run falls back to the stat check and still sees the rewrite',
-          bool(res.input_changes) and bool(getattr(res, 'watch_error', None)), (res.input_changes, getattr(res, 'watch_error', None)))
+    # Recheck 2026-11-05: a stat check misses a transient parent-directory swap, so no fallback.
+    check('recheck: a checked run without its watch is not made (fails closed, harness ERROR)', unavailable, unavailable)
 
 
 # ---- cli tier: snapshots and staged caches (finding 1) ------------------------------------------

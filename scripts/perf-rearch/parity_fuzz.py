@@ -33,8 +33,8 @@ Inputs (lane H4): before every process (Go, tsc-rs, JS) the case dir is written 
 case, and oracle.run watches it while the process runs and checks every input file's bytes after it
 (vendor/difffuzz/oracle.py). What a process leaves in place of an input it overwrote or deleted is
 part of its result (Go emits over an input .js on some allowJs cases). When the inotify watch cannot be
-built (the instance or watch limit), the check falls back to the inputs' stat identity and bytes,
-which still see every write (the attempt's `watch` says so); this is no ERROR: tsc-rs must leave exactly what
+built (the instance or watch limit), the run is not made and the case is a harness ERROR, never
+cached: a stat check cannot see a transient swap of a parent directory. tsc-rs must leave exactly what
 Go leaves. A tsc-rs process that changes its inputs in any other way, or changes one and puts it
 back, is a failure (rsFailure "input"); a Go or JS process that changes one and puts it back is a
 harness ERROR, and its result is never cached. Go's and JS's results are staged (parity_inputs.Stage, with their key material) and
@@ -186,7 +186,7 @@ class Case:
             inputs = 'changed: ' + '; '.join(r.input_changes[:5])
         self.attempts.append({'why': why, 'secs': round(r.secs, 2), 'timeout': timeout, 'outcome': outcome,
                               **r.fingerprint(), 'inputs': inputs,
-                              **({'watch': f'stat fallback: {r.watch_error}'} if r.watch_error else {})})
+                              })
         self.results.append(r)
         return r
 

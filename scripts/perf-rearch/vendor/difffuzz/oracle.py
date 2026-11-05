@@ -127,11 +127,15 @@ def _input_changes(d, inputs, watch, before):
     return changes, after
 
 
+class WatchUnavailable(Exception):
+    """The inotify watch of a checked run's inputs could not be built: the run is not made."""
+
+
 def run(binary, d, inputs, timeout, args=()):
     """One compiler run in d. inputs: {path: bytes} from write_project (checked, see the top comment),
-    or a set of paths (not checked). Without inotify, or when the watch cannot be built (the instance
-    or watch limit), the check falls back to the inputs' stat identity and bytes (`watch_error` says
-    why), which still sees every write: a write sets the ctime."""
+    or a set of paths (not checked). A checked run needs its inotify watch: when it cannot be built
+    (no inotify, the instance or watch limit) the run raises WatchUnavailable, which the tier reports
+    as a harness ERROR. The stat identity and bytes of the inputs are checked as well."""
     d = Path(d)
     watch, watch_error, before = None, None, None
     if isinstance(inputs, dict):
@@ -145,6 +149,10 @@ def run(binary, d, inputs, timeout, args=()):
                 watch_error = str(e)
         else:
             watch_error = 'no inotify module'
+        if watch_error is not None:
+            # Fail closed (Astra recheck, 2026-11-05): a stat check of the input files cannot see a
+            # transient swap of a parent directory, so without the watch the run is no evidence.
+            raise WatchUnavailable(f'inotify watch unavailable, no run: {watch_error}')
     start = time.monotonic()
     # A CPU limit the kernel enforces, so a compiler on an exponential input still ends when this process is
     # killed before its own timeout fires (the new session keeps the caller's group kill from reaching it).
