@@ -6,16 +6,16 @@ usage: parity_compare.py merge DIR            DIR/<tier>/results.json -> DIR/res
        parity_compare.py known DIR            every item that is not good (the known diffs of a base),
                                               and every item with a referee status; IGNORED and SKIP counted
 
-Good: MATCH (CLI, LSP, fuzz, corpus), the referee statuses of parity_referees.py (CLI, fuzz,
-corpus: GO-BROKEN, GO-PARTITION, JS-AGREES), PASS and FLAKY (tests; FLAKY: passed when run again
+Good: MATCH (CLI, LSP, fuzz, corpus), the referee statuses (parity_referees.py on CLI, fuzz and
+corpus: GO-BROKEN, GO-PARTITION, JS-AGREES; parity_lsp.py on LSP: GO-BROKEN, JS-AGREES), PASS and FLAKY (tests; FLAKY: passed when run again
 alone). An item that is MATCH in BASE and has a referee status in CUR is not lost, but compare lists
 every such item, grouped by status ("good by a referee"), and so every recovered or new item with a
 referee status. compare fails on an item that is good in BASE
 and is DIFF, FAIL, ERROR, UNRUN, SKIP or IGNORED in CUR (a regression), and, when both runs are the
 same mode (quick or full), on such an item that CUR does not have (not run), and on any ERROR item
 in CUR (a harness error, or a tier that ended without results). Items that CUR has and
-BASE does not are new: listed, never a failure. An item that is GO-UNSTABLE in CUR is not compared
-(Go results are cached, so this needs a new Go cache). Items that are not good in BASE are known
+BASE does not are new: listed, never a failure. An item that is GO-UNSTABLE in CUR (only under
+--no-referees now) is not compared (Go results are cached, so this needs a new Go cache). Items that are not good in BASE are known
 diffs: listed when they recover.
 """
 import json

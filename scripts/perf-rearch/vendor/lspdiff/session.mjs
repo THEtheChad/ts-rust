@@ -2,13 +2,16 @@
 // see exactly the same sequence and Go picks its checkers deterministically.
 import { LspClient, fileUri, initializeParams } from "./client.mjs";
 import { endPosition, languageId, pickPositions, readText, rel } from "./project.mjs";
+import { TsserverClient } from "./tsserver.mjs";
 
 // Typed at the end of the first file, one character per didChange (the diff session asks for
 // a completion after each; bench.mjs types it at a fixed speed).
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
+// cmd: an LSP server's [binary, ...args], or { tsserver: <tsserver.js> } for JS tsserver driven over
+// its own protocol (tsserver.mjs, the referee; its ATA is always off).
 export async function startServer(cmd, root, { stderr, watch = false, ata = true, env } = {}) {
-  const client = new LspClient(cmd, { cwd: root, stderr, env });
+  const client = cmd.tsserver ? new TsserverClient(cmd.tsserver, { cwd: root, stderr, env }) : new LspClient(cmd, { cwd: root, stderr, env });
   const init = await client.request("initialize", initializeParams(root, { watch, ata }));
   if (init.error) throw new Error(`initialize failed: ${JSON.stringify(init.error)}`);
   client.notify("initialized", {});
@@ -49,10 +52,16 @@ export function removeTail(client, doc, length) {
 }
 
 // Runs the session and returns [{ step, method, params, result, error }]. ATA is off: its typings
-// would join an inferred project whenever its npm call returns (see initializeParams).
+// would join an inferred project whenever its npm call returns (see initializeParams). When the
+// server crashes or times out, the error carries the answers so far as `log`.
 export async function runSession(cmd, root, files, { positions = 4, stderr, env } = {}) {
-  const client = await startServer(cmd, root, { stderr, env, ata: false });
   const log = [];
+  let client;
+  try {
+    client = await startServer(cmd, root, { stderr, env, ata: false });
+  } catch (e) {
+    throw Object.assign(e, { log });
+  }
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
     log.push({ step, method, params, result: r.result, error: r.error, ms: r.ms });
@@ -114,6 +123,8 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
     await ask(`${name} after typing hover`, "textDocument/hover", { textDocument: { uri: d.uri }, position: hoverAt });
     removeTail(client, d, TYPED.length);
     await ask(`${name} after undo diagnostic`, "textDocument/diagnostic", { textDocument: { uri: d.uri } });
+  } catch (e) {
+    throw Object.assign(e, { log });
   } finally {
     await client.shutdown();
   }
