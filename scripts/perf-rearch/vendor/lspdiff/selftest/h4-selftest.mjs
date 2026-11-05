@@ -109,6 +109,13 @@ await part("finding 9", async () => {
   check("finding 9: a panic line on stderr fails the session even with exit 0", sessionBad(panic0.items, (it) => it.status === "DIFF" && /panic: at shutdown/.test(it.detail)), JSON.stringify(bad(panic0.items)));
   const hang = lspdiff("no-exit", fake("rs-hang", "", "  time.sleep(30)"));
   check("finding 9: a server that does not exit after exit fails the session", sessionBad(hang.items, (it) => it.status === "DIFF" && /killed|SIGKILL/.test(it.detail)), JSON.stringify(bad(hang.items)));
+  // Round 3, finding 2: stdout at EOF (the reviewer's eof/ probes) and stray output in front of a header.
+  const garbage = lspdiff("eof-garbage", fake("rs-garbage", "", '  sys.stdout.write("debug: shutdown complete\\n"); sys.stdout.flush(); sys.exit(0)'));
+  check("round 3: a stray line on stdout at EOF fails the session (probe eof rs-garbage)", sessionBad(garbage.items, (it) => it.status === "DIFF" && /no whole message/.test(it.detail)), JSON.stringify(bad(garbage.items)) + garbage.out.slice(-300));
+  const short = lspdiff("eof-short", fake("rs-short-frame", "", '  sys.stdout.write("Content-Length: 100\\r\\n\\r\\n{\\"jsonrpc\\":"); sys.stdout.flush(); sys.exit(0)'));
+  check("round 3: a truncated frame at EOF fails the session (probe eof rs-short-frame)", sessionBad(short.items, (it) => it.status === "DIFF" && /no whole message/.test(it.detail)), JSON.stringify(bad(short.items)));
+  const stray = lspdiff("stray-header", fake("rs-stray", "sys.stdout.write('debug: starting\\n')", "  sys.exit(0)"));
+  check("round 3: stray output in front of a header is a protocol error", bad(stray.items).some((it) => it.status === "DIFF" && /stray bytes|protocol/.test(it.detail ?? "")), JSON.stringify(bad(stray.items).slice(0, 2)));
   const ok = lspdiff("clean", fake("rs-ok", "", "  sys.exit(0)"));
   check("finding 9: control: a clean server run has no DIFF", ok.items.length > 0 && bad(ok.items).length === 0, JSON.stringify(bad(ok.items)) + ok.out.slice(-300));
   // A server that writes into its project (lane H4 sandbox): parity_lsp.py sets LSPDIFF_SANDBOX.
@@ -153,7 +160,7 @@ await part("finding 10", async () => {
   check("finding 10: the same requests in another order are a DIFF", items2.some((it) => it.status === "DIFF" && /order/.test(`${it.step} ${it.detail}`)), JSON.stringify(items2));
 });
 
-// ---- accumulated Go evidence (root's decision after H4) ---------------------------------------
+// ---- accumulated Go evidence (root's decision after H4; round 3: provenance, schema) ------------
 await part("go variants", async () => {
   const root = join(ROOT, "variants");
   mkdirSync(root, { recursive: true });
@@ -162,31 +169,87 @@ await part("go variants", async () => {
   const dir = join(out, "variants-diff");
   mkdirSync(dir, { recursive: true });
   const refs = (order) => ({ step: "a.ts:1:14 references", method: "textDocument/references", params: { position: { line: 0, character: 13 } }, result: order.map((line) => ({ uri: "file:///p/a.ts", range: range(line) })) });
-  const hover = { step: "a.ts:1:14 hover", method: "textDocument/hover", params: { position: { line: 0, character: 13 } }, result: null };
-  const clean = JSON.stringify({ clean: true, why: [], exit: { code: 0, signal: null }, shutdown: "ok" });
-  for (const n of ["go", "go2", "rs", "rs2"]) {
-    writeFileSync(join(dir, `${n}.jsonl`), [hover, refs([1, 2])].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    writeFileSync(join(dir, `${n}.session.json`), clean);
-  }
-  const prior = join(ROOT, "prior-go.jsonl"); // an earlier fill of the same material: the other order
-  writeFileSync(prior, [hover, refs([2, 1])].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const hover = (text) => ({ step: "a.ts:1:14 hover", method: "textDocument/hover", params: { position: { line: 0, character: 13 } }, result: text === null ? null : { contents: text } });
+  const clean = { clean: true, why: [], exit: { code: 0, signal: null }, shutdown: "ok", inputs: { modified: [], cacheWrites: 0 } };
+  const writeRuns = (go, rs) => {
+    for (const n of ["go", "go2", "rs", "rs2"]) {
+      writeFileSync(join(dir, `${n}.jsonl`), (n.startsWith("go") ? go : rs).map((e) => JSON.stringify(e)).join("\n") + "\n");
+      writeFileSync(join(dir, `${n}.session.json`), JSON.stringify(clean));
+    }
+  };
+  writeRuns([hover(null), refs([1, 2])], [hover(null), refs([1, 2])]);
+  const writePrior = (name, log, session) => {
+    const f = join(ROOT, `${name}.jsonl`);
+    writeFileSync(f, log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    if (session) writeFileSync(join(ROOT, `${name}.session.json`), JSON.stringify(session));
+    return f;
+  };
+  const prior = writePrior("prior-go", [hover(null), refs([2, 1])], clean); // an earlier verified fill: the other order
   const store = join(ROOT, "variants.json");
-  const run = (material, extra) => {
-    const r = spawnSync("node", [join(LSPDIFF, "lspdiff.mjs"), "diff", "--project", root, "--out", out, "--go-runs", "2", "--rs-runs", "2", "--reuse", "--go-variants-material", material, ...extra], { encoding: "utf8" });
-    const items = existsSync(join(dir, "items.json")) ? JSON.parse(readFileSync(join(dir, "items.json"), "utf8")) : [];
-    return { ref: items.find((it) => /references/.test(it.step)), hov: items.find((it) => /hover/.test(it.step)), out: r.stdout + r.stderr };
+  const run = (material, extra, lspdiffDir = LSPDIFF) => {
+    const r = spawnSync("node", [join(lspdiffDir, "lspdiff.mjs"), "diff", "--project", root, "--out", out, "--go-runs", "2", "--rs-runs", "2", "--reuse", "--go-variants-material", material, ...extra], { encoding: "utf8" });
+    const f = join(dir, "items.json");
+    const items = r.status === 0 && existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : [];
+    if (existsSync(f)) rmSync(f);
+    return { ref: items.find((it) => /references/.test(it.step)), hov: items.find((it) => /hover/.test(it.step)), out: r.stdout + r.stderr, status: r.status };
   };
   const M = JSON.stringify({ go: "sha-a", tree: "t1" });
   const first = run(M, ["--go-prior", prior, "--go-variants-out", store]);
-  check("go variants: an answer an earlier fill of the same material gave makes the item GO-BROKEN", first.ref?.status === "GO-BROKEN" && /vary across fills/.test(first.ref.detail) && first.hov?.status === "MATCH", JSON.stringify(first.ref) + first.out.slice(-300));
+  check("go variants: an answer an earlier verified fill of the same material gave makes the item GO-BROKEN", first.ref?.status === "GO-BROKEN" && /vary across fills/.test(first.ref.detail) && first.hov?.status === "MATCH", JSON.stringify(first.ref) + first.out.slice(-300));
   const again = run(M, ["--go-variants", store, "--go-variants-out", store]);
-  check("go variants: the record is monotone (the earlier variant stays without its log)", again.ref?.status === "GO-BROKEN", JSON.stringify(again.ref));
-  const rec = JSON.parse(readFileSync(store, "utf8"));
-  check("go variants: the record holds both variants", Object.values(rec.variants).some((hs) => hs.length === 2), JSON.stringify(rec.variants));
+  check("go variants: the record is monotone (the earlier variant stays without its log)", again.ref?.status === "GO-BROKEN", JSON.stringify(again.ref) + again.out.slice(-300));
+  const rec = existsSync(store) ? JSON.parse(readFileSync(store, "utf8")) : {};
+  const provs = Object.values(rec.variants ?? {}).flatMap((byHash) => (Array.isArray(byHash) ? [] : Object.values(byHash).flat()));
+  check("round 3: every variant keeps its provenance (fill, run, log)", Object.values(rec.variants ?? {}).some((byHash) => Object.keys(byHash).length === 2) && provs.length > 0 && provs.every((pv) => pv.fill && pv.run && pv.log) && provs.some((pv) => pv.log === prior), JSON.stringify(rec).slice(0, 400));
   const other = run(JSON.stringify({ go: "sha-b", tree: "t1" }), ["--go-variants", store]);
   check("go variants: negative control: a record of another binary is never merged", other.ref?.status === "MATCH" && /not merged/.test(other.out), JSON.stringify(other.ref) + other.out.slice(-200));
   const input = run(JSON.stringify({ go: "sha-a", tree: "t2" }), ["--go-variants", store]);
   check("go variants: negative control: a record of another input is never merged", input.ref?.status === "MATCH" && /not merged/.test(input.out), JSON.stringify(input.ref));
+
+  // Finding 3 (round 3): the reviewer's invalid-input prior: tsc-rs's hover differs from Go's; a prior
+  // log whose session changed its inputs must not turn that DIFF into GO-BROKEN.
+  writeRuns([hover("go"), refs([1, 2])], [hover("tsc-rs"), refs([1, 2])]);
+  const control = run(M, []);
+  check("round 3: control: tsc-rs's other hover is a DIFF", control.hov?.status === "DIFF", JSON.stringify(control.hov) + control.out.slice(-300));
+  const tainted = writePrior("prior-modified", [hover("tsc-rs"), refs([1, 2])], { ...clean, clean: false, why: ["it changed its inputs: /p/a.ts"], inputs: { modified: ["/p/a.ts"], cacheWrites: 0 } });
+  const t = run(M, ["--go-prior", tainted]);
+  check("round 3: a prior log whose session changed its inputs is never evidence (probe invalid-input-prior)", t.hov?.status === "DIFF" && /not used/.test(t.out), JSON.stringify(t.hov) + t.out.slice(-300));
+  const unclean = writePrior("prior-unclean", [hover("tsc-rs"), refs([1, 2])], { ...clean, clean: false, why: ["exit 3"], exit: { code: 3, signal: null } });
+  const u = run(M, ["--go-prior", unclean]);
+  check("round 3: nor one whose session did not end clean", u.hov?.status === "DIFF", JSON.stringify(u.hov));
+  const bare = writePrior("prior-bare", [hover("tsc-rs"), refs([1, 2])], null);
+  const b = run(M, ["--go-prior", bare]);
+  check("round 3: nor one without a session result", b.hov?.status === "DIFF", JSON.stringify(b.hov));
+  // A Go run of this fill that changed its inputs: no Go evidence at all.
+  writeFileSync(join(dir, "go2.session.json"), JSON.stringify({ ...clean, clean: false, why: ["it changed its inputs"], inputs: { modified: ["/p/a.ts"], cacheWrites: 0 } }));
+  const g = run(M, []);
+  check("round 3: a Go run of this fill that changed its inputs stops the session (no GO-BROKEN from it)", g.status !== 0 && /changed its inputs/.test(g.out), `${g.status} ${g.out.slice(-300)}`);
+  writeFileSync(join(dir, "go2.session.json"), JSON.stringify(clean));
+
+  // Finding 4: the reviewer's malformed records (a string where the hashes belong; the old shape).
+  const k0 = Object.keys(rec.variants ?? { "0\u0000a\u0000b\u0000{}": 1 })[0];
+  for (const [name, body] of [
+    ["a hash string, not an object of hashes (probe hash-string-not-array)", { ...rec, variants: { [k0]: "6c9df7c0dcf5a295a673106e0f75d4ee" } }],
+    ["the version-1 shape (probe poisoned-record)", { material: M, normalizer: rec.normalizer, variants: { [k0]: ["6c9df7c0dcf5a295", "a673106e0f75d4ee"] } }],
+    ["a hash of the wrong size", { ...rec, variants: { [k0]: { abc: [{ fill: "f", run: "go", log: "l" }] } } }],
+    ["a variant without provenance", { ...rec, variants: { [k0]: { "0123456789abcdef": [] } } }],
+    ["an unknown key", { ...rec, extra: true }],
+  ]) {
+    const f = join(ROOT, "bad-record.json");
+    writeFileSync(f, JSON.stringify(body));
+    const r = run(M, ["--go-variants", f]);
+    check(`round 3: a malformed record fails loudly: ${name}`, r.status !== 0 && /malformed Go variant record/.test(r.out), `${r.status} ${JSON.stringify(r.hov)} ${r.out.slice(-200)}`);
+  }
+
+  // Finding 5: the fingerprint covers the whole answer-to-hash transformation: an lspdiff whose
+  // `answer` hashes another view of the answer must not read this record.
+  const copy = join(ROOT, "lspdiff-copy");
+  spawnSync("cp", ["-r", LSPDIFF, copy]);
+  const src = readFileSync(join(copy, "lspdiff.mjs"), "utf8");
+  writeFileSync(join(copy, "lspdiff.mjs"), src.replace("const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method));", "const answer = (e, method) => JSON.stringify(normalize(e && { result: e.result }, method));"));
+  writeRuns([hover(null), refs([1, 2])], [hover(null), refs([1, 2])]);
+  const changed = run(M, ["--go-variants", store], copy);
+  check("round 3: a changed answer function does not read the record (normalizer identity)", changed.ref?.status === "MATCH" && /other normalizer/.test(changed.out), JSON.stringify(changed.ref) + changed.out.slice(-200));
 });
 
 // ---- finding 11: the ATA barrier never succeeds on its deadline -------------------------------

@@ -272,6 +272,79 @@ def fuzz_input_checks(root):
     check('inputs: not making Go\'s overwrite is a DIFF', row['status'] == 'DIFF', row)
 
 
+@contextlib.contextmanager
+def _slow_reader(delay):
+    """The reviewer's watch-race: the reader thread has read events but not parsed them yet when the
+    run's final check comes (every parse on the reader thread waits `delay` first)."""
+    import threading
+    import parity_watch as W
+    orig = W.Watch._parse
+
+    def slow(self, data):
+        if threading.current_thread() is getattr(self, 'thread', None):
+            import time
+            time.sleep(delay)
+        return orig(self, data)
+    W.Watch._parse = slow
+    try:
+        yield
+    finally:
+        W.Watch._parse = orig
+
+
+def _fds():
+    return len(os.listdir('/proc/self/fd'))
+
+
+def watch_checks(root):
+    import oracle
+    import parity_watch as W
+    case = {'name': 'h4-rewrite', 'files': {'a.ts': 'export const a = 1;\n'}, 'options': {'noEmit': True}, 'args': []}
+    rewrite = script(root / 'rewrite', 'from pathlib import Path\nimport time\np = Path("a.ts"); p.write_bytes(p.read_bytes()); time.sleep(.15)\n')
+    d = root / 'race'
+    with _slow_reader(0.5):
+        res = oracle.run(str(rewrite), d, oracle.write_project(case, d), 10)
+    check('round 3: finding 1: a same-byte rewrite is seen while the reader is still parsing (probe watch-race)',
+          bool(res.input_changes), (res.input_changes, res.inputs_after))
+    go = script(root / 'go-plain', 'import time\ntime.sleep(.15)\n')
+    with _slow_reader(0.5):
+        row = run_case(root, fuzz_args({'go': go, 'rs': rewrite}, root, timeout=10), {**case, 'name': 'h4-watch-gate'})
+    check('round 3: finding 1: and the case is a failure, not MATCH (probe watch-gate)', row['status'] == 'DIFF' and row.get('rsFailure') == 'input', row)
+
+    # Finding 6: the watch cannot be built (the watch limit): nothing leaks, and the run falls back.
+    orig = W._libc.inotify_add_watch
+    calls = {'n': 0}
+
+    def failing(fd, path, mask):
+        calls['n'] += 1
+        if calls['n'] >= 2:
+            import ctypes
+            ctypes.set_errno(28)  # ENOSPC: the watch limit
+            return -1
+        return orig(fd, path, mask)
+    tree = root / 'tree'
+    (tree / 'sub').mkdir(parents=True)
+    before = _fds()
+    W._libc.inotify_add_watch = failing
+    try:
+        try:
+            W.Watch([str(tree)])
+            raised = False
+        except W.WatchError:
+            raised = True
+        after = _fds()
+        calls['n'] = 0
+        case2 = {'name': 'h4-limit', 'files': {'a.ts': 'export const a = 1;\n', 'sub/b.ts': 'export const b = 2;\n'},
+                 'options': {'noEmit': True}, 'args': []}
+        d2 = root / 'limit'
+        res = oracle.run(str(rewrite), d2, oracle.write_project(case2, d2), 10)
+    finally:
+        W._libc.inotify_add_watch = orig
+    check('round 3: finding 6: a watch that cannot be built leaks no fd (probe watch-limit)', raised and after == before, (raised, before, after))
+    check('round 3: finding 6: the run falls back to the stat check and still sees the rewrite',
+          bool(res.input_changes) and bool(getattr(res, 'watch_error', None)), (res.input_changes, getattr(res, 'watch_error', None)))
+
+
 # ---- cli tier: snapshots and staged caches (finding 1) ------------------------------------------
 
 def cli_project(root, name):
@@ -393,20 +466,12 @@ def variants_checks(root):
     got = [d.name for d in L.prior_dirs(cache, 'hono-f12-p6', 'hono-f12-p6-' + 'c' * 24, cur)]
     check('go variants: prior logs come from the same material at another run count, never another input',
           got == ['hono-f12-p6-' + 'same'.ljust(24, '0')], got)
-    base = root / 'base'
-    (base / 'lsp').mkdir(parents=True)
-    sha = 'f' * 12
-    key = f'hono-f12-p6-{I.json_hash({"session": sess, "root": "/p/hono", "real": "/p/hono", "sources": sha, "env": {"LSPDIFF_SETTLE_MS": None, "LSPDIFF_REQUEST_TIMEOUT_MS": None}, "extra": ["g4"], "tree": snap.hash})[:24]}'
-    (base / 'lsp/results.json').write_text(json.dumps({'sessions': {'hono-f12-p6': {'key': key}}}))
-    go_dir = root / 'go'
-    (go_dir / 'lsp' / key).mkdir(parents=True)
-    (go_dir / 'lsp' / key / 'go.jsonl').write_text('{}\n')
-    logs, _ = L.legacy_prior(base, sess, '/p/hono', snap, info, go_dir, sha)
-    check('go variants: the base\'s Go logs are imported when its key is this run\'s content', len(logs) == 1, logs)
-    logs, why = L.legacy_prior(base, sess, '/p/hono', other, info, go_dir, sha)
-    check('go variants: negative control: the base\'s logs of another input are never imported', logs == [], why)
-    logs, why = L.legacy_prior(base, sess, '/p/hono', snap, info, go_dir, 'e' * 12)
-    check('go variants: negative control: nor of other scripting sources', logs == [], why)
+    h3 = cache / ('hono-f12-p6-' + 'h3'.ljust(24, '0'))  # an H3 cache dir: no key.json, whatever its key says
+    h3.mkdir()
+    (h3 / 'go.jsonl').write_text('{}\n')
+    got = [d.name for d in L.prior_dirs(cache, 'hono-f12-p6', 'hono-f12-p6-' + 'c' * 24, cur)]
+    check('round 3: Go logs of a harness before H4 are never priors (no import by key alone)',
+          h3.name not in got and not hasattr(L, 'legacy_prior'), got)
 
 
 def main():
@@ -419,7 +484,8 @@ def main():
     root.mkdir(parents=True)
     try:
         for name, part in (('compare', compare_checks), ('fuzz', fuzz_checks), ('fuzz inputs', fuzz_input_checks),
-                           ('cli', cli_checks), ('lsp keys', lsp_key_checks), ('go variants', variants_checks)):
+                           ('cli', cli_checks), ('lsp keys', lsp_key_checks), ('go variants', variants_checks),
+                           ('watch', watch_checks)):
             if args.only and args.only not in name:
                 continue
             sub = root / name.replace(' ', '-')
