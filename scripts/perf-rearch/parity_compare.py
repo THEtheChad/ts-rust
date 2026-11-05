@@ -21,8 +21,9 @@ referee status. compare fails (PARITY FAIL) on:
     "tsc-rs: ..."), whatever BASE says;
   - ERROR: any ERROR item in CUR (a harness error, a tier that ended without results, an input that
     changed during the run).
-An item listed in parity-grandfathered.json (next to this file: item id -> status, rsFailure and a
-reason) is excused from NEW and CRASH only while its status and rsFailure are the ones listed; every
+An item listed in parity-grandfathered.json (next to this file: item id -> status, rsFailure,
+detailContains and a reason) is excused from NEW and CRASH only while its status and rsFailure are
+the ones listed and its detail contains detailContains (the exact failure, such as the panic line); every
 excused item is printed with its reason, and so is every entry that no longer applies. Items that are
 not good in BASE are known diffs: listed when they recover.
 """
@@ -86,7 +87,8 @@ def load_grandfathered(path=GRANDFATHERED):
 
 def _excused(k, row, grand):
     g = grand.get(k)
-    return bool(g) and g.get('status') == row['status'] and g.get('rsFailure') == rs_failure(row)
+    return (bool(g) and g.get('status') == row['status'] and g.get('rsFailure') == rs_failure(row)
+            and g.get('detailContains', '') in (row.get('detail') or row.get('sig') or ''))
 
 
 def compare(base, cur, grand_file=GRANDFATHERED):
