@@ -570,3 +570,21 @@ once a **reconciliation step** is built and tested.
     loader (L2-era). It is a timing property: the output for a given disk
     state is unchanged.
   - **ttfd** at the L1 head: 280 ms against Go's 288 ms.
+- **2026-11-04, Chad: partition-dependent output contract** (brief, "Goal").
+  - **The rule:** byte-identical with Go c4, except where Go's own output
+    varies with `--checkers N` (N in {1, 2, 3, 4, 6, 8, 12, 16}). There, the
+    whole run must equal some Go-N run, and tsc-rs must be deterministic.
+  - **Evidence (zod `packages/zod`):** JS tsc 6.0.3 reports 0 errors and Go c4
+    reports 22, including 6 TS5115 and the TS2344 at
+    `assignability.test.ts(149,61)`. Go `--checkers 16` reports fewer.
+  - **D1 impact:**
+    - Limit triggers may stop forcing a fallback, if validation shows that
+      refine outputs always land in the Go-N set.
+    - The fallback rate (31% of the parity set) should drop.
+    - The trigger policy per class is decided from validation data before
+      merge.
+  - **Harness:** the parity CLI, corpus and fuzz tiers need a GO-PARTITION
+    class: on a mismatch with Go c4, run Go at every N and accept an exact
+    match to any of them.
+  - **D2** (shared type store) becomes more plausible, but only for designs
+    whose results can be shown to equal some Go-N.

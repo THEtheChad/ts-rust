@@ -14,11 +14,27 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 - **Behavior parity is the hard bar; code-shape parity is not.** This branch
   drops upstream's rule of matching Go's code shape (`// Go:` markers,
   `// PORT:` notes, "contract" constraints such as the serial loader of
-  contract 10). Any architecture is allowed if the output stays byte-identical.
+  contract 10). Any architecture is allowed if the output stays byte-identical (see the partition exception below).
 - **"Output"** means everything observable: stdout and stderr of `tsc`,
   diagnostics (text, order, codes, spans), emitted JS, `.d.ts` and maps,
   `.tsbuildinfo`, exit codes, `--extendedDiagnostics`-style counts only where
   they are printed, and every LSP answer.
+- **Partition-dependent output (Chad, 2026-11-04).** Byte-identical with Go's
+  default run is the contract, with one exception. Where Go's *own* output
+  depends on how it splits files across checkers, tsc-rs may give any output
+  that Go itself gives at some checker count.
+  - **Which counts:** `--checkers N` for N in {1, 2, 3, 4, 6, 8, 12, 16}.
+  - **What must match:** the whole run (stdout, stderr, exit code, emit,
+    build info) must equal one of those Go runs exactly.
+  - **Determinism:** tsc-rs must give the same output on every run.
+  - **When the exception doesn't apply:** where Go gives the same output at
+    every N in the set, tsc-rs must match it byte for byte. Mechanically: run
+    Go at every N. If the outputs differ, the item is GO-PARTITION and
+    accepts any of them; if not, it needs an exact match.
+  - **Why:** in these cases Go's default answer is an artifact of its split.
+    On zod a limit hit in an earlier file caches a degraded type; JS tsc
+    6.0.3 reports 0 errors there and Go c4 reports 22.
+  - **Not allowed:** "Better than Go" in general, and run-to-run variation.
 - **Oracles:** Go at pin `3e9236361fa9` (`~/.local/bin/tsgo-oracle-3e9236361fa9`,
   LSP `~/.local/bin/tsgo-lsp-oracle-3e9236361fa9 --lsp --stdio`), Go source
   `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`. The JS `tsc` is a
