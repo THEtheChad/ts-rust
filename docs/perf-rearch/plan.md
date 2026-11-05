@@ -519,3 +519,21 @@ once a **reconciliation step** is built and tested.
   - **Perf lead for timing window 2:** in hono-f12, the first request after
     12 didOpens takes 0.65–1.05 s in tsc-rs vs 0.12 s in Go. Measure it
     after L1.
+- **2026-11-04, D1-S2 done; Astra: PROCEED WITH CHANGES**
+  (`reviews/2026-11-04-astra-d1-s2.md`).
+  - **Blockers:**
+    - the virtual-count nested resets;
+    - cycle-agreement identities;
+    - transactional writes for the fallback.
+  - **Any unexplained divergence blocks the flip**, id-order ones included.
+  - **D1-I1 started:**
+    - exact-mode routing chosen before speculation;
+    - production refinement without env switches;
+    - a write and stream barrier, with execve fallback;
+    - limit monitors with the fixed counter;
+    - finding-5 monitors.
+  - **Next lanes:** I2 (cycle agreement, relation bound), then the
+    validation campaign, then C3 deletion and the default flip.
+  - **Separate small lane later:** Go shares diagnostic pointers where tsc-rs
+    clones values (`ast/misc.rs:963`), so a mutation after collection is
+    visible only in Go.
