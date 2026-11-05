@@ -506,3 +506,16 @@ once a **reconciliation step** is built and tested.
   - **L1 round 3:** delete the reconciliation, keep V as the only LSP load
     path, and compare V's observation-to-registration window with the base's.
   - This replaces the "Default with recovery" decision.
+- **2026-11-04, ND1 merged.** The hono `0057` inlayHint and the five
+  `references` flakes were ATA racing the requests (a network `npm` call);
+  Go shares the race.
+  - **Harness fix:** standard sessions turn ATA off
+    (`disableAutomaticTypeAcquisition`), and every LSP session runs Go 4
+    times, with the run count in the cache key. Go's own references order
+    varies, from `ls/crossproject.go` goroutines.
+  - **LSP tier** (`runs/nd1-lsp-g4`): 0 lost, 25 recovered, 6 newly
+    Go-unstable. The one DIFF, `watch-narrow-umami-f12/0012`, is in the base
+    too.
+  - **Perf lead for timing window 2:** in hono-f12, the first request after
+    12 didOpens takes 0.65–1.05 s in tsc-rs vs 0.12 s in Go. Measure it
+    after L1.
