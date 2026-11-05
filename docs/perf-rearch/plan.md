@@ -722,3 +722,18 @@ once a **reconciliation step** is built and tested.
   - **Full gate:** OK, 0 lost (`runs/h4r3-a8392a002-full`), now
     `base-current`.
   - **Next:** a focused Astra recheck, then the interim rule is dropped.
+- **2026-11-05, gate accepted.** Astra's focused recheck closed findings 1
+  and 3–6.
+  - **Root fixed the last two gaps** (`22c967e4f`):
+    - **No watch, no run:** a fuzz/corpus run whose inotify watch can't be
+      built now fails closed as a harness ERROR.
+    - **Real EOF:** an LSP session is unclean unless stdout really reaches
+      EOF.
+  - **Gate after the fixes:**
+    - The full run (`runs/recheck-a8392a002-full`) lost only
+      `watch-umami-f12/0012`. The record had been reset by the `client.mjs`
+      edit.
+    - After two `--go-refill` fills, the LSP tier lost 0
+      (`runs/recheck-a8392a002-lsp`).
+  - **The interim rule is dropped.** The brief now says to add refills after
+    any lspdiff edit.

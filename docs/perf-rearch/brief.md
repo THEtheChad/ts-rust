@@ -81,13 +81,11 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
 
 ## Parity gate (mandatory for every change)
 
-> **Interim, until lane H3 merges (2026-11-05).** Astra found false-good
-> paths in the referees and the compare (`reviews/2026-11-05-astra-h1h2.md`).
-> Until H3 lands, PARITY OK is not enough on its own:
-> - **Referee passes:** list every item that is good only through a referee
->   (GO-BROKEN, GO-PARTITION, JS-AGREES), and every "new items not good".
-> - **Quick runs:** confirm the compared count, because a quick run against
->   a full base can drop items silently.
+> **Harness edits reset Go evidence.** The LSP Go-variant record is keyed on
+> the lspdiff sources, so any edit to them starts the record empty. Sessions
+> where Go races (hono and query references, the umami watch load) can then
+> come out LOST. Before judging a run after such an edit, add verified fills:
+> `parity_lsp.py --tier full --only '^<session>$' --go-refill '^<session>$'`.
 
 `scripts/perf-rearch/parity.sh quick|full <tsgo bin> --base ~/.cache/perf-rearch/parity/base-current`
 prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
