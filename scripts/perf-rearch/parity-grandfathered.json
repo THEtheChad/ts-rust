@@ -211,5 +211,11 @@
    "reason": "Go times out too (60 s; deep nesting): there is no Go answer, and a hang in both is no regression of tsc-rs. Recheck if tsc-rs gets an answer here: then it is GO-BROKEN, good.",
    "detailContains": "go-broken (GO-FAIL: Go timed out)"
   }
+ },
+ "fuzz/1:25496": {
+  "status": "DIFF",
+  "rsFailure": "timeout",
+  "reason": "tsc-rs is about 8x slower than Go here (84 s vs 10.7 s, same output; found by lane H3 on 2026-11-05). Lane P1 fixes it; remove this entry when P1 merges.",
+  "detailContains": "tsc-rs timeout in an attempt"
  }
 }
