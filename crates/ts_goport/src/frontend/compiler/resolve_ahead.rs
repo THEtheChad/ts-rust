@@ -971,17 +971,50 @@ pub fn hold_in_job(on: bool) {
     HOLD_IN_JOB.1.notify_all();
 }
 
+/// Tests (diagnostics): the jobs that held workers wait in (one entry per
+/// waiting worker, by the job's address).
 #[cfg(feature = "diagnostics")]
-fn diag_hold_in_job() {
+static HELD_JOBS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+/// Tests (diagnostics): the distinct jobs with a worker held in them
+/// (`hold_in_job`); each such worker holds its load's view.
+#[cfg(feature = "diagnostics")]
+#[must_use]
+pub fn jobs_held() -> usize {
+    let mut jobs = HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    jobs.sort_unstable();
+    jobs.dedup();
+    jobs.len()
+}
+
+#[cfg(feature = "diagnostics")]
+fn diag_hold_in_job(job: &Arc<Job>) {
+    let id = Arc::as_ptr(job) as usize;
     let mut held = HOLD_IN_JOB
         .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !*held {
+        return;
+    }
+    HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(id);
     while *held {
         held = HOLD_IN_JOB
             .1
             .wait(held)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+    let mut jobs = HELD_JOBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(at) = jobs.iter().position(|&held| held == id) {
+        jobs.swap_remove(at);
     }
 }
 
@@ -1180,7 +1213,7 @@ fn run_job(job: &Arc<Job>) {
     let (package_jsons, reads, kept) = KeptPackageJsons::take(job);
     let fs = begin_ahead_fs(job, reads, kept);
     #[cfg(feature = "diagnostics")]
-    diag_hold_in_job();
+    diag_hold_in_job(job);
     let fs: Rc<dyn Fs> = fs;
     let mut resolver = job.config.new_resolver(fs, Some(package_jsons.clone()));
     resolver.caches.shared = Some(SharedResolutionLink {

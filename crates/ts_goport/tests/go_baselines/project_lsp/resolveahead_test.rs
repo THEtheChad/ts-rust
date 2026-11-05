@@ -2304,8 +2304,8 @@ mod load_view {
         /// resolve-ahead worker of a keyed load is held inside the job
         /// across the load's end (`hold_in_job`), and a third load runs
         /// meanwhile, whose ended job waits to be freed behind them: only
-        /// the held view stays alive (`live_views`, diagnostics only) until
-        /// the workers are let go.
+        /// the views of the jobs with held workers stay alive (`live_views`,
+        /// `jobs_held`, diagnostics only) until the workers are let go.
         fn a_view_held_by_a_worker_goes_when_the_worker_returns() {
             use ts_goport::frontend::vfs::loadview::diag::live_views;
             if ts_goport::program::available_cores() == 1 {
@@ -2335,12 +2335,18 @@ mod load_view {
             program(&session, &file_uri(&root, "src/index.ts"));
             session.wait_for_background_tasks();
             // The loads have ended; their scopes, parse pools and jobs let go
-            // of their views, and the held workers keep the second one.
-            // The free thread can be behind on a busy machine: wait for it.
+            // of their views. Only the jobs with held workers keep theirs: the
+            // second load's, and the third's too when one of its workers
+            // started before that load ended (a busy machine). The free
+            // thread can be behind: wait for it.
             assert!(
-                wait_until(10, || live_views() == 1),
-                "only the held workers' view should be alive: {}",
-                live_views()
+                wait_until(10, || {
+                    let held = resolve_ahead::jobs_held() as u64;
+                    held >= 1 && live_views() == held
+                }),
+                "views alive: {}, jobs with held workers: {}",
+                live_views(),
+                resolve_ahead::jobs_held()
             );
             resolve_ahead::hold_in_job(false);
             assert!(
