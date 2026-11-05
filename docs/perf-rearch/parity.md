@@ -2,8 +2,8 @@
 
 `scripts/perf-rearch/parity.sh` checks that tsc-rs's output still matches Go `tsc` at the pin
 (`3e9236361fa9`, `~/.local/bin/tsgo-oracle-3e9236361fa9`, LSP `tsgo-lsp-oracle-3e9236361fa9`)
-byte for byte. The rewrite lanes run it on every change. A change passes when no item that was
-good in the base on main is bad now.
+byte for byte, except where a referee (see "Referees") accepts a difference. The rewrite lanes run
+it on every change. A change passes when no item that was good in the base is bad now.
 
 ```sh
 scripts/perf-rearch/parity.sh quick <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main   # ~4 min warm
@@ -16,16 +16,20 @@ scripts/perf-rearch/parity.sh help
 
 The last line is `PARITY OK` (exit 0) or `PARITY FAIL` (exit 1). Before it come the lost items
 (`LOST <item>: <status> <first difference>`), any item the run did not reach (when it was the same
-mode as the base), harness `ERROR`s, new items that are not good, recovered items and FLAKY tests.
+mode as the base), harness `ERROR`s, new items that are not good, recovered items, every item that
+became good by a referee (grouped by status, never cut) and FLAKY tests.
 Only one gate runs at a time, under a lock: the scratch paths are fixed, so the paths in the
 output agree with the cached Go results. The test tier builds and tests the checkout (`--checkout`,
 default the worktree that holds the script). Every other tier runs `<tsgo bin>`.
 
 ## Tiers
 
-Each item is MATCH (tsc-rs equals Go), DIFF, GO-UNSTABLE (two Go runs disagree, so the item is not
-compared), GO-FAIL (Go timed out or panicked; fuzz only), ERROR (harness), SKIP, or for tests
-PASS / FAIL / FLAKY / IGNORED / UNRUN. The good statuses are MATCH, PASS and FLAKY.
+Each item is MATCH (tsc-rs equals Go's default run), one of the referee statuses GO-BROKEN,
+GO-PARTITION and JS-AGREES (cli, fuzz and corpus; see "Referees"), DIFF, GO-UNSTABLE (lsp: two Go
+runs disagree, so the item is not compared; cli, fuzz and corpus only with `--no-referees`), GO-FAIL
+(fuzz and corpus with `--no-referees`: Go timed out or panicked), ERROR (harness), SKIP, or for
+tests PASS / FAIL / FLAKY /
+IGNORED / UNRUN. The good statuses are MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, PASS and FLAKY.
 
 Go results are cached under `~/.cache/perf-rearch/parity/go-cache/<sha of the Go binary>/` and are
 keyed by everything that goes into the run, including a project fingerprint (the commit plus the
@@ -200,7 +204,120 @@ project, unmutated, through the real binary. TestLocal checks the same cases in-
 the test harness; this tier checks them through the CLI (option parsing, file system, the
 multi-checker program and the output writer).
 
+## Referees (`parity_referees.py`; Chad, 2026-11-04)
+
+The brief's "Goal" allows three kinds of difference from Go's default run (4 checkers), each decided
+mechanically. They apply to the cli, fuzz and corpus tiers; the lsp tier keeps MATCH / DIFF /
+GO-UNSTABLE (its checker pool is not covered by the partition rule, and it has no JS referee). An
+item that is not MATCH is judged in this order:
+
+1. **tsc-rs determinism.** Two tsc-rs runs that differ are a DIFF (`rs-nondet`), whatever Go does.
+   Where a tier ran tsc-rs once (quick, corpus), it runs it once more before it reports any of the
+   three statuses below; a difference there is `rs-nondet` too.
+2. **GO-BROKEN.** Go's default run crashed (a Go panic, a signal, `oracle.crashed`), timed out, or
+   its repeated runs (2; 8 with `--traceResolution`) differ. Good when tsc-rs neither crashes nor
+   times out; the detail says what Go did (for a crash, Go's `panic:` line). If tsc-rs crashes or
+   times out too, the item is a DIFF (`go-broken (...), tsc-rs ...`); on fuzz and corpus an exact
+   copy of Go's crash output is MATCH. A tsc-rs crash is a panic trace, exit 70 or a signal, and
+   also a Go-style `panic: ` line on stderr: that is how tsc-rs reproduces a Go crash on purpose
+   (`strings: negative Repeat count`, nil pointers; the difffuzz finds TypeScript #65078 and
+   #65079). Such a reproduction is a crash, so it is not GO-BROKEN.
+   *Mapping:* the Go cache keeps GO-FAIL (fuzz: a timeout or crash in any Go run) and
+   GO-UNSTABLE (runs differ) as before; they are now properties of the Go result, and the case's
+   status is GO-BROKEN, MATCH or DIFF from them. On cli, Go's two runs differing used to be the item
+   status GO-UNSTABLE; it is now GO-BROKEN (or DIFF). GO-UNSTABLE and GO-FAIL as item statuses are
+   left only on lsp and under `--no-referees` (the `js` mode). GO-BROKEN is judged at the default
+   settings only: a Go race at some `--checkers N` is not GO-BROKEN (see step 3).
+3. **GO-PARTITION.** Go runs with `--checkers N` for N in {1, 2, 3, 4, 6, 8, 12, 16}, as often per
+   N as the tier runs its default (2, or 8 with `--traceResolution`), normalized the same way.
+   An N whose own runs differ is a Go race at that N, not a partition, and is left out (`unstable`
+   in the row); so is an N where Go timed out (`failed`; not cached). If the remaining outputs
+   differ across N and tsc-rs's output (exit, stdout, stderr, every written file; both runs of
+   incr) equals one exactly, the item is GO-PARTITION with the matching N in `detail` and the
+   groups of N with equal output in `referees.partition.groups`. If they differ and tsc-rs equals
+   none, the item goes on to step 4 and, failing that, is a DIFF whose detail starts
+   `go-partition-miss`. If Go gives one output at every N, step 3 has nothing to say.
+   It does not apply where the item's own arguments fix the checkers or are another mode:
+   `--checkers`, `--singleThreaded`, `-b`/`--build`, `-w`/`--watch`, and `--showConfig`, which
+   prints `"checkers": N` itself (`referees.partition.skipped` says why). The CLI items never set
+   the first two; difffuzz drops both options from its seeds.
+4. **JS-AGREES.** JS tsc 6.0.3 runs once (it is single-threaded), with the same arguments in the
+   same place (cli: `node <tsc>` on the item's overlay, as `parity.sh js` does; fuzz: the case
+   dir). It must side with tsc-rs on every point where tsc-rs and Go differ:
+   - every diagnostic Go prints and tsc-rs doesn't is absent from JS's output: JS has neither that
+     diagnostic nor more diagnostics of that code at that place than tsc-rs has;
+   - every diagnostic tsc-rs prints and Go doesn't is in JS's output, equal in file, line, column,
+     category, code and text (message chain and related information included), as often as
+     tsc-rs prints it;
+   - every written file that differs from Go's (content, missing or extra) equals JS's;
+   - the exit code, if it differs from Go's, equals JS's;
+   - per run, for the two-run variants.
+   Points where tsc-rs equals Go need nothing from JS. What JS cannot referee fails the check and
+   leaves a DIFF: stderr that differs from Go's, any other stdout line (listFiles, explainFiles,
+   showConfig, extendedDiagnostics statistics, `-b` messages) that differs from Go's, diagnostics
+   both print but in another order, a `Found N errors` summary that does not count tsc-rs's own
+   errors, and a difference with no point at all (blank lines only). The detail counts the points
+   by kind and the most common codes (`JS sides with tsc-rs on 22 points: 22 go-only (TS2344 x22)`);
+   `referees.js.points` lists up to 50 (`go-only TS2344 at src/v4/x.ts(10,5)`, `file out/a.js`,
+   `exit 2>0`).
+   Since every written file that differs must equal JS's, an item whose `.tsbuildinfo` differs from
+   Go's (composite or incremental configs, where the build info records diagnostics) cannot be
+   JS-AGREES: JS's build info has another format and version.
+5. Otherwise **DIFF**, with the reasons of steps 3 and 4 in front of the first difference.
+
+`--referee-all` (parity_cli.py, parity_fuzz.py) runs step 4 even where step 3 decided, and records
+it in `referees.js`; the status stays the first referee's. `--no-referees` gives the old statuses.
+
+**Demonstration on zod** (2026-11-05). The D1 spike `tsgo-d1s1-a17219bf7-goport` with
+`GOPORT_CERT_SPLIT=refine GOPORT_CERT_N=8`, as the item `cli/zod/zod/noemit`
+(`--rs "env GOPORT_CERT_SPLIT=refine GOPORT_CERT_N=8 <bin>" --only '^cli/zod/zod/noemit$' --referee-all`):
+- Go's output differs at every one of the 8 N (22 errors at c4; 19, 20, 19, 22, 21, 23, 21, 20 at
+  c1 to c16), each N stable over its 2 runs. tsc-rs (the same in both runs) prints 21 errors and
+  equals none of them: Go c16 plus a TS5115 at `fix-json-issue.test.ts(17,14)` that c4 also prints.
+  So step 3 gives `go-partition-miss`.
+- Against c4, the one difference is c4's TS2344 at `src/v4/mini/tests/assignability.test.ts(149,61)`,
+  which tsc-rs does not print. JS 6.0.3 prints 15 errors there, all TS6133/TS6196, and not that
+  TS2344. So the JS delta rule holds, and the item is **JS-AGREES** (`JS sides with tsc-rs on 1
+  points: 1 go-only (TS2344 x1)`).
+- With `GOPORT_CERT_N` 1, 2, 3, 4, 6, 12 or 16 the spike's output equals Go c4 byte for byte. Only
+  N=8 differs.
+
+**Diagnostic parsing** (`parse_output`). Both formats parse: `file(line,col): error TSn: text`
+(`--pretty false`) and `file:line:col - error TSn: text` (`--pretty true`, ANSI colors removed),
+plus global `error TSn: text`. Indented lines right after the header are the message chain. In
+pretty output, code frames (the reverse-video gutter lines and squiggles) are dropped, and related
+information is read after the blank line. JS 6 and Go differ in one systematic way here, and it is
+normalized: Go prints related information as `  file:line:col - text` before its code frame, JS 6
+as `  file:line:col`, the frame, then `    text`; both become `(file, line, col, text)`. The
+`Found N errors ...` line and its `Errors  Files` table are a summary, not diagnostics: they are
+taken out of all three outputs, and tsc-rs's own summary must count its errors (in total and per
+file). Blank lines are ignored outside diagnostics (Go ends pretty output with one more blank line
+than JS). `--pretty false` output prints no related information and no summary, in Go and JS alike.
+Neither prints a version banner in these modes.
+
+**Caches.** Go's per-N results sit next to its default result in the Go cache:
+`go-cache/<go sha>/cli/<item key>.p1-c<N>.json` and `go-cache/<go sha>/{fuzz,corpus}/<case>.r<runs>.p1-c<N>.pkl`.
+JS's results are in `~/.cache/perf-rearch/parity/js-cache/<sha of lib/tsc.js>/{cli,fuzz,corpus}/`,
+keyed like the Go cache. Timeouts are not cached. All extra runs happen only for an item that is
+not MATCH, once; later gate runs read them from the cache.
+
 ## Run times
+
+**Cost.** The referees run only for items that are not MATCH, and their Go and JS results are
+cached, so a run on a binary that matches Go everywhere costs nothing extra on cli and corpus.
+- **Per item, once:** 16 Go runs (8 N × 2), or 64 for a `--traceResolution` case (8 N × 8), plus 1
+  JS run. On `cli/zod/zod/noemit` at a load of 42: Go 1.7 to 12.2 s per run (c1 is the slowest),
+  about 68 s for the 16, and JS 32.9 s; the item took 114 s. On `fuzz/1:23080`: 64 Go runs, 16.3 s
+  in all, and JS 1.2 s.
+- **Every run: tsc-rs on Go-broken fuzz cases.** Before, GO-FAIL and GO-UNSTABLE cases did not run
+  tsc-rs. Now the 44 such cases of the full batch do: the 18 GO-BROKEN ones take 0.1 to 0.9 s each.
+  The 26 where Go timed out (deep nesting) time out in tsc-rs too. Each gets one 60 s try, no
+  retry (a timeout there is a DIFF either way). Before that cap, the first full run spent up to
+  2 × (60 + 120) s on each: its fuzz tier took 1,612 s against the base's 965 s, at a higher load.
+  With the cap the 26 cases are 26 × 60 s = 1,563 s of worker time, about 130 s of the tier's 12
+  workers; all 45 non-MATCH cases alone took 180 s of wall time on 12 workers at a load of 53. The
+  final full run's fuzz tier took 823 s (base 965 s, at a lower load).
+
 
 These were measured on MS-A2 at a 1-minute load of 15 to 45 (other lanes were busy). The tiers
 run in sequence, except tests, which runs beside them. Wall times:
@@ -312,6 +429,41 @@ What the watch items saw, on both servers: `typescript-config-watch-id`
 `workspace/inlayHint/refresh` requests; `publishDiagnostics` for each tsconfig, with the
 `bogusOption` error in fsevents. Neither server sent a semanticTokens or codeLens refresh in these
 scenarios, so those are compared only as absent.
+
+## Referees on the perf head (2026-11-05)
+
+Full gate with the referees (lane H1, harness 69a8525b0) on `tsgo-head-efef52257-rel` against
+`base-current` (`head-efef52257-full`, the same binary). Run dir:
+`~/.cache/perf-rearch/parity/runs/h1-head-efef52257-full-referees-2/`, 07:28 to 07:55 UTC (27 min),
+load 28 to 61. Result: **PARITY OK**, 187,130 items compared, 0 lost, 0 not run, 0 new items not
+good, 9 recovered.
+
+| tier | wall | result |
+|---|---|---|
+| cli | 272 s | 170 MATCH: no referee ran |
+| tests | 297 s | 139,899 PASS, 2 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`, and `api_async_held_request_keeps_its_reply_at_the_end`, both timing tests of `tsgo_stdio_end`), 1,731 IGNORED |
+| lsp | 264 s | 2,567 MATCH, 33 GO-UNSTABLE, 1 DIFF (the base's known `watch-narrow-umami-f12/0012`); no referees on lsp |
+| fuzz | 823 s (base 965 s) | 29,955 MATCH, 9 GO-BROKEN, 36 DIFF |
+| corpus | 256 s | 12,727 MATCH |
+
+None of the 45 fuzz cases that are not MATCH was good in the base (35 GO-FAIL, 9 GO-UNSTABLE, 1
+DIFF):
+- **GO-BROKEN (9), recovered:** the 9 cases on which Go's runs differ (`1:2813`, `5391`, `12500`,
+  `12702`, `15106`, `19122`, `20151`, `20360`, `29616`). tsc-rs gave the same answer in both runs,
+  in under 1 s.
+- **DIFF, tsc-rs reproduces Go's panic (9):** `1:3909`, `4134`, `4327`, `17373`, `19954`, `20483`
+  (Go `panic: strings: negative Repeat count`) and `1:795`, `16682`, `18749` (nil pointer). tsc-rs
+  prints the same `panic:` line and exits 2. An earlier run of the referees (harness 4151af485)
+  counted these as GO-BROKEN because the copy has no goroutine trace. They become GO-BROKEN when
+  tsc-rs answers there instead.
+- **DIFF, both time out (26):** the deep-nesting cases on which Go timed out; tsc-rs times out at
+  60 s too.
+- **DIFF `1:23080`:** the known `--traceResolution` race. Go gives one output at every N (8 runs
+  each), and JS cannot referee a trace line.
+
+The earlier run (`h1-head-efef52257-full-referees`, harness 4151af485) was also PARITY OK. Its fuzz
+tier took 1,612 s before the timeout cap, and exited 1 after writing its results (the summary line
+failed on DIFFs without a signature; fixed in 5dcf897e5).
 
 ## Base on main (91f3d021c)
 
@@ -439,8 +591,13 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
     deletes with children.
 - **The msgpack/JSON API** (`scripts/goport/api_oracle.py`) and the native-preview client suite
   (`np-suite.sh`).
-- **Not compared at all:** GO-UNSTABLE and GO-FAIL items, the masked `--extendedDiagnostics`
-  memory and time values, and the Go-crash cases.
+- **Not compared at all:** lsp GO-UNSTABLE items and the masked `--extendedDiagnostics` memory and
+  time values. Where Go is broken (GO-BROKEN), only tsc-rs's own stability and absence of crashes
+  and hangs are checked: there is no Go answer to compare with.
+- **Referees.** GO-BROKEN, GO-PARTITION and JS-AGREES accept the differences they decide without
+  further checks (see "Referees" for what each cannot referee). JS-AGREES compares JS only on the
+  points where tsc-rs and Go differ. The lsp tier has no referees; the brief's GO-BROKEN rule for
+  lsp is not implemented here.
 - **Nondeterminism that two tsc-rs runs do not show.** Full mode runs tsc-rs twice on cli and
   fuzz, and three times on lsp (the third with `GOPORT_PARSE_THREADS=1`). A race that needs more
   runs or other load can still pass, and other worker settings (`GOPORT_MAPPED_THREADS`,
@@ -458,14 +615,17 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `parity_cli.py`, `parity_tests.py`, `parity_lsp.py`, `parity_fuzz.py`: the tiers. Each prints
   its usage with `--help`.
 - `parity_compare.py`: `merge`, `compare` and `known`.
+- `parity_referees.py`: GO-BROKEN, GO-PARTITION, JS-AGREES and the diagnostic parser;
+  `parity_referees_test.py`: their self-test (fake compilers, every classification path, about 2
+  minutes; `SELFTEST OK`).
 - `parity-projects.json`: the CLI projects; `prepare-parity-projects.sh`: the parity lane's
   project copies.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs` and `--server-logs`; `scenario.mjs` holds the
   watch scenarios and `fixtures.mjs` the watch-small fixture) and
   `vendor/difffuzz/` (feat/difffuzz 033e55442, unchanged).
-- State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `runs/`,
-  `logs/` and `scratch/`.
+- State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `js-cache/`,
+  `runs/`, `logs/` and `scratch/`.
 
 
 ## Clock steps on this machine (2026-11-04)

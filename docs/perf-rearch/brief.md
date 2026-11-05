@@ -86,6 +86,12 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   this branch (now the C1+ND1+L1 head efef52257, run head-efef52257-full; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
+- **Referees:** on the cli, fuzz and corpus tiers the gate applies the
+  "Partition-dependent output" and "Better than Go" rules above itself:
+  GO-BROKEN, GO-PARTITION and JS-AGREES are good statuses, judged in that
+  order after tsc-rs's determinism (`parity.md`, "Referees"). The compare
+  lists every item that left MATCH for one of them, by status: name each in
+  your answer, with why it is right.
 - Run full tiers under `systemd-run` (see Rules). The tests tier builds your
   checkout's source, so run it from your own worktree.
 - **Quality report (report only, no gate):** before reporting, run
