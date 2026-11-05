@@ -240,6 +240,10 @@ impl LoadView {
             self.found(slot, kind, who, false);
             return map(&slot.value);
         }
+        // The observation time is taken before the OS call (the base serial
+        // loader's is taken there too, l1-window-base-spike.patch).
+        #[cfg(feature = "diagnostics")]
+        let started = diag::obs_start();
         let value = self.os_call(kind, who, path, load);
         #[cfg(feature = "diagnostics")]
         if self.diag.frozen() {
@@ -261,7 +265,7 @@ impl LoadView {
                 #[cfg(feature = "diagnostics")]
                 by_worker: who == Who::Worker,
                 #[cfg(feature = "diagnostics")]
-                obs: diag::SlotObs::new(who),
+                obs: diag::SlotObs::new(who, started),
             },
         );
         result

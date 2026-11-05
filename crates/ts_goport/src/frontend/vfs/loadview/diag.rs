@@ -321,7 +321,7 @@ impl<V> Shards<V> {
             Slot {
                 value,
                 by_worker: false,
-                obs: SlotObs::new(Who::Loader),
+                obs: SlotObs::new(Who::Loader, 0),
             },
         );
     }
@@ -590,10 +590,17 @@ pub(super) struct SlotObs {
     demanded: bool,
 }
 
+/// The time an OS call of a view starts, when the observation log is on
+/// (else 0).
+pub(super) fn obs_start() -> u64 {
+    if obs_log_on() { clock_ns() } else { 0 }
+}
+
 impl SlotObs {
-    pub(super) fn new(who: Who) -> Self {
+    /// A slot that a call started at `started` (`obs_start`) filled.
+    pub(super) fn new(who: Who, started: u64) -> Self {
         SlotObs {
-            at_ns: if obs_log_on() { clock_ns() } else { 0 },
+            at_ns: started,
             by_worker: who == Who::Worker,
             demanded: who == Who::Loader,
         }
@@ -625,20 +632,31 @@ fn obs_line(line: std::fmt::Arguments<'_>) {
     }
 }
 
+/// The views of the loads that ended since the last watch registration, with
+/// their start and end (`clock_ns`), while the observation log is on: their
+/// observations are written after the registration, so the log costs nothing
+/// inside the window (the views live that long in such a run only).
+static OBS_PENDING: Mutex<Vec<(u64, u64, Arc<LoadView>)>> = Mutex::new(Vec::new());
+
 impl LoadView {
-    /// The observation log of a load that ended: its span, then each entry
-    /// that the loader demanded with when it was observed and by whom
-    /// (`load <t0> <t1>`, `obs <kind> <ms> <who> <path>`).
-    pub fn write_observations(&self, t0_ns: u64) {
-        use std::fmt::Write as _;
-        if !obs_log_on() {
-            return;
+    /// Keeps the observations of a load that ended (`t0_ns`: its start) for
+    /// the log after the next watch registration (`note_watch_registered`).
+    pub fn keep_observations(view: &Arc<LoadView>, t0_ns: u64) {
+        if obs_log_on() {
+            lock(&OBS_PENDING).push((t0_ns, clock_ns(), view.clone()));
         }
-        // One write after the load: the log costs nothing inside the window.
-        let mut text = format!(
-            "load {:.3} {:.3}\n",
+    }
+
+    /// The observation log of a load that ended: its span, then each entry
+    /// that the loader demanded with when its OS call started and who made
+    /// it (`load <t0> <t1>`, `obs <kind> <ms> <who> <path>`).
+    fn observations_text(&self, t0_ns: u64, t1_ns: u64, text: &mut String) {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            text,
+            "load {:.3} {:.3}",
             t0_ns as f64 / 1e6,
-            clock_ns() as f64 / 1e6
+            t1_ns as f64 / 1e6
         );
         fn each<V>(text: &mut String, kind: Kind, shards: &Shards<V>) {
             for (path, obs) in shards.collect(|slot| slot.obs.demanded, |slot| slot.obs) {
@@ -651,16 +669,26 @@ impl LoadView {
                 );
             }
         }
-        each(&mut text, Kind::Stat, &self.stats);
-        each(&mut text, Kind::Read, &self.reads);
-        each(&mut text, Kind::Realpath, &self.realpaths);
-        each(&mut text, Kind::Entries, &self.entries);
-        obs_line(format_args!("{}", text.trim_end()));
+        each(text, Kind::Stat, &self.stats);
+        each(text, Kind::Read, &self.reads);
+        each(text, Kind::Realpath, &self.realpaths);
+        each(text, Kind::Entries, &self.entries);
     }
 }
 
 /// The session's watch registration ended (every watcher's
-/// `registerCapability` answered): `watch <ms>` in the observation log.
+/// `registerCapability` answered): `watch <ms>` in the observation log, then
+/// the observations of the loads that ended before it (`keep_observations`).
 pub fn note_watch_registered() {
-    obs_line(format_args!("watch {:.3}", clock_ns() as f64 / 1e6));
+    if !obs_log_on() {
+        return;
+    }
+    let at = clock_ns();
+    let pending = std::mem::take(&mut *lock(&OBS_PENDING));
+    let mut text = String::new();
+    for (t0, t1, view) in &pending {
+        view.observations_text(*t0, *t1, &mut text);
+    }
+    text.push_str(&format!("watch {:.3}", at as f64 / 1e6));
+    obs_line(format_args!("{text}"));
 }

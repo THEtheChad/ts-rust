@@ -60,8 +60,8 @@ pub(super) fn next_replay() -> Option<Arc<LoadView>> {
 
 /// The end of a load's scope: its counts line, record and test hooks.
 #[cfg(feature = "diagnostics")]
-pub(super) fn end_scope(view: &LoadView, t0: (f64, u64)) {
-    view.write_observations(t0.1);
+pub(super) fn end_scope(view: &Arc<LoadView>, t0: (f64, u64)) {
+    LoadView::keep_observations(view, t0.1);
     let t0 = t0.0;
     loadview::diag::flush_logs();
     let bypass = loadview::diag::take_bypass();
