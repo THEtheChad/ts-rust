@@ -399,6 +399,8 @@ export async function applyJsReferee({ items, logs, root, runJs, rerunRs, answer
   const verdicts = new Map();
   for (const it of items) {
     if (!hasNormalizer(it.method)) continue;
+    // Without `all`, only the candidates (normalizing umami's MATCH answers takes 30 s).
+    if (!all && !candidates.includes(it)) continue;
     const [g, r] = [normalize(it.method, logs.go[it.i], { root }), normalize(it.method, logs.rs[it.i], { root })];
     const j = js[it.i] ? normalize(it.method, js[it.i], { root, libDir: JS_LIBS }) : null;
     if (it.status === "MATCH") {
@@ -408,7 +410,6 @@ export async function applyJsReferee({ items, logs, root, runJs, rerunRs, answer
       else if (sameNormalized(g, j)) c.jsEqual++;
       continue;
     }
-    if (it.detail && !all) continue;
     if (it.status === "GO-UNSTABLE") {
       // Report only (GO-BROKEN comes before JS-AGREES): which of Go's runs JS equals, and tsc-rs.
       const goRuns = Object.keys(logs).filter((k) => /^go\d*$/.test(k));

@@ -17,7 +17,7 @@ sessions are all full sessions, so a quick run compares with a full base.
 
 Go's four sessions per item set (go.jsonl to go4.jsonl, GO_RUNS) are kept in ~/.cache/perf-rearch/parity/
 go-cache/<go sha>/lsp/<session>-<project fingerprint>-<lspdiff sources sha>/ (parity_cli.fingerprint:
-commit, node_modules mtimes; the sha of the vendored lspdiff sources, since they script the session)
+commit, node_modules mtimes; the sha of the lspdiff sources that script the session, SESSION_SOURCES)
 and reused, so a run starts only tsc-rs. Standard sessions run with ATA off (vendor/lspdiff
 client.mjs initializeParams). In full, tsc-rs runs three times: twice as is and once with
 GOPORT_PARSE_THREADS=1. An item is judged in this order (docs/perf-rearch/parity.md, "JS tsserver as
