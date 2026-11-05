@@ -609,3 +609,17 @@ once a **reconciliation step** is built and tested.
     on purpose (`strings: negative Repeat count`, nil pointer). Giving a real
     answer there would be GO-BROKEN, which is good.
   - **Review:** Astra will review H1 and H2 together once H2 lands.
+- **2026-11-05, Astra on D1-I1: ACCEPT WITH FIXES as a base for I2**
+  (`reviews/2026-11-05-astra-d1-i1.md`). The branch stays unmerged, so the
+  shipped default stays exact, until the campaign passes. No switch.
+  - **D1-I2a** (fallback and commit): in-process fallback from the immutable
+    Program if a global-state audit allows it, otherwise exec with a
+    preserved snapshot. One ordered stream/file log; commit failures go
+    through the normal emit errors, not a restart; aliased sinks; no env
+    marker; the identity tools compare exact order and reuse the H1 referees.
+  - **D1-I2b** (monitors, in parallel, disjoint files): the publication race;
+    T5b insert vs reuse plus epochs; Go's real count at the t3-server site
+    and a compositional reset rule; cycle agreement (`CycleDisagree`); the
+    relation-budget bound.
+  - **Then:** an Astra review, the validation campaign, C3, and the policy
+    decision per trigger (CountBound is the first candidate).
