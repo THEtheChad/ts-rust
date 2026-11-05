@@ -309,19 +309,6 @@ impl Fs for OsFs {
         self.common.read_file(path)
     }
 
-    // PORT: not in Go (`Fs::read_regular_file_shared`): `read_file` that
-    // does not read a path that is not a regular file.
-    fn read_regular_file_shared(&self, path: &str) -> super::RegularRead {
-        if is_network_path(path) {
-            return super::RegularRead::Failed;
-        }
-        match self.common.read_regular_file(path) {
-            Some((text, true)) => super::RegularRead::Text(super::SharedText::new(text)),
-            Some((_, false)) => super::RegularRead::Failed,
-            None => super::RegularRead::NotRegular,
-        }
-    }
-
     // Go: os.go:105 DirectoryExists (ts#64832)
     fn directory_exists(&self, path: &str) -> bool {
         #[cfg(feature = "diagnostics")]
@@ -777,44 +764,6 @@ impl IoFs for DirFs {
         let fullname = self.join(name)?;
         std::fs::read(os_path(&fullname)).map_err(|err| FsError::path("open", name, err))
     }
-
-    // PORT: not in Go (`IoFs::read_file_if_regular`). The open does not block
-    // on a FIFO (`O_NONBLOCK`), and the type is the open file's (`fstat`),
-    // so a path that changes between a check and the open cannot make it
-    // read a FIFO.
-    fn read_file_if_regular(&self, name: &str) -> Result<Option<Vec<u8>>, FsError> {
-        use std::io::Read;
-        let fullname = self.join(name)?;
-        let mut file =
-            open_nonblocking(&fullname).map_err(|err| FsError::path("open", name, err))?;
-        let meta = file
-            .metadata()
-            .map_err(|err| FsError::path("fstat", name, err))?;
-        if !meta.is_file() {
-            return Ok(None);
-        }
-        let mut bytes = Vec::with_capacity(meta.len() as usize);
-        file.read_to_end(&mut bytes)
-            .map_err(|err| FsError::path("read", name, err))?;
-        Ok(Some(bytes))
-    }
-}
-
-/// Opens `path` to read without blocking on a FIFO (`O_NONBLOCK`; a
-/// regular file reads as usual).
-#[cfg(unix)]
-fn open_nonblocking(path: &str) -> io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
-        .open(os_path(path))
-}
-
-/// Opens `path` to read (no FIFO to block on off unix).
-#[cfg(not(unix))]
-fn open_nonblocking(path: &str) -> io::Result<std::fs::File> {
-    std::fs::File::open(os_path(path))
 }
 
 // Go: os/dir.go ReadDir

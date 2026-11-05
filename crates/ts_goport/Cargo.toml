@@ -76,9 +76,9 @@ test-hooks = ["goport_core/test-hooks"]
 # the perf-rearch tools: `scripts/run-cargo-capped.sh build --release -p
 # ts_goport --features diagnostics --bin tsgo`. Never in a shipped build.
 # It also turns on goport_util's: the loader v2 load view's counters, live-OS
-# bypass count, call trace, V-replay oracle and the test hooks of the load
-# view and its reconciliation, whose tests (go_baselines
-# project_lsp/resolveahead_test.rs `load_view`) run only with it.
+# bypass count, observation log, call trace, V-replay oracle and test hooks,
+# whose tests (go_baselines project_lsp/resolveahead_test.rs `load_view`) run
+# only with it.
 diagnostics = ["goport_core/diagnostics", "goport_util/diagnostics"]
 
 [lints]

@@ -258,6 +258,28 @@ fn load_counts(values: &[AtomicU64; 4]) -> [u64; 4] {
 }
 
 impl<V> Shards<V> {
+    /// `map` of each entry that `keep` keeps, sorted by path.
+    fn collect<T>(
+        &self,
+        keep: impl Fn(&Slot<V>) -> bool,
+        map: impl Fn(&Slot<V>) -> T,
+    ) -> Vec<(Box<str>, T)> {
+        let mut all = Vec::new();
+        for shard in &self.shards {
+            let shard = shard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            all.extend(
+                shard
+                    .iter()
+                    .filter(|(_, slot)| keep(slot))
+                    .map(|(path, slot)| (path.clone(), map(slot))),
+            );
+        }
+        all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        all
+    }
+
     fn len(&self) -> usize {
         self.shards.iter().map(|shard| lock(shard).len()).sum()
     }
@@ -268,7 +290,7 @@ impl<V> Shards<V> {
             Slot {
                 value,
                 by_worker: false,
-                used: 0,
+                obs: SlotObs::new(Who::Loader),
             },
         );
     }
@@ -521,4 +543,93 @@ impl Reader<'_> {
             symlinks,
         })
     }
+}
+
+/// The process's clock of the observation log: ns since its first use.
+#[must_use]
+pub fn clock_ns() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+}
+
+/// When a slot was observed (`clock_ns`), who observed it, and whether the
+/// loader demanded it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SlotObs {
+    at_ns: u64,
+    by_worker: bool,
+    demanded: bool,
+}
+
+impl SlotObs {
+    pub(super) fn new(who: Who) -> Self {
+        SlotObs {
+            at_ns: if obs_log_on() { clock_ns() } else { 0 },
+            by_worker: who == Who::Worker,
+            demanded: who == Who::Loader,
+        }
+    }
+
+    pub(super) fn demand(&mut self) {
+        self.demanded = true;
+    }
+}
+
+static OBS_LOG: OnceLock<Option<Log>> = OnceLock::new();
+
+/// True when `GOPORT_LOAD_OBS_LOG=<file>` is set: the observation log of
+/// the observation-to-watch window (`write_observations`,
+/// `note_watch_registered`).
+#[cfg(feature = "diagnostics")]
+pub fn obs_log_on() -> bool {
+    env_file_log("GOPORT_LOAD_OBS_LOG", &OBS_LOG).is_some()
+}
+
+/// Appends `line` and a newline to the observation log, if it is on.
+fn obs_line(line: std::fmt::Arguments<'_>) {
+    if let Some(log) = env_file_log("GOPORT_LOAD_OBS_LOG", &OBS_LOG) {
+        let mut log = lock(log);
+        let _ = log.write_fmt(line);
+        let _ = log.write_all(b"\n");
+        let _ = log.flush();
+    }
+}
+
+impl LoadView {
+    /// The observation log of a load that ended: its span, then each entry
+    /// that the loader demanded with when it was observed and by whom
+    /// (`load <t0> <t1>`, `obs <kind> <ms> <who> <path>`).
+    pub fn write_observations(&self, t0_ns: u64) {
+        if !obs_log_on() {
+            return;
+        }
+        obs_line(format_args!(
+            "load {:.3} {:.3}",
+            t0_ns as f64 / 1e6,
+            clock_ns() as f64 / 1e6
+        ));
+        fn each<V>(kind: Kind, shards: &Shards<V>) {
+            for (path, obs) in shards.collect(|slot| slot.obs.demanded, |slot| slot.obs) {
+                let who = if obs.by_worker { "worker" } else { "loader" };
+                obs_line(format_args!(
+                    "obs {} {:.3} {who} {path}",
+                    kind.name(),
+                    obs.at_ns as f64 / 1e6
+                ));
+            }
+        }
+        each(Kind::Stat, &self.stats);
+        each(Kind::Read, &self.reads);
+        each(Kind::Realpath, &self.realpaths);
+        each(Kind::Entries, &self.entries);
+    }
+}
+
+/// The session's watch registration ended (every watcher's
+/// `registerCapability` answered): `watch <ms>` in the observation log.
+pub fn note_watch_registered() {
+    obs_line(format_args!("watch {:.3}", clock_ns() as f64 / 1e6));
 }

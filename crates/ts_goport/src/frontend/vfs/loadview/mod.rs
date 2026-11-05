@@ -1,8 +1,7 @@
 //! The per-load frozen OS view **V** (perf/first-principles loader v2, lane
 //! L0+L1, `docs/perf-rearch/design/loader-v2.md`): the language server's
-//! program loads read the OS through it, with the reconciliation after the
-//! watch registration (`compiler::load_view_scope`). It replaced the live OS
-//! path of those loads; there is no switch.
+//! program loads read the OS through it. It replaced the live OS path of
+//! those loads; there is no switch.
 //!
 //! **Placement.** V sits under the language server's `OverlayFS.host`: the
 //! session's host is `bundled::wrap_fs(os_view_fs())`, and `ViewFs` in loader
@@ -29,24 +28,26 @@
 //!   fails;
 //! - `entries`: `get_accessible_entries` with its order and symlink set.
 //!
-//! Each entry also records what the serial loader read of it (`USED_*`),
-//! which the reconciliation checks after the watch registration.
-//!
 //! **Who fills it.** The serial loader (a miss is the live OS call, stored)
 //! and the parse and resolve-ahead workers of the load, through a worker
 //! `ViewFs` (`worker_fs`) with the same OS calls. A worker reads a file only
 //! when V's stat says it is a regular file (no speculative read of a FIFO or
 //! a device); otherwise it gets a failed read and V stores no read.
 //!
+//! **Lifetime.** One view per load: attached when the load starts and freed
+//! when it ends (`compiler::load_view_scope`).
+//!
 //! **Semantics.** With nothing that the load observes changing on disk
 //! during the load, every V answer equals the live answer, so the load is
 //! byte-identical to the serial loader. Otherwise the load equals the
-//! serial loader run against V (the V-replay oracle, `diag`); the
-//! reconciliation after the watch registration reloads what changed.
+//! serial loader run against V (the V-replay oracle, `diag`). As in Go, a
+//! change after an observation and before the watch registration is seen
+//! when a later watch event reports its path.
 //!
 //! **Diagnostics** (cargo feature `diagnostics`, `diag.rs`): the counters,
-//! the count of live OS calls in the load scope that bypassed V, the call
-//! trace, the record and replay of a view, and the test hooks.
+//! the count of live OS calls in the load scope that bypassed V, the
+//! observation times, the call trace, the record and replay of a view, and
+//! the test hooks.
 // PORT: not in Go (perf).
 
 #[cfg(feature = "diagnostics")]
@@ -169,21 +170,15 @@ pub enum Who {
     Worker,
 }
 
-/// The loader read whether a stat entry is a file (`file_exists`).
-pub const USED_FILE: u8 = 1;
-/// The loader read whether a stat entry is a directory (`directory_exists`).
-pub const USED_DIR: u8 = 2;
-/// The loader read the whole entry (a `stat`, a read, a realpath, entries).
-pub const USED_FULL: u8 = 4;
-
 struct Slot<V> {
     value: V,
     /// A worker stored it (the diagnostics' counts).
     #[cfg(feature = "diagnostics")]
     by_worker: bool,
-    /// What the serial loader read of it (`USED_*`); 0 when only workers
-    /// did. The reconciliation checks only this.
-    used: u8,
+    /// When it was observed and whether the loader demanded it (the
+    /// observation-to-watch window, `diag::write_observations`).
+    #[cfg(feature = "diagnostics")]
+    obs: diag::SlotObs,
 }
 
 const SHARDS: usize = 64;
@@ -208,28 +203,6 @@ impl<V> Shards<V> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-
-    /// `map` of each entry that `keep` keeps, sorted by path.
-    fn collect<T>(
-        &self,
-        keep: impl Fn(&Slot<V>) -> bool,
-        map: impl Fn(&Slot<V>) -> T,
-    ) -> Vec<(Box<str>, T)> {
-        let mut all = Vec::new();
-        for shard in &self.shards {
-            let shard = shard
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            all.extend(
-                shard
-                    .iter()
-                    .filter(|(_, slot)| keep(slot))
-                    .map(|(path, slot)| (path.clone(), map(slot))),
-            );
-        }
-        all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        all
-    }
 }
 
 /// The per-load frozen OS view. `Sync`: the workers of the load and its
@@ -251,19 +224,18 @@ impl LoadView {
     }
 
     /// `map` of the entry of `path` in `shards`, or of `load()` stored there
-    /// (first answer wins). The OS call runs with no lock held. `used`: what
-    /// a loader demand reads of the entry (`USED_*`).
+    /// (first answer wins). The OS call runs with no lock held.
     fn get<V, R>(
         &self,
         shards: &Shards<V>,
-        ask: (Kind, Who, u8),
+        ask: (Kind, Who),
         path: &str,
         load: impl FnOnce() -> V,
         map: impl FnOnce(&V) -> R,
     ) -> R {
-        let (kind, who, used) = ask;
+        let (kind, who) = ask;
         if let Some(slot) = shards.shard(path).get_mut(path) {
-            self.found(slot, kind, who, used, false);
+            self.found(slot, kind, who, false);
             return map(&slot.value);
         }
         let value = self.os_call(kind, who, path, load);
@@ -274,37 +246,39 @@ impl LoadView {
         }
         let mut shard = shards.shard(path);
         if let Some(slot) = shard.get_mut(path) {
-            self.found(slot, kind, who, used, true);
+            self.found(slot, kind, who, true);
             return map(&slot.value);
         }
         #[cfg(feature = "diagnostics")]
         self.diag.stored(kind, who, path);
         let result = map(&value);
-        let used = if who == Who::Worker { 0 } else { used };
         shard.insert(
             path.into(),
             Slot {
                 value,
                 #[cfg(feature = "diagnostics")]
                 by_worker: who == Who::Worker,
-                used,
+                #[cfg(feature = "diagnostics")]
+                obs: diag::SlotObs::new(who),
             },
         );
         result
     }
 
     /// Notes a demand or a worker lookup that found `slot` (`race`: after
-    /// its own OS call).
+    /// its own OS call). Only the diagnostics count it.
     #[inline]
-    fn found<V>(&self, slot: &mut Slot<V>, kind: Kind, who: Who, used: u8, race: bool) {
+    #[cfg(feature = "diagnostics")]
+    fn found<V>(&self, slot: &mut Slot<V>, kind: Kind, who: Who, race: bool) {
         if who == Who::Loader {
-            slot.used |= used;
+            slot.obs.demand();
         }
-        #[cfg(feature = "diagnostics")]
         self.diag.found(kind, who, slot.by_worker, race);
-        #[cfg(not(feature = "diagnostics"))]
-        let _ = (kind, race);
     }
+
+    #[inline(always)]
+    #[cfg(not(feature = "diagnostics"))]
+    fn found<V>(&self, _slot: &mut Slot<V>, _kind: Kind, _who: Who, _race: bool) {}
 
     /// `load()`, the OS call of a view.
     #[inline]
@@ -321,24 +295,17 @@ impl LoadView {
     fn stat_with<R>(
         &self,
         os: &dyn Fs,
-        ask: (Who, u8),
+        who: Who,
         path: &str,
         map: impl FnOnce(&Option<FileInfo>) -> R,
     ) -> R {
-        let (who, used) = ask;
-        self.get(
-            &self.stats,
-            (Kind::Stat, who, used),
-            path,
-            || os.stat(path),
-            map,
-        )
+        self.get(&self.stats, (Kind::Stat, who), path, || os.stat(path), map)
     }
 
     fn read(&self, os: &dyn Fs, who: Who, path: &str) -> Option<SharedText> {
         self.get(
             &self.reads,
-            (Kind::Read, who, USED_FULL),
+            (Kind::Read, who),
             path,
             || os.read_file_shared(path),
             Clone::clone,
@@ -348,7 +315,7 @@ impl LoadView {
     /// A worker's read: from V, or only for a regular file (by V's stat)
     /// the OS read stored in V. Else a failed read that V does not store.
     fn speculative_read(&self, os: &dyn Fs, path: &str) -> Option<SharedText> {
-        let regular = self.stat_with(os, (Who::Worker, 0), path, |info| {
+        let regular = self.stat_with(os, Who::Worker, path, |info| {
             info.as_ref().is_some_and(|info| info.mode().is_regular())
         });
         if !regular {
@@ -369,7 +336,7 @@ impl LoadView {
     fn realpath(&self, os: &dyn Fs, who: Who, path: &str) -> String {
         self.get(
             &self.realpaths,
-            (Kind::Realpath, who, USED_FULL),
+            (Kind::Realpath, who),
             path,
             || os.realpath(path),
             Clone::clone,
@@ -379,53 +346,11 @@ impl LoadView {
     fn entries(&self, os: &dyn Fs, who: Who, path: &str) -> Entries {
         self.get(
             &self.entries,
-            (Kind::Entries, who, USED_FULL),
+            (Kind::Entries, who),
             path,
             || os.get_accessible_entries(path),
             Clone::clone,
         )
-    }
-
-    /// The observations that the serial loader read (`Slot::used`), with
-    /// what it read of each: what the reconciliation checks.
-    #[must_use]
-    pub fn demanded(&self) -> Demanded {
-        fn used<V, T>(shards: &Shards<V>, map: impl Fn(&V) -> T) -> Vec<(Box<str>, T, u8)> {
-            shards
-                .collect(|slot| slot.used != 0, |slot| (map(&slot.value), slot.used))
-                .into_iter()
-                .map(|(path, (value, used))| (path, value, used))
-                .collect()
-        }
-        Demanded {
-            stats: used(&self.stats, Clone::clone),
-            reads: used(&self.reads, |text| text.as_ref().map(|text| text.hash)),
-            realpaths: used(&self.realpaths, Clone::clone),
-            entries: used(&self.entries, Clone::clone),
-        }
-    }
-}
-
-/// The observations of a view that its load's serial loader read
-/// (`LoadView::demanded`), each with what it read (`USED_*`). Reads keep
-/// only their hash.
-#[derive(Default)]
-pub struct Demanded {
-    pub stats: Vec<(Box<str>, Option<FileInfo>, u8)>,
-    pub reads: Vec<(Box<str>, Option<u128>, u8)>,
-    pub realpaths: Vec<(Box<str>, String, u8)>,
-    pub entries: Vec<(Box<str>, Entries, u8)>,
-}
-
-impl Demanded {
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.stats.len() + self.reads.len() + self.realpaths.len() + self.entries.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
@@ -482,7 +407,7 @@ impl Fs for ViewFs {
 
     fn file_exists(&self, path: &str) -> bool {
         self.with(
-            |view, who| view.stat_with(&*self.os, (who, USED_FILE), path, super::stat_is_file),
+            |view, who| view.stat_with(&*self.os, who, path, super::stat_is_file),
             || self.os.file_exists(path),
         )
     }
@@ -527,7 +452,7 @@ impl Fs for ViewFs {
 
     fn directory_exists(&self, path: &str) -> bool {
         self.with(
-            |view, who| view.stat_with(&*self.os, (who, USED_DIR), path, super::stat_is_dir),
+            |view, who| view.stat_with(&*self.os, who, path, super::stat_is_dir),
             || self.os.directory_exists(path),
         )
     }
@@ -541,7 +466,7 @@ impl Fs for ViewFs {
 
     fn stat(&self, path: &str) -> Option<FileInfo> {
         self.with(
-            |view, who| view.stat_with(&*self.os, (who, USED_FULL), path, Clone::clone),
+            |view, who| view.stat_with(&*self.os, who, path, Clone::clone),
             || self.os.stat(path),
         )
     }

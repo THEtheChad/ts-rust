@@ -9,19 +9,16 @@
 //!   loader (`GOPORT_RESOLVE_AHEAD=0`) that is "the serial loader run against
 //!   V";
 //! - test hooks: the records and counts of this thread's loads, a replay
-//!   set in process, a hook after each load, the reconciliation switch and
-//!   its last events.
+//!   set in process, and a hook after each load (a change after the load,
+//!   before the watch registration).
 // PORT: not in Go (perf diagnostics).
 //
 // The whole module is under the feature (its `mod` item); the items that read
 // an environment variable repeat the `cfg` so that `quality.sh` sees it.
 
-use super::ReconcileEvent;
-use super::reconcile::Outcome;
 use crate::frontend::prelude::*;
 use crate::frontend::vfs::loadview::{self, LoadView, diag::ViewCounts};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 thread_local! {
@@ -33,8 +30,6 @@ thread_local! {
     /// The counts of the last load's view, and its bypassing OS calls.
     static LAST_COUNTS: Cell<Option<(ViewCounts, u64)>> = const { Cell::new(None) };
     static AFTER_LOAD: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
-    static RECONCILE_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
-    static LAST_EVENTS: RefCell<Option<Vec<ReconcileEvent>>> = const { RefCell::new(None) };
 }
 
 fn env_file(name: &'static str, cell: &'static OnceLock<Option<String>>) -> Option<&'static str> {
@@ -65,7 +60,9 @@ pub(super) fn next_replay() -> Option<Arc<LoadView>> {
 
 /// The end of a load's scope: its counts line, record and test hooks.
 #[cfg(feature = "diagnostics")]
-pub(super) fn end_scope(view: &LoadView, t0: f64) {
+pub(super) fn end_scope(view: &LoadView, t0: (f64, u64)) {
+    view.write_observations(t0.1);
+    let t0 = t0.0;
     loadview::diag::flush_logs();
     let bypass = loadview::diag::take_bypass();
     let counts = view.counts();
@@ -105,20 +102,6 @@ pub(super) fn after_load() {
     }
 }
 
-/// Whether the reconciliation checks `view`: not a replayed view (it holds
-/// no live observation), nor any view after `set_reconcile(Some(false))`.
-pub(super) fn reconciles(view: &LoadView) -> bool {
-    !view.is_frozen() && RECONCILE_OVERRIDE.with(Cell::get) != Some(false)
-}
-
-pub(super) fn note_events(events: &[ReconcileEvent]) {
-    LAST_EVENTS.with(|last| {
-        last.borrow_mut()
-            .get_or_insert_with(Vec::new)
-            .extend_from_slice(events);
-    });
-}
-
 /// Tests: keep the record of each load's view (`take_records`).
 pub fn keep_records(on: bool) {
     RECORDS.with(|records| *records.borrow_mut() = on.then(Vec::new));
@@ -153,85 +136,4 @@ pub fn last_counts() -> Option<(ViewCounts, u64)> {
 /// load, before the watch registration).
 pub fn set_after_load(hook: Option<Rc<dyn Fn()>>) {
     AFTER_LOAD.with(|after| *after.borrow_mut() = hook);
-}
-
-/// Tests: `Some(false)` turns the reconciliation off on this thread, to
-/// show what it recovers (`None`: on).
-pub fn set_reconcile(on: Option<bool>) {
-    RECONCILE_OVERRIDE.with(|cell| cell.set(on));
-}
-
-/// Tests: the events of the reconciliations on this thread since the last
-/// call (`None`: no reconciliation ended).
-#[must_use]
-pub fn take_last_events() -> Option<Vec<ReconcileEvent>> {
-    LAST_EVENTS.with(|last| last.borrow_mut().take())
-}
-
-static FAIL_NEXT: AtomicUsize = AtomicUsize::new(0);
-static CHECK_DELAY_US: AtomicU64 = AtomicU64::new(0);
-
-/// Tests: the next `count` reconciliation jobs of the process fail (their
-/// plan task panics).
-pub fn fail_next_reconciles(count: usize) {
-    FAIL_NEXT.store(count, Ordering::SeqCst);
-}
-
-/// Tests: each reconciliation check sleeps `micros` first (a slow file
-/// system).
-pub fn set_check_delay(micros: u64) {
-    CHECK_DELAY_US.store(micros, Ordering::SeqCst);
-}
-
-/// A job's plan task: fails when `fail_next_reconciles` asks.
-pub(super) fn inject_failure() {
-    let left = FAIL_NEXT.load(Ordering::SeqCst);
-    if left > 0
-        && FAIL_NEXT
-            .compare_exchange(left, left - 1, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-    {
-        panic!("load view reconciliation: injected failure");
-    }
-}
-
-/// A check: sleeps as `set_check_delay` asks.
-pub(super) fn slow_check() {
-    let micros = CHECK_DELAY_US.load(Ordering::Relaxed);
-    if micros > 0 {
-        std::thread::sleep(std::time::Duration::from_micros(micros));
-    }
-}
-
-/// The timing of one reconciliation job (`GOPORT_LOAD_TIMES`).
-pub(super) struct JobDiag {
-    t0: f64,
-}
-
-impl JobDiag {
-    pub(super) fn start() -> Self {
-        JobDiag {
-            t0: crate::frontend::compiler::load_times::monotonic_ms(),
-        }
-    }
-
-    /// Writes the `goport load-view-reconcile:` line of a job that ended.
-    #[cfg(feature = "diagnostics")]
-    pub(super) fn report(&self, checked: usize, outcome: &Outcome) {
-        if !crate::frontend::compiler::load_times::times_enabled() {
-            return;
-        }
-        use std::io::Write;
-        let wall = crate::frontend::compiler::load_times::monotonic_ms() - self.t0;
-        let result = match outcome {
-            Outcome::Done(events) => format!("events={}", events.len()),
-            Outcome::Failed => "failed".to_string(),
-        };
-        let line = format!(
-            "goport load-view-reconcile: t0={:.3} wall={wall:.3} threads={} checked={checked} {result}\n",
-            self.t0,
-            super::pool::size(),
-        );
-        let _ = std::io::stderr().write_all(line.as_bytes());
-    }
 }

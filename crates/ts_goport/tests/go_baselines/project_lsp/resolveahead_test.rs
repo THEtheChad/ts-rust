@@ -1658,14 +1658,14 @@ TMPDIR="$1/t" exec "$2" --exact "$3" --nocapture --test-threads=1"#;
 }
 
 // Loader v2 L1: the per-load OS view (`vfs::loadview`) of `tsgo --lsp`, its
-// V-replay oracle and its reconciliation. Their hooks are diagnostics, so
+// V-replay oracle and its load window. Their hooks are diagnostics, so
 // these tests run with the `diagnostics` cargo feature.
 #[cfg(feature = "diagnostics")]
 mod load_view {
 
     use super::super::util::CREATED;
     use super::*;
-    use ts_goport::frontend::compiler::load_view_scope::{self, diag as scope_diag};
+    use ts_goport::frontend::compiler::load_view_scope::diag as scope_diag;
     use ts_goport::frontend::vfs::loadview::{self, diag as view_diag};
 
     /// A session whose host is the OS file system with the per-load OS view
@@ -1984,24 +1984,8 @@ mod load_view {
     }
 
     // ---------------------------------------------------------------------------
-    // Loader v2 L1: the reconciliation after the watch registration
-    // (`load_view_scope::reconcile_pending`).
+    // Loader v2 L1: sessions with a client that records the watch calls.
     // ---------------------------------------------------------------------------
-
-    /// Where a reconciliation test changes the disk.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum ChangePoint {
-        /// Before the load starts (the workers observe the changed disk).
-        BeforeObservation,
-        /// After the parse workers observed the disk, before the loader's
-        /// demands (`Mode::Force`: the workers are idle then).
-        BetweenObservationAndDemand,
-        /// After the load ended, before the watch registration.
-        BetweenDemandAndRegistration,
-        /// After the watch registration and the reconciliation: the client's
-        /// watcher reports it (`didChangeWatchedFiles`).
-        AfterRegistration,
-    }
 
     /// What the language server shows after a session: the program's files,
     /// missing files, metadata and resolutions, every semantic diagnostic, and
@@ -2086,129 +2070,10 @@ mod load_view {
         (session, client)
     }
 
-    /// A session through the OS view whose disk changes (`change`) at `point`,
-    /// with the reconciliation on or off. The session opens `src/index.ts`, waits
-    /// for its background tasks (the watch registration and the
-    /// reconciliation), then asks for the program again. Returns what it shows,
-    /// what a fresh serial session (no view, no resolve ahead) of the final disk
-    /// shows, and the reconciliation's events.
-    fn reconciled_session(
-        label: &str,
-        point: ChangePoint,
-        reconcile: bool,
-        prepare: &dyn Fn(&str),
-        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
-    ) -> (Shown, Shown, Vec<load_view_scope::ReconcileEvent>) {
-        let index = |root: &str| file_uri(root, "src/index.ts");
-        let root = fresh_project(label);
-        prepare(&root);
-        scope_diag::set_reconcile(Some(reconcile));
-        let changed = Rc::new(std::cell::Cell::new(false));
-        let hook = {
-            let root = root.clone();
-            let changed = changed.clone();
-            Rc::new(move || {
-                if !changed.replace(true) {
-                    let _ = change(&root);
-                }
-            }) as Rc<dyn Fn()>
-        };
-        match point {
-            ChangePoint::BeforeObservation => {
-                hook();
-            }
-            ChangePoint::BetweenObservationAndDemand => {
-                resolve_ahead::set_mode(Some(Mode::Force));
-                resolve_ahead::set_first_load(Some(true));
-                resolve_ahead::set_after_workers(Some(hook.clone()));
-            }
-            ChangePoint::BetweenDemandAndRegistration => {
-                scope_diag::set_after_load(Some(hook.clone()));
-            }
-            ChangePoint::AfterRegistration => {}
-        }
-        let (session, client) = watched_session(&root, true);
-        open(&session, &index(&root), INDEX);
-        program(&session, &index(&root));
-        resolve_ahead::set_after_workers(None);
-        scope_diag::set_after_load(None);
-        session.wait_for_background_tasks();
-        let mut events = scope_diag::take_last_events().unwrap_or_default();
-        if point == ChangePoint::AfterRegistration {
-            // The client's watcher reports the change.
-            let reported = change(&root);
-            changed.set(true);
-            let reported: Vec<(lsproto::FileChangeType, &str)> = reported
-                .iter()
-                .map(|(kind, name)| (*kind, name.as_str()))
-                .collect();
-            let reported: Vec<(lsproto::FileChangeType, String)> = reported
-                .iter()
-                .map(|(kind, name)| (*kind, file_uri(&root, name)))
-                .collect();
-            let reported: Vec<(lsproto::FileChangeType, &str)> =
-                reported.iter().map(|(k, u)| (*k, u.as_str())).collect();
-            super::super::util::watch(&session, &reported);
-        }
-        assert!(changed.get(), "the change did not run at {point:?}");
-        // The next request applies the pending changes (a reload).
-        program(&session, &index(&root));
-        session.wait_for_background_tasks();
-        if let Some(more) = scope_diag::take_last_events() {
-            events.extend(more);
-        }
-        program(&session, &index(&root));
-        session.wait_for_background_tasks();
-        let after = shown(&session, &root, &client);
-        resolve_ahead::set_mode(None);
-        resolve_ahead::set_first_load(None);
-        scope_diag::set_reconcile(None);
-        drop(session);
-        // A fresh serial session of the final disk (same root path).
-        let final_root = fresh_project(label);
-        assert_eq!(final_root, root);
-        prepare(&root);
-        let _ = change(&root);
-        resolve_ahead::set_mode(Some(Mode::Off));
-        let (session, client) = watched_session(&root, false);
-        open(&session, &index(&root), INDEX);
-        program(&session, &index(&root));
-        session.wait_for_background_tasks();
-        let fresh = shown(&session, &root, &client);
-        resolve_ahead::set_mode(None);
-        drop(session);
-        std::fs::remove_dir_all(&root).unwrap();
-        (after, fresh, events)
-    }
-
     /// `lib/c.ts` deleted (only the resolution of "../lib/c" looks it up).
     fn delete_c(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
         std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
         vec![(DELETED, "lib/c.ts".to_string())]
-    }
-
-    /// A nearby package appears and the ancestor package's package.json
-    /// changes.
-    fn nearby_package(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
-        write(
-            root,
-            "src/node_modules/pkg/package.json",
-            r#"{ "name": "pkg", "version": "3.0.0", "types": "index.d.ts" }"#,
-        );
-        write(
-            root,
-            "src/node_modules/pkg/index.d.ts",
-            "export declare const p: string;",
-        );
-        write(
-            root,
-            "node_modules/pkg/package.json",
-            r#"{ "name": "pkg", "version": "1.0.1", "types": "index.d.ts" }"#,
-        );
-        vec![
-            (CREATED, "src/node_modules".to_string()),
-            (CHANGED, "node_modules/pkg/package.json".to_string()),
-        ]
     }
 
     /// A file's text changes (its export's type).
@@ -2216,114 +2081,6 @@ mod load_view {
         write(root, "src/a.ts", "export const a: string = 1;");
         vec![(CHANGED, "src/a.ts".to_string())]
     }
-
-    /// A package.json changes what its package resolves to (`types`).
-    fn edit_package_json(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
-        write(
-            root,
-            "node_modules/pkg/package.json",
-            r#"{ "name": "pkg", "version": "1.0.0", "types": "other.d.ts" }"#,
-        );
-        vec![(CHANGED, "node_modules/pkg/package.json".to_string())]
-    }
-
-    /// A negative lookup turns positive: `./missing/x`, which the index
-    /// imports, appears.
-    fn create_missing(root: &str) -> Vec<(lsproto::FileChangeType, String)> {
-        write(root, "src/missing/x.ts", "export const x = 4;");
-        vec![
-            (CREATED, "src/missing".to_string()),
-            (CREATED, "src/missing/x.ts".to_string()),
-        ]
-    }
-
-    const POINTS: [ChangePoint; 4] = [
-        ChangePoint::BeforeObservation,
-        ChangePoint::BetweenObservationAndDemand,
-        ChangePoint::BetweenDemandAndRegistration,
-        ChangePoint::AfterRegistration,
-    ];
-
-    fn reconciles_at_every_point(
-        label: &str,
-        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
-    ) {
-        reconciles_at_every_point_of(label, &|_| {}, change);
-    }
-
-    /// `reconciles_at_every_point` of a project that `prepare` changes
-    /// first. Returns what the sessions showed after the reconciliation.
-    fn reconciles_at_every_point_of(
-        label: &str,
-        prepare: &dyn Fn(&str),
-        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
-    ) -> Vec<Shown> {
-        let mut shown_all = Vec::new();
-        for point in POINTS {
-            let (after, fresh, events) =
-                reconciled_session(&format!("{label}{point:?}"), point, true, prepare, change);
-            assert_eq!(after, fresh, "{point:?}: events {events:?}");
-            if point == ChangePoint::BetweenDemandAndRegistration {
-                assert!(!events.is_empty(), "{point:?}: no reconciliation event");
-            }
-            shown_all.push(after);
-        }
-        // Without the reconciliation, a change after the load and before the
-        // registration is lost (the sensitivity of the tests above).
-        let (after, fresh, events) = reconciled_session(
-            &format!("{label}none"),
-            ChangePoint::BetweenDemandAndRegistration,
-            false,
-            prepare,
-            change,
-        );
-        assert!(events.is_empty(), "{events:?}");
-        assert_ne!(after, fresh, "the change was found with no reconciliation");
-        shown_all
-    }
-
-    os_child_test! {
-        /// L1 reconciliation: a file deleted at each point of the load window.
-        fn the_reconciliation_recovers_a_deleted_file() {
-            reconciles_at_every_point("recdel", &delete_c);
-        }
-    }
-
-    os_child_test! {
-        /// L1 reconciliation: a nearby package that appears, and an ancestor
-        /// package.json that changes, at each point of the load window.
-        fn the_reconciliation_recovers_a_new_package() {
-            reconciles_at_every_point("recpkg", &nearby_package);
-        }
-    }
-
-    os_child_test! {
-        /// L1 reconciliation: a file whose text changes at each point of the
-        /// load window.
-        fn the_reconciliation_recovers_an_edited_file() {
-            reconciles_at_every_point("recedit", &edit_a);
-        }
-    }
-
-    os_child_test! {
-        /// L1 reconciliation: a package.json edit that changes what its
-        /// package resolves to, at each point of the load window.
-        fn the_reconciliation_recovers_a_package_json_edit() {
-            reconciles_at_every_point("recpj", &edit_package_json);
-        }
-    }
-
-    os_child_test! {
-        /// L1 reconciliation: a missing module (a negative lookup) that
-        /// appears, at each point of the load window.
-        fn the_reconciliation_recovers_a_negative_lookup() {
-            reconciles_at_every_point("recneg", &create_missing);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Astra's L1 review, round 2.
-    // -----------------------------------------------------------------------
 
     /// A package `pkg2` behind a node_modules symlink to `store/a`, whose
     /// `x` is `"A"`, and `src/sym.ts`, which needs `"A"` (Astra's repro).
@@ -2373,244 +2130,158 @@ mod load_view {
         shown.diagnostics.iter().any(|d| d.contains(code))
     }
 
-    os_child_test! {
-        /// Astra L1 finding 1: the node_modules symlink of a package is
-        /// repointed from A to B at each point of the load window. The
-        /// reconciliation's events keep delete before create (the session
-        /// takes a create then a delete as nothing), and the session ends as
-        /// a fresh serial session and as Go: TS2322 ("B" is not "A").
-        fn the_reconciliation_recovers_a_repointed_symlink() {
-            for shown in reconciles_at_every_point_of("recsym", &symlinked_pkg2, &|root| {
-                point_pkg2(root, "b")
-            }) {
-                assert!(has_code(&shown, "TS2322"), "{:?}", shown.diagnostics);
-            }
-        }
-    }
+    // -----------------------------------------------------------------------
+    // Loader v2 L1: a change during the load window, as in Go. Go registers
+    // the watchers after the load (project/session.go `updateWatch`); a
+    // change between its read and the client's watch acknowledgement is not
+    // seen until a later watch event reports its path. The base serial
+    // loader (a session with no view) and the view behave the same; the
+    // view's window starts at a worker's observation, which can be before
+    // the loader's demand.
+    // -----------------------------------------------------------------------
 
-    os_child_test! {
-        /// Astra L1 finding 1: only the real path of the package changes
-        /// (the same files at another place): the resolutions name the new
-        /// real path, as a fresh serial session does.
-        fn the_reconciliation_recovers_a_realpath_change() {
-            for shown in reconciles_at_every_point_of("recreal", &symlinked_pkg2, &|root| {
-                point_pkg2(root, "a2")
-            }) {
-                assert!(!has_code(&shown, "TS2322"), "{:?}", shown.diagnostics);
-                assert!(
-                    shown.resolutions.iter().any(|r| r.contains("store/a2/index.d.ts")),
-                    "{:?}",
-                    shown.resolutions
-                );
-            }
-        }
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 1: a file that becomes a directory (`lib/c.ts`,
-        /// which "../lib/c" resolves to).
-        fn the_reconciliation_recovers_a_file_that_became_a_directory() {
-            for shown in reconciles_at_every_point_of("recf2d", &|_| {}, &|root| {
-                std::fs::remove_file(std::path::Path::new(root).join("lib/c.ts")).unwrap();
-                write(root, "lib/c.ts/index.ts", "export const c = 3;");
-                vec![
-                    (DELETED, "lib/c.ts".to_string()),
-                    (CREATED, "lib/c.ts".to_string()),
-                ]
-            }) {
-                assert!(has_code(&shown, "TS2307"), "{:?}", shown.diagnostics);
-            }
-        }
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 1: a directory that becomes a file (`src/sub`,
-        /// with the root files `b.ts` and `d.ts`).
-        fn the_reconciliation_recovers_a_directory_that_became_a_file() {
-            reconciles_at_every_point("recd2f", &|root| {
-                std::fs::remove_dir_all(std::path::Path::new(root).join("src/sub")).unwrap();
-                write(root, "src/sub", "not a directory");
-                vec![
-                    (DELETED, "src/sub/b.ts".to_string()),
-                    (DELETED, "src/sub/d.ts".to_string()),
-                    (DELETED, "src/sub".to_string()),
-                    (CREATED, "src/sub".to_string()),
-                ]
-            });
-        }
-    }
-
-    /// Replaces `lib/c.ts`, which the load read, with a FIFO.
-    fn fifo_for_c(root: &str) {
-        let c = std::path::Path::new(root).join("lib/c.ts");
-        std::fs::remove_file(&c).unwrap();
-        let status = std::process::Command::new("mkfifo")
-            .arg(&c)
-            .status()
-            .expect("mkfifo");
-        assert!(status.success());
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 2: `lib/c.ts` becomes a FIFO after the load,
-        /// before the watch registration (Astra's repro). The reconciliation
-        /// reads with no wait (the open file is not a regular file: no read),
-        /// reports the path as replaced, and the session closes at once.
-        fn a_fifo_does_not_block_the_reconciliation_or_the_close() {
-            watchdog(60);
-            let root = fresh_project("recfifo");
-            let hook_root = root.clone();
-            scope_diag::set_after_load(Some(Rc::new(move || fifo_for_c(&hook_root))));
-            let (session, _client) = watched_session(&root, true);
-            open(&session, &file_uri(&root, "src/index.ts"), INDEX);
-            program(&session, &file_uri(&root, "src/index.ts"));
-            scope_diag::set_after_load(None);
-            let started = std::time::Instant::now();
-            session.wait_for_background_tasks();
-            let events = scope_diag::take_last_events().unwrap_or_default();
-            let c = format!("{root}/lib/c.ts");
-            assert!(
-                events.contains(&load_view_scope::ReconcileEvent::Deleted(c.clone()))
-                    && events.contains(&load_view_scope::ReconcileEvent::Created(c)),
-                "{events:?}"
-            );
-            session.close();
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(10),
-                "{:?}",
-                started.elapsed()
-            );
-            drop(session);
-            std::fs::remove_dir_all(&root).unwrap();
-        }
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 2: a session that closes while its reconciliation
-        /// runs (slow checks) does not wait for it, and the cancelled job's
-        /// result is never sent to the closed session.
-        fn a_close_cancels_the_reconciliation_in_flight() {
-            watchdog(60);
-            let root = fresh_project("reccancel");
-            let hook_root = root.clone();
-            scope_diag::set_after_load(Some(Rc::new(move || {
-                let _ = delete_c(&hook_root);
-            })));
-            scope_diag::set_check_delay(20_000);
-            let (session, _client) = watched_session(&root, true);
-            open(&session, &file_uri(&root, "src/index.ts"), INDEX);
-            program(&session, &file_uri(&root, "src/index.ts"));
-            scope_diag::set_after_load(None);
-            // The watch registration starts the reconciliation.
-            session.background_queue.wait();
-            assert!(session.load_views.borrow().in_flight());
-            let started = std::time::Instant::now();
-            session.close();
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(2),
-                "{:?}",
-                started.elapsed()
-            );
-            assert!(!session.load_views.borrow().in_flight());
-            scope_diag::set_check_delay(0);
-            // The job ends and posts; its result is dropped.
-            let _ = scope_diag::take_last_events();
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while std::time::Instant::now() < until {
-                ts_goport::gostd::local::run_pending();
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            assert_eq!(scope_diag::take_last_events(), None, "a cancelled job delivered");
-            assert!(session.pending_file_changes.borrow().is_empty());
-            drop(session);
-            std::fs::remove_dir_all(&root).unwrap();
-        }
-    }
-
-    /// `reconciled_session` of a deleted `lib/c.ts` between the load and the
-    /// watch registration, with the next `failures` reconciliation jobs
-    /// failing.
-    fn reconciled_with_failures(label: &str, failures: usize) {
-        scope_diag::fail_next_reconciles(failures);
-        let (after, fresh, events) = reconciled_session(
-            label,
-            ChangePoint::BetweenDemandAndRegistration,
-            true,
-            &|_| {},
-            &delete_c,
-        );
-        scope_diag::fail_next_reconciles(0);
-        assert_eq!(after, fresh, "events {events:?}");
-        assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
-        assert!(!events.is_empty(), "no reconciliation event");
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 3: a reconciliation job that fails is tried
-        /// again with its views kept, and the change is found.
-        fn a_failed_reconciliation_is_tried_again() {
-            reconciled_with_failures("recfail1", 1);
-        }
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 3: a reconciliation that fails again reports
-        /// every observation of its views as possibly changed, and the
-        /// session still ends as a fresh serial session.
-        fn a_reconciliation_that_keeps_failing_reloads_everything() {
-            reconciled_with_failures("recfail2", 2);
-        }
-    }
-
-    /// The reconcile threads of this process.
-    fn reconcile_threads() -> usize {
-        std::fs::read_dir("/proc/self/task")
-            .unwrap()
-            .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
-            .filter(|name| name.starts_with("goport-reconci"))
-            .count()
-    }
-
-    os_child_test! {
-        /// Astra L1 finding 5: many loads in a row while the file system is
-        /// slow keep one reconciliation job in flight and the process's
-        /// reconcile threads bounded; the views of the loads that came
-        /// meanwhile go into the next job, and none is lost (the reconciler
-        /// is empty at the end, and a change after the first load is found).
-        fn many_loads_keep_the_reconciliation_bounded() {
-            watchdog(120);
-            let root = fresh_project("recbound");
-            let hook_root = root.clone();
-            let first = Rc::new(std::cell::Cell::new(true));
-            scope_diag::set_after_load(Some(Rc::new(move || {
-                if first.replace(false) {
-                    let _ = delete_c(&hook_root);
+    /// What a session on the project in `root` shows after it opens the
+    /// index (with or without the view), the change `change` made by `hook`
+    /// during its load window, and the watch registration; then after the
+    /// client's watch events for the change. `force` makes the change after
+    /// the parse workers observed the disk and before the loader's demands
+    /// (`Mode::Force`); otherwise it is made after the load, before the
+    /// watch registration.
+    fn lost_then_seen(
+        root: &str,
+        view: bool,
+        force: bool,
+        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+    ) -> (Shown, Shown) {
+        let uri = file_uri(root, "src/index.ts");
+        let reported = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let hook = {
+            let root = root.to_string();
+            let reported = reported.clone();
+            Rc::new(move || {
+                if reported.borrow().is_empty() {
+                    *reported.borrow_mut() = change(&root);
                 }
-            })));
-            scope_diag::set_check_delay(2_000);
-            let (session, client) = watched_session(&root, true);
-            let uri = file_uri(&root, "src/index.ts");
-            open(&session, &uri, INDEX);
-            program(&session, &uri);
-            let mut max_threads = 0;
-            for version in 2..14 {
-                // A new import each time: a new program load.
-                edit_index(&session, &root, version, &format!("import \"./more{version}\";\n"));
-                program(&session, &uri);
-                session.background_queue.wait();
-                max_threads = max_threads.max(reconcile_threads());
-            }
-            scope_diag::set_after_load(None);
-            scope_diag::set_check_delay(0);
-            session.wait_for_background_tasks();
-            program(&session, &uri);
-            session.wait_for_background_tasks();
-            assert!(!session.load_views.borrow().in_flight());
-            assert!(max_threads <= 8, "{max_threads} reconcile threads");
-            let after = shown(&session, &root, &client);
+            }) as Rc<dyn Fn()>
+        };
+        if force {
+            resolve_ahead::set_mode(Some(Mode::Force));
+            resolve_ahead::set_first_load(Some(true));
+            resolve_ahead::set_after_workers(Some(hook.clone()));
+        }
+        let (session, client) = watched_session(root, view);
+        open(&session, &uri, INDEX);
+        program(&session, &uri);
+        resolve_ahead::set_after_workers(None);
+        resolve_ahead::set_mode(None);
+        resolve_ahead::set_first_load(None);
+        if !force {
+            // After the load, before the watch registration (a background
+            // task of the snapshot update).
+            hook();
+        }
+        session.wait_for_background_tasks();
+        let lost = shown(&session, root, &client);
+        // The client's watcher reports the change later.
+        let events: Vec<(lsproto::FileChangeType, String)> = reported
+            .borrow()
+            .iter()
+            .map(|(kind, name)| (*kind, file_uri(root, name)))
+            .collect();
+        assert!(!events.is_empty(), "the change did not run");
+        let events: Vec<(lsproto::FileChangeType, &str)> = events
+            .iter()
+            .map(|(kind, uri)| (*kind, uri.as_str()))
+            .collect();
+        super::super::util::watch(&session, &events);
+        program(&session, &uri);
+        session.wait_for_background_tasks();
+        let seen = shown(&session, root, &client);
+        drop(session);
+        (lost, seen)
+    }
+
+    /// A fresh serial session (no view, no resolve ahead) of the disk in
+    /// `root`.
+    fn fresh_serial(root: &str) -> Shown {
+        resolve_ahead::set_mode(Some(Mode::Off));
+        let (session, client) = watched_session(root, false);
+        open(&session, &file_uri(root, "src/index.ts"), INDEX);
+        program(&session, &file_uri(root, "src/index.ts"));
+        session.wait_for_background_tasks();
+        let fresh = shown(&session, root, &client);
+        resolve_ahead::set_mode(None);
+        drop(session);
+        fresh
+    }
+
+    /// The disk before and after `change` (fresh serial sessions), and
+    /// `lost_then_seen` with and without the view in the same project path.
+    fn change_in_the_window(
+        label: &str,
+        force: bool,
+        prepare: &dyn Fn(&str),
+        change: &'static dyn Fn(&str) -> Vec<(lsproto::FileChangeType, String)>,
+    ) -> Shown {
+        let root = fresh_project(label);
+        prepare(&root);
+        let before = fresh_serial(&root);
+        let _ = change(&root);
+        let after = fresh_serial(&root);
+        assert_ne!(before, after, "the change shows nothing");
+        let sides: &[bool] = if force { &[true] } else { &[true, false] };
+        for &view in sides {
+            assert_eq!(fresh_project(label), root);
+            prepare(&root);
+            let (lost, seen) = lost_then_seen(&root, view, force, change);
+            assert_eq!(
+                lost, before,
+                "view {view}: the change was seen before its watch event"
+            );
+            assert_eq!(
+                seen, after,
+                "view {view}: the watch event did not bring the change"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+        after
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: a file deleted after the
+        /// load read it and before the watch registration stays in the
+        /// program until its watch event arrives; then the program loses it.
+        fn a_file_deleted_after_the_load_is_seen_with_its_watch_event() {
+            let after = change_in_the_window("winafterdel", false, &|_| {}, &delete_c);
             assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
-            drop(session);
-            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: an edited file.
+        fn a_file_edited_after_the_load_is_seen_with_its_watch_event() {
+            let _ = change_in_the_window("winafteredit", false, &|_| {}, &edit_a);
+        }
+    }
+
+    os_child_test! {
+        /// Go's window, with and without the view: a repointed node_modules
+        /// symlink (A to B: TS2322 once the watch events arrive).
+        fn a_symlink_repointed_after_the_load_is_seen_with_its_watch_events() {
+            let after = change_in_the_window("winaftersym", false, &symlinked_pkg2, &|root| {
+                point_pkg2(root, "b")
+            });
+            assert!(has_code(&after, "TS2322"), "{:?}", after.diagnostics);
+        }
+    }
+
+    os_child_test! {
+        /// The view's window starts at a worker's observation: a file deleted
+        /// after a worker read it and before the loader's demand stays in the
+        /// program until its watch event, as a change after Go's read does.
+        fn a_file_deleted_after_a_worker_observed_it_is_seen_with_its_watch_event() {
+            let after = change_in_the_window("winobsdel", true, &|_| {}, &delete_c);
+            assert!(has_code(&after, "TS2307"), "{:?}", after.diagnostics);
         }
     }
 }
