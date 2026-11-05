@@ -1,93 +1,180 @@
 #!/usr/bin/env python3
-"""What each parity mode runs: the one definition parity.sh runs from and parity_compare.py checks
-a run against (`required`: the base items a run of a mode must have).
+"""What each parity mode runs and what a run of it must have (lane H4).
 
 usage: parity_modes.py shell quick|full     the mode's settings as shell assignments (parity.sh)
-       parity_modes.py in MODE ITEM...      whether each item is one MODE runs
+       parity_modes.py in MODE ITEM...      whether a run of MODE must have each item (by the
+                                            manifest of this checkout)
+       parity_modes.py check [FILE]         validate a quick manifest (default: this checkout's)
 
-quick runs a subset of full: the cli items of the quick configs and variants (parity-projects.json
-"quick", parity_cli.VARIANTS), the go_baselines tests and TestLocal rows (no workspace binaries),
-the lsp sessions of parity_lsp.SESSIONS['quick'], and fuzz cases 0 to QUICK_FUZZ - 1 of seed 1 (no
-corpus). full runs every tier on everything.
+full runs every tier on everything, and a full run must have every base item. quick runs a subset,
+and its required items are the quick manifest's (parity-quick-manifest.json): the cli items it names,
+every answer of the lsp sessions it names, fuzz cases 0 to count-1 of its seed, the tests of the
+binaries whose names start with its binaryPrefixes, and the TestLocal rows. No corpus. The tiers run
+at least the manifest's items in quick mode (parity_cli.py, parity_lsp.py and parity_tests.py read
+it; parity.sh passes its fuzz count), so execution may cover more than the manifest, never less.
+
+parity_compare.py does not judge a run by the candidate's own manifest: it reads the accepted one,
+`accepted_file(ref, name)` from git (the accepted ref, default perf/first-principles), so a lane
+that shrinks the manifest still has to run the accepted items until the change is reviewed and
+merged. The manifest is validated strictly (`load_manifest`): unknown keys, a missing key or a
+value of the wrong type is an error, never a default.
 """
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+MANIFEST = HERE / 'parity-quick-manifest.json'
+MANIFEST_REPO_PATH = 'scripts/perf-rearch/parity-quick-manifest.json'
 MODES = {
-    'quick': {'tiers': ['cli', 'tests', 'lsp', 'fuzz'], 'rs_runs': 1, 'fuzz_count': 1500},
+    'quick': {'tiers': ['cli', 'tests', 'lsp', 'fuzz'], 'rs_runs': 1},
     'full': {'tiers': ['cli', 'tests', 'lsp', 'fuzz', 'corpus'], 'rs_runs': 2, 'fuzz_count': 30000},
 }
-FUZZ_SEED = '1'
 TIER_OF = {'cli': 'cli', 'test': 'tests', 'test-local': 'tests', 'lsp': 'lsp', 'fuzz': 'fuzz', 'corpus': 'corpus'}
+MANIFEST_KEYS = {'about': str, 'version': int, 'cli': list, 'lsp': list, 'fuzz': dict, 'tests': dict}
+CLI_ITEM = re.compile(r'^cli/[^/]+/[^/]+/[^/]+$')
+
+
+class ArtifactError(Exception):
+    pass
 
 
 def tier_of(item):
     return TIER_OF.get(item.split('/', 1)[0])
 
 
-def _cli_spec(projects_file=HERE / 'parity-projects.json'):
-    from parity_cli import VARIANTS
-    spec = json.loads(Path(projects_file).read_text())
-    configs = {(p['name'], c['label']): bool(c.get('quick')) for p in spec['projects'] for c in p['configs']}
-    return configs, {v: quick for v, (quick, _, _) in VARIANTS.items()}
+def _exact_keys(where, d, spec):
+    if not isinstance(d, dict):
+        raise ArtifactError(f'{where}: not an object')
+    unknown, missing = sorted(set(d) - set(spec)), sorted(set(spec) - set(d))
+    if unknown or missing:
+        raise ArtifactError(f'{where}: ' + '; '.join(x for x in (unknown and f'unknown keys {unknown}',
+                                                               missing and f'missing keys {missing}') if x))
+    for k, t in spec.items():
+        if not isinstance(d[k], t) or (t is int and isinstance(d[k], bool)):
+            raise ArtifactError(f'{where}.{k}: a {type(d[k]).__name__}, not a {t.__name__}')
 
 
-def _lsp_spec():
-    from parity_lsp import SESSIONS
-    return {s['name'] for s in SESSIONS['quick']}, {s['name'] for s in SESSIONS['full']}
+class Manifest:
+    """A validated quick manifest; `requires(item)`: whether a quick run must have the item."""
+
+    def __init__(self, data, origin):
+        self.origin = origin
+        _exact_keys('manifest', data, MANIFEST_KEYS)
+        if data['version'] != 1:
+            raise ArtifactError(f'manifest.version: {data["version"]}, not 1')
+        _exact_keys('manifest.fuzz', data['fuzz'], {'seed': str, 'count': int})
+        _exact_keys('manifest.tests', data['tests'], {'binaryPrefixes': list, 'testLocal': bool})
+        for k, pat in (('cli', CLI_ITEM), ('lsp', re.compile(r'^[\w.-]+$'))):
+            for x in data[k]:
+                if not isinstance(x, str) or not pat.match(x):
+                    raise ArtifactError(f'manifest.{k}: not an item name: {x!r}')
+            if len(set(data[k])) != len(data[k]):
+                raise ArtifactError(f'manifest.{k}: a name is listed twice')
+        if data['fuzz']['count'] < 0 or not re.match(r'^\d+$', data['fuzz']['seed']):
+            raise ArtifactError('manifest.fuzz: bad seed or count')
+        if not all(isinstance(x, str) and re.match(r'^[\w-]+$', x) for x in data['tests']['binaryPrefixes']):
+            raise ArtifactError('manifest.tests.binaryPrefixes: not binary names')
+        self.data = data
+        self.cli = set(data['cli'])
+        self.lsp = set(data['lsp'])
+        self.fuzz_seed, self.fuzz_count = data['fuzz']['seed'], data['fuzz']['count']
+        self.test_prefixes = tuple(data['tests']['binaryPrefixes'])
+        self.test_local = data['tests']['testLocal']
+
+    def requires(self, item):
+        tier = tier_of(item)
+        parts = item.split('/')
+        if tier == 'cli':
+            return item in self.cli
+        if tier == 'lsp':
+            return len(parts) > 1 and parts[1] in self.lsp
+        if tier == 'fuzz':
+            m = re.match(r'^fuzz/([^:]+):(\d+)$', item)
+            return bool(m) and m[1] == self.fuzz_seed and int(m[2]) < self.fuzz_count
+        if tier == 'tests':
+            if parts[0] == 'test-local':
+                return self.test_local
+            return len(parts) >= 2 and parts[1].startswith(self.test_prefixes)
+        if tier == 'corpus':
+            return False
+        return True  # an unknown name is required
+
+    def items(self):
+        """What the manifest names, for the shrink report: cli items, lsp sessions, fuzz cases, tests."""
+        return ({f'cli {x}' for x in self.cli} | {f'lsp session {x}' for x in self.lsp}
+                | {f'fuzz/{self.fuzz_seed}:{i}' for i in range(self.fuzz_count)}
+                | {f'tests binary {p}*' for p in self.test_prefixes} | ({'test-local rows'} if self.test_local else set()))
+
+
+def load_manifest(text, origin):
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise ArtifactError(f'{origin}: not JSON: {e}') from None
+    try:
+        return Manifest(data, origin)
+    except ArtifactError as e:
+        raise ArtifactError(f'{origin}: {e}') from None
+
+
+def working_manifest():
+    """This checkout's manifest: what the tiers run (never what compare requires)."""
+    return load_manifest(MANIFEST.read_text(), str(MANIFEST))
+
+
+def accepted_file(ref, repo_path):
+    """(text, origin) of a file at the accepted git ref of this harness's repo. Raises ArtifactError."""
+    top = subprocess.run(['git', '-C', str(HERE), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+    sha = subprocess.run(['git', '-C', str(HERE), 'rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}'],
+                         capture_output=True, text=True)
+    if top.returncode or sha.returncode:
+        raise ArtifactError(f'the accepted ref {ref!r} does not resolve in {HERE}')
+    r = subprocess.run(['git', '-C', top.stdout.strip(), 'show', f'{sha.stdout.strip()}:{repo_path}'],
+                       capture_output=True)
+    if r.returncode:
+        raise ArtifactError(f'{repo_path} is not in the accepted ref {ref} ({sha.stdout.strip()[:12]})')
+    return r.stdout.decode(), f'{ref} ({sha.stdout.strip()[:12]}):{repo_path}'
 
 
 class Selector:
-    """in_mode(item): whether a run of `mode` must have the item. An item is left out only when it is
-    positively one that the mode does not run (a known full-only cli config or variant, a known
-    full-only lsp session, a workspace test binary, a fuzz case past the quick count, a corpus case,
-    or a tier the mode has not); anything else, an unknown name included, is required."""
+    """in_mode(item): whether a run of `mode` must have the item: every item for full (an unknown mode
+    is held to full), the manifest's items for quick."""
 
-    def __init__(self, mode):
-        self.mode = mode if mode in MODES else 'full'  # an unknown mode is held to full
-        if self.mode == 'quick':
-            self.cli_configs, self.cli_variants = _cli_spec()
-            self.lsp_quick, self.lsp_full = _lsp_spec()
+    def __init__(self, mode, manifest=None):
+        self.mode = mode if mode in MODES else 'full'
+        self.manifest = manifest
+        if self.mode == 'quick' and manifest is None:
+            raise ArtifactError('a quick run is judged by a quick manifest')
 
     def __call__(self, item):
-        return self.mode == 'full' or not self.full_only(item)
-
-    def full_only(self, item):
-        tier = tier_of(item)
-        if tier is None:
-            return False
-        if tier not in MODES['quick']['tiers']:
-            return True  # corpus
-        parts = item.split('/')
-        if tier == 'cli':
-            if len(parts) != 4 or (parts[1], parts[2]) not in self.cli_configs or parts[3] not in self.cli_variants:
-                return False
-            return not (self.cli_configs[(parts[1], parts[2])] and self.cli_variants[parts[3]])
-        if tier == 'tests':
-            return parts[0] == 'test' and len(parts) >= 3 and not parts[1].startswith('go_baselines')
-        if tier == 'lsp':
-            name = parts[1] if len(parts) > 1 else ''
-            return name in self.lsp_full and name not in self.lsp_quick
-        if tier == 'fuzz':
-            m = re.match(r'^fuzz/([^:]+):(\d+)$', item)
-            return bool(m) and m[1] == FUZZ_SEED and int(m[2]) >= MODES['quick']['fuzz_count']
-        return False
+        return self.mode == 'full' or self.manifest.requires(item)
 
 
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == 'shell' and sys.argv[2] in MODES:
         m = MODES[sys.argv[2]]
-        print(f'tiers="{" ".join(m["tiers"])}" rs_runs={m["rs_runs"]} fuzz_count={m["fuzz_count"]}')
+        count = m.get('fuzz_count') or working_manifest().fuzz_count
+        print(f'tiers="{" ".join(m["tiers"])}" rs_runs={m["rs_runs"]} fuzz_count={count}')
         return 0
     if len(sys.argv) >= 3 and sys.argv[1] == 'in':
-        sel = Selector(sys.argv[2])
+        sel = Selector(sys.argv[2], working_manifest())
         for item in sys.argv[3:]:
             print(f'{"yes" if sel(item) else "no "} {item}')
+        return 0
+    if len(sys.argv) >= 2 and sys.argv[1] == 'check':
+        path = Path(sys.argv[2]) if len(sys.argv) > 2 else MANIFEST
+        try:
+            m = load_manifest(path.read_text(), str(path))
+        except ArtifactError as e:
+            print(f'INVALID {e}')
+            return 1
+        print(f'ok {path}: {len(m.cli)} cli items, {len(m.lsp)} lsp sessions, fuzz {m.fuzz_count}, '
+              f'tests {",".join(m.test_prefixes)}{" + TestLocal" if m.test_local else ""}')
         return 0
     print(__doc__)
     return 2
