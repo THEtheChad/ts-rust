@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # parity.sh: the output-parity gate of perf/first-principles. tsc-rs against Go tsc at the pin
-# (3e9236361fa9), everything compared byte for byte, per item MATCH / DIFF / GO-UNSTABLE.
+# (3e9236361fa9), everything compared byte for byte, per item MATCH / DIFF / GO-UNSTABLE, and on the
+# cli, fuzz and corpus tiers the referee statuses (parity_referees.py): an item that differs from
+# Go's default run is still good when GO-BROKEN (Go crashed, timed out or its runs differ; tsc-rs
+# stable), GO-PARTITION (tsc-rs equals Go at another --checkers N, N in 1,2,3,4,6,8,12,16, where
+# Go's output depends on N) or JS-AGREES (JS tsc 6.0.3 sides with tsc-rs on every point where it
+# differs from Go). The extra Go and JS runs happen only for items that are not MATCH, once: they are
+# cached (docs/perf-rearch/parity.md, "Referees").
 #
 # usage: scripts/perf-rearch/parity.sh quick|full <tsgo bin> [--base DIR] [--out DIR] [--checkout DIR]
 #                                       [--tiers t1,t2,...]
@@ -28,7 +34,8 @@
 # Output: --out (default ~/.cache/perf-rearch/parity/runs/<time>-<mode>-<bin sha>): meta.json,
 # <tier>/ (results.json and details: cli/items/<item>/diff.txt, fuzz/diffs/<case>/, lsp/<session>/),
 # <tier>.log, and results.json (all tiers). With --base it ends with `parity_compare.py compare`:
-# a failure is any item that was MATCH or PASS in the base and is not now (PARITY FAIL, exit 1).
+# a failure is any item that was good in the base and is not now (PARITY FAIL, exit 1). Items
+# that became good by a referee are listed by status, every one.
 # The base on main: ~/.cache/perf-rearch/parity/base-main/.
 #
 # One gate run at a time (a lock: the scratch paths are fixed so that paths in output agree with the
@@ -106,13 +113,15 @@ for t in $tiers; do
 done
 for t in $tiers; do
   case $t in
-  cli) tier cli python3 -I "$here/parity_cli.py" --rs "$bin" --go "$GO" --out "$out/cli" --tier "$mode" --rs-runs "$rs_runs" ;;
+  cli) tier cli python3 -I "$here/parity_cli.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/cli" --tier "$mode" \
+    --rs-runs "$rs_runs" ;;
   lsp) tier lsp python3 -I "$here/parity_lsp.py" --rs "$bin" --go "$GO_LSP" --out "$out/lsp" --tier "$mode" ;;
-  fuzz) tier fuzz python3 -I "$here/parity_fuzz.py" --rs "$bin" --go "$GO" --out "$out/fuzz" --seed 1 \
+  fuzz) tier fuzz python3 -I "$here/parity_fuzz.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/fuzz" --seed 1 \
     --count "$fuzz_count" --jobs 12 --rs-runs "$rs_runs" ;;
-  corpus) tier corpus python3 -I "$here/parity_fuzz.py" --corpus --rs "$bin" --go "$GO" --out "$out/corpus" --jobs 16 ;;
+  corpus) tier corpus python3 -I "$here/parity_fuzz.py" --corpus --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/corpus" \
+    --jobs 16 ;;
   js) tier js python3 -I "$here/parity_cli.py" --rs "node $JS_TSC" --label-rs js-tsc --go "$GO" --out "$out/js" \
-    --tier full --rs-runs 1 ;;
+    --tier full --rs-runs 1 --no-referees ;;
   tests) ;;
   *) echo "parity.sh: unknown tier $t" >&2 ;;
   esac
