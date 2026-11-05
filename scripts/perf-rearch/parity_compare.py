@@ -3,10 +3,14 @@
 
 usage: parity_compare.py merge DIR            DIR/<tier>/results.json -> DIR/results.json
        parity_compare.py compare BASE CUR     exit 1 when an item that is good in BASE is not good in CUR
-       parity_compare.py known DIR            every item that is not good (the known diffs of a base);
-                                              IGNORED and SKIP only counted
+       parity_compare.py known DIR            every item that is not good (the known diffs of a base),
+                                              and every item with a referee status; IGNORED and SKIP counted
 
-Good: MATCH (CLI, LSP, fuzz, corpus), PASS and FLAKY (tests; FLAKY: passed when run again alone). compare fails on an item that is good in BASE
+Good: MATCH (CLI, LSP, fuzz, corpus), the referee statuses of parity_referees.py (CLI, fuzz,
+corpus: GO-BROKEN, GO-PARTITION, JS-AGREES), PASS and FLAKY (tests; FLAKY: passed when run again
+alone). An item that is MATCH in BASE and has a referee status in CUR is not lost, but compare lists
+every such item, grouped by status ("good by a referee"), and so every recovered or new item with a
+referee status. compare fails on an item that is good in BASE
 and is DIFF, FAIL, ERROR, UNRUN, SKIP or IGNORED in CUR (a regression), and, when both runs are the
 same mode (quick or full), on such an item that CUR does not have (not run), and on any ERROR item
 in CUR (a harness error, or a tier that ended without results). Items that CUR has and
@@ -19,7 +23,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-GOOD = {'MATCH', 'PASS', 'FLAKY'}
+REFEREED = ('GO-BROKEN', 'GO-PARTITION', 'JS-AGREES')  # parity_referees.REFEREED
+GOOD = {'MATCH', *REFEREED, 'PASS', 'FLAKY'}
 TIERS = ('cli', 'tests', 'lsp', 'fuzz', 'corpus', 'js')
 
 
@@ -57,6 +62,11 @@ def compare(base, cur):
     bi, ci = items_of(b), items_of(c)
     same_mode = b['meta'].get('mode') == c['meta'].get('mode')
     lost, unrun, unstable, recovered, new_bad = [], [], [], [], []
+    refereed = {s: [] for s in REFEREED}  # status -> [(item, base status or None, detail)]
+    for k, now in ci.items():
+        was = bi.get(k, {}).get('status')
+        if now['status'] in REFEREED and was != now['status']:
+            refereed[now['status']].append((k, was, now.get('detail', '')))
     for k, v in bi.items():
         now = ci.get(k)
         if v['status'] in GOOD:
@@ -75,7 +85,9 @@ def compare(base, cur):
     print(f'base {base} ({b["meta"].get("mode")}, {b["meta"].get("rsSha", "")[:12]}) vs '
           f'{cur} ({c["meta"].get("mode")}, {c["meta"].get("rsSha", "")[:12]})')
     print(f'compared {len(set(bi) & set(ci))} items: {len(lost)} lost, {len(unrun)} not run, '
-          f'{len(recovered)} recovered, {len(unstable)} Go-unstable now, {len(new_bad)} new items not good')
+          f'{len(recovered)} recovered, {len(unstable)} Go-unstable now, {len(new_bad)} new items not good, '
+          f'{sum(map(len, refereed.values()))} newly good by a referee '
+          f'({", ".join(f"{n} {len(v)}" for n, v in refereed.items())})')
     for k, s, d in lost[:60]:
         print(f'LOST      {k}: {s} {d}')
     for k in unrun[:30]:
@@ -83,7 +95,8 @@ def compare(base, cur):
     for k, s, d in new_bad[:30]:
         print(f'NEW {s:<6} {k} {d}')
     for k in recovered[:30]:
-        print(f'RECOVERED {k}')
+        print(f'RECOVERED {k} ({ci[k]["status"]})')
+    print_refereed(refereed)
     for k in sorted(k for k, v in ci.items() if v['status'] == 'FLAKY'):
         print(f'FLAKY     {k} (failed, then passed alone)')
     errors = [k for k, v in ci.items() if v['status'] == 'ERROR']
@@ -94,13 +107,31 @@ def compare(base, cur):
     return 0 if ok else 1
 
 
+TITLES = {'GO-BROKEN': 'Go itself is broken here (crash, timeout or runs that differ); tsc-rs is stable',
+          'GO-PARTITION': 'now matches another Go partition (--checkers N)',
+          'JS-AGREES': 'JS tsc 6.0.3 sides with tsc-rs on every point where it differs from Go'}
+
+
+def print_refereed(refereed):
+    """Every item whose referee status is new in CUR, grouped by status. Never cut: each one from
+    MATCH is a change of tsc-rs's output that a reviewer checks."""
+    for status, rows in refereed.items():
+        if not rows:
+            continue
+        from_match = sum(1 for _, was, _ in rows if was == 'MATCH')
+        print(f'{status}: {TITLES[status]} ({len(rows)}; {from_match} were MATCH in the base)')
+        for k, was, d in sorted(rows, key=lambda r: (r[1] != 'MATCH', r[0])):
+            print(f'  {was or "new":<11} -> {status:<12} {k}: {d}')
+
+
 def known(d):
-    """Every item that is not good, except IGNORED and SKIP (counted per tier prefix)."""
+    """Every item that is not good, and every item with a referee status (good, but not Go's default
+    output); IGNORED and SKIP are counted per tier prefix."""
     quiet = Counter()
     for k, v in sorted(items_of(load(d)).items()):
         if v['status'] in ('IGNORED', 'SKIP'):
             quiet[(v['status'], k.split('/', 1)[0])] += 1
-        elif v['status'] not in GOOD:
+        elif v['status'] not in GOOD or v['status'] in REFEREED:  # good, but not Go's default output
             print(f'{v["status"]:<11} {k} {v.get("detail") or v.get("sig") or ""}')
     for (status, prefix), n in sorted(quiet.items()):
         print(f'{status:<11} {n} items of {prefix}/ (not listed)')
