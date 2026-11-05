@@ -487,3 +487,14 @@ once a **reconciliation step** is built and tested.
       emit scheduling;
     - hash the declaration-text slice directly when there are no declaration
       diagnostics.
+- **2026-11-04, D1-S1 done** (`d1-s1-report.md`).
+  - **Gain gate:** the static refinement passes the 90% gate in all 10 cells
+    (median 116% of Go-N's gain).
+  - **Not yet safe:** zod drops a TS2344 at r8 and r16k, because Go's warm
+    checker silently degrades a type in an earlier file.
+  - **D1-S2 started:** instrument every type-degrading limit or cycle event
+    (diagnostics feature, spike only), check the trigger catches every
+    divergence in the identity matrix, cost the fallback granularity
+    (whole process vs per group), design the finding-5 diagnostic
+    collection, and propose validation. Astra reviews its design.
+  - C3 waits for D1's outcome.

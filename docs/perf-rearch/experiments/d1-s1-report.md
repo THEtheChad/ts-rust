@@ -1,4 +1,4 @@
-# D1-S1 report (spike branch `t3/1441d85b`, head 07ac2d5ae; never merged as a switch)
+# D1-S1 report (spike branch `t3/refine-checker-split`, head 07ac2d5ae; never merged as a switch)
 
 The full write-up is `docs/perf-rearch/experiments/d1-s1.md` on the spike
 branch. The bins are `~/.cache/perf-rearch/bins/tsgo-d1s1-a17219bf7-goport`
