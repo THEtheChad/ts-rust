@@ -177,6 +177,7 @@ SPEC = {
     'show': {'go': {'d': 'checkers 4\n', **{str(n): f'checkers {n}\n' for n in R.CHECKERS}}, 'rs': {'*': 'checkers 1\n'}},
     'partb': {'go': PART, 'rs': {'*': 'lo\n'}},
     'slow': {'go': {**PART, '16': {'out': 'hi\n', 'sleep': 6}}, 'rs': {'*': 'lo\n'}},
+    'bothhang': {'go': {'*': {'out': 'x\n', 'sleep': 7}}, 'rs': {'*': {'out': 'x\n', 'sleep': 7}}},
 }
 JS_DEFAULT = {'*': {'out': '', 'code': 0}}
 
@@ -341,6 +342,7 @@ FUZZ_EXPECT = {  # scenario -> (status, detail substring, extra case args, rs ru
     'partjs': ('GO-PARTITION', 'matches Go --checkers 1', [], 2),
     'show': ('DIFF', '', ['--showConfig'], 2),
     'slow': ('GO-PARTITION', 'matches Go --checkers 1,2', [], 1),
+    'bothhang': ('DIFF', 'go-broken (GO-FAIL: Go timed out), tsc-rs timed out too', [], 1),
 }
 
 
@@ -369,6 +371,8 @@ def fuzz(root, bins, state):
             extra = row['referees']['partition']['unstable'] == [1]
         detail = row.get('detail', '')
         check(f'corpus {s} -> {status}', row['status'] == status and sub in detail and extra, row)
+    check('corpus: the summary names a DIFF without a signature (both timed out)',
+          parity_fuzz.diff_kind({'status': 'DIFF', 'detail': 'go-broken (x), tsc-rs timed out too'}) == 'go-broken (x), tsc-rs timed out too')
     before = len(calls(state))
     args.rs_runs, args.timeout = 2, 3
     _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, names.index('jsagree'))

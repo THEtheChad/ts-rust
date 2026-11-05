@@ -212,6 +212,12 @@ def run_case(args, corpus, cache, out, i):
     return i, row, go_secs + c.go_secs, rs_secs
 
 
+def diff_kind(row):
+    """What a DIFF row is, for the summary: difffuzz's signature, or the referee's detail (a DIFF
+    where Go was broken and tsc-rs crashed or hung too has no signature when both timed out)."""
+    return row.get('sig') or row.get('detail') or '?'
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--rs', required=True)
@@ -272,7 +278,7 @@ def main():
                'items': dict(sorted(items.items()))}
     (out / 'results.json').write_text(json.dumps(summary, indent=1) + '\n')
     print(f'{kind}: {dict(counts)} in {summary["secs"]["wall"]}s; DIFF signatures: '
-          f'{dict(Counter(r["sig"] for r in items.values() if r["status"] == "DIFF"))}')
+          f'{dict(Counter(diff_kind(r) for r in items.values() if r["status"] == "DIFF"))}')
 
 
 if __name__ == '__main__':
