@@ -32,10 +32,18 @@
 //                   load, then edited and closed
 //   second-project  query: a second tsconfig project's first load after the first project's
 //                   load and completions filled the session's caches
+//   ata-overlay     fixture ata-small with automatic type acquisition on, a private typings cache
+//                   and a stand-in npm with a fixed delay (ata-npm/): the inferred project's first
+//                   load, its refresh when ATA's typings arrive, an overlay whose import makes ATA
+//                   install more typings, and the watchers when the overlay and the file close
+// ATA: the scenarios that set `ata: false` turn it off (pkgjson-overlay); ata-overlay runs it against
+// the stand-in npm; the others leave it on with the user's npm and typings cache
+// (~/.cache/typescript/7.1, which parity_lsp.py keys their Go cache by).
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
-import { writeFixture } from "./fixtures.mjs";
+import { ATA_STORE, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
 import { TYPED, startServer } from "./session.mjs";
 
@@ -172,6 +180,33 @@ class Script {
     mkdirSync(dirname(b), { recursive: true });
     renameSync(a, b);
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(a), type: 3 }, { uri: fileUri(b), type: 1 }] });
+  }
+
+  // ata-overlay: waits until ATA is idle (no stand-in npm call in flight, and none started for
+  // ATA_IDLE_MS after the last one ended, at most 60 s), lets the server settle, and logs the npm calls
+  // since the last wait as an item ("<label> ata npm", method ata/npm: each call's arguments and exit
+  // code), compared like an answer. The scenario waits after every step, so no request is ever sent
+  // while ATA's npm call runs: a request in that window starts a second install of the same typings
+  // and makes the next answers depend on which install a snapshot sees (Go and tsc-rs alike; the race
+  // ND1 found with the real npm).
+  async ataIdle(label) {
+    const file = this.ata.log;
+    const quiet = Number(process.env.ATA_IDLE_MS ?? 1500);
+    const read = () => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    const start = performance.now();
+    let last = performance.now();
+    let seen = -1;
+    for (;;) {
+      const log = read();
+      if (log.length !== seen) [seen, last] = [log.length, performance.now()];
+      const busy = log.filter((e) => e.start).length > log.filter((e) => e.done).length;
+      if ((!busy && performance.now() - last >= quiet) || performance.now() - start > 60000) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await this.client.settle(SETTLE_MS);
+    const done = read().filter((e) => e.done);
+    this.log.push({ step: `${label} ata npm`, method: "ata/npm", result: done.slice(this.ata.reported).map((e) => ({ args: e.args, code: e.code })), ms: 0 });
+    this.ata.reported = done.length;
   }
 
   // Waits until the server is quiet (no checkpoint): between didOpens, so that each snapshot's
@@ -442,6 +477,45 @@ export const SCENARIOS = {
   },
 };
 
+SCENARIOS["ata-overlay"] = {
+  fixture: "ata-small",
+  // ATA on, against a private typings cache (XDG_CACHE_HOME, fresh for every server run) and the
+  // stand-in npm (ata-npm/: offline, ATA_NPM_DELAY_MS per call): the same for Go and tsc-rs, and the
+  // same on every run. After every step the script waits until ATA is idle (ataIdle), so each answer
+  // sees ATA's typings exactly when the steps before it made ATA install them.
+  typings: "private",
+  async run(s) {
+    const app = "src/app.js";
+    const ghost = "src/ghost.js";
+    s.open(app);
+    await s.ataIdle("open app.js:");
+    await s.diag(app);
+    await s.ataIdle("diagnostic:");
+    await s.hover(app, "pad(");
+    await s.ataIdle("hover:");
+    await s.diag(app, " again");
+    await s.ataIdle("diagnostic again:");
+    await s.checkpoint("load");
+    s.open(ghost, 'import { twice } from "ata-fake-two";\n\nexport const g = twice(2);\n');
+    await s.ataIdle("open overlay:");
+    await s.diag(ghost);
+    await s.ataIdle("overlay diagnostic:");
+    await s.hover(ghost, "twice(");
+    await s.ataIdle("overlay hover:");
+    await s.diag(ghost, " again");
+    await s.ataIdle("overlay diagnostic again:");
+    await s.checkpoint("open-overlay");
+    s.close(ghost);
+    await s.ataIdle("close overlay:");
+    await s.diag(app, " after closing the overlay");
+    await s.ataIdle("diagnostic after close:");
+    await s.checkpoint("close-overlay");
+    s.close(app);
+    await s.ataIdle("close app.js:");
+    await s.checkpoint("close-all");
+  },
+};
+
 // The same steps with the workspace folder at <root>/src: package.json, node_modules and the
 // tsconfig are then outside the workspace, so Go registers watchers for the directories the loader
 // looked in there instead of covering them with "<root>/**/*".
@@ -456,6 +530,25 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   const scenario = SCENARIOS[name];
   if (!scenario) throw new Error(`unknown scenario ${name}`);
   if (scenario.fixture) writeFixture(scenario.fixture, root);
+  // A private typings cache: <root>-ata/xdg as XDG_CACHE_HOME (so <root>-ata/xdg/typescript/7.1 is the
+  // typings location; it reads "<root>-ata" in answers), the stand-in npm first on PATH, its store
+  // and log beside it. Written fresh before every server run.
+  let ata;
+  if (scenario.typings === "private") {
+    const dir = `${root}-ata`;
+    writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
+    mkdirSync(join(dir, "xdg"), { recursive: true });
+    ata = { log: join(dir, "npm.log"), reported: 0 };
+    env = {
+      ...env,
+      PATH: `${join(dirname(fileURLToPath(import.meta.url)), "ata-npm")}:${process.env.PATH}`,
+      ATA_NODE: process.execPath,
+      ATA_STORE: join(dir, "store"),
+      ATA_NPM_LOG: ata.log,
+      ATA_NPM_DELAY_MS: process.env.ATA_NPM_DELAY_MS ?? "500",
+      XDG_CACHE_HOME: join(dir, "xdg"),
+    };
+  }
   let client;
   try {
     client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
@@ -464,6 +557,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     throw Object.assign(e, { log: [] });
   }
   const s = new Script(client, root);
+  s.ata = ata;
   try {
     await scenario.run(s, { files });
     await s.checkpoint("end");
@@ -478,6 +572,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
       writeFileSync(serverLog, lines.join("\n") + "\n");
     }
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
+    if (ata) rmSync(`${root}-ata`, { recursive: true, force: true });
   }
   return s.log;
 }

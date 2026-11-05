@@ -39,6 +39,33 @@ export const FIXTURES = {
   },
 };
 
+// ata-small: JS files in no tsconfig (an inferred project, type acquisition on) that import packages
+// without types: ata-fake-lib (a dependency in package.json, in node_modules) and ata-fake-two
+// (imported only by an overlay the scenario opens). ATA_STORE is what the stand-in npm (ata-npm/)
+// installs: the types registry and the two @types packages.
+FIXTURES["ata-small"] = {
+  "package.json": json({ name: "ata-small", version: "1.0.0", dependencies: { "ata-fake-lib": "1.0.0" } }),
+  "node_modules/ata-fake-lib/package.json": json({ name: "ata-fake-lib", version: "1.0.0", main: "index.js" }),
+  "node_modules/ata-fake-lib/index.js": "exports.pad = (text, n) => text.padStart(n);\n",
+  "src/app.js": ['import { pad } from "ata-fake-lib";', "", 'export const padded = pad("a", 3);', ""].join("\n"),
+};
+export const ATA_STORE = {
+  "registry.json": json({ entries: { "ata-fake-lib": { latest: "1.0.0", "ts7.1": "1.0.0" }, "ata-fake-two": { latest: "2.0.0", "ts7.1": "2.0.0" } } }),
+  "types/ata-fake-lib/package.json": json({ name: "@types/ata-fake-lib", version: "1.0.0", types: "index.d.ts" }),
+  "types/ata-fake-lib/index.d.ts": "/** Pads `text` to `n` characters. */\nexport declare function pad(text: string, n: number): string;\n",
+  "types/ata-fake-two/package.json": json({ name: "@types/ata-fake-two", version: "2.0.0", types: "index.d.ts" }),
+  "types/ata-fake-two/index.d.ts": "export declare function twice(n: number): number;\n",
+};
+
+// Writes a { path: text } map into a fresh dir.
+export function writeTree(files, root) {
+  rmSync(root, { recursive: true, force: true });
+  for (const [rel, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, rel)), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  }
+}
+
 // Replaces `root` with a fresh copy of the fixture.
 export function writeFixture(name, root) {
   const files = FIXTURES[name];
