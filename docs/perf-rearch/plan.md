@@ -681,3 +681,24 @@ once a **reconciliation step** is built and tested.
   - **Still timing out on both sides:** the 26 grandfathered deep-nesting
     cases. They don't share P1's cause; 1776 shows a `get_implied_constraint`
     explosion.
+- **2026-11-05, H4 done** (gate round 2; branch not merged yet). All 12 H3
+  findings are fixed.
+  - **New mechanisms:**
+    - read-only rsync snapshots watched with inotify;
+    - staged caches;
+    - a structured grandfather file with a regen tool;
+    - a quick manifest read from the accepted ref;
+    - a mandatory LSP `session end` item;
+    - request identity by method and params;
+    - ATA barriers.
+  - **Results:** full has 1 lost, `lsp/hono-f12-p6/0476`. That is Go's
+    references order race: all 4 of Go's new runs agreed by chance. Quick is
+    OK.
+  - **Root decision: accumulated Go evidence.** Every variant the pinned Go
+    has produced on identical inputs and settings is legitimate, and the merge
+    is monotone. Multi-project LSP sessions get 8 Go runs. H4 is implementing
+    both.
+  - **`fuzz/1:5391`** stays pinned as a known output DIFF.
+  - **Backlog (compiler):** on `--traceResolution`, tsc-rs always prints
+    "does not exist." where Go's default prints "does not exist according to
+    earlier cached lookups.". The port may be missing a cached-lookup path.
