@@ -645,6 +645,75 @@ disagreements:
 Calibration cost: JS's cold sessions took 228 s together (umami 95 s; the others 6 to 20 s). They
 ran 4 at a time beside the tsc-rs runs, at a load of 25 to 60.
 
+### Parity run and cost (2026-11-05)
+
+**Full gate.** `tsgo-head-efef52257-rel` against `base-current` (`head-efef52257-full`, the same
+binary), harness 63a4c7b1c (H1 merged). The client and session sources changed, so the Go cache was
+refilled. Run dir: `runs/h2-head-efef52257-full-2/`, 02:05 to 02:33 local, load 18 to 35.
+
+Result: **PARITY OK**. 187,130 items compared, 0 lost, 0 not run, 0 new items not good,
+43 recovered, 49 newly good by a referee (all GO-BROKEN).
+
+| tier | result |
+|---|---|
+| cli | 170 MATCH |
+| tests | 139,899 PASS, 2 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`, `build_statistics_time_the_started_check_and_emit`) |
+| lsp | 2,561 MATCH, 40 GO-BROKEN, no DIFF, no JS-AGREES |
+| fuzz | 29,955 MATCH, 9 GO-BROKEN, 36 DIFF (as in H1's run) |
+| corpus | 12,727 MATCH |
+
+**The 40 lsp GO-BROKEN items:**
+
+- 33 are the base's GO-UNSTABLE items (22 hono references, 5 umami completions, 6 watch items) and
+  `watch-narrow-umami-f12/0012`, the base's known DIFF.
+- 8 were MATCH in the base: `pkgjson-overlay` 0007, 0014, 0017–0019, 0023, 0024 and 0033 (server
+  messages and the inferred project's ATA watcher). Go's fourth run of the new fill differed there
+  from its first three.
+
+No session had a DIFF of a refereed kind, so JS did not run in the gate.
+
+On the 27 GO-BROKEN items JS can normalize (`--js-all` run below):
+
+- 11 hono references: JS equals tsc-rs and every Go run. Go's runs differ only in the order of the
+  references.
+- 11 other hono references: tsc-rs equals every Go run as a set, and JS differs (the JS 6
+  differences above).
+- The 5 umami completions: neither tsc-rs nor JS equals any Go run, normalized.
+
+**A shared race in the watch scenarios.** The first full run of this lane, at harness a8d90e985
+(`runs/h2-head-efef52257-full/`, load 50 to 87), was PARITY FAIL. It lost exactly those 8
+`pkgjson-overlay` items as `rs-nondet`: tsc-rs's first run had no `workspace/diagnostic/refresh`
+at the load checkpoint, and no unregister of the `/dev/null/inferred` watcher when the dependency
+overlay closed. That is not this lane:
+
+- a pkgjson-overlay probe (`target/h2/flake*.log` in the lane worktree, 16 sessions, load 8 to 26)
+  hit it in 2 of 8 sessions with the vendored lspdiff of `b24ed46e2`, and in 2 of 8 with this lane's;
+- Go's own fourth run hit the same items;
+- the `--js-all` runs below also had `rs-nondet`/`rs-schedule` on `watch-hono-f12` server messages
+  and on 3 of the pkgjson-overlay items.
+
+It is the ATA timing that the watch scenarios keep, the race ND1 removed from the standard
+sessions. In this Go fill, the 8 items are GO-BROKEN, not MATCH, so they now check only tsc-rs's
+own determinism. Turning ATA off in `pkgjson-overlay` (it only tests package.json overlays) or
+settling longer would make them comparable again. That change is not made here.
+
+**Cost.**
+
+- **A gate run with no DIFF of a refereed kind** (every run so far): JS never starts. The only
+  added work is hashing tsserver once per tier (well under 1 s). The lsp tier took 372 s here,
+  with the Go refill. The earlier run of this lane, on a warm Go cache, took 258 s; base-current
+  took 284 s.
+- **A session that has a refereed DIFF**, with JS cold: one tsserver replay of that session. At
+  loads of 29 to 35 that took ts-pattern 11 s, hono 36 s, second-project 14 s, unsaved 5 s,
+  pkgjson-overlay 5 s, fsevents 16 s, fsevents-narrow 17 s, watch-ts-pattern 12 s, watch-hono 15 s,
+  watch-umami and watch-narrow-umami 20 s each, and umami 119 s. In quick, one more tsc-rs
+  session confirms (`rs-confirm`).
+- **The same session, with JS warm:** reading the cached log (0.2 to 0.3 s for ts-pattern and hono,
+  3 to 3.6 s for umami's 340 MB) and judging the DIFF candidates (milliseconds).
+- **`--js-all` (calibration, all 12 sessions):** JS cold, the lsp tier took 341 s (290 s of JS
+  sessions, run 4 at a time beside the tsc-rs runs; umami's session 335 s). JS warm, it took
+  233 s (umami's session 232 s, including 27 s to normalize all its answers). Go was warm in both.
+
 ### Self-test
 
 `node scripts/perf-rearch/vendor/lspdiff/selftest/referee-selftest.mjs` (`--unit` for part 1 only)
