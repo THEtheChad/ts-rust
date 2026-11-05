@@ -550,3 +550,23 @@ once a **reconciliation step** is built and tested.
   - **pkgjson-overlay `rs-nondet`** (8 items under heavy load) predates L1.
     The delayed `workspace/diagnostic/refresh` arrives after the client moves
     on. Backlog: make the harness wait for it.
+- **2026-11-04, L1 merged** (`efef52257`).
+  - **Go's window** (instrumented Go build, `l1-load-view.md` "Go's window
+    (round 5)"), umami, all kinds, paired against Go:
+
+    | | p90 delta |
+    |---|---|
+    | V − Go | +170 ms |
+    | base − Go | +264 ms |
+
+  - **The base already missed Go's window, and by more.** V moves tsc-rs
+    closer to Go, so L1 merges. Hono is not material.
+  - **Neither fix option** (cap the prefetch age, bound the prefetch
+    distance) would meet the criterion: the estimated p90 is still +142 ms.
+  - **The remaining gap is architectural.** Go makes its OS calls as it
+    parses and resolves; V's workers make most of them in the first third
+    of the load, and the loader then works from those answers.
+  - **Backlog:** race-window parity with Go belongs to a Go-like streaming
+    loader (L2-era). It is a timing property: the output for a given disk
+    state is unchanged.
+  - **ttfd** at the L1 head: 280 ms against Go's 288 ms.
