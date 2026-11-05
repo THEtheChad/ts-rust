@@ -36,7 +36,8 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
     6.0.3 reports 0 errors there and Go c4 reports 22.
   - **Never allowed:** run-to-run variation. Output that differs from Go in
     other ways ("better than Go") is allowed in principle (Chad); how such a
-    difference is verified is being defined. Until then, record it, don't gate it.
+    difference is verified is being defined. Until then the gate still fails on
+    it: bring it to root with evidence, don't work around it.
 - **Oracles:** Go at pin `3e9236361fa9` (`~/.local/bin/tsgo-oracle-3e9236361fa9`,
   LSP `~/.local/bin/tsgo-lsp-oracle-3e9236361fa9 --lsp --stdio`), Go source
   `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`. The JS `tsc` is a
