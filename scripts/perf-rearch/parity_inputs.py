@@ -35,7 +35,7 @@ _LOCKS_LOCK = threading.Lock()
 
 
 def json_hash(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()  # \uXXXX escapes: lossless for the surrogate-escaped bytes of fuzz cases
 
 
 def _file_sha(path):
