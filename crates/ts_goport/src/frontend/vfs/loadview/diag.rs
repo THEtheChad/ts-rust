@@ -604,28 +604,32 @@ impl LoadView {
     /// that the loader demanded with when it was observed and by whom
     /// (`load <t0> <t1>`, `obs <kind> <ms> <who> <path>`).
     pub fn write_observations(&self, t0_ns: u64) {
+        use std::fmt::Write as _;
         if !obs_log_on() {
             return;
         }
-        obs_line(format_args!(
-            "load {:.3} {:.3}",
+        // One write after the load: the log costs nothing inside the window.
+        let mut text = format!(
+            "load {:.3} {:.3}\n",
             t0_ns as f64 / 1e6,
             clock_ns() as f64 / 1e6
-        ));
-        fn each<V>(kind: Kind, shards: &Shards<V>) {
+        );
+        fn each<V>(text: &mut String, kind: Kind, shards: &Shards<V>) {
             for (path, obs) in shards.collect(|slot| slot.obs.demanded, |slot| slot.obs) {
                 let who = if obs.by_worker { "worker" } else { "loader" };
-                obs_line(format_args!(
+                let _ = writeln!(
+                    text,
                     "obs {} {:.3} {who} {path}",
                     kind.name(),
                     obs.at_ns as f64 / 1e6
-                ));
+                );
             }
         }
-        each(Kind::Stat, &self.stats);
-        each(Kind::Read, &self.reads);
-        each(Kind::Realpath, &self.realpaths);
-        each(Kind::Entries, &self.entries);
+        each(&mut text, Kind::Stat, &self.stats);
+        each(&mut text, Kind::Read, &self.reads);
+        each(&mut text, Kind::Realpath, &self.realpaths);
+        each(&mut text, Kind::Entries, &self.entries);
+        obs_line(format_args!("{}", text.trim_end()));
     }
 }
 
