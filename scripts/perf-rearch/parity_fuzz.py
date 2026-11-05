@@ -16,7 +16,8 @@ are the same for Go and tsc-rs and from run to run.
 Go's result of a case is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/fuzz),
 keyed by the Go binary, seed and case id. The first time, Go runs twice (8 times for a case with
 --traceResolution). Later runs only run tsc-rs (--rs-runs times; 2 also catches tsc-rs
-nondeterminism). A tsc-rs timeout gets one more try with twice the time.
+nondeterminism). A tsc-rs timeout gets one more try with twice the time, except where Go timed
+out too: there tsc-rs's first timeout ends the case (DIFF, tsc-rs timed out too).
 
 Per case: MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES or DIFF (sig: difffuzz's signature, diag:,
 emit:, stderr:, exit:, crash:, hang, or rs-nondet when two tsc-rs runs differ). A case that is not
@@ -189,12 +190,17 @@ def run_case(args, corpus, cache, out, i):
         shutil.rmtree(d, ignore_errors=True)
         return i, {'status': go_status}, go_secs, rs_secs
     rs_runs = []
+    # Where Go itself timed out, tsc-rs gets the same time once: a timeout there is a DIFF either way
+    # (GO-BROKEN needs an answer), so the longer retry and the second run would only cost time.
+    go_hung = go_status == 'GO-FAIL' and go.code == 'timeout' and args.referees
     for _ in range(args.rs_runs):
         rs = c.run_rs(args.timeout)
-        if rs.code == 'timeout':
+        if rs.code == 'timeout' and not go_hung:
             rs = c.run_rs(args.timeout * 2)
         rs_secs += rs.secs
         rs_runs.append(rs)
+        if rs.code == 'timeout' and go_hung:
+            break
     sigs = [oracle.signature(go, rs, str(d.resolve()) + '/') for rs in rs_runs]
     if len({rs.key() for rs in rs_runs}) > 1:
         sig = 'rs-nondet:' + str(next(s for s in sigs if s))

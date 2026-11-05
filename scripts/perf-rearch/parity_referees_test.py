@@ -129,7 +129,7 @@ def units():
     check('partition: a failed N is left out', s == 'GO-PARTITION' and info['failed'] == [16], info)
 
     crash = run('', 2, err=b'panic: boom\n\ngoroutine 1 [running]:\n')
-    check('broken: Go crash reason', (R.go_broken_reason([crash], None) or '').startswith('Go crash'))
+    check('broken: Go crash reason names the panic', R.go_broken_reason([crash], None) == 'Go crash: panic: boom')
     check('broken: Go timeout reason', R.go_broken_reason([run('', 'timeout')], None) == 'Go timed out')
     check('broken: Go runs differ reason', R.go_broken_reason([run('')], 'stdout').startswith('Go runs differ'))
     check('broken: Go fine', R.go_broken_reason([run('x', 2)], None) is None)
@@ -342,7 +342,7 @@ FUZZ_EXPECT = {  # scenario -> (status, detail substring, extra case args, rs ru
     'partjs': ('GO-PARTITION', 'matches Go --checkers 1', [], 2),
     'show': ('DIFF', '', ['--showConfig'], 2),
     'slow': ('GO-PARTITION', 'matches Go --checkers 1,2', [], 1),
-    'bothhang': ('DIFF', 'go-broken (GO-FAIL: Go timed out), tsc-rs timed out too', [], 1),
+    'bothhang': ('DIFF', 'go-broken (GO-FAIL: Go timed out), tsc-rs timed out too', [], 2),
 }
 
 
@@ -367,6 +367,8 @@ def fuzz(root, bins, state):
             extra = row['referees']['partition'] == {'skipped': '--showConfig prints the checker count'}
         if s == 'nondet':
             extra = row['sig'].startswith('rs-nondet')
+        if s == 'bothhang':  # Go hung: one tsc-rs run of --timeout, no retry, no second run
+            extra = [c for c in calls(state) if c.startswith('rs bothhang')] == ['rs bothhang d']
         if s == 'race':
             extra = row['referees']['partition']['unstable'] == [1]
         detail = row.get('detail', '')

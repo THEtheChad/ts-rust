@@ -61,7 +61,8 @@ def go_broken_reason(go_runs, unstable):
         if r.code == 'timeout':
             return 'Go timed out'
         if oracle.crashed(r):
-            return f'Go {oracle.crash_sig(r)}'
+            panic = next((ln for ln in r.stderr.decode('utf-8', 'replace').splitlines() if ln.startswith('panic: ')), None)
+            return f'Go crash: {panic[:160]}' if panic else f'Go {oracle.crash_sig(r)}'
     return None
 
 
