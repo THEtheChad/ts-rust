@@ -113,6 +113,41 @@ def units():
     ok, _, _ = R.js_delta([run(D1, 2), run('', 0)], [run('', 0), run('', 0)], [run('', 0), run('', 0)])
     check('js: two-run side (incr), point in run 1', ok)
 
+    # Negative controls (lane H3, finding 4): every stdout line accounted for. Each pairs a change JS
+    # approves (Go's TS2344 that JS lacks; tsc-rs drops it) with an unrelated corruption.
+    go_summary_less = GO_PRETTY.split('\n\n\nFound')[0] + '\n\n'
+    corrupt = [
+        ('the summary deleted', RS_PRETTY_GO_LAYOUT.split('\n\n\nFound')[0] + '\n\n'),
+        ('the summary count wrong', RS_PRETTY_GO_LAYOUT.replace('Found 1 error in src/a.ts', 'Found 3 errors in the same file, starting at: src/a.ts')),
+        ('the summary line number wrong', RS_PRETTY_GO_LAYOUT.replace('src/a.ts\x1b[90m:3', 'src/a.ts\x1b[90m:9')),
+        ('a code frame of a common diagnostic dropped', RS_PRETTY_GO_LAYOUT.replace(f'{E}7m3{E}0m f({{b: 1}});\n{E}7m {E}0m {E}91m   ~{E}0m\n', '')),
+        ('a code frame of a common diagnostic changed', RS_PRETTY_GO_LAYOUT.replace('f({b: 1});', 'f({b: 2});')),
+        ('a blank line added', RS_PRETTY_GO_LAYOUT.replace('Chain line.\n\n', 'Chain line.\n\n\n', 1)),
+        ('an extra stdout line', RS_PRETTY_GO_LAYOUT + 'stray line\n'),
+    ]
+    for name, rs_out in corrupt:
+        ok, detail, _ = R.js_delta([run(GO_PRETTY, 2)], [run(rs_out, 2)], [run(JS_PRETTY, 2)])
+        check(f'negative control: finding 4: {name} beside an approved change -> no JS-AGREES', not ok, detail)
+    ok, detail, _ = R.js_delta([run(GO_PRETTY, 2)], [run(RS_PRETTY_GO_LAYOUT, 2)], [run(JS_PRETTY, 2)])
+    check('finding 4: the approved change alone is still JS-AGREES', ok, detail)
+    # A table row's file wrong: Go 2 errors in 2 files; tsc-rs adds an error JS prints, its table must name it.
+    two = GO_PRETTY.replace('Found 2 errors in 2 files.', 'Found 3 errors in 2 files.')
+    extra = (f'{E}96msrc/b.ts{E}0m:{E}93m2{E}0m:{E}93m1{E}0m - {E}91merror{E}0m{E}90m TS1005: {E}0mNew.\n\n'
+             f'{E}7m2{E}0m y\n{E}7m {E}0m {E}91m~{E}0m\n')
+    rs3 = GO_PRETTY.replace('\n\n\nFound 2 errors in 2 files.', '\n\n' + extra + '\n\nFound 3 errors in 2 files.').replace('     1  src/b.ts', '     2  src/b.ts')
+    js3 = JS_PRETTY.split('\n\n\nFound')[0] + '\n\n' + extra + '\n'
+    ok, detail, _ = R.js_delta([run(GO_PRETTY, 2)], [run(rs3, 2)], [run(js3, 2)])
+    check('finding 4: an extra diagnostic JS prints, with its block equal to JS\'s and Go\'s summary for it -> JS-AGREES', ok, detail)
+    for name, bad in [('the table counting the wrong file', rs3.replace('     1  src/a.ts', '     2  src/a.ts').replace('     2  src/b.ts', '     1  src/b.ts')),
+                      ('the extra diagnostic\'s code frame not JS\'s', rs3.replace(f'{E}7m2{E}0m y', f'{E}7m2{E}0m z'))]:
+        ok, detail, _ = R.js_delta([run(GO_PRETTY, 2)], [run(bad, 2)], [run(js3, 2)])
+        check(f'negative control: finding 4: {name} -> no JS-AGREES', not ok, detail)
+    plain_go = D1 + D2
+    for name, bad in [('a plain stdout line changed beside an approved change', D2 + 'garbage\n'),
+                      ('a common diagnostic\'s chain changed beside an approved change', D2.replace('Common.', 'Common.\n  extra chain.'))]:
+        ok, detail, _ = R.js_delta([run(plain_go, 2)], [run(bad, 2)], [run(D2, 2)])
+        check(f'negative control: finding 4: {name} -> no JS-AGREES', not ok, detail)
+
     check('blocker: --checkers', R.blocker(['-p', 'x', '--Checkers', '2']) == 'sets --checkers')
     check('blocker: --singleThreaded', R.blocker(['--singleThreaded']) == 'sets --singleThreaded')
     check('blocker: -b, --watch, --showConfig', all(R.blocker([a]) for a in ('-b', '--build', '-w', '--watch', '--showConfig')))
@@ -183,6 +218,10 @@ SPEC = {
     'partb': {'go': PART, 'rs': {'*': 'lo\n'}},
     'slow': {'go': {**PART, '16': {'out': 'hi\n', 'sleep': 6}}, 'rs': {'*': 'lo\n'}},
     'bothhang': {'go': {'*': {'out': 'x\n', 'sleep': 7}}, 'rs': {'*': {'out': 'x\n', 'sleep': 7}}},
+    # finding 6 (the reviewer's case): Go's runs differ (GO-BROKEN), tsc-rs times out once, then answers
+    'retry': {'go': {'d': {'alt': ['x\n', 'y\n']}, '*': 'x\n'}, 'rs': {'*': {'out': 'x\n', 'sleep_first': 5}}},
+    # the same with Go fine: timeout, then the Go answer
+    'retrym': {'go': {'*': 'x\n'}, 'rs': {'*': {'out': 'x\n', 'sleep_first': 5}}},
 }
 JS_DEFAULT = {'*': {'out': '', 'code': 0}}
 
@@ -202,7 +241,7 @@ open(count, 'w').write(str(k + 1))
 open(os.path.join(STATE, 'calls.log'), 'a').write(f'{{ROLE}} {{scen}} {{n}}\n')
 if 'alt' in e:
     e = {{'out': e['alt'][k % len(e['alt'])]}}
-time.sleep(e.get('sleep', 0))
+time.sleep(e.get('sleep', 0) + (e.get('sleep_first', 0) if k == 0 else 0))
 for f, text in e.get('write', {{}}).items():
     os.makedirs(os.path.dirname(f) or '.', exist_ok=True)
     open(f, 'w').write(text)
@@ -228,11 +267,22 @@ def write_fakes(root):
                                     js_default=JS_DEFAULT))
         f.chmod(0o755)
         bins[role] = f
-    js = root / 'fake-js'
-    js.write_text(FAKE_JS.format(py=str(bins['js-py'])))
-    js.chmod(0o755)
-    bins['js'] = js
+    write_js_package(root / 'fakejs', bins['js-py'])
+    bins['js'] = root / 'fakejs/bin/tsc'
     return bins, state
+
+
+def write_js_package(pkg, py, version='6.0.3', impl='// the compiler\n'):
+    """A fake JS referee laid out as the typescript package: package.json, bin/tsc (runs the Python
+    fake in the JS role), lib/tsc.js (the shim) and lib/_tsc.js (the "implementation")."""
+    (pkg / 'bin').mkdir(parents=True, exist_ok=True)
+    (pkg / 'lib').mkdir(exist_ok=True)
+    (pkg / 'package.json').write_text(json.dumps({'name': 'typescript', 'version': version}))
+    js = pkg / 'bin/tsc'
+    js.write_text(FAKE_JS.format(py=str(py)))
+    js.chmod(0o755)
+    (pkg / 'lib/tsc.js').write_text("require('./_tsc.js')\n")
+    (pkg / 'lib/_tsc.js').write_text(f'var version = "{version}";\n{impl}')
 
 
 def calls(state):
@@ -299,6 +349,7 @@ def cli(root, bins, state):
     projects = cli_projects(root)
     js_cache = Path.home() / f'.cache/perf-rearch/parity/js-cache/{R.js_sha(bins["js"])}/cli'
     shutil.rmtree(js_cache, ignore_errors=True)
+    caches = [js_cache]
     items = run_cli(root, bins, projects, 'cli1', '--rs-runs', '2', '--only', r'^cli/selftest/(?!nondet1/)')
     for item, (status, sub, extra) in CLI_EXPECT.items():
         row = items.get(f'cli/selftest/{item}', {})
@@ -322,7 +373,28 @@ def cli(root, bins, state):
     items = run_cli(root, bins, projects, 'cli5', '--rs-runs', '2', '--no-referees', '--only', r'^cli/selftest/(unstable|part)/')
     check('cli --no-referees: GO-UNSTABLE and DIFF as before', items['cli/selftest/unstable/noemit']['status'] == 'GO-UNSTABLE'
           and items['cli/selftest/part/noemit']['status'] == 'DIFF', items)
-    shutil.rmtree(js_cache, ignore_errors=True)
+    # Negative controls (lane H3). Finding 7: a change of the JS implementation (_tsc.js, not the
+    # tsc.js shim) must make JS run again, not reuse the cached verdict.
+    write_js_package(root / 'fakejs', bins['js-py'], impl='// NEW COMPILER\n')
+    caches.append(Path.home() / f'.cache/perf-rearch/parity/js-cache/{R.js_sha(bins["js"])}/cli')
+    before = len(calls(state))
+    run_cli(root, bins, projects, 'cli6', '--rs-runs', '2', '--only', r'^cli/selftest/jsagree/')
+    js_calls = [c for c in calls(state)[before:] if c.startswith('js ')]
+    check('negative control: finding 7: a changed JS implementation (_tsc.js) runs JS again', js_calls == ['js jsagree d'], js_calls)
+    write_js_package(root / 'fakejs', bins['js-py'], version='6.0.2')
+    items = run_cli(root, bins, projects, 'cli7', '--rs-runs', '2', '--only', r'^cli/selftest/jsagree/')
+    row = items['cli/selftest/jsagree/noemit']
+    check('negative control: finding 7: a JS referee that is not 6.0.3 decides nothing', row['status'] == 'DIFF', row)
+    write_js_package(root / 'fakejs', bins['js-py'], impl='// NEW COMPILER\n')
+    # Finding 8: a content edit in the project (no commit, no node_modules change) with a warm cache
+    # must run Go again.
+    before = len(calls(state))
+    (projects.parent / 'project' / 'src.ts').write_text('let a: number = "wrong";\n')
+    run_cli(root, bins, projects, 'cli8', '--rs-runs', '2', '--only', r'^cli/selftest/part/')
+    go_calls = [c for c in calls(state)[before:] if c == 'go part d']
+    check('negative control: finding 8: a project content edit with a warm cache runs Go again', len(go_calls) == 2, go_calls)
+    for c in caches:
+        shutil.rmtree(c, ignore_errors=True)
 
 
 # ---- the fuzz and corpus tier ---------------------------------------------------------------
@@ -350,6 +422,8 @@ FUZZ_EXPECT = {  # scenario -> (status, detail substring, extra case args, rs ru
     'show': ('DIFF', '', ['--showConfig'], 2),
     'slow': ('GO-PARTITION', 'matches Go --checkers 1,2', [], 1),
     'bothhang': ('DIFF', 'go-broken (GO-FAIL: Go timed out), tsc-rs timed out too', [], 2),
+    'retry': ('DIFF', 'tsc-rs timeout in an attempt', [], 2),
+    'retrym': ('DIFF', 'tsc-rs timeout in an attempt', [], 2),
 }
 
 
@@ -368,8 +442,8 @@ def fuzz(root, bins, state):
         extra = True
         if s == 'slow':
             extra = row.get('referees', {}).get('partition', {}).get('failed') == [16] \
-                and not (cache / f'corpus-{i}.r2.p{parity_fuzz.PARTITION_VERSION}-c16.pkl').exists() \
-                and (cache / f'corpus-{i}.r2.p{parity_fuzz.PARTITION_VERSION}-c8.pkl').exists()
+                and not list(cache.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c16.pkl')) \
+                and list(cache.glob(f'corpus-{i}-*.r2.p{parity_fuzz.PARTITION_VERSION}-c8.pkl'))
         if s == 'show':
             extra = row['referees']['partition'] == {'skipped': '--showConfig prints the checker count'}
         if s == 'nondet':
@@ -378,6 +452,8 @@ def fuzz(root, bins, state):
             extra = [c for c in calls(state) if c.startswith('rs bothhang')] == ['rs bothhang d']
         if s == 'race':
             extra = row['referees']['partition']['unstable'] == [1]
+        if s in ('retry', 'retrym'):  # every attempt kept, the case flagged for parity_compare
+            extra = row.get('rsFailure') == 'timeout' and [a['outcome'] for a in row.get('attempts', [])][:2] == ['timeout', 'exit 0']
         detail = row.get('detail', '')
         check(f'corpus {s} -> {status}', row['status'] == status and sub in detail and extra, row)
     check('corpus: the summary names a DIFF without a signature (both timed out)',
@@ -387,6 +463,13 @@ def fuzz(root, bins, state):
     _, row, _, _ = parity_fuzz.run_case(args, corpus, cache, out, names.index('jsagree'))
     new = [c for c in calls(state)[before:] if not c.startswith('rs ')]
     check('corpus: second run: Go and JS results come from the cache', new == [] and row['status'] == 'JS-AGREES', (new, row))
+    # Finding 8: a case whose content changed at the same index must not reuse Go's cached result.
+    i = names.index('match')
+    corpus[i] = {**corpus[i], 'files': {**corpus[i]['files'], 'a.ts': 'export const changed = 1;\n'}}
+    before = len(calls(state))
+    parity_fuzz.run_case(args, corpus, cache, out, i)
+    go_calls = [c for c in calls(state)[before:] if c.startswith('go match')]
+    check('negative control: finding 8: a changed fuzz/corpus case at the same index runs Go again', len(go_calls) == 2, go_calls)
 
 
 # ---- parity_compare -------------------------------------------------------------------------
@@ -418,6 +501,60 @@ def compare(root):
     check('compare: every item that left MATCH (and recovered and new ones) listed by status', lines[at:at + len(want)] == want, p.stdout)
     p = subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(base), str(bad)], capture_output=True, text=True)
     check('compare: GO-PARTITION in the base, DIFF now -> lost', p.returncode == 1 and 'LOST      e: DIFF x' in p.stdout, p.stdout)
+    # Negative controls (lane H3): the reviewer's probes, with real item names too.
+    cmp = lambda b, c: subprocess.run([sys.executable, '-I', str(HERE / 'parity_compare.py'), 'compare', str(b), str(c)],  # noqa: E731
+                                      capture_output=True, text=True)
+    nb, qe, qok, crash = root / 'cmp-newbad', root / 'cmp-quick-empty', root / 'cmp-quick', root / 'cmp-crash'
+    write(nb, 'full', {'a': {'status': 'MATCH'}, 'b': {'status': 'MATCH'}, 'c': {'status': 'MATCH'}, 'd': {'status': 'DIFF'},
+                       'e': {'status': 'GO-PARTITION'}, 'f': {'status': 'MATCH'}, 'lsp/crash': {'status': 'DIFF'}})
+    p = cmp(base, nb)
+    check('negative control: finding 9: a new item that is not good fails the gate', p.returncode == 1 and 'NEW DIFF   lsp/crash' in p.stdout, p.stdout)
+    rb = root / 'cmp-real-base'
+    write(rb, 'full', {'cli/query/core/noemit': {'status': 'MATCH'}, 'cli/query/core/decl': {'status': 'MATCH'},
+                       'fuzz/1:3': {'status': 'MATCH'}, 'fuzz/1:20000': {'status': 'MATCH'}, 'corpus/x': {'status': 'MATCH'}})
+    write(qe, 'quick', {})
+    p = cmp(rb, qe)
+    check('negative control: finding 10: an empty quick run against a full base fails (the quick items are missing)',
+          p.returncode == 1 and 'NOT RUN   cli/query/core/noemit' in p.stdout and 'NOT RUN   fuzz/1:3' in p.stdout
+          and 'NOT RUN   cli/query/core/decl' not in p.stdout and 'NOT RUN   corpus/x' not in p.stdout, p.stdout)
+    write(qok, 'quick', {'cli/query/core/noemit': {'status': 'MATCH'}, 'fuzz/1:3': {'status': 'MATCH'}})
+    p = cmp(rb, qok)
+    check('compare: a complete quick run against a full base is PARITY OK (full-only items exempt)', p.returncode == 0, p.stdout)
+    p = cmp(base, qe)  # the reviewer's probe: unknown item names are required too
+    check('negative control: finding 10: a quick run lacking an item it cannot prove full-only fails', p.returncode == 1 and 'NOT RUN   a' in p.stdout, p.stdout)
+    write(crash, 'full', {'a': {'status': 'MATCH'}, 'b': {'status': 'MATCH'}, 'c': {'status': 'MATCH'},
+                          'd': {'status': 'DIFF', 'rsFailure': 'timeout', 'detail': 'tsc-rs timeout'},
+                          'e': {'status': 'GO-PARTITION'}, 'f': {'status': 'MATCH'}})
+    p = cmp(base, crash)
+    check('negative control: finding 9: a tsc-rs timeout fails the gate even on a known diff', p.returncode == 1 and 'CRASH     d' in p.stdout, p.stdout)
+    gf = root / 'grandfathered.json'
+    gf.write_text(json.dumps({'items': {'d': {'status': 'DIFF', 'rsFailure': 'timeout', 'reason': 'Go times out too'}}}))
+    sys.path.insert(0, str(HERE))
+    import parity_compare
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = parity_compare.compare(str(base), str(crash), gf)
+    check('compare: a grandfathered crash (listed with its status and reason) passes and is printed',
+          rc == 0 and 'GRANDFATHERED d: DIFF (Go times out too)' in buf.getvalue(), buf.getvalue())
+
+
+def lsp_keys(root):
+    """Finding 8 on the lsp tier: the Go and JS cache keys of a session change with the content of its
+    project and with the project dir it resolved to."""
+    import parity_inputs
+    import parity_lsp
+    proj, other = root / 'lsp-proj', root / 'lsp-proj2'
+    for d in (proj, other):
+        (d / 'src').mkdir(parents=True)
+        (d / 'src/a.ts').write_text('export const a = 1;\n')
+    sess = parity_lsp.std('umami')
+    key = lambda r: parity_lsp.session_key(sess, r, parity_inputs.Snapshot(), 'src')  # noqa: E731
+    k1 = key(proj)
+    (proj / 'src/a.ts').write_text('export const a = "two";\n')
+    check('negative control: finding 8: an lsp session key changes with a content edit of its project', key(proj) != k1)
+    check('negative control: finding 8: an lsp session key names the project dir it resolved to', key(other) != key(proj))
 
 
 def main():
@@ -428,11 +565,19 @@ def main():
     shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True)
     try:
-        units()
-        bins, state = write_fakes(root)
-        cli(root, bins, state)
-        fuzz(root, bins, state)
-        compare(root)
+        # Each part on its own: an exception fails that part and the others still run (the negative
+        # controls also run against older harness versions, which lack some of these modules).
+        bins = state = None
+        for name, part in [('units', units), ('fakes', lambda: None), ('cli', lambda: cli(root, bins, state)),
+                           ('fuzz', lambda: fuzz(root, bins, state)), ('compare', lambda: compare(root)),
+                           ('lsp keys', lambda: lsp_keys(root))]:
+            try:
+                if name == 'fakes':
+                    bins, state = write_fakes(root)
+                else:
+                    part()
+            except Exception as e:  # noqa: BLE001
+                check(f'{name}: raised', False, repr(e)[:300])
     finally:
         if not args.keep:
             subprocess.run(['chmod', '-R', 'u+rwx', str(root)], check=False)

@@ -1,0 +1,1 @@
+const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',l=>{const q=JSON.parse(l);if(q.command==='exit')process.exit(0);const b=JSON.stringify({type:'response',request_seq:q.seq,command:q.command,success:false,message:'Error processing request. Internal compiler failure'});process.stdout.write('Content-Length: '+Buffer.byteLength(b)+'\r\n\r\n'+b);});
