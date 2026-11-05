@@ -84,11 +84,20 @@ check("lib locations on other lines differ", !sameNormalized(N(refs, lib(gl)), N
 // tsserver.mjs: semantic tokens in Go's legend (decoded back by the normalizer).
 const tok = N("textDocument/semanticTokens/full", { data: [1, 2, 3, TOKEN_TYPES.indexOf("method"), 1] });
 const tokRef = tok.sets.tokens.items[0].ref ?? tok.sets.tokens.items[0][0];
-check("semantic tokens decode in Go's legend", JSON.parse(tokRef) === "1:2+3 method.declaration" || tokRef === "1:2+3 method.declaration", tokRef);
+check("semantic tokens decode in Go's legend", tokRef === "1:2+3 method.declaration" || tokRef === JSON.stringify("1:2+3 method.declaration"), tokRef);
 
 // ---- part 1b: negative controls (lane H3; reviews/2026-11-05-astra-h1h2.md). Each one is a false
 // good of the referee at e0b29c61c: it must not be JS-AGREES.
-const NEG = (name, verdict, reasonRe) => check(`negative control: ${name}`, !verdict.agrees && (!reasonRe || reasonRe.test(verdict.reason)), JSON.stringify(verdict).slice(0, 300));
+// verdict: the judge's verdict, or a function giving it (an exception fails the check).
+const NEG = (name, verdict, reasonRe) => {
+  let v;
+  try {
+    v = typeof verdict === "function" ? verdict() : verdict;
+  } catch (e) {
+    return check(`negative control: ${name}`, false, `raised ${e}`);
+  }
+  check(`negative control: ${name}`, !v.agrees && (!reasonRe || reasonRe.test(v.reason)), JSON.stringify(v).slice(0, 300));
+};
 const failedJs = normalize(refs, { failed: "references: success false: Error processing request. Internal compiler failure" }, { libDir: JS_LIBS });
 NEG("finding 1: a failed tsserver command is no evidence (go-only location)", judge(N(refs, [a1, a3]), N(refs, [a1]), failedJs), /JS failed/);
 const diagS = (code, line, source) => ({ ...diag(code, line), source });
