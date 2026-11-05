@@ -104,3 +104,28 @@ The handoff is `docs/perf-rearch/design/d1-impl.md` on the branch. Bins are
 - **icount:** the exact path is +0.03–0.06%, within LTO noise.
 - **Wall:** not measured (load 19–70).
 - **Integration lane D1-I2 started:** I2a + I2b + perf head.
+
+## D1-I2 integrated (branch `t3/6fb1d54b`, head 6ed200011, code 5addb1178)
+- **Merges:** I2a, I2b, H2, H3 and P1.
+- **Publication:** inside the job, before the pending count drops. The stall
+  test fails on the old order and passes on the new one.
+- **State reset:** `MAP.stats` and `MAP.cycles` are cleared on abandon, and the
+  fingerprint check covers them.
+- **Parity full:** OK, 0 lost (`20261105-080045-full-193886eef5`). The 37
+  referee-only items were already referee-only in the base; none of them goes
+  through D1.
+- **Identity:** 66/66 exact on every comparison (manifest `e207424842b1d334`).
+  15 commit, 5 fall back (all ConstraintCut). With fallbacks disabled, 5 runs
+  fire and every raw output still equals Go.
+- **Wall** (gated, goport, without P1):
+
+  | project | Go | c4 | I2 | I2 vs Go |
+  |---|---|---|---|---|
+  | vscode | 9.04 s | 5.76 s | 3.08 s | 0.34× |
+  | t3-server | 11.11 s | 3.85 s | 3.06 s | 0.28× |
+  | umami | 1.33 s | 0.716 s | 0.491 s | 0.37× |
+  | hono | 0.286 s | 0.123 s | 0.093 s | 0.32× |
+  | zod (falls back) | 1.01 s | 0.461 s | 0.555 s | 0.55× |
+
+  - **Open:** umami is +3.8% against I1, with equal instructions. Suspects are
+    the cycle-check round and the fresh-file pass.
