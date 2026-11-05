@@ -2336,8 +2336,12 @@ mod load_view {
             session.wait_for_background_tasks();
             // The loads have ended; their scopes, parse pools and jobs let go
             // of their views, and the held workers keep the second one.
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            assert_eq!(live_views(), 1, "only the held workers' view");
+            // The free thread can be behind on a busy machine: wait for it.
+            assert!(
+                wait_until(10, || live_views() == 1),
+                "only the held workers' view should be alive: {}",
+                live_views()
+            );
             resolve_ahead::hold_in_job(false);
             assert!(
                 wait_until(10, || live_views() == 0),
