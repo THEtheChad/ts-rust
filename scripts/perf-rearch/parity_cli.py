@@ -36,8 +36,11 @@ be older than an earlier one, and Go and tsc-rs alike then rebuild ("is older th
 side runs again, up to CLOCK_ATTEMPTS times; when every attempt saw a step, the item is an ERROR.
 
 Go's result is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/cli), keyed
-by the Go binary, project path, project fingerprint (commit and node_modules mtimes), config and
-arguments. When the cache is made Go runs twice. tsc-rs runs --rs-runs times (default 1 for quick,
+by the Go binary, the project path, the content of the whole project tree (parity_inputs.tree_hash:
+sources, configs, node_modules, every file but .git), config, arguments and the run's parameters
+(timeout, overlay command). The tree hashes are taken when the tier starts and taken again when it
+ends: an item of a project that changed while the tier ran is an ERROR. When the cache is made Go
+runs twice. tsc-rs runs --rs-runs times (default 1 for quick,
 2 for full).
 
 Compared per item: exit code, stdout, stderr and the written file tree (sha256 of each file).
@@ -78,6 +81,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # python3 -I does not put the script's dir on the path
+import parity_inputs as inputs  # noqa: E402
 import parity_referees as referees  # noqa: E402
 
 HOME = Path.home()
@@ -90,9 +94,9 @@ TIMEOUT = 1800
 OVERLAY = ['unshare', '-rm', '--', 'sh', '-c',
            'mount -t overlay overlay -o "lowerdir=$1,upperdir=$2,workdir=$3" "$1" && cd "$4" && shift 4 && exec "$@"',
            'overlay']
-CACHE_VERSION = 4  # bump when a change of this file changes Go's cached results
-PARTITION_VERSION = 1  # the same, for the per-N Go results of the partition check
-JS_CACHE_VERSION = 1  # the same, for JS tsc's results
+CACHE_VERSION = 5  # bump when a change of this file changes Go's cached results
+PARTITION_VERSION = 2  # the same, for the per-N Go results of the partition check
+JS_CACHE_VERSION = 2  # the same, for JS tsc's results
 # A side whose wall clock stepped by more than CLOCK_STEP_NS runs again (see the top comment).
 CLOCK_STEP_NS = 5_000_000
 CLOCK_ATTEMPTS = 6
@@ -152,17 +156,15 @@ def load_projects(path):
     out = []
     for p in spec['projects']:
         root = next((expand(d) for d in p['dirs'] if (expand(d) / p.get('marker', 'package.json')).exists()), None)
-        out.append({**p, 'root': root, 'fingerprint': fingerprint(root) if root else None})
+        out.append({**p, 'root': root})
     return out
 
 
-def fingerprint(root):
-    """The project's commit and the mtime of its node_modules dirs (top level, and one level down for
-    workspaces): a new install or checkout makes a new Go cache key instead of a stale Go result."""
-    head = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
-    nm = sorted(str(p.stat().st_mtime_ns) for p in [root / 'node_modules', *root.glob('*/node_modules'),
-                                                   *root.glob('*/*/node_modules')] if p.is_dir())
-    return hashlib.sha256(f'{head}|{"|".join(nm)}'.encode()).hexdigest()[:16]
+def rs_failure(runs):
+    """'timeout' or 'crash' when a tsc-rs run of the side timed out or crashed, else None."""
+    if any(r.code == 'timeout' for r in runs):
+        return 'timeout'
+    return 'crash' if any(referees.crashed(r) for r in runs) else None
 
 
 class Run:
@@ -334,12 +336,21 @@ class Tier:
 
     def __init__(self, args, rs_cmd, rs_runs, go_sha, cache, out):
         self.args, self.rs_cmd, self.rs_runs, self.go_sha, self.cache, self.out = args, rs_cmd, rs_runs, go_sha, cache, out
-        self.js_sha = referees.js_sha(args.js) if args.referees else None
+        self.snapshot = inputs.Snapshot()
+        self.js_sha, self.js_error = None, None
+        if args.referees:
+            try:
+                self.js_sha = referees.js_sha(args.js)
+            except (OSError, ValueError) as e:  # no JS 6.0.3: no JS-AGREES (every JS check fails)
+                self.js_error = str(e)
         self.js_cache = HOME / f'.cache/perf-rearch/parity/js-cache/{self.js_sha}/cli'
 
     def key(self, it, *extra):
-        return hashlib.sha256(json.dumps([*extra, str(it.project['root']), it.project['fingerprint'],
-                                          it.config, it.variant, it.args()]).encode()).hexdigest()[:24]
+        """The cache key of an item's evidence: what the run reads (the project tree's content) and
+        how it runs (arguments, config, timeout, the overlay command), with the producer in `extra`."""
+        root = it.project['root']
+        return hashlib.sha256(json.dumps([*extra, str(root), os.path.realpath(root), self.snapshot.of(root),
+                                          it.config, it.variant, it.args(), TIMEOUT, OVERLAY]).encode()).hexdigest()[:24]
 
     def run_item(self, it):
         key = self.key(it, CACHE_VERSION, self.go_sha)
@@ -353,6 +364,9 @@ class Tier:
         status, detail, extra = self.judge(it, key, go_runs, go_unstable, rs_all, diffs[0], nondet)
         clear(it.scratch)
         row.update(status=status, **({'detail': detail} if detail else {}), **extra)
+        failure = next((f for f in map(rs_failure, rs_all) if f), None)
+        if failure and status not in referees.REFEREED and status != 'MATCH':
+            row['rsFailure'] = failure
         if it.clock_retries:
             row['clockRetries'] = it.clock_retries
         if status == 'DIFF':
@@ -394,7 +408,10 @@ class Tier:
         return referees.UNSTABLE if unstable else run_key(runs)
 
     def js_side(self, it):
-        """JS tsc's side (one run: it is single-threaded), cached unless it timed out."""
+        """JS tsc's side (one run: it is single-threaded), cached unless it timed out; None when the
+        JS referee is not typescript 6.0.3 (referees.js_identity)."""
+        if self.js_error:
+            return None
         cfile = self.js_cache / f'{self.key(it, JS_CACHE_VERSION, self.js_sha)}.json'
         runs, _ = cached_side(it, cfile, ['node', self.args.js], count=1, cache_timeouts=False)
         return runs
@@ -487,7 +504,17 @@ def main():
 
     with ThreadPoolExecutor(args.jobs) as pool:
         list(pool.map(one, items))
+    changed = tier.snapshot.verify()
+    for it in items:
+        why = changed.get(str(it.project['root']))
+        if why and results[it.name]['status'] != 'ERROR':
+            counts[results[it.name]['status']] -= 1
+            results[it.name] = {'status': 'ERROR', 'detail': why, 'was': results[it.name]}
+            counts['ERROR'] += 1
+            print(f'ERROR       {it.name} {why}', flush=True)
+    counts = +counts
     summary = {'tier': args.tier, 'rs': args.rs, 'rsRuns': rs_runs, 'goSha': go_sha, 'counts': dict(counts),
+               'inputs': tier.snapshot.hashes, 'jsSha': tier.js_sha, **({'jsError': tier.js_error} if tier.js_error else {}),
                'wallSecs': round(time.monotonic() - start, 1), 'items': dict(sorted(results.items()))}
     (out / 'results.json').write_text(json.dumps(summary, indent=1) + '\n')
     print(f'cli: {dict(counts)} in {summary["wallSecs"]}s')

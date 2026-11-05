@@ -14,10 +14,18 @@ directory, /tmp/parity-fuzz/<S>-<i>, so absolute paths in the output (--listFile
 are the same for Go and tsc-rs and from run to run.
 
 Go's result of a case is cached in --cache (default ~/.cache/perf-rearch/parity/go-cache/<go sha>/fuzz),
-keyed by the Go binary, seed and case id. The first time, Go runs twice (8 times for a case with
---traceResolution). Later runs only run tsc-rs (--rs-runs times; 2 also catches tsc-rs
-nondeterminism). A tsc-rs timeout gets one more try with twice the time, except where Go timed
-out too: there tsc-rs's first timeout ends the case (DIFF, tsc-rs timed out too).
+keyed by the Go binary, the case id and the case's content (case_key: every file, the options, the
+extra arguments, the directory, oracle.ARGS, the timeout and the number of Go runs), so a changed
+mutator, seed corpus or parameter makes new Go runs. The first time, Go runs twice (8 times for a
+case with --traceResolution). Later runs only run tsc-rs (--rs-runs times; 2 also catches tsc-rs
+nondeterminism).
+
+Every tsc-rs attempt counts (the row's `attempts`, one per tsc-rs process: seconds and outcome). A
+timeout or crash in any attempt makes the case a DIFF with `rsFailure` (parity_compare.py fails on
+it whatever the base says, unless parity-grandfathered.json lists it). The retry policy is for
+diagnosis only: after a timeout (not where Go timed out too) tsc-rs runs once more with twice the
+time, so the row says whether it was load (the retry answered) or a hang; the case stays a DIFF
+either way.
 
 Per case: MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES or DIFF (sig: difffuzz's signature, diag:,
 emit:, stderr:, exit:, crash:, hang, or rs-nondet when two tsc-rs runs differ). A case that is not
@@ -57,13 +65,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / 'vendor/difffuzz'))
 sys.path.insert(0, str(HERE))  # python3 -I does not put the script's dir on the path
 import oracle  # noqa: E402
+import parity_inputs as inputs  # noqa: E402
 import parity_referees as referees  # noqa: E402
 import seeds  # noqa: E402
 from difffuzz import DEFAULT_UPSTREAM, make_case  # noqa: E402
 
 WORK = Path('/tmp/parity-fuzz')
-PARTITION_VERSION = 1  # bump when a change of this file changes the cached per-N Go results
-JS_CACHE_VERSION = 1  # the same, for JS tsc's results
+PARTITION_VERSION = 2  # bump when a change of this file changes the cached per-N Go results
+JS_CACHE_VERSION = 2  # the same, for JS tsc's results
+CACHE_VERSION = 2  # the same, for Go's default results
 
 
 def sha256(path):
@@ -116,26 +126,45 @@ def go_at_n(args, d, inputs, extra, count, cfile):
     return value, secs
 
 
+def case_key(case, d, go_count, timeout):
+    """What a case's results depend on: its content (files, options, arguments), where it runs and
+    how (oracle.ARGS, the timeout, the number of Go runs). 16 hex digits."""
+    return inputs.json_hash({'files': case['files'], 'options': case.get('options'), 'args': case.get('args', []),
+                             'dir': str(d), 'argv': oracle.ARGS, 'timeout': timeout, 'goRuns': go_count})[:16]
+
+
 class Case:
-    """One case on disk, with the tier's runners for the referees."""
+    """One case on disk, with the tier's runners for the referees. Every tsc-rs process it starts is
+    in `attempts`."""
 
-    def __init__(self, args, cache, js_cache, cid, d, inputs, extra, go_count):
+    def __init__(self, args, cache, js_cache, cid, d, inputs, extra, go_count, ckey):
         self.args, self.cache, self.js_cache, self.cid = args, cache, js_cache, cid
-        self.d, self.inputs, self.extra, self.go_count = d, inputs, extra, go_count
+        self.d, self.inputs, self.extra, self.go_count, self.ckey = d, inputs, extra, go_count, ckey
         self.go_secs = 0.0
+        self.attempts = []
 
-    def run_rs(self, timeout):
-        return oracle.run(self.args.rs, self.d, self.inputs, timeout, self.extra)
+    def run_rs(self, timeout, why):
+        r = oracle.run(self.args.rs, self.d, self.inputs, timeout, self.extra)
+        self.attempts.append({'why': why, 'secs': round(r.secs, 2), 'timeout': timeout,
+                              'outcome': 'timeout' if r.code == 'timeout' else 'crash' if referees.crashed(r) else f'exit {r.code}'})
+        return r
+
+    def failure(self):
+        """'timeout' or 'crash' when an attempt timed out or crashed, else None."""
+        outcomes = [a['outcome'] for a in self.attempts]
+        return 'timeout' if 'timeout' in outcomes else 'crash' if 'crash' in outcomes else None
 
     def go_at_n(self, n):
         key, secs = go_at_n(self.args, self.d, self.inputs, [*self.extra, *referees.go_args(n)], self.go_count,
-                            self.cache / f'{self.cid}.r{self.go_count}.p{PARTITION_VERSION}-c{n}.pkl')
+                            self.cache / f'{self.cid}-{self.ckey}.r{self.go_count}.p{PARTITION_VERSION}-c{n}.pkl')
         self.go_secs += secs
         return key
 
     def js_side(self):
         """JS tsc's result (one run: it is single-threaded), cached unless it timed out."""
-        cfile = self.js_cache / f'{self.cid}.v{JS_CACHE_VERSION}.pkl'
+        if self.js_cache is None:  # no JS 6.0.3 (referees.js_identity): no JS-AGREES
+            return None
+        cfile = self.js_cache / f'{self.cid}-{self.ckey}.v{JS_CACHE_VERSION}.pkl'
         if cfile.exists():
             js = pickle.loads(cfile.read_bytes())
         else:
@@ -146,28 +175,41 @@ class Case:
         return [js]
 
 
+def attempts_text(c):
+    return ', '.join(f'{a["why"]} {a["outcome"]} ({a["secs"]} s of {a["timeout"]:g})' for a in c.attempts)
+
+
 def judge(c, go, go_status, rs_runs, sig):
-    """(status, detail) and the extra row fields of a case, in the order of parity_referees."""
+    """(status, detail) and the extra row fields of a case, in the order of parity_referees. A tsc-rs
+    attempt that timed out or crashed is a DIFF (step 1) even where a later attempt answered, except an
+    exact copy of Go's own crash output, which is MATCH (tsc-rs reproduces some Go crashes on purpose)."""
     rs = rs_runs[0]
     if sig is not None and sig.startswith('rs-nondet:'):
         return 'DIFF', None, {}
-    if go_status is None and sig is None:
+    if go_status == 'GO-FAIL' and go.code != 'timeout' and all(r.key() == go.key() for r in rs_runs) and c.args.referees:
+        return 'MATCH', None, {}
+    if go_status is None and sig is None and not c.failure():
         return 'MATCH', None, {}
     if not c.args.referees:
         return go_status or 'DIFF', None, {}
-    if go_status == 'GO-FAIL' and go.code != 'timeout' and rs.key() == go.key():
-        return 'MATCH', None, {}  # tsc-rs equals Go's result exactly (a crash it reproduces)
     if go_status:
         reason = referees.go_broken_reason([go], None) or ('Go runs differ' if go_status == 'GO-UNSTABLE'
                                                             else 'Go timed out or crashed on a repeated run')
         (status, detail), extra = referees.judge_broken(f'{go_status}: {reason}', rs_runs), {}
+        if status == referees.GO_BROKEN and c.failure():
+            return 'DIFF', f'go-broken ({go_status}: {reason}), tsc-rs {c.failure()} in an attempt: {attempts_text(c)}', extra
+        if status == 'DIFF' and c.failure():
+            detail = f'{detail}; attempts: {attempts_text(c)}'
+    elif c.failure():
+        return 'DIFF', f'tsc-rs {c.failure()} in an attempt: {attempts_text(c)}', {}
     else:
         status, detail, info = referees.referee(
             [*oracle.ARGS, *c.extra], c.go_at_n, c.js_side, [go], [rs], rs.key(), c.args.referee_all)
         extra = {'referees': info}
     if status in referees.REFEREED and len(rs_runs) < 2:  # determinism first: one more tsc-rs run
-        if c.run_rs(c.args.timeout * 2).key() != rs.key():
-            return 'DIFF', 'rs-nondet: on the extra run of the referee check', extra
+        again = c.run_rs(c.args.timeout, 'confirm')
+        if again.key() != rs.key() or c.failure():
+            return 'DIFF', f'rs-nondet: on the extra run of the referee check ({c.attempts[-1]["outcome"]})', extra
     return status, detail, extra
 
 
@@ -183,24 +225,27 @@ def run_case(args, corpus, cache, out, i):
     extra = case.get('args', [])
     # --traceResolution output follows Go's resolver threads: 8 Go runs, as difffuzz confirms it.
     go_count = 8 if '--traceResolution' in extra else 2
-    c = Case(args, cache, args.js_cache, cid, d, inputs, extra, go_count)
-    go, go_status, go_secs = go_cached(args, d, inputs, extra, go_count, cache / f'{cid}.r{go_count}.pkl')
+    ckey = case_key(case, d, go_count, args.timeout)
+    c = Case(args, cache, args.js_cache, cid, d, inputs, extra, go_count, ckey)
+    go, go_status, go_secs = go_cached(args, d, inputs, extra, go_count, cache / f'{cid}-{ckey}.v{CACHE_VERSION}.r{go_count}.pkl')
     rs_secs = 0.0
     if go_status and not args.referees:
         shutil.rmtree(d, ignore_errors=True)
         return i, {'status': go_status}, go_secs, rs_secs
     rs_runs = []
     # Where Go itself timed out, tsc-rs gets the same time once: a timeout there is a DIFF either way
-    # (GO-BROKEN needs an answer), so the longer retry and the second run would only cost time.
+    # (GO-BROKEN needs an answer), so the diagnostic retry and the second run would only cost time.
     go_hung = go_status == 'GO-FAIL' and go.code == 'timeout' and args.referees
-    for _ in range(args.rs_runs):
-        rs = c.run_rs(args.timeout)
-        if rs.code == 'timeout' and not go_hung:
-            rs = c.run_rs(args.timeout * 2)
+    for k in range(args.rs_runs):
+        rs = c.run_rs(args.timeout, f'run{k + 1}')
         rs_secs += rs.secs
-        rs_runs.append(rs)
         if rs.code == 'timeout' and go_hung:
+            rs_runs.append(rs)
             break
+        if rs.code == 'timeout':  # diagnosis only (load or a hang): the timeout stays in c.attempts,
+            rs = c.run_rs(args.timeout * 2, f'run{k + 1} retry')  # and judge makes the case a DIFF
+            rs_secs += rs.secs
+        rs_runs.append(rs)
     sigs = [oracle.signature(go, rs, str(d.resolve()) + '/') for rs in rs_runs]
     if len({rs.key() for rs in rs_runs}) > 1:
         sig = 'rs-nondet:' + str(next(s for s in sigs if s))
@@ -208,9 +253,13 @@ def run_case(args, corpus, cache, out, i):
         sig = sigs[0]
     status, detail, extra_row = judge(c, go, go_status, rs_runs, sig)
     row = {'status': status, **({'detail': detail} if detail else {}), **({'sig': sig} if sig else {}), **extra_row}
+    if status == 'DIFF' and c.failure():
+        row['rsFailure'] = c.failure()
+    if len(c.attempts) > args.rs_runs or c.failure():
+        row['attempts'] = c.attempts
     if status == 'DIFF':
         row.update(mutations=case.get('mutations', []), seedCase=case['name'])
-        if detail and sig and not detail.startswith('go-broken') and not detail.startswith('rs-nondet'):
+        if detail and sig and not detail.startswith(('go-broken', 'rs-nondet', 'tsc-rs ')):
             row['detail'] = f'{detail}: {sig}'
         bad = next((rs for rs, s in zip(rs_runs, sigs) if s), rs_runs[0])
         oracle.write_finding(out / 'diffs' / cid, case, sig or detail, go, bad)
@@ -250,7 +299,13 @@ def main():
     kind = 'corpus' if args.corpus else 'fuzz'
     cache = Path(args.cache) if args.cache else Path.home() / f'.cache/perf-rearch/parity/go-cache/{go_sha}/{kind}'
     cache.mkdir(parents=True, exist_ok=True)
-    args.js_cache = Path.home() / f'.cache/perf-rearch/parity/js-cache/{referees.js_sha(args.js)}/{kind}' if args.referees else None
+    args.js_cache, js_error = None, None
+    if args.referees:
+        try:
+            args.js_cache = Path.home() / f'.cache/perf-rearch/parity/js-cache/{referees.js_sha(args.js)}/{kind}'
+        except (OSError, ValueError) as e:  # no JS 6.0.3: every JS check fails, no JS-AGREES
+            js_error = str(e)
+            print(f'{kind}: JS referee unavailable: {js_error}', flush=True)
     corpus, _ = seeds.load(args.upstream)
     if args.count is None:
         args.count = 2000 if not args.corpus else 0
@@ -279,7 +334,8 @@ def main():
     with ThreadPoolExecutor(args.jobs) as pool:
         list(pool.map(one, range(args.start, args.start + args.count)))
     summary = {'seed': args.seed, 'start': args.start, 'count': args.count, 'rsRuns': args.rs_runs,
-               'goSha': go_sha, 'corpus': len(corpus), 'counts': dict(counts),
+               'goSha': go_sha, 'corpus': len(corpus), 'counts': dict(counts), 'timeout': args.timeout,
+               **({'jsError': js_error} if js_error else {}),
                'secs': {**{k: round(v, 1) for k, v in secs.items()}, 'wall': round(time.monotonic() - start, 1)},
                'items': dict(sorted(items.items()))}
     (out / 'results.json').write_text(json.dumps(summary, indent=1) + '\n')

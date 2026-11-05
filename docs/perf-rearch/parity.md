@@ -3,7 +3,9 @@
 `scripts/perf-rearch/parity.sh` checks that tsc-rs's output still matches Go `tsc` at the pin
 (`3e9236361fa9`, `~/.local/bin/tsgo-oracle-3e9236361fa9`, LSP `tsgo-lsp-oracle-3e9236361fa9`)
 byte for byte, except where a referee (see "Referees") accepts a difference. The rewrite lanes run
-it on every change. A change passes when no item that was good in the base is bad now.
+it on every change. A change passes when no item that was good in the base is bad now, the run has
+every base item its mode runs, no new item is bad, tsc-rs crashed or timed out nowhere, and no item
+is an ERROR (see "The verdict").
 
 ```sh
 scripts/perf-rearch/parity.sh quick <tsgo bin> --base ~/.cache/perf-rearch/parity/base-main   # ~4 min warm
@@ -15,12 +17,67 @@ scripts/perf-rearch/parity.sh help
 ```
 
 The last line is `PARITY OK` (exit 0) or `PARITY FAIL` (exit 1). Before it come the lost items
-(`LOST <item>: <status> <first difference>`), any item the run did not reach (when it was the same
-mode as the base), harness `ERROR`s, new items that are not good, recovered items, every item that
-became good by a referee (grouped by status, never cut) and FLAKY tests.
+(`LOST <item>: <status> <first difference>`), the base items the run should have and lacks (`NOT
+RUN`), new items that are not good (`NEW`), items where tsc-rs crashed or timed out (`CRASH`),
+recovered items, every item that became good by a referee (grouped by status, never cut), the
+grandfathered items with their reasons, FLAKY tests and harness `ERROR`s.
+
+### The verdict (`parity_compare.py compare`; lane H3)
+
+PARITY FAIL on any of:
+
+- **LOST:** good in the base, not good now.
+- **NOT RUN:** good in the base, a mode of this run runs it, and the run lacks it.
+  `parity_modes.py` is the one definition of what quick and full run; `parity.sh` takes its
+  settings from it. A quick run against a full base must have every quick item. An item is
+  exempt only when it is positively full-only: a known config or variant that is not quick, a known
+  full-only lsp session, a workspace test binary, a fuzz case at index 1,500 or above, or a corpus
+  case. An unknown name is required. A run with `--tiers` fails on the tiers it left out.
+- **NEW:** not in the base and not good (IGNORED tests excepted; SKIP counts as not good).
+- **CRASH:** tsc-rs crashed or timed out on the item (the row's `rsFailure`, or an lsp detail
+  `tsc-rs: ...`), whatever the base says.
+- **ERROR:** any ERROR item, including an input that changed while the tier ran.
+
+`scripts/perf-rearch/parity-grandfathered.json` lists known items that NEW or CRASH would otherwise
+fail, each with its status, its `rsFailure` and a reason. An entry excuses its item only while the
+status and `rsFailure` are the listed ones. Every excused item is printed with its reason
+(`GRANDFATHERED`), and every entry that no longer applies is printed as `STALE GRANDFATHER`.
 Only one gate runs at a time, under a lock: the scratch paths are fixed, so the paths in the
 output agree with the cached Go results. The test tier builds and tests the checkout (`--checkout`,
 default the worktree that holds the script). Every other tier runs `<tsgo bin>`.
+
+## Input identities (`parity_inputs.py`; lane H3)
+
+Every Go, Go-N and JS cache key holds the content of what the run reads and the parameters it runs
+with, so a warm cache never answers for other inputs.
+
+- **cli:** the realpath of the project dir and `tree_hash` of its whole tree. That covers every
+  directory entry but `.git`: sources, configs, `node_modules`, symlink targets, and the trees that
+  symlinks out of the project point to. The key also holds the config, the arguments, the timeout
+  and the overlay command.
+- **lsp:** the session's definition (project, files, positions, scenario), the resolved project
+  dir and its `tree_hash`, and for scenarios the typings cache their ATA reads
+  (`~/.cache/typescript/7.1`). It also holds the lspdiff sources that script the session, including
+  the stand-in npm, and the harness settings `LSPDIFF_SETTLE_MS` and `LSPDIFF_REQUEST_TIMEOUT_MS`.
+  The JS key adds `tsserver.mjs`.
+- **fuzz and corpus:** the case's id and `json_hash` of its content (every file, the options, the
+  extra arguments), its directory, `oracle.ARGS`, the timeout and the number of Go runs. A changed
+  mutator, seed corpus or parameter makes new Go runs.
+- **JS:** `parity_referees.js_identity` hashes the whole typescript package: package.json, `bin/`
+  and `lib/` (the shims, `_tsc.js`, `_tsserver.js`, `typescript.js`, every other module, and the
+  `lib.*.d.ts` files). It requires version 6.0.3, by package.json and by the version string
+  compiled into `_tsc.js` and `typescript.js`. Any other package is no referee: JS-AGREES is then
+  impossible on that tier, and the summary says why (`jsError`).
+
+`tree_hash` caches each file's sha256 by its (dev, inode, size, mtime, ctime). Every write changes
+ctime, and user space cannot set it, so a cached hash is reused only for the unchanged file. The
+hashes are taken when a tier starts. Every input root is hashed again when the tier ends, and the
+items of a root that changed in between become ERROR (`input changed while the tier ran`).
+
+Cost on MS-A2 (load 45 to 60): the first hash of all 12 project trees and the typings cache took
+273 s (t3code 91 s, vscode 38 s, query 33 s, umami 30 s, zod 25 s). A warm hash of all of them took
+16 s one after another (t3code 5.3 s, query 3.7 s). The cli tier hashes its 10 projects in parallel
+at its start and again at its end, the lsp tier its 4 projects and the typings cache.
 
 ## Tiers
 
@@ -33,8 +90,8 @@ tests PASS / FAIL / FLAKY /
 IGNORED / UNRUN. The good statuses are MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, PASS and FLAKY.
 
 Go results are cached under `~/.cache/perf-rearch/parity/go-cache/<sha of the Go binary>/` and are
-keyed by everything that goes into the run, including a project fingerprint (the commit plus the
-mtimes of the `node_modules` dirs). On a warm cache a run starts only tsc-rs. When a cache entry
+keyed by everything that goes into the run (see "Input identities"). On a warm cache a run starts
+only tsc-rs. When a cache entry
 is made, Go runs twice (8 times for `--traceResolution` fuzz cases). The full tier runs tsc-rs
 twice on cli and fuzz, and a difference between its own two runs is a DIFF (`rs-nondet`). That
 is how the gate catches nondeterminism from parallel rewrites.
@@ -120,9 +177,9 @@ compared as normalized JSON (the root path is masked; completion items and Works
 are sorted, since Go itself does not keep those orders). The client advertises no dynamic watch
 registration, so both servers log "file watching: disabled". Automatic type acquisition (ATA) is
 off (`disableAutomaticTypeAcquisition`), so an answer does not depend on when npm returns (see
-"ATA in the standard sessions" below). A Go cache entry is keyed by the session, the project
-fingerprint and the sha of the vendored lspdiff sources, so a change to the session script makes
-new Go runs.
+"ATA in the standard sessions" below). A Go cache entry is keyed by the session, the content of the
+project tree and the sha of the vendored lspdiff sources ("Input identities"), so a change to the
+project or the session script makes new Go runs.
 
 **Watch scenarios** (`scenario.mjs`). Here the client advertises what VS Code does:
 `workspace.didChangeWatchedFiles` with `dynamicRegistration` and `relativePatternSupport`,
@@ -170,6 +227,7 @@ in order (seen on a low-load run). Go runs 4 times when a scenario's cache entry
 | `watch-umami-f12`, `watch-hono-f12` | full | `watch` on umami and hono |
 | `watch-narrow-umami-f12` | full | `watch` on umami with the workspace folder at `umami/src` |
 | `second-project-query` | full | query: `query-core` loads (diagnostics, hover, completion), then a `react-query` file opens: a second tsconfig project's first load with the session's caches warm (diagnostics, hover, definition into query-core, references, completion), then auto-import completion and resolves in it |
+| `ata-overlay` | quick, full | fixture `ata-small` (JS files in no tsconfig, so an inferred project with type acquisition on) with ATA on against a private typings cache and the stand-in npm (see "ATA in the watch scenarios"): the first load and ATA's registry and typings installs, the refreshes they cause, an overlay (`src/ghost.js`, not on disk) whose import makes ATA install more typings, closing the overlay, and the inferred project's watchers unregistered when the last file closes |
 
 Go dedupes watchers per glob (`watchRegistry.Acquire`), and inside the workspace it covers the
 project with one `<root>/**/*` glob, plus `bundled:///libs/**/*` and `node_modules/**/*`. With the
@@ -257,11 +315,25 @@ pool (see "JS tsserver as the LSP referee"). An item that is not MATCH is judged
    - every written file that differs from Go's (content, missing or extra) equals JS's;
    - the exit code, if it differs from Go's, equals JS's;
    - per run, for the two-run variants.
-   Points where tsc-rs equals Go need nothing from JS. What JS cannot referee fails the check and
-   leaves a DIFF: stderr that differs from Go's, any other stdout line (listFiles, explainFiles,
-   showConfig, extendedDiagnostics statistics, `-b` messages) that differs from Go's, diagnostics
-   both print but in another order, a `Found N errors` summary that does not count tsc-rs's own
-   errors, and a difference with no point at all (blank lines only). The detail counts the points
+   Points where tsc-rs equals Go need nothing from JS. **Every stdout line is accounted for**
+   (`_stdout_points`, lane H3). Each stdout is split into tokens: diagnostic blocks (header,
+   message chain, code frames, related information), blank lines, the `Found N errors` summary
+   with the blank lines before it and its table, and every other line. Take out the blocks of the
+   diagnostics only one side prints, each with the blank line that joined it to its neighbour.
+   Go's and tsc-rs's tokens must then be equal byte for byte. The summary must be the one Go writes
+   for tsc-rs's own errors: count, file table, line numbers and layout (`render_summary`, Go's
+   `WriteErrorSummaryText`). The renderer is checked against Go's own summary in the same item
+   first. A block only tsc-rs prints must equal JS's block for that diagnostic byte for byte, code
+   frame included. In `--pretty` with related information that is undecidable, since JS 6 lays the
+   block out differently, so such a block has no referee. What JS cannot referee fails the check and
+   leaves a DIFF:
+   - stderr that differs from Go's;
+   - any other stdout line or blank line that differs from Go's (listFiles, explainFiles,
+     showConfig, extendedDiagnostics statistics, `-b` messages);
+   - a block of a diagnostic both print that differs from Go's (frame, colors, chain);
+   - diagnostics both print in another order;
+   - a summary that is not Go's for tsc-rs's errors, or one where Go prints none;
+   - a difference with no point at all. The detail counts the points
    by kind and the most common codes (`JS sides with tsc-rs on 22 points: 22 go-only (TS2344 x22)`);
    `referees.js.points` lists up to 50 (`go-only TS2344 at src/v4/x.ts(10,5)`, `file out/a.js`,
    `exit 2>0`).
@@ -287,23 +359,24 @@ it in `referees.js`; the status stays the first referee's. `--no-referees` gives
 - With `GOPORT_CERT_N` 1, 2, 3, 4, 6, 12 or 16 the spike's output equals Go c4 byte for byte. Only
   N=8 differs.
 
-**Diagnostic parsing** (`parse_output`). Both formats parse: `file(line,col): error TSn: text`
+**Diagnostic parsing** (`tokenize`, `parse_output`). `tokenize` is lossless: joining its tokens
+gives the stdout back. `parse_output` is the view for comparing diagnostics with JS, never with Go.
+Both formats parse: `file(line,col): error TSn: text`
 (`--pretty false`) and `file:line:col - error TSn: text` (`--pretty true`, ANSI colors removed),
 plus global `error TSn: text`. Indented lines right after the header are the message chain. In
 pretty output, code frames (the reverse-video gutter lines and squiggles) are dropped, and related
 information is read after the blank line. JS 6 and Go differ in one systematic way here, and it is
 normalized: Go prints related information as `  file:line:col - text` before its code frame, JS 6
 as `  file:line:col`, the frame, then `    text`; both become `(file, line, col, text)`. The
-`Found N errors ...` line and its `Errors  Files` table are a summary, not diagnostics: they are
-taken out of all three outputs, and tsc-rs's own summary must count its errors (in total and per
-file). Blank lines are ignored outside diagnostics (Go ends pretty output with one more blank line
+`Found N errors ...` line and its `Errors  Files` table are a summary, not diagnostics: tsc-rs's
+summary must be the one Go renders for tsc-rs's errors (above). Blank lines are ignored outside diagnostics (Go ends pretty output with one more blank line
 than JS). `--pretty false` output prints no related information and no summary, in Go and JS alike.
 Neither prints a version banner in these modes.
 
 **Caches.** Go's per-N results sit next to its default result in the Go cache:
 `go-cache/<go sha>/cli/<item key>.p1-c<N>.json` and `go-cache/<go sha>/{fuzz,corpus}/<case>.r<runs>.p1-c<N>.pkl`.
-JS's results are in `~/.cache/perf-rearch/parity/js-cache/<sha of lib/tsc.js>/{cli,fuzz,corpus}/`,
-keyed like the Go cache. Timeouts are not cached. All extra runs happen only for an item that is
+JS's results are in `~/.cache/perf-rearch/parity/js-cache/<js_identity>/{cli,fuzz,corpus}/`,
+keyed like the Go cache (see "Input identities"). Timeouts are not cached. All extra runs happen only for an item that is
 not MATCH, once; later gate runs read them from the cache.
 
 ## Run times
@@ -317,7 +390,13 @@ cached, so a run on a binary that matches Go everywhere costs nothing extra on c
 - **Every run: tsc-rs on Go-broken fuzz cases.** Before, GO-FAIL and GO-UNSTABLE cases did not run
   tsc-rs. Now the 44 such cases of the full batch do: the 18 GO-BROKEN ones take 0.1 to 0.9 s each.
   The 26 where Go timed out (deep nesting) time out in tsc-rs too. Each gets one 60 s try, no
-  retry (a timeout there is a DIFF either way). Before that cap, the first full run spent up to
+  retry (a timeout there is a DIFF either way).
+- **Every tsc-rs attempt counts (lane H3).** A fuzz or corpus row's `attempts` lists each tsc-rs
+  process with its seconds and outcome. A timeout or crash in any attempt makes the case a DIFF with
+  `rsFailure`, and `parity_compare.py` fails it whatever the base says, unless
+  `parity-grandfathered.json` lists it. After a timeout tsc-rs runs once more with twice the time.
+  That retry is diagnosis only: it shows whether the timeout was load (the retry answered) or a
+  hang, and the case stays a DIFF either way. An exact copy of Go's crash output is still MATCH. Before that cap, the first full run spent up to
   2 × (60 + 120) s on each: its fuzz tier took 1,612 s against the base's 965 s, at a higher load.
   With the cap the 26 cases are 26 × 60 s = 1,563 s of worker time, about 130 s of the tier's 12
   workers; all 45 non-MATCH cases alone took 180 s of wall time on 12 workers at a load of 53. The
@@ -384,9 +463,42 @@ The 20 GO-UNSTABLE `references` items of hono, and the `rs-nondet` references it
 
 The fix is in the harness. Standard sessions turn ATA off for both servers
 (`vendor/lspdiff/client.mjs` `initializeParams(..., { ata: false })`, which `session.mjs`
-`runSession` uses). The watch scenarios keep ATA on. They settle at checkpoints and register its
-watch globs (`program files for /dev/null/inferred`). The repro is `scripts/perf-rearch/nd1/repro.mjs`
-(`--ata` turns the old behavior back on).
+`runSession` uses). The repro is `scripts/perf-rearch/nd1/repro.mjs` (`--ata` turns the old
+behavior back on).
+
+## ATA in the watch scenarios (lane H3, 2026-11-05)
+
+Not every watch scenario keeps ATA on:
+
+| scenario | ATA |
+|---|---|
+| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose content is in their Go cache key ("Input identities"). Their refereed answers are on configured projects |
+| `pkgjson-overlay` | off (lane H2: its npm call raced the overlay steps) |
+| `ata-overlay` | on, deterministic: a private typings cache and the stand-in npm |
+
+`ata-overlay` restores what turning ATA off in `pkgjson-overlay` lost: the interaction of ATA with
+the inferred project, overlays and the watchers. For every server run (Go and tsc-rs alike):
+
+- `<root>-ata/xdg` is `XDG_CACHE_HOME`, written fresh, so the typings location is
+  `<root>-ata/xdg/typescript/7.1`. Both servers take it from `os.UserCacheDir`.
+- `vendor/lspdiff/ata-npm/npm` is first on `PATH`; both servers run `npm` from `PATH`. It is
+  offline and takes `ATA_NPM_DELAY_MS` (500) per call. `install types-registry@latest` writes the
+  fixture's registry (`ata-fake-lib`, `ata-fake-two`), and `install @types/<x>@latest` copies the
+  fixture's typings. It logs every call.
+- After every step the script waits until ATA is idle (`ataIdle`): no npm call in flight, none
+  started for `ATA_IDLE_MS` (1.5 s). It then logs the npm calls since the last wait as an item
+  (`<step> ata npm`, method `ata/npm`).
+
+The first draft sent its requests while npm ran, and both servers varied from run to run. A request
+in that window started a second install of `@types/ata-fake-lib` (3 npm calls instead of 2), and
+the next answers then depended on which install a snapshot saw. That is the ND1 race again, in
+Go's design and in tsc-rs. With the idle waits, 4 Go runs and 3 tsc-rs runs of
+`tsgo-head-efef52257-rel` gave 44 equal answers:
+
+- didOpen installs the registry and `@types/ata-fake-lib`, and the hover shows the typed `pad`;
+- the load sends `workspace/inlayHint/refresh` and `workspace/diagnostic/refresh`;
+- the overlay's import installs `@types/ata-fake-two`;
+- closing the last file unregisters the inferred project's watchers.
 
 ## LSP watch scenarios on the perf head (2026-11-04)
 
@@ -448,12 +560,23 @@ the like) is involved.
 `parity_lsp.py` judges each answer in this order:
 
 1. **tsc-rs determinism.** A tsc-rs run that crashed or timed out (detail `tsc-rs: rs crashed
-   after N answers (...)`), or a later tsc-rs run that differs from the first (`rs-nondet`,
-   `rs-schedule`), makes a DIFF whatever Go and JS say. A tsc-rs run that ended early also adds an
-   item of its own, `<run> server`. In full, tsc-rs runs three times. In quick (one plain run), an
-   answer that would be GO-BROKEN or JS-AGREES needs one more tsc-rs session (`rs-confirm`) that
-   gives it again, as on the other tiers. Otherwise it is a DIFF
-   `rs-nondet: the run made to confirm ... differs from run 1`.
+   after N answers (...)`, `rsFailure`), or a later tsc-rs run that differs from the first
+   (`rs-nondet`, `rs-schedule`), makes a DIFF whatever Go and JS say. A tsc-rs run that ended early
+   also adds an item of its own, `<run> server`. In full, tsc-rs runs three times. In quick (one
+   plain run), when any answer would be GO-BROKEN or JS-AGREES, one more tsc-rs session runs
+   (`rs-confirm`), as on the other tiers. **It is a complete tsc-rs run (lane H3):** every answer
+   of it, MATCH ones included, is compared with run 1. An answer it changes or lacks is a DIFF
+   `rs-nondet: the confirming tsc-rs run ...`. So is every answer after its crash or timeout
+   (`rsFailure`), a request only it asked (`rs-confirm extra answers`), and the crash itself
+   (`rs-confirm server`).
+   **Alignment (lane H3).** Two requests of the standard session depend on earlier answers: rename
+   runs only after a prepareRename that gave a result, and quick fixes run for the first 3
+   diagnostics. Answers are therefore aligned across all runs by request identity (the step name
+   and its occurrence), not by index. A request that a run was not asked is an answer of its own
+   ("not asked"). Only Go asked: DIFF `only Go was asked this request`. Only tsc-rs asked: `only
+   tsc-rs ...`. Go's runs disagree: GO-BROKEN. tsc-rs's runs disagree: rs-nondet. Item `i` is the
+   request's place in Go's run 1, with the requests only other runs made in their place. Where all
+   runs ask the same requests, the item names are as before.
 2. **GO-BROKEN.** A Go run crashed (the server exited; its `panic:` line is in the detail when
    stderr had one) or timed out before the answer, or Go's 4 runs differ on it. The detail says
    which: `go crashed after 63 answers (server exited (3) during textDocument/hover)`,
@@ -491,8 +614,20 @@ same `didChange` edits, the same requests at the same positions, and the same fi
 
 - **Process:** `node --max-old-space-size=8192 tsserver.js --disableAutomaticTypingAcquisition
   --canUseWatchEvents --suppressDiagnosticEvents --noGetErrOnBackgroundUpdate --locale en`. ATA is
-  off in every session, the watch scenarios included. Those scenarios keep ATA on for the LSP
-  servers, but their refereed answers are on configured projects.
+  off in every session, the watch scenarios included. Most of those scenarios keep ATA on for the
+  LSP servers, but their refereed answers are on configured projects. In `ata-overlay` JS has no
+  typings, so it decides nothing there.
+- **Failed answers (lane H3).** An answer is `{ failed: <why> }` in the log, never a result, when:
+  - tsserver answered `success:false`, `No content available.` included;
+  - the response had no body, or the message was malformed or had no Content-Length;
+  - tsserver exited, or gave no response in `LSPDIFF_REQUEST_TIMEOUT_MS`;
+  - a step the mapping needs gave nothing (`completionEntryDetails`);
+  - the request kind has no tsserver equivalent;
+  - the `configure` or `compilerOptionsForInferredProjects` step failed (then every answer fails).
+  `session.mjs`, `scenario.mjs` and the JS cache keep the field. `referee.mjs` never takes a failed
+  answer as evidence (`JS failed here (no evidence)`). Past a JS crash there is no JS answer, and
+  the crash is cached in `js.broken.json`. Only prepareRename's refusal is an LSP error answer, as
+  Go's is.
 - **Initialize:** `configure` with the session's `userPreferences`, and Go's defaults where
   tsserver's differ: `providePrefixAndSuffixTextForRename`, `allowRenameOfImportPath`,
   `includeCompletionsForImportStatements`, `displayPartsForJSDoc`,
@@ -513,10 +648,9 @@ same `didChange` edits, the same requests at the same positions, and the same fi
   `{ line, character }` in UTF-16 code units: line − 1, offset − 1. Offsets (semantic
   classifications, inlay hint spans) are converted through the open document's text.
 - **Lib files:** `<typescript>/lib/lib.*.d.ts` becomes `bundled:///libs/lib.*.d.ts`.
-- **Cache:** `~/.cache/perf-rearch/parity/js-cache/<tsserver sha>/lsp/<session>-<project
-  fingerprint>-<sources sha>/js.jsonl`. The tsserver sha covers `tsserver.js`, `_tsserver.js` and
-  `typescript.js`. The sources sha covers the session-scripting sources (`client`, `fixtures`,
-  `project`, `scenario`, `session.mjs`) plus `tsserver.mjs`. JS runs once: it is single-threaded,
+- **Cache:** `~/.cache/perf-rearch/parity/js-cache/<js_identity>/lsp/<session>-<key>/js.jsonl`
+  ("Input identities": the whole typescript 6.0.3 package; the session key with `tsserver.mjs`
+  among the sources). JS runs once: it is single-threaded,
   and a session is one process. The Go cache key now hashes only the session-scripting sources, so
   changes to the diff code (`lspdiff.mjs`, `referee.mjs`) no longer make new Go runs. This change of
   key made one new Go fill.
@@ -525,21 +659,41 @@ same `didChange` edits, the same requests at the same positions, and the same fi
 
 All three servers' answers go through the same normalizer, after the root is masked. Each normalized
 answer has *scalars* (one point each), *sets* (list answers: a key per element with every refereed
-field, and a residue of the fields JS cannot referee) and *rest* (everything else). Two rules apply
-to every kind:
+field, and a residue of **all** the element's other fields) and *rest* (everything else in the
+answer, the error's code and data included). Key and residue together are the whole element, so no
+field is dropped. Every part has two views (lane H3):
 
-- **URIs are compared without percent-encoding.** Go writes `node_modules/%40types`, Node writes `@`.
-- **A range in a `bundled:///libs` file is compared by the text of its lines, not by line numbers.**
-  Go's libs (the pin's `internal/bundled/libs`) and JS 6.0.3's differ, for example by 1,470 lines in
-  `lib.dom.d.ts`. So a location becomes `«interface Console {»:10-«...»:17`.
+- **exact:** the raw JSON. **Go and tsc-rs are compared on it**: they bundle the same libs and write
+  the same encodings, so any byte that differs between them is a point. `%40` against `@`, or a
+  location moved between two identical lib lines, is a difference.
+- **ref:** for comparing with JS only. Equivalent encodings map to one form:
+  - **URIs** are parsed structurally: `fileURLToPath` plus the query and fragment. `%40types` and
+    `@types` are one path; `a%23b.ts` (a file named `a#b.ts`) and `a#b.ts` (file `a`, fragment
+    `#b.ts`) stay apart.
+  - **A position in a `bundled:///libs` file is anchored to its text.** Go's libs (the pin's
+    `internal/bundled/libs`) and JS 6.0.3's differ, for example by 1,470 lines in `lib.dom.d.ts`.
+    The anchor (`anchorLine`) is the line's text plus the hash of the smallest window of 2k+1 lines
+    around it (k up to 40) that occurs once in that side's copy and at most once in the other's.
+    The same declaration then gets the same anchor in both copies. `lib.dom.d.ts` has 235 copies of
+    the generic `addEventListener(type: string, ...)` line; each gets its own anchor. A line with no
+    unique window has no anchor, and a point on it has no referee.
+
+A point (a scalar or a go-only or rs-only element) has no referee when:
+- its ref view is lossy: documentation as plain words, inlay labels without whitespace;
+- its ref is ambiguous;
+- its ref equals Go's (the two differ only in encoding);
+- another element of the answer has the same ref.
+
+The unrefereed fields of an rs-only element must be a form Go gives an element of that answer, or
+JS's form for that element. Otherwise a corruption there would ride on an approved element.
 
 | LSP request | tsserver | refereed (key / scalars) | not refereed (residue / rest) |
 |---|---|---|---|
-| `textDocument/diagnostic` | `syntacticDiagnosticsSync` + `semanticDiagnosticsSync` + `suggestionDiagnosticsSync` (Go `getAllDiagnostics` order; declaration diagnostics are in the semantic ones in both). Category error/warning/message/suggestion → severity 1/2/3/4. Go's `reportStyleChecksAsWarnings` applies: 6133, 6138, 6192, 6196, 7027–7030 error → warning | per diagnostic: range, severity, code, message text (with its chain), tags, related information (uri, range, message) | `source`, `data`; the order |
+| `textDocument/diagnostic` | `syntacticDiagnosticsSync` + `semanticDiagnosticsSync` + `suggestionDiagnosticsSync` (Go `getAllDiagnostics` order; declaration diagnostics are in the semantic ones in both). Category error/warning/message/suggestion → severity 1/2/3/4. Go's `reportStyleChecksAsWarnings` applies: 6133, 6138, 6192, 6196, 7027–7030 error → warning | per diagnostic: range, severity, code, message text (with its chain), tags, related information (uri, range, message) | `source`, `data` and any other field (residue); the order |
 | `textDocument/hover` | `quickinfo`: `"```typescript\n" + displayString + "\n```\n"`, then documentation and `*@tag* — text` | display text (inside the first fence), documentation as plain words (links `[x](y)` → x, `{@link X}` → X, emphasis, inline code, ` — ` and whitespace runs removed), range | anything else |
 | `textDocument/completion` | `completionInfo` (trigger character and kind). Kind by Go `getCompletionsSymbolKind`. An optional member of a member completion gets `?` on its label and its name as insert text (Go `createLSPCompletionItem`). `labelDetails` from tsserver's, or the auto-import source | isIncomplete; per item: label, kind, sortText, insertText, `labelDetails.description` | data, filterText, textEdit, commitCharacters, tags, `labelDetails.detail`; itemDefaults; the order (free, as in lspdiff) |
 | `completionItem/resolve` | `completionEntryDetails` for the item's name, source and data. detail = the code actions' descriptions, or the display parts. Edits of the item's file | label, detail, documentation words; the additional edits as a set | – |
-| `textDocument/definition` | `definitionAndBoundSpan` → LocationLink (origin = bound span, target selection = span, target range = context span) | origin range; per target: uri, selection range | target range (JS 6 gives the initializer for a function-valued const, Go the declaration); the order |
+| `textDocument/definition` | `definitionAndBoundSpan` → LocationLink (origin = bound span, target selection = span, target range = context span) | per link: origin range, uri, selection range | target range (JS 6 gives the initializer for a function-valued const, Go the declaration) and any other field (residue); the order |
 | `textDocument/typeDefinition`, `implementation`, `references` | `typeDefinition`, `implementation`, `references` (all refs; the session asks includeDeclaration) | per location: uri, range | the order |
 | `textDocument/documentHighlight` | `documentHighlights` (filesToSearch = the file); `writtenReference` → 3 (write), `definition`/`reference` → 2 (read), `none` → 1 | per highlight: range, kind | the order |
 | `textDocument/signatureHelp` | `signatureHelp`. The trigger reason as Go derives it from the context (none without one, as the session sends). label = prefix + parameters joined by the separator + suffix. Documentation is the comment only (Go `commentOnly`) | activeSignature, activeParameter; per signature: label, parameter labels, documentation words | the order |
@@ -556,9 +710,9 @@ both have must be in the same order. A changed order is a DIFF (`... the order d
 as unrefereed, and `tsserver.mjs` builds some lists itself (the three diagnostic commands).
 
 **Fields outside the referee.** If Go and tsc-rs differ in a residue of an element they both have,
-or in rest, the answer is a DIFF (`... differs outside the refereed fields`). If they differ only
-where the normalizer looks away (whitespace in an inlay label, markdown markup), that is a DIFF too
-(`no refereed point differs`). JS-AGREES needs at least one refereed point and JS's agreement on
+or in rest, the answer is a DIFF (`... differs outside the refereed fields`). A difference in a
+field whose JS view is lossy (whitespace in an inlay label, markdown markup) is a point with no
+referee (`its JS view is lossy`). JS-AGREES needs at least one refereed point and JS's agreement on
 all of them.
 
 **No referee:**
@@ -717,7 +871,8 @@ settling longer would make them comparable again. That change is not made here.
 ### Self-test
 
 `node scripts/perf-rearch/vendor/lspdiff/selftest/referee-selftest.mjs` (`--unit` for part 1 only)
-prints `referee self-test OK`.
+prints `referee self-test OK` (48 checks; about 6 minutes at a load of 50). The negative controls of
+lane H3 (part 1b, part 2b) are under "Gate fixes" below.
 
 - **Part 1** (19 checks) tests the judge on hand-made answers:
   - rs-only and go-only elements, with and without JS;
@@ -742,6 +897,152 @@ prints `referee self-test OK`.
     hover) and one that hangs (never answers a references request; timeout 5 s) make every answer
     from there GO-BROKEN, naming the crash and the timeout. One confirming tsc-rs run checks them,
     and the answers before stay MATCH.
+
+## Gate fixes (lane H3, 2026-11-05)
+
+Astra's review of H1 and H2 (`reviews/2026-11-05-astra-h1h2.md`, at `e0b29c61c`) found false-good
+paths in the referees and the compare. The rules this lane holds the gate to:
+
+- A referee only ever adds evidence. A failed, malformed, ambiguous or incomplete piece of evidence
+  fails the item.
+- Every observable difference between tsc-rs and Go is either identical or covered by a referee
+  rule for that exact point. Normalization maps equivalent encodings, never distinct values.
+- Every tsc-rs attempt counts for determinism.
+
+| # | finding | fix | where |
+|---|---|---|---|
+| 1 | a failed tsserver command became an empty answer | a distinct `failed` answer, kept through the logs and the JS cache, never evidence | `tsserver.mjs`, `referee.mjs`, `lspdiff.mjs` |
+| 2 | LSP fields dropped (diagnostic `source`, the origin of every definition link but the first, error code and data; also signature `activeParameter` and parameter documentation, prepareRename `defaultBehavior`, rename `documentChanges` ops, completion `labelDetails` and resolve fields, semantic token bits) | key plus residue is the whole element; the error's code and data are rest; lossy JS views are no referee; an rs-only element's other fields must be Go's or JS's form | `referee.mjs` |
+| 3 | lib lines merged by text; `%23` read as `#` | Go and tsc-rs compared exactly; for JS, structural URIs and lib anchors on a window of lines unique in both copies | `referee.mjs` |
+| 4 | stdout corruption passed (summary, its table, code frames, blank lines) | every stdout token accounted for, the summary rendered from tsc-rs's own errors, rs-only blocks equal to JS's | `parity_referees.py` |
+| 5 | the confirming run checked only the pending items | a complete tsc-rs run: every answer, missing and extra ones, crash and timeout | `lspdiff.mjs` |
+| 6 | a retry overwrote a tsc-rs timeout | every attempt kept; any timeout or crash is a DIFF with `rsFailure` | `parity_fuzz.py` |
+| 7 | the JS cache hashed the `tsc.js` shim | `js_identity`: the whole 6.0.3 package, version verified (cli, fuzz, corpus, lsp) | `parity_referees.py`, `parity_lsp.py` |
+| 8 | cache keys missed content edits | content keys (`parity_inputs.py`), the inputs checked again at the tier's end | all tiers |
+| 9 | new bad items passed | NEW and CRASH fail; `parity-grandfathered.json` with reasons | `parity_compare.py` |
+| 10 | an empty quick run passed against a full base | `parity_modes.py`: every base item the mode runs is required | `parity_compare.py`, `parity.sh` |
+| 11 | conditional requests shifted the index alignment | alignment by request identity; a request one side was not asked is a difference | `lspdiff.mjs` |
+| 12 | turning ATA off in `pkgjson-overlay` lost the ATA/overlay interaction | the deterministic `ata-overlay` scenario; the docs say which scenarios keep ATA | `scenario.mjs`, `fixtures.mjs`, `ata-npm/` |
+
+### Negative controls
+
+Each control is one of the reviewer's false-good scenarios, run as he ran it where he had a probe
+(`~/.cache/perf-rearch/scratch/review-e0b29c61c/`): the failing tsserver, the compare dirs, the
+`_tsc.js` change, the lib lines. Both self-tests ran against this lane's head and against the
+harness at `e0b29c61c` with the new test files copied in (`git archive e0b29c61c
+scripts/perf-rearch` in `scratch/h3/old-e0b29c61c/`).
+
+| self-test | new code | `e0b29c61c` |
+|---|---|---|
+| `parity_referees_test.py` | `SELFTEST OK`, 123 checks | 19 FAIL |
+| `referee-selftest.mjs` | `referee self-test OK`, 48 checks | 15 FAIL |
+
+Fail on `e0b29c61c`, pass now:
+
+- **1, failed referee commands:** the reviewer's `failing-tsserver.cjs` as the referee of a dropped
+  reference (old JS-AGREES); a failed answer in the unit judge.
+- **2 and 4, mixed defects** (an approved change plus an unrelated corruption): a diagnostic
+  `source`; the origin of a second definition link; an error code; hover markup next to an
+  approved display; a deleted summary; a wrong summary line; a common diagnostic's code frame
+  dropped or changed; a blank line added; an rs-only block whose frame is not JS's.
+- **3, ambiguous anchors and URIs:** a location moved from `lib.dom.d.ts` 0-based line 3733 to 3812
+  (two of the 235 copies of the generic `addEventListener` line), the two lines getting different
+  anchors, `%23` against `#`, and `%40` against `@` between Go and tsc-rs.
+- **5, the confirming run:** changing a MATCH answer, and crashing at the first hover.
+- **6, timeout then success:** the reviewer's case (Go's runs differ, tsc-rs times out once, then
+  answers twice: old GO-BROKEN), and the same with Go fine (old MATCH).
+- **7, the JS implementation:** a changed `_tsc.js` (old: cache hit), and a package that is not 6.0.3
+  (old JS-AGREES).
+- **8, input content with a warm cache:** a cli project edit, a fuzz case changed at the same index,
+  and the lsp key's content and project dir.
+- **9 and 10, the compare:** the reviewer's `new-bad` and `quick-empty` dirs, a quick run against
+  a real-named full base, and a tsc-rs timeout on a known diff (and that a grandfathered entry
+  excuses it, with its reason printed).
+- **11, conditional requests:** tsc-rs answers prepareRename with null, so only Go is asked the
+  rename. Old: lspdiff threw `TypeError: Cannot read properties of undefined (reading 'line')` on
+  the shifted answers, an ERROR for the whole session. Now it is one DIFF (`only Go was asked`),
+  and every other answer MATCHes.
+
+Fail on `e0b29c61c` for reasons other than a false good: the inlay check (the old judge called it
+"no refereed point"); the two parts that use modules or parameters the old harness lacks; and
+`corpus slow`, which looks for the new per-N cache file names. Five coverage checks of finding 4
+pass on the old code too, since those cases were never false goods there: a wrong summary count,
+an extra stdout line, a table counting the wrong file, a changed plain line, a changed chain.
+
+### Gate runs with the fixes
+
+All on `tsgo-head-efef52257-rel` against `base-current` (`head-efef52257-full`), harness
+`cf8859bb2`, the tests tier on this lane's checkout. Every Go cache key changed, so the first run
+refilled the Go cache. No item was renamed, so the base needed no regeneration: compare reads the
+base's statuses, and its GO-UNSTABLE and GO-FAIL items are known diffs.
+
+| run | dir (`runs/`) | wall | result |
+|---|---|---|---|
+| full, cold Go cache | `h3-head-efef52257-full` | 61 min, load 6 to 67 | PARITY FAIL: 13 lost (12 ERROR from an input change, and `fuzz/1:25496`) |
+| full, warm | `h3-head-efef52257-full-warm` | 24 min, load 8 to 35 | PARITY FAIL: 1 lost, `fuzz/1:25496` |
+| quick, warm | `h3-head-efef52257-quick` | 5 min, load 19 to 33 | **PARITY OK**: 142,741 compared, all 141,005 good base items a quick run must have, 0 not run |
+
+Warm full, per tier:
+
+| tier | wall | result |
+|---|---|---|
+| cli | 286 s | 170 MATCH |
+| tests | 215 s | 139,900 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731 IGNORED |
+| lsp | 168 s | 2,617 MATCH, 28 GO-BROKEN, no DIFF |
+| fuzz | 825 s | 29,954 MATCH, 8 GO-BROKEN, 1 GO-PARTITION, 37 DIFF |
+| corpus | 147 s | 12,727 MATCH |
+
+The compare: 187,130 items compared, 1 lost, 0 not run, 0 new items not good, 0 CRASH, 35
+grandfathered, 43 recovered, and 37 newly good by a referee (36 GO-BROKEN, 1 GO-PARTITION, no
+JS-AGREES). None of the 37 was MATCH in the base:
+
+- **lsp GO-BROKEN (28)**, all GO-UNSTABLE in the base: 22 hono references (Go's cross-project
+  search order), 5 umami completions, and watch-hono's raw watcher ids. The base's DIFF
+  `watch-narrow-umami-f12/0012` is MATCH now.
+- **fuzz GO-BROKEN (8):** `2813`, `12500`, `12702`, `15106`, `20151`, `20360` and `29616` were
+  GO-UNSTABLE in the base. The base's known DIFF `23080` (the `--traceResolution` race) is GO-BROKEN
+  now: the new Go fill hit both answers.
+- **fuzz GO-PARTITION (1):** `19122`, GO-UNSTABLE in the base. In the new fill Go's two default runs
+  agreed, and tsc-rs equals Go at `--checkers` 8, 12 and 16 (2 Go outputs over N). By the rule that
+  is good. Go's default run has varied on this case before, though (H1: GO-BROKEN).
+- `5391` (the same `--traceResolution` race) is a DIFF now; it was GO-UNSTABLE, a known diff.
+- The 35 grandfathered cases each failed in exactly the listed way: Go's timeout, or the reproduced
+  panic line.
+
+### What the fixes revealed
+
+- **`fuzz/1:25496`: tsc-rs is 8 times slower than Go** (a lost item, not hidden). The case is a
+  deep-nesting mutation of `conformance/.../assignmentCompatWithCallSignatures4.ts`, converted to
+  JS. Measured back to back at a load of 50 to 57: Go 10.7 s and 10.6 s, tsc-rs 83.5 s and 84.5 s,
+  same output. Both full runs timed out at 60 s, and the diagnostic retries answered after 63 to
+  88 s. The base had it as MATCH because the old retry (120 s) overwrote the timeout: finding 6.
+  It is a tsc-rs performance defect, not a harness one.
+- **Another lane's bench wrote into a shared project dir during the gate.** In the cold run the
+  t3code tree's hash was `d386c2ec75c4` when the cli tier started and `1b2872465328` when it ended.
+  `apps/web` changed at 04:31:42. Lane d1i2b's wall bench ran its warm-up compiles in
+  `projects/t3code` (`apps/server/tsconfig.noeffect.json`, noemit) from 04:31:18 to 04:32:52
+  (`scratch/d1i2b/wall.log`) and left the tree as it was. Before the fix, this was invisible:
+  the overlay's lower dir is the live tree, so the runs that mounted then saw other inputs than
+  Go's cached result. Now its 12 items were ERROR. In the warm run, with no bench running, they all
+  MATCH.
+
+### Cost
+
+- **Input hashing:** the first hash of everything took 273 s, once. A warm pass, 4 trees at a time
+  at a load of 36, takes 26 s for the cli tier's 10 projects and 11 s for the lsp tier's 4 projects
+  and the typings cache. Each tier makes two passes, at its start and its end. `js_identity`
+  (24 MB) takes 0.08 s. Fuzz and corpus keys hash the case in memory, which is negligible.
+- **Warm full gate:** 24 min. The H1 warm run had cli 272 s, lsp 264 s, fuzz 823 s and corpus
+  256 s. Here cli took 286 s (the hash passes), lsp 168 s (ata-overlay adds a tsc-rs run of
+  about 25 s per server run, three in full), fuzz 825 s and corpus 147 s, at another load.
+- **Quick:** 5 min. cli 16 s, lsp 88 s (umami's GO-BROKEN answers make the full confirming run, as
+  before), fuzz 65 s, tests 281 s.
+- **Cold full:** 61 min, refilling every Go cache entry. cli 442 s, lsp 315 s (Go 4 times per
+  session), fuzz 2,180 s, corpus 723 s.
+- **New Go runs:** `ata-overlay` costs 4 Go runs of about 25 s when its cache entry is made. Since
+  the keys are content keys, any change in a project tree now refills that project's entries.
+
+## Referees on the perf head (2026-11-05)
 
 ## Referees on the perf head (2026-11-05)
 
@@ -918,16 +1219,22 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - **Inputs.** 10 projects (23 configs), 4 LSP projects plus the watch-small fixture, 42,727 test-case runs (30,000 fuzz plus
   12,727 corpus). Corpus cases with `@link`, `@symlink`, `@currentDirectory`, their own
   `tsconfig.json` or `..` paths are skipped by difffuzz's seed parser (TestLocal covers them).
-- **Project dirs owned by another lane.** The baseline lane owns most project dirs. A reinstall
-  there changes the fingerprint and therefore the Go cache key, never the result silently. But a
-  changed input can turn base MATCHes into new items, so rerun the base after one.
+- **Project dirs owned by another lane.** The baseline lane owns most project dirs. Any change
+  there (an edit, a reinstall, a build into the tree) changes the tree hash and therefore the Go
+  cache key, never the result silently, and a change during a tier is an ERROR. But a changed input
+  can turn base MATCHes into new results, so rerun the base after one.
+- **Inputs outside the hashed trees.** The Go and tsc-rs binaries are keyed by their sha, and JS by
+  its package. The node that runs lspdiff, the kernel and the environment variables the harness
+  passes through (`PATH`, `HOME`) are not keyed.
 
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
 - `parity_cli.py`, `parity_tests.py`, `parity_lsp.py`, `parity_fuzz.py`: the tiers. Each prints
   its usage with `--help`.
-- `parity_compare.py`: `merge`, `compare` and `known`.
+- `parity_compare.py`: `merge`, `compare` and `known`; `parity_modes.py`: what quick and full run
+  (`parity.sh` and `compare` read it); `parity_inputs.py`: the input content hashes;
+  `parity-grandfathered.json`: the known items excused from NEW and CRASH, with reasons.
 - `parity_referees.py`: GO-BROKEN, GO-PARTITION, JS-AGREES and the diagnostic parser;
   `parity_referees_test.py`: their self-test (fake compilers, every classification path, about 2
   minutes; `SELFTEST OK`).
@@ -936,7 +1243,7 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
-  `fixtures.mjs` the watch-small fixture; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
+  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
   the normalizers and the JS-AGREES judge, `selftest/` their self-test) and
   `vendor/difffuzz/` (feat/difffuzz 033e55442, unchanged).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `js-cache/`,

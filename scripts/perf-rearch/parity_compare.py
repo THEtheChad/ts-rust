@@ -10,18 +10,32 @@ Good: MATCH (CLI, LSP, fuzz, corpus), the referee statuses (parity_referees.py o
 corpus: GO-BROKEN, GO-PARTITION, JS-AGREES; parity_lsp.py on LSP: GO-BROKEN, JS-AGREES), PASS and FLAKY (tests; FLAKY: passed when run again
 alone). An item that is MATCH in BASE and has a referee status in CUR is not lost, but compare lists
 every such item, grouped by status ("good by a referee"), and so every recovered or new item with a
-referee status. compare fails on an item that is good in BASE
-and is DIFF, FAIL, ERROR, UNRUN, SKIP or IGNORED in CUR (a regression), and, when both runs are the
-same mode (quick or full), on such an item that CUR does not have (not run), and on any ERROR item
-in CUR (a harness error, or a tier that ended without results). Items that CUR has and
-BASE does not are new: listed, never a failure. An item that is GO-UNSTABLE in CUR (only under
---no-referees now) is not compared (Go results are cached, so this needs a new Go cache). Items that are not good in BASE are known
-diffs: listed when they recover.
+referee status. compare fails (PARITY FAIL) on:
+  - LOST: an item that is good in BASE and is not good in CUR (DIFF, FAIL, ERROR, UNRUN, SKIP,
+    IGNORED, GO-UNSTABLE);
+  - NOT RUN: an item that is good in BASE, that CUR's mode runs (parity_modes.Selector: a quick run
+    against a full base must have every quick item; only full-only items are exempt), and that CUR
+    does not have;
+  - NEW: an item that CUR has and BASE does not, and that is not good (IGNORED tests excepted);
+  - CRASH: an item on which tsc-rs crashed or timed out (its row's rsFailure, or an lsp detail
+    "tsc-rs: ..."), whatever BASE says;
+  - ERROR: any ERROR item in CUR (a harness error, a tier that ended without results, an input that
+    changed during the run).
+An item listed in parity-grandfathered.json (next to this file: item id -> status, rsFailure,
+detailContains and a reason) is excused from NEW and CRASH only while its status and rsFailure are
+the ones listed and its detail contains detailContains (the exact failure, such as the panic line); every
+excused item is printed with its reason, and so is every entry that no longer applies. Items that are
+not good in BASE are known diffs: listed when they recover.
 """
 import json
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # python3 -I leaves the script dir out
+from parity_modes import Selector  # noqa: E402
+
+GRANDFATHERED = Path(__file__).resolve().parent / 'parity-grandfathered.json'
 
 REFEREED = ('GO-BROKEN', 'GO-PARTITION', 'JS-AGREES')  # parity_referees.REFEREED
 GOOD = {'MATCH', *REFEREED, 'PASS', 'FLAKY'}
@@ -57,11 +71,33 @@ def items_of(r):
     return {k: v for t in r['tiers'].values() for k, v in t['items'].items()}
 
 
-def compare(base, cur):
+def rs_failure(row):
+    """'crash' or 'timeout' when tsc-rs crashed or timed out on the item, else None."""
+    if row.get('rsFailure'):
+        return row['rsFailure']
+    detail = row.get('detail') or ''
+    if row['status'] not in GOOD and detail.startswith('tsc-rs: '):  # lsp: a tsc-rs run that ended early
+        return 'timeout' if 'timed out' in detail else 'crash'
+    return None
+
+
+def load_grandfathered(path=GRANDFATHERED):
+    return json.loads(Path(path).read_text())['items'] if Path(path).exists() else {}
+
+
+def _excused(k, row, grand):
+    g = grand.get(k)
+    return (bool(g) and g.get('status') == row['status'] and g.get('rsFailure') == rs_failure(row)
+            and g.get('detailContains', '') in (row.get('detail') or row.get('sig') or ''))
+
+
+def compare(base, cur, grand_file=GRANDFATHERED):
     b, c = load(base), load(cur)
     bi, ci = items_of(b), items_of(c)
-    same_mode = b['meta'].get('mode') == c['meta'].get('mode')
-    lost, unrun, unstable, recovered, new_bad = [], [], [], [], []
+    grand = load_grandfathered(grand_file)
+    cur_mode = c['meta'].get('mode')
+    selected = Selector(cur_mode)
+    lost, unrun, recovered, new_bad, crashes, excused = [], [], [], [], [], []
     refereed = {s: [] for s in REFEREED}  # status -> [(item, base status or None, detail)]
     for k, now in ci.items():
         was = bi.get(k, {}).get('status')
@@ -71,38 +107,54 @@ def compare(base, cur):
         now = ci.get(k)
         if v['status'] in GOOD:
             if now is None:
-                if same_mode:
+                if selected(k):
                     unrun.append(k)
-            elif now['status'] == 'GO-UNSTABLE':
-                unstable.append(k)
             elif now['status'] not in GOOD:
                 lost.append((k, now['status'], now.get('detail') or now.get('sig') or ''))
         elif now is not None and now['status'] in GOOD:
             recovered.append(k)
+    lost_keys = {k for k, _, _ in lost}
     for k, v in ci.items():
-        if k not in bi and v['status'] not in GOOD | {'GO-UNSTABLE', 'SKIP', 'IGNORED'}:
-            new_bad.append((k, v['status'], v.get('detail') or v.get('sig') or ''))
+        why = v.get('detail') or v.get('sig') or ''
+        if k not in bi and v['status'] not in GOOD | {'IGNORED'}:
+            (excused if _excused(k, v, grand) else new_bad).append((k, v['status'], why))
+        elif k in bi and k not in lost_keys and rs_failure(v):
+            (excused if _excused(k, v, grand) else crashes).append((k, v['status'], why))
+    stale = sorted(k for k, g in grand.items() if k not in ci or not _excused(k, ci[k], grand))
     print(f'base {base} ({b["meta"].get("mode")}, {b["meta"].get("rsSha", "")[:12]}) vs '
-          f'{cur} ({c["meta"].get("mode")}, {c["meta"].get("rsSha", "")[:12]})')
-    print(f'compared {len(set(bi) & set(ci))} items: {len(lost)} lost, {len(unrun)} not run, '
-          f'{len(recovered)} recovered, {len(unstable)} Go-unstable now, {len(new_bad)} new items not good, '
+          f'{cur} ({cur_mode}, {c["meta"].get("rsSha", "")[:12]})')
+    required = sum(1 for k, v in bi.items() if v['status'] in GOOD and selected(k))
+    print(f'compared {len(set(bi) & set(ci))} items ({required} good base items that a {cur_mode} run must have): '
+          f'{len(lost)} lost, {len(unrun)} not run, {len(recovered)} recovered, {len(new_bad)} new items not good, '
+          f'{len(crashes)} known items where tsc-rs crashed or timed out, {len(excused)} grandfathered, '
           f'{sum(map(len, refereed.values()))} newly good by a referee '
           f'({", ".join(f"{n} {len(v)}" for n, v in refereed.items())})')
     for k, s, d in lost[:60]:
         print(f'LOST      {k}: {s} {d}')
+    by_tier = Counter(k.split('/', 1)[0] for k in unrun)
+    if unrun:
+        print(f'NOT RUN   {len(unrun)} items ({", ".join(f"{t} {n}" for t, n in sorted(by_tier.items()))}); '
+              f'tiers run: {" ".join(c["meta"].get("tiers", [])) or "?"}')
     for k in unrun[:30]:
         print(f'NOT RUN   {k}')
-    for k, s, d in new_bad[:30]:
+    for k, s, d in new_bad[:60]:
         print(f'NEW {s:<6} {k} {d}')
+    for k, s, d in crashes[:60]:
+        print(f'CRASH     {k}: {s} {d}')
     for k in recovered[:30]:
         print(f'RECOVERED {k} ({ci[k]["status"]})')
     print_refereed(refereed)
+    for k, s, d in excused:
+        print(f'GRANDFATHERED {k}: {s} ({grand[k].get("reason", "no reason")}) {d[:160]}')
+    for k in stale:
+        print(f'STALE GRANDFATHER {k}: listed as {grand[k].get("status")}/{grand[k].get("rsFailure")}, '
+              f'now {ci[k]["status"] + "/" + str(rs_failure(ci[k])) if k in ci else "absent"}')
     for k in sorted(k for k, v in ci.items() if v['status'] == 'FLAKY'):
         print(f'FLAKY     {k} (failed, then passed alone)')
     errors = [k for k, v in ci.items() if v['status'] == 'ERROR']
     for k in errors[:30]:
         print(f'ERROR     {k} {ci[k].get("detail", "")}')
-    ok = not lost and not unrun and not errors
+    ok = not lost and not unrun and not errors and not new_bad and not crashes
     print('PARITY OK' if ok else 'PARITY FAIL')
     return 0 if ok else 1
 

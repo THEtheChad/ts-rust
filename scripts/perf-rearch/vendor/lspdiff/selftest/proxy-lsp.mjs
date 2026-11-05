@@ -9,6 +9,7 @@
 //   drop-location  { uri }: drop the locations whose uri ends with uri
 //   crash          the server exits (code 3) when the request arrives
 //   hang           the request is never answered (the client's timeout ends the run)
+//   null-result    the answer's result is null
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,7 @@ function rewrite(msg) {
   for (const r of matching(req)) {
     if (r.edit === "hover-replace" && msg.result?.contents) msg.result.contents.value = msg.result.contents.value.replace(r.from, r.to);
     if (r.edit === "drop-location" && Array.isArray(msg.result)) msg.result = msg.result.filter((l) => !(l.uri ?? l.targetUri).endsWith(r.uri));
+    if (r.edit === "null-result") msg.result = null;
   }
   return msg;
 }

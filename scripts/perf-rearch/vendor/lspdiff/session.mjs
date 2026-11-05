@@ -51,9 +51,14 @@ export function removeTail(client, doc, length) {
   });
 }
 
-// Runs the session and returns [{ step, method, params, result, error }]. ATA is off: its typings
-// would join an inferred project whenever its npm call returns (see initializeParams). When the
-// server crashes or times out, the error carries the answers so far as `log`.
+// Runs the session and returns [{ step, method, params, result, error, failed }] (failed: JS
+// tsserver gave no usable answer, tsserver.mjs). ATA is off: its typings would join an inferred
+// project whenever its npm call returns (see initializeParams). When the server crashes or times out,
+// the error carries the answers so far as `log`.
+// Two requests depend on earlier answers: rename (only after a prepareRename that gave a result) and
+// the quick fixes (for the first 3 diagnostics of the file). Each server's log has the requests it was
+// asked, so the logs need not have the same length; lspdiff.mjs aligns them by request identity (the
+// step name and its occurrence), and a request that only one side was asked is a difference.
 export async function runSession(cmd, root, files, { positions = 4, stderr, env } = {}) {
   const log = [];
   let client;
@@ -64,7 +69,7 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
   }
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
-    log.push({ step, method, params, result: r.result, error: r.error, ms: r.ms });
+    log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
     return r;
   };
   try {

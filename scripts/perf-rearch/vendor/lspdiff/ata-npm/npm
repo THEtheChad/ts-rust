@@ -1,0 +1,4 @@
+#!/bin/sh
+# The stand-in npm of the ata-overlay watch scenario (scenario.mjs): first on the language server's
+# PATH, so ATA's npm calls run fake-npm.mjs with the node that runs lspdiff (ATA_NODE).
+exec "$ATA_NODE" "$(dirname -- "$0")/fake-npm.mjs" "$@"
