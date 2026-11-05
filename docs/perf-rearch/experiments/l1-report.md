@@ -48,3 +48,30 @@ the lane branch.
   - Cognitive complexity >25 flat (716).
   - Duplication 3.65%.
   - `panic!` +3.
+
+## Round 2 (head `dc7f562d0`; code at `0de56c592`)
+- **All 5 Astra findings fixed** (`4e60f7a4b`, `caaf8a994`, `0de56c592`):
+  - One ordered transition per path (a replacement is Delete→Create).
+  - Reads use `O_NONBLOCK` plus fstat, and only regular files are read.
+  - `Session::close` cancels without waiting.
+  - A failed job gets an explicit Failed result: one retry, then
+    possibly-changed invalidation.
+  - Diagnostics are gated whole, with no-op `off` modules.
+  - Reconciliation runs on a process-wide pool (at most 8 threads), with one
+    job in flight per session.
+- **New tests:** symlink repoint, realpath-only, file↔dir, FIFO, close during
+  reconcile, injected failures, 12 loads on a slow FS. A Create-before-Delete
+  mutant fails them.
+- **`nm`:** 0 diagnostic symbols in the plain goport build.
+- **Parity:** full PARITY OK against the C1 base (0 lost of 187,119).
+- **ttfd** (umami, idle, 7 runs; manifest
+  `~/.cache/perf-rearch/l1/ttfd-0de56c592/manifest.jsonl`):
+
+  | | median |
+  |---|---|
+  | Go | 306.1 ms |
+  | perf head | 406.6 ms |
+  | L1 | 287.4 ms |
+
+- **Quality:** shipped escape hatches 41 → 40, complexity flat, duplication
+  3.64%, `panic!` +4.

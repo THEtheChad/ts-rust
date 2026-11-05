@@ -487,3 +487,22 @@ once a **reconciliation step** is built and tested.
       emit scheduling;
     - hash the declaration-text slice directly when there are no declaration
       diagnostics.
+- **2026-11-04, D1-S1 done** (`d1-s1-report.md`).
+  - **Gain gate:** the static refinement passes the 90% gate in all 10 cells
+    (median 116% of Go-N's gain).
+  - **Not yet safe:** zod drops a TS2344 at r8 and r16k, because Go's warm
+    checker silently degrades a type in an earlier file.
+  - **D1-S2 started:** instrument every type-degrading limit or cycle event
+    (diagnostics feature, spike only), check the trigger catches every
+    divergence in the identity matrix, cost the fallback granularity
+    (whole process vs per group), design the finding-5 diagnostic
+    collection, and propose validation. Astra reviews its design.
+  - C3 waits for D1's outcome.
+- **2026-11-04, Chad: drop L1's recovery and match Go.**
+  - Astra rejected round 2 (`reviews/2026-11-04-astra-l1-r2.md`): 4 P1 and 3 P2,
+    several of them caused by the recovery itself.
+  - Go has no recovery (`project/session.go` `updateWatch`). It misses a change
+    between its read and the watch ack, as the base serial loader does.
+  - **L1 round 3:** delete the reconciliation, keep V as the only LSP load
+    path, and compare V's observation-to-registration window with the base's.
+  - This replaces the "Default with recovery" decision.
