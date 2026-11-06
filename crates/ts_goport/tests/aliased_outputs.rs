@@ -249,3 +249,122 @@ fn outputs_through_a_symlinked_directory_alias() {
     }
     fs::remove_dir_all(root).expect("remove scratch");
 }
+
+/// The project of the dangling directory link (Astra D1-I3 finding 1):
+/// `src/left/f<i>.ts` and `src/right/f<i>.ts` with other text, emitted to
+/// `out/left` and `out/right`. Each run starts from an empty `out` with
+/// the dangling link `out/left -> right`, so the two outputs of each name
+/// are one file once the emit makes `out/right`.
+fn dirlink_project() -> PathBuf {
+    let root = scratch_dir();
+    for side in ["left", "right"] {
+        fs::create_dir_all(root.join("src").join(side)).expect("src dir");
+        for index in 0..40 {
+            let text: String = std::iter::repeat_n(side, 200).collect();
+            fs::write(
+                root.join(format!("src/{side}/f{index}.ts")),
+                format!("export const f{index} = \"{text}\";\n"),
+            )
+            .expect("module");
+        }
+    }
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions": {"outDir": "out", "rootDir": "src", "target": "es2020", "module": "commonjs"}, "include": ["src"]}"#,
+    )
+    .expect("tsconfig");
+    root
+}
+
+/// One run of `args` on a fresh `out` with `out/left -> right`: the out
+/// tree (path, kind, link target, bytes), stdout and the exit code.
+fn dirlink_run(root: &Path, args: &[&str]) -> (Vec<(String, Vec<u8>)>, Vec<u8>, Option<i32>) {
+    let out = root.join("out");
+    let _ = fs::remove_dir_all(&out);
+    let _ = fs::remove_file(root.join("x.tsbuildinfo"));
+    fs::create_dir(&out).expect("out");
+    std::os::unix::fs::symlink("right", out.join("left")).expect("dir link");
+    let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+        .current_dir(root)
+        .args(args)
+        .env_remove("GOPORT_EMIT_THREADS")
+        .output()
+        .expect("run tsgo");
+    let mut tree = Vec::new();
+    let mut stack = vec![out.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read out") {
+            let path = entry.expect("entry").path();
+            let rel = path
+                .strip_prefix(&out)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let meta = fs::symlink_metadata(&path).expect("stat");
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path).expect("link");
+                tree.push((
+                    format!("l {rel}"),
+                    target.to_string_lossy().into_owned().into_bytes(),
+                ));
+            } else if meta.is_dir() {
+                tree.push((format!("d {rel}"), Vec::new()));
+                stack.push(path);
+            } else {
+                tree.push((format!("f {rel}"), fs::read(&path).expect("read")));
+            }
+        }
+    }
+    tree.sort();
+    (tree, output.stdout, output.status.code())
+}
+
+/// Astra D1-I3 finding 1: with the dangling directory link, every emit
+/// mode gives one result on every run, and the modes that write in
+/// program order (the default route, Go's split, incremental, `-b`) give
+/// the same one. Before the fix the runs differed (5 results in 10 plain
+/// runs, 6 in 6 incremental and `-b --force` runs). `--singleThreaded`
+/// writes in Go's single-threaded order, also every run the same.
+#[test]
+fn a_dangling_directory_link_gives_one_result_in_every_emit_mode() {
+    let root = dirlink_project();
+    let modes: [&[&str]; 4] = [
+        &["-p", "tsconfig.json"],
+        &["-p", "tsconfig.json", "--checkers", "4"],
+        &[
+            "-p",
+            "tsconfig.json",
+            "--incremental",
+            "--tsBuildInfoFile",
+            "x.tsbuildinfo",
+        ],
+        &["-b", "tsconfig.json", "--force"],
+    ];
+    let mut results = Vec::new();
+    for args in modes {
+        let first = dirlink_run(&root, args);
+        for run in 1..RUNS {
+            assert!(
+                dirlink_run(&root, args) == first,
+                "{args:?} run {run} differs"
+            );
+        }
+        results.push((args, first));
+    }
+    for (args, result) in &results[1..] {
+        assert!(
+            *result == results[0].1,
+            "{args:?} differs from {:?}",
+            results[0].0
+        );
+    }
+    let single = ["-p", "tsconfig.json", "--singleThreaded"];
+    let first = dirlink_run(&root, &single);
+    for run in 1..RUNS {
+        assert!(
+            dirlink_run(&root, &single) == first,
+            "--singleThreaded run {run} differs"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove scratch");
+}

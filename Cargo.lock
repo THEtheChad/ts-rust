@@ -160,6 +160,7 @@ dependencies = [
  "signal-hook",
  "smallvec",
  "tikv-jemalloc-ctl",
+ "winapi-util",
  "xxhash-rust",
 ]
 
@@ -714,6 +715,7 @@ dependencies = [
  "smallvec",
  "tikv-jemalloc-ctl",
  "tikv-jemallocator",
+ "winapi-util",
  "xxhash-rust",
 ]
 
