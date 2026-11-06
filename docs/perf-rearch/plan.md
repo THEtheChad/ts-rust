@@ -910,3 +910,16 @@ once a **reconciliation step** is built and tested.
     - An Astra review of D1-I4, in parallel.
     - ND2: the `watch-ts-pattern-f12` rs-nondet. It's the third time; tsc-rs
       or the harness is racy under load.
+- **2026-11-06, D1-I4 round 2** (head `3a692d1a1`, code `4c420eb57`).
+  - **Memory-fire race fixed:** the reason is now part of the state
+    (`FALLING_BACK_ON_MEMORY`), and a barrier test fails on the old order.
+  - **Gates:** tests 2,870 pass; parity quick OK.
+  - **Known limit:** forced n=16 at exactly 1.0× c4's peak is killed in the
+    exact attempt (about 270 MiB is left behind by the dropped attempt). It
+    exits nonzero and never writes wrong bytes. At 1.1× it completes, and an
+    unforced run at 1.0× picks n=4 and completes.
+  - **Backlog:** give the refined checkers their own jemalloc arenas, which
+    would make that leftover go away.
+  - **CV2 started on this candidate.** The forced 1.0× case is report-only,
+    checked only for nonzero exit and no wrong output; the unforced 1.0× case
+    gates.
