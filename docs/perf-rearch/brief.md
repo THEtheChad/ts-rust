@@ -181,6 +181,14 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   `--ignore-scripts`, Python with `-I`.
 - Keep tools under `scripts/perf-rearch/` (or your lane dir), never `/tmp`.
   Keep command output under 20 KB.
+- **Review rounds (Chad, 2026-11-06):** at most 3 Astra rounds per lane. After
+  the third, root decides whether to take, drop or redesign the work, and
+  records the decision.
+- **Windows** is available locally through WSL interop. The Windows side has
+  rustup stable msvc (`/mnt/c/Users/agent/.cargo/bin/cargo.exe`), VS 2022
+  BuildTools and Git, and `cmd.exe` is at `/mnt/c/Windows/System32/cmd.exe`
+  (not on PATH). Windows work happens in `C:\tsrs-win` only (a clone, not a
+  `\\wsl.localhost` path; cmd can't use UNC paths).
 - If you need a decision, take the safe option, say which in your answer and
   continue.
 - **Your final answer is the deliverable:** findings, numbers with their

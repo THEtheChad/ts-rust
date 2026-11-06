@@ -969,3 +969,26 @@ once a **reconciliation step** is built and tested.
   - **Next:** Astra's campaign acceptance review. If it passes, merge D1 into
     perf/first-principles: the certified split becomes the default, per
     Chad's "default if tests pass". C3 then deletes fast mode.
+- **2026-11-06, Chad's decisions:**
+  1. **D1 is shelved.** The certified split is not merged; its branches are
+     kept (`t3/memory-aware-fallback`, `t3/checker-split-campaign`) and CV3
+     was cancelled.
+     - **Why:** "≤ Go" is already met without it, and D1's safety and
+        validation upkeep is large, including a re-audit on every pin bump.
+     - **What stays:** the shipped-path fixes it produced:
+        `fix/aliased-output-order`, `-dirlinks`, `-layout-serial` and
+        `-layout-prefix`.
+  2. **Review cap: 3 rounds per lane.** After that, root decides (take, drop
+     or redesign) and tells Chad.
+  3. **Windows testing runs locally.** WSL interop works, and the Windows
+     side already has Rust 1.99.1 (msvc), VS 2022 BuildTools (MSVC
+     14.44.35207, SDK 10.0.26100) and Git. Lane WIN builds and tests there.
+- **Next:**
+  - **C2:** remove the loader switches; L1 is merged.
+  - **C3:** remove fast mode, stealing, lazy members and the fast "never"
+    order. These are non-default paths, and lazy members isn't
+    Go-identical. The no-old-paths rule applies now that D1 won't replace
+    them.
+  - **WIN:** Windows build, the `cfg(windows)` tests and the layout repros on
+    NTFS.
+  - **W2:** keeps running.
