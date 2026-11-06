@@ -8,6 +8,10 @@ file once the emit makes out/right. Each run's result is the hash of the whole o
 kinds, link targets, bytes), stdout and the exit code.
 
 usage: dirlink_repro.py BIN [--runs 20] [--mode plain|incremental|build] [--arg A ...] [--env K=V ...]
+                         [--case CASE]
+  CASE (Astra's round-2 edges, ~/.cache/perf-rearch/scratch/astra-dirlink-edges-*/<case>/work, whose out/
+  holds the link to recreate): different-names, target-file, case-only, target-created-file, absolute,
+  chain, deep, parent, input-dir. Without --case: the round-1 repro (out/left -> right).
   plain        tsgo -p tsconfig.json <args>
   incremental  tsgo -p tsconfig.json --incremental --tsBuildInfoFile <scratch>/x.tsbuildinfo <args>
                (the build info is removed before each run: every run is a full build)
@@ -40,12 +44,26 @@ def main():
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--mode", default="plain", choices=["plain", "incremental", "build"])
     ap.add_argument("--project")
+    ap.add_argument("--case")
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--allow-varying", action="store_true")
     ap.add_argument("--arg", dest="extra", action="append", default=[])
     a = ap.parse_args()
-    project = a.project or sorted(glob.glob(os.path.expanduser(
-        "~/.cache/perf-rearch/scratch/astra-i3-dirlink-*")))[0]
+    links = [("left", "right", False)]
+    if a.case:
+        edges = sorted(glob.glob(os.path.expanduser("~/.cache/perf-rearch/scratch/astra-dirlink-edges-*")))[0]
+        project = os.path.join(edges, a.case, "work")
+        links = []
+        for top, dirs, files in os.walk(os.path.join(project, "out")):
+            for name in dirs + files:
+                p = os.path.join(top, name)
+                if os.path.islink(p):
+                    links.append((os.path.relpath(p, os.path.join(project, "out")), os.readlink(p), False))
+        if a.case == "target-file":
+            links.append(("right", None, True))
+    else:
+        project = a.project or sorted(glob.glob(os.path.expanduser(
+            "~/.cache/perf-rearch/scratch/astra-i3-dirlink-*")))[0]
     env = dict(os.environ)
     for kv in a.env:
         k, v = kv.split("=", 1)
@@ -70,7 +88,14 @@ def main():
             for stale in glob.glob(os.path.join(scratch, "*.tsbuildinfo")):
                 os.unlink(stale)
             os.makedirs(out)
-            os.symlink("right", os.path.join(out, "left"))
+            for rel, target, is_file in links:
+                dest = os.path.join(out, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if is_file:
+                    open(dest, "w").write("not a directory")
+                else:
+                    # An absolute link into the case's own work dir points into this scratch copy.
+                    os.symlink(target.replace(project, scratch), dest)
             r = subprocess.run(cmd, cwd=scratch, capture_output=True, env=env)
             exits[r.returncode] = exits.get(r.returncode, 0) + 1
             h = hashlib.sha256(tree_hash(out).encode() + r.stdout.replace(scratch.encode(), b"<dir>")

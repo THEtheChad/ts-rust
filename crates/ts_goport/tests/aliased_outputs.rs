@@ -250,23 +250,81 @@ fn outputs_through_a_symlinked_directory_alias() {
     fs::remove_dir_all(root).expect("remove scratch");
 }
 
-/// The project of the dangling directory link (Astra D1-I3 finding 1):
-/// `src/left/f<i>.ts` and `src/right/f<i>.ts` with other text, emitted to
-/// `out/left` and `out/right`. Each run starts from an empty `out` with
-/// the dangling link `out/left -> right`, so the two outputs of each name
-/// are one file once the emit makes `out/right`.
-fn dirlink_project() -> PathBuf {
+/// A layout of Astra's directory-link repros (D1-I3 rounds 1 and 2):
+/// `src/left/f<i>.ts`, and `right` modules named `<right_prefix><i>` in
+/// `src/right/` (or one `src/right.ts`), with `out/left` a link to
+/// `link_target`, and, when `right_file` is set, a file `out/right`.
+#[derive(Clone, Copy, Debug)]
+struct DirLink {
+    name: &'static str,
+    /// Prefix of the modules in `src/right/`; None: one `src/right.ts`.
+    right_prefix: Option<&'static str>,
+    link_target: &'static str,
+    right_file: bool,
+}
+
+const DIR_LINKS: [DirLink; 5] = [
+    // Round 1: one name per side, through a dangling link.
+    DirLink {
+        name: "same-names",
+        right_prefix: Some("f"),
+        link_target: "right",
+        right_file: false,
+    },
+    // Round 2, A: other names on the right, so each pair writes two files,
+    // and the link's directory is made by the right side.
+    DirLink {
+        name: "different-names",
+        right_prefix: Some("g"),
+        link_target: "right",
+        right_file: false,
+    },
+    // Names that only differ in case (case-sensitive here).
+    DirLink {
+        name: "case-only",
+        right_prefix: Some("F"),
+        link_target: "right",
+        right_file: false,
+    },
+    // The link names an existing file: no directory can be made there.
+    DirLink {
+        name: "target-file",
+        right_prefix: Some("f"),
+        link_target: "right",
+        right_file: true,
+    },
+    // Round 2, B: the link names `right.js`, which the emit writes.
+    DirLink {
+        name: "target-created-file",
+        right_prefix: None,
+        link_target: "right.js",
+        right_file: false,
+    },
+];
+
+fn dirlink_project(layout: DirLink) -> PathBuf {
     let root = scratch_dir();
-    for side in ["left", "right"] {
-        fs::create_dir_all(root.join("src").join(side)).expect("src dir");
-        for index in 0..40 {
-            let text: String = std::iter::repeat_n(side, 200).collect();
-            fs::write(
-                root.join(format!("src/{side}/f{index}.ts")),
-                format!("export const f{index} = \"{text}\";\n"),
-            )
-            .expect("module");
+    fs::create_dir_all(root.join("src/left")).expect("src dir");
+    let module = |path: PathBuf, name: &str, fill: &str| {
+        let text: String = std::iter::repeat_n(fill, 200).collect();
+        fs::write(path, format!("export const {name} = \"{text}\";\n")).expect("module");
+    };
+    for index in 0..40 {
+        module(
+            root.join(format!("src/left/f{index}.ts")),
+            &format!("f{index}"),
+            "left",
+        );
+    }
+    match layout.right_prefix {
+        Some(prefix) => {
+            fs::create_dir_all(root.join("src/right")).expect("src dir");
+            for index in 0..40 {
+                let name = format!("{prefix}{index}");
+                module(root.join(format!("src/right/{name}.ts")), &name, "right");
+            }
         }
+        None => module(root.join("src/right.ts"), "right", "right"),
     }
     fs::write(
         root.join("tsconfig.json"),
@@ -276,14 +334,21 @@ fn dirlink_project() -> PathBuf {
     root
 }
 
-/// One run of `args` on a fresh `out` with `out/left -> right`: the out
+/// One run of `args` on a fresh `out` with the layout's link: the out
 /// tree (path, kind, link target, bytes), stdout and the exit code.
-fn dirlink_run(root: &Path, args: &[&str]) -> (Vec<(String, Vec<u8>)>, Vec<u8>, Option<i32>) {
+fn dirlink_run(
+    root: &Path,
+    layout: DirLink,
+    args: &[&str],
+) -> (Vec<(String, Vec<u8>)>, Vec<u8>, Option<i32>) {
     let out = root.join("out");
     let _ = fs::remove_dir_all(&out);
     let _ = fs::remove_file(root.join("x.tsbuildinfo"));
     fs::create_dir(&out).expect("out");
-    std::os::unix::fs::symlink("right", out.join("left")).expect("dir link");
+    std::os::unix::fs::symlink(layout.link_target, out.join("left")).expect("link");
+    if layout.right_file {
+        fs::write(out.join("right"), "not a directory").expect("right file");
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
         .current_dir(root)
         .args(args)
@@ -319,16 +384,15 @@ fn dirlink_run(root: &Path, args: &[&str]) -> (Vec<(String, Vec<u8>)>, Vec<u8>, 
     (tree, output.stdout, output.status.code())
 }
 
-/// Astra D1-I3 finding 1: with the dangling directory link, every emit
-/// mode gives one result on every run, and the modes that write in
-/// program order (the default route, Go's split, incremental, `-b`) give
-/// the same one. Before the fix the runs differed (5 results in 10 plain
-/// runs, 6 in 6 incremental and `-b --force` runs). `--singleThreaded`
-/// writes in Go's single-threaded order, also every run the same.
+/// Astra D1-I3 rounds 1 and 2: in every directory-link layout, every emit
+/// mode gives one result on every run (a layout that is not ordinary
+/// writes everything serially in program order, `output_aliases`), and
+/// the default route, Go's split, incremental and `-b` give the same one.
+/// `--singleThreaded` writes in Go's single-threaded order, also every
+/// run the same.
 #[test]
-fn a_dangling_directory_link_gives_one_result_in_every_emit_mode() {
-    let root = dirlink_project();
-    let modes: [&[&str]; 4] = [
+fn directory_link_layouts_give_one_result_in_every_emit_mode() {
+    let modes: [&[&str]; 5] = [
         &["-p", "tsconfig.json"],
         &["-p", "tsconfig.json", "--checkers", "4"],
         &[
@@ -339,32 +403,30 @@ fn a_dangling_directory_link_gives_one_result_in_every_emit_mode() {
             "x.tsbuildinfo",
         ],
         &["-b", "tsconfig.json", "--force"],
+        &["-p", "tsconfig.json", "--singleThreaded"],
     ];
-    let mut results = Vec::new();
-    for args in modes {
-        let first = dirlink_run(&root, args);
-        for run in 1..RUNS {
+    for layout in DIR_LINKS {
+        let root = dirlink_project(layout);
+        let mut results = Vec::new();
+        for args in modes {
+            let first = dirlink_run(&root, layout, args);
+            for run in 1..RUNS {
+                assert!(
+                    dirlink_run(&root, layout, args) == first,
+                    "{}: {args:?} run {run} differs",
+                    layout.name
+                );
+            }
+            results.push((args, first));
+        }
+        for (args, result) in &results[1..4] {
             assert!(
-                dirlink_run(&root, args) == first,
-                "{args:?} run {run} differs"
+                *result == results[0].1,
+                "{}: {args:?} differs from {:?}",
+                layout.name,
+                results[0].0
             );
         }
-        results.push((args, first));
+        fs::remove_dir_all(root).expect("remove scratch");
     }
-    for (args, result) in &results[1..] {
-        assert!(
-            *result == results[0].1,
-            "{args:?} differs from {:?}",
-            results[0].0
-        );
-    }
-    let single = ["-p", "tsconfig.json", "--singleThreaded"];
-    let first = dirlink_run(&root, &single);
-    for run in 1..RUNS {
-        assert!(
-            dirlink_run(&root, &single) == first,
-            "--singleThreaded run {run} differs"
-        );
-    }
-    fs::remove_dir_all(root).expect("remove scratch");
 }

@@ -165,13 +165,13 @@ fn emit_results_with(
         target.force_dts_emit(),
         target.force_js_emit(),
     );
-    let aliases = alias_sink(&source_files, target.emit_only, |_| {
+    let serial = serial_sink(&source_files, target.emit_only, |_| {
         target.force_emit_paths()
     });
-    if let Some(aliases) = &aliases {
+    if let Some(serial) = &serial {
         target.write_file = target
             .write_file
-            .map(|write_file| aliases.recorder(write_file));
+            .map(|write_file| serial.recorder(write_file));
     }
     phase_times::route(Route::StartAfterCheck, source_files.len());
     let pooled = start_emit_files_with_pool(&source_files, |_| target.clone(), wrap)
@@ -184,9 +184,9 @@ fn emit_results_with(
             result
         }),
     };
-    if let Some(aliases) = aliases {
-        aliases.finish(&source_files);
-        apply_deferred_outcomes(&source_files, &mut results, aliases.take());
+    if let Some(serial) = serial {
+        serial.finish(&source_files);
+        apply_deferred_outcomes(&source_files, &mut results, serial.take());
     }
     results
 }
@@ -263,18 +263,17 @@ struct DeferredWrite {
 ///   write waiting is made at once by its emitter, as in the barrier path,
 ///   so it gets its own result; a write of a file whose earlier writes
 ///   still wait goes behind them.
-/// - **Aliased** (`output_aliases`): a write of an output whose
-///   destination another output of the emit may share waits, open or not,
-///   until `finish`, which makes them one at a time in program file
-///   order, each file's in its order. So the outputs that share a file end
-///   as Go's would with its emit goroutines run in file order, on every
-///   run, and the writes to other files stay parallel.
+/// - **Serial** (an emit whose outputs are not in an ordinary layout,
+///   `output_aliases`): every write waits, open or not, until `finish`,
+///   which makes them one at a time in program file order, each file's in
+///   its order, directory creation included: the schedule of Go's emit
+///   goroutines run in file order, on every run.
 ///
 /// The outcome of each write that waited is applied to its file's result
 /// at the end (`apply_deferred_outcomes`).
 struct DeferredWrites {
-    /// The output names whose writes wait until `finish`.
-    aliased: FxHashSet<String>,
+    /// Every write waits until `finish` (see the type).
+    serial: bool,
     state: Mutex<SinkState>,
 }
 
@@ -294,8 +293,8 @@ struct FileWrites {
     pending: std::collections::VecDeque<DeferredWrite>,
     /// A flush thread makes this file's held writes.
     writing: bool,
-    /// The aliased writes, in order (`finish`).
-    aliased: Vec<DeferredWrite>,
+    /// The serial writes, in order (`finish`).
+    serial: Vec<DeferredWrite>,
     /// Each made write that waited: its file name and outcome.
     outcomes: Vec<(String, WriteOutcome)>,
     /// The TS5033 diagnostics of the failed writes that waited.
@@ -303,11 +302,12 @@ struct FileWrites {
 }
 
 impl DeferredWrites {
-    /// A sink whose `aliased` writes wait until `finish`; with `held`, the
-    /// other writes wait until `open`, else they are made at once.
-    fn new(aliased: FxHashSet<String>, held: bool) -> Arc<DeferredWrites> {
+    /// A sink whose writes all wait until `finish` when `serial`; else,
+    /// with `held`, they wait until `open`, and without, they are made at
+    /// once.
+    fn new(serial: bool, held: bool) -> Arc<DeferredWrites> {
         Arc::new(DeferredWrites {
-            aliased,
+            serial,
             state: Mutex::new(SinkState {
                 open: !held,
                 ..SinkState::default()
@@ -338,12 +338,12 @@ impl DeferredWrites {
         text: &str,
         data: &mut WriteFileData,
     ) -> Result<(), String> {
-        let aliased = self.aliased.contains(file_name);
+        let serial = self.serial;
         let mut state = self.lock();
         if state.closed {
             return Ok(());
         }
-        if !aliased
+        if !serial
             && state.open
             && state
                 .files
@@ -360,8 +360,8 @@ impl DeferredWrites {
             data: data.clone(),
         };
         let file = state.files.entry(data.source_file).or_default();
-        if aliased {
-            file.aliased.push(write);
+        if serial {
+            file.serial.push(write);
         } else {
             file.pending.push_back(write);
         }
@@ -440,7 +440,7 @@ impl DeferredWrites {
         }
     }
 
-    /// Makes the aliased writes, one at a time, in the order of `files`
+    /// Makes the serial writes, one at a time, in the order of `files`
     /// (the emit's files, in program order), each file's in its order.
     /// The caller calls it once every emit job of the sink ended, after
     /// `open` for a held sink.
@@ -453,7 +453,7 @@ impl DeferredWrites {
                     return;
                 }
                 match state.files.get_mut(&node) {
-                    Some(file) => std::mem::take(&mut file.aliased),
+                    Some(file) => std::mem::take(&mut file.serial),
                     None => continue,
                 }
             };
@@ -524,31 +524,29 @@ impl DeferredWrites {
             state
                 .files
                 .values()
-                .all(|file| file.pending.is_empty() && !file.writing && file.aliased.is_empty()),
+                .all(|file| file.pending.is_empty() && !file.writing && file.serial.is_empty()),
             "a deferred write was not made"
         );
         std::mem::take(&mut state.files)
     }
 }
 
-/// PORT: not in Go (determinism). The sink of an emit of `files` (each
-/// with its force flags) whose outputs may share a destination
-/// (`output_aliases`), or None when none do. A single-threaded emit makes
-/// its writes one at a time in its own job order (Go's
-/// `singleThreadedWorkGroup` order), and a signature emit writes no file,
-/// so neither needs one. Loading thread.
-fn alias_sink(
+/// PORT: not in Go (determinism). The serial sink of an emit of `files`
+/// (each with its force flags) whose outputs are not in an ordinary layout
+/// (`output_aliases`), or None when they are and the writes stay parallel.
+/// A single-threaded emit makes its writes one at a time in its own job
+/// order (Go's `singleThreadedWorkGroup` order), and a signature emit
+/// writes no file, so neither needs one. Loading thread.
+fn serial_sink(
     files: &[Node],
     emit_only: EmitOnly,
     force: impl Fn(Node) -> ForceEmitPaths,
 ) -> Option<Arc<DeferredWrites>> {
-    if single_threaded() || emit_only == EmitOnly::BuilderSignature || files.len() < 2 {
-        // One file's outputs can still share a file; its writes run in
-        // order on one emitter, as Go's do.
+    if single_threaded() || emit_only == EmitOnly::BuilderSignature || files.is_empty() {
         return None;
     }
-    let scan = output_aliases::scan(&output_aliases::output_paths(files, force));
-    (!scan.aliased.is_empty()).then(|| DeferredWrites::new(scan.aliased, false))
+    let ordinary = output_aliases::ordinary_layout(&output_aliases::output_paths(files, force));
+    (!ordinary).then(|| DeferredWrites::new(true, false))
 }
 
 /// PORT: not in Go (tests, feature `test-hooks`).
@@ -630,20 +628,16 @@ pub fn start_plain_emit(options: &EmitOptions) -> Option<StartedPlainEmit> {
         .expect("start_plain_emit: the early emit needs a WriteFile");
     let source_files = get_source_files_to_emit(None, false, false);
     // The early emit holds its writes and makes them on a few threads
-    // after the check; a write that blocks (opening a FIFO with no reader)
-    // could hold back the other outputs that the barrier path writes. So
-    // with an output path that exists and is not a regular file (a
-    // directory, a FIFO, a device, a socket, a symlink) the program keeps
-    // the barrier. The scan also finds the outputs that share a file
-    // (`output_aliases`), whose writes wait until the emit ends.
-    let scan = output_aliases::scan(&output_aliases::output_paths(&source_files, |_| {
-        ForceEmitPaths::default()
-    }));
-    if !scan.all_regular {
+    // after the check. In a layout that is not ordinary (`output_aliases`:
+    // a link, a hard link, a non-directory on the way, a FIFO or another
+    // entry at an output, names equal after case folding) the program
+    // keeps the barrier, whose emit writes everything serially.
+    let outputs = output_aliases::output_paths(&source_files, |_| ForceEmitPaths::default());
+    if !output_aliases::ordinary_layout(&outputs) {
         return None;
     }
     PLAIN_EMIT_CANCELLED.store(false, std::sync::atomic::Ordering::Release);
-    let writes = DeferredWrites::new(scan.aliased, true);
+    let writes = DeferredWrites::new(false, true);
     let target = EmitterOptions {
         emit_only: options.emit_only,
         force_emit: options.force_emit,
@@ -872,9 +866,9 @@ enum PendingBatch {
     Sent {
         has_file: Vec<bool>,
         files: PendingFiles,
-        /// The sink of the outputs that share a file (`alias_sink`), with
+        /// The serial sink of a layout that is not ordinary (`serial_sink`), with
         /// the files of the jobs in their order.
-        aliases: Option<(Arc<DeferredWrites>, Vec<Node>)>,
+        serial: Option<(Arc<DeferredWrites>, Vec<Node>)>,
     },
 }
 
@@ -889,21 +883,21 @@ impl PendingEmitBatch {
     /// order: the result of `emit_batch_with`.
     #[must_use]
     pub fn wait(self) -> Vec<EmitResult> {
-        let (has_file, files, aliases) = match self.0 {
+        let (has_file, files, serial) = match self.0 {
             PendingBatch::Done(results) => return results,
             PendingBatch::Sent {
                 has_file,
                 files,
-                aliases,
-            } => (has_file, files, aliases),
+                serial,
+            } => (has_file, files, serial),
         };
         let mut results = match files {
             PendingFiles::Pool(pool) => pool.wait(),
             PendingFiles::Checkers(jobs) => wait_emit_jobs(|| jobs.wait()),
         };
-        if let Some((aliases, files)) = aliases {
-            aliases.finish(&files);
-            apply_deferred_outcomes(&files, &mut results, aliases.take());
+        if let Some((serial, files)) = serial {
+            serial.finish(&files);
+            apply_deferred_outcomes(&files, &mut results, serial.take());
         }
         let mut results = results.into_iter();
 
@@ -981,15 +975,15 @@ pub fn start_emit_batch_with(
     // batch replaces, so each checker does the same work in the same order.
     // With the pool, no trace is written (`emit_pool_enabled`), so there is
     // no trace event per target.
-    let aliases = alias_sink(&files, EmitOnly::All, |file| {
+    let serial = serial_sink(&files, EmitOnly::All, |file| {
         file_targets[&file].force_emit_paths()
     });
-    if let Some(aliases) = &aliases {
+    if let Some(serial) = &serial {
         for target in file_targets.values_mut() {
             target.write_file = target
                 .write_file
                 .take()
-                .map(|write_file| aliases.recorder(write_file));
+                .map(|write_file| serial.recorder(write_file));
         }
     }
     phase_times::route(Route::StartBatch, files.len());
@@ -1015,7 +1009,7 @@ pub fn start_emit_batch_with(
     PendingEmitBatch(PendingBatch::Sent {
         has_file,
         files: jobs,
-        aliases: aliases.map(|aliases| (aliases, files)),
+        serial: serial.map(|serial| (serial, files)),
     })
 }
 
