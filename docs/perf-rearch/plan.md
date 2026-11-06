@@ -746,3 +746,14 @@ once a **reconciliation step** is built and tested.
   - **hono 12-open first request: 0.536 s against Go's 0.120 s (4.5×
     slower) with less CPU.** Lane P2 is investigating. Most likely the opens
     or the project loads run serially.
+- **2026-11-06, P2 merged: the open12 gap is not real** (`experiments/p2-open12.md`).
+  - **Cause:** each slow W2 run was the first run 7–33 s after a VM boot.
+  - **Gated and warm:** tsc-rs 106.7 ms against Go's 118.4 ms (0.90×); umami
+    ttfd 292 ms against Go's 302 ms.
+  - **Tooling fix:** `bench.py` waits 300 s after a VM boot and records the
+    uptime.
+  - **Candidate, not needed for "≤ Go":** a parallel BFS level of project
+    loads (Go `projectcollectionbuilder.go:1086`) would save 30–40 ms when
+    opening `src/index.ts`. It would need an LS threading redesign.
+  - **Host-cold disk:** one session lost about 35 ms on the spec load. Not
+    reproducible on demand.
