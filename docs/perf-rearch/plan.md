@@ -786,3 +786,17 @@ once a **reconciliation step** is built and tested.
   - **Backlog (harness):** the `watch-ts-pattern-f12` session is timing-racy
     on both sides: Go varies (0016, 0018), and tsc-rs was rs-nondet under
     load. Add event barriers.
+- **2026-11-06, D1-I3 round 2 done; `fix/aliased-output-dirlinks` merged into
+  perf/first-principles.**
+  - **Alias keys:** resolved through every symlink, dangling ones included,
+    plus the missing path tail. Astra's dangling-directory repro gives 20/20
+    identical runs in every mode.
+  - **Windows:** file identity uses `winapi-util` (vol serial + file index).
+    The `cfg(windows)` test has only been type-checked.
+  - **Identity manifest:** child env, CPU and cgroup settings are frozen, and
+    traces prove the split and fallback coverage.
+  - **D1 `24f16ee88`:**
+    - parity full OK;
+    - IDENTITY OK, 66/66: 20 items split, 13 forced fallbacks proven;
+    - 0 raw divergences with fallbacks off.
+  - **Next:** a focused Astra recheck, then the validation campaign.
