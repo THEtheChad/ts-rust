@@ -923,3 +923,14 @@ once a **reconciliation step** is built and tested.
   - **CV2 started on this candidate.** The forced 1.0× case is report-only,
     checked only for nonzero exit and no wrong output; the unforced 1.0× case
     gates.
+- **2026-11-06, ND2 merged.** The `watch-ts-pattern-f12` flake was in the
+  harness: the scenario waits ended before ATA's npm call finished, and Go has
+  the same race.
+  - **Fix:** a logging npm shim, plus one wait for every step: server quiet,
+    and no npm activity for 1.5 s counted from the start of the wait.
+  - **Repro:** under load with npm randomly slowed, tsc-rs runs are 32/32
+    identical (before: 4 variants).
+  - **Side effect:** the base's Go-race watch items are now MATCH.
+  - **Cost:** about 100 s more on the LSP tier. Root accepted the 1.5 s
+    floor.
+  - **Parity:** full OK (`runs/nd2-e92f96b39-full`), now `base-current`.
