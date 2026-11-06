@@ -825,3 +825,40 @@ once a **reconciliation step** is built and tested.
   fuzzer instead, so the campaign tests this rule too.
 - **Validation campaign started:** lane CV1 writes the spec and builds the
   tools; CV2 runs it.
+- **2026-11-06, CV1 done** (`design/d1-campaign.md`; tools in
+  `scripts/perf-rearch/campaign/` on `t3/checker-split-campaign`).
+  - **5% smoke on `3178750e6`:** 0 failures, no nondeterminism. 2 GO-BROKEN
+    layout cases: Go's own runs vary, and tsc-rs's single result is one Go
+    produced.
+  - **Raw divergences caught by the fallback:**
+    - real **rxjs** holdout: `ConstraintCut`, 9 TS2345 and 1 TS2322 with no
+      referee;
+    - a generated case: `InstantiationDepth`, +8 TS5114.
+
+    Direct evidence that both classes must keep falling back.
+  - **Mutants:** 27 of 32 detected.
+    - **Undetected:** cycle-key coarsening, and 4 triggers with no witness
+      input (`ConstraintDepth`, `GlobalDiagnosticVariant`, `RelationBudget`,
+      `TemplateLiteralSize`).
+    - **ASCII-only case folding:** needs a case-insensitive file system.
+  - **Cost gaps:**
+    - vscode forced fallback at the commit point: 9.38 s against Go's
+      8.64 s.
+    - Certified RSS is 6.3 GB against c4's 5.4 GB, so under a memory cap at
+      c4's peak, certified is killed (nonzero exit) where c4 completes.
+  - **Holdout configs to fix before freezing:** date-fns (checks 0 files), nest
+    and vue-core (composite).
+  - **Estimate:** about 19 machine-hours, 5–6 h wall here.
+- **Root decisions:**
+  - **D1-I4 (compiler):**
+    - a memory-aware N policy: cgroup `memory.max` and MemAvailable, routing
+      exact when there's no headroom;
+    - evaluate the end-of-run bounds (gap and relation bound, cycle agreement)
+      incrementally, so fires happen as early as possible;
+    - measure the wall time of natural fallbacks.
+  - **Timing rule for fallbacks:** natural runs, natural fallbacks included,
+    must be ≤ Go on every input. A forced late fallback is a synthetic worst
+    case: reported, not gating. Chad may override.
+  - **CV2-prep (campaign, in parallel):** witnesses for the 4 triggers and for
+    cycle-key coarsening, and fixed holdout configs. Then CV2 freezes on the
+    D1-I4 candidate.
