@@ -4,6 +4,7 @@ pub mod file_loader;
 pub mod files_parser;
 pub mod host;
 pub mod include_processor;
+#[cfg(feature = "diagnostics")]
 pub mod load_dump;
 pub mod load_times;
 pub mod load_view_scope;

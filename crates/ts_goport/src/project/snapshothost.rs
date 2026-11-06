@@ -118,6 +118,7 @@ impl SnapshotHost {
     ) -> Rc<SourceFileLease> {
         let file_handle = new_cached_file_handle(&options.file_name, text.to_string());
         let key = new_parse_cache_key(&options, file_handle.hash(), script_kind);
+        #[cfg(feature = "diagnostics")]
         crate::frontend::compiler::load_dump::note(|out| {
             out.push_str(&format!("acquire {key:?}"));
         });
@@ -149,6 +150,7 @@ impl SnapshotHost {
     // `new_parse_cache`), so the file is bound here, as `acquire_bound` does
     // for `acquire_source_file`. A bound file is not bound again.
     pub fn acquire_existing_source_file(&self, key: ParseCacheKey) -> Option<Rc<SourceFileLease>> {
+        #[cfg(feature = "diagnostics")]
         crate::frontend::compiler::load_dump::note(|out| {
             out.push_str(&format!("acquire_existing {key:?}"));
         });

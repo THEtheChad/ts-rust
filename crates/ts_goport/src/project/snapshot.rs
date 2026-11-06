@@ -1185,6 +1185,7 @@ impl Snapshot {
         };
 
         let (snapshot_fs, _) = fs.finalize();
+        #[cfg(feature = "diagnostics")]
         if crate::frontend::compiler::load_dump::dump_enabled() {
             dump_snapshot_fs(new_snapshot_id, &fs, &snapshot_fs);
         }
@@ -1432,6 +1433,7 @@ impl Snapshot {
 /// hash, reload state, realpath path), cached directories (children in
 /// their order) and node_modules realpath aliases (compiler/load_dump.rs).
 // PORT: not in Go (perf diagnostics).
+#[cfg(feature = "diagnostics")]
 fn dump_snapshot_fs(id: u64, builder: &SnapshotFSBuilder, snapshot_fs: &SnapshotFS) {
     use crate::frontend::compiler::load_dump;
     use std::fmt::Write as _;

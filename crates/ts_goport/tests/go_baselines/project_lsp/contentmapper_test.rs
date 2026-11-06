@@ -1647,7 +1647,11 @@ fn fresh_session_dump(owned: &[(String, String)], main_text: &str) -> String {
 fn assert_same_dump(reused: &str, full: &str) {
     if reused != full {
         let line = reused.lines().zip(full.lines()).position(|(a, b)| a != b);
-        let at = |text: &str| line.and_then(|l| text.lines().nth(l)).unwrap_or("<end>").to_string();
+        let at = |text: &str| {
+            line.and_then(|l| text.lines().nth(l))
+                .unwrap_or("<end>")
+                .to_string()
+        };
         panic!(
             "the new program differs from a full build at line {line:?}:\n  new  {}\n  full {}",
             at(reused),
@@ -1678,9 +1682,15 @@ fn switching_files(options_json: &str, more: &[(&str, &str)]) -> Vec<(String, St
             "/home/project/node_modules/tslib/tslib.d.ts".to_string(),
             "export declare function __awaiter(a: any, b: any, c: any, d: any): any;\n".to_string(),
         ),
-        ("/home/project/main.ts".to_string(), "export const m = 1;\n".to_string()),
+        (
+            "/home/project/main.ts".to_string(),
+            "export const m = 1;\n".to_string(),
+        ),
     ];
-    owned.extend(more.iter().map(|(name, text)| (name.to_string(), text.to_string())));
+    owned.extend(
+        more.iter()
+            .map(|(name, text)| (name.to_string(), text.to_string())),
+    );
     owned
 }
 

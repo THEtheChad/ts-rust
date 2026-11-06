@@ -18,7 +18,7 @@
 use ts_goport::frontend::compiler::{PrefetchCounts, prefetch_counts};
 use ts_goport::lsp::lsproto;
 
-use super::resolveahead_test::{os_session, write};
+use super::os_project::{os_session, write};
 use super::util::{edit, open, open_kind};
 
 /// The `file:` URI of `name` in `root`. A Windows root (`C:/a/b`) has no

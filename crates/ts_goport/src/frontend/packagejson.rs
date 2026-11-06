@@ -1295,6 +1295,7 @@ impl InfoCache {
     ///   would give (the entry, else the pending read parsed), with no change.
     /// The contents are the parsed fields and whether they parsed; the lazily
     /// found version paths are left out.
+    #[cfg(feature = "diagnostics")]
     #[must_use]
     pub fn dump_lines(&self) -> Vec<String> {
         let describe = |key: &Path, entry: &InfoCacheEntry| {

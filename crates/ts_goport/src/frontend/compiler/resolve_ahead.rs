@@ -41,72 +41,87 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use xxhash_rust::xxh3::xxh3_128;
 
-/// Whether program loads resolve ahead (`GOPORT_RESOLVE_AHEAD`).
+/// Tests (diagnostics): how the program loads on a thread resolve ahead
+/// (`set_mode`). Shipped builds always resolve ahead (`On`).
+#[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// `0`: no workers. The loader resolves every key itself.
+    /// No resolve ahead: the loader resolves every key itself, as a load
+    /// whose host has no resolve-ahead view does (the serial oracle).
     Off,
-    /// The default: the workers resolve while the loader runs.
+    /// The shipped behavior: the workers resolve while the loader runs.
     On,
-    /// `force`: the workers resolve every key before the loader starts, so
-    /// the loader finds an answer for each key of the previous load (tests).
+    /// The workers resolve every key before the loader starts, so the
+    /// loader finds an answer for each key of the previous load.
     Force,
 }
 
+#[cfg(feature = "diagnostics")]
 thread_local! {
     /// `set_mode` on this thread.
-    static MODE: Cell<Option<Mode>> = const { Cell::new(None) };
+    static MODE: Cell<Mode> = const { Cell::new(Mode::On) };
+    /// `set_first_load` on this thread.
+    static FIRST_LOAD: Cell<bool> = const { Cell::new(true) };
     /// The counts of the last resolve-ahead load on this thread.
     static LAST_STATS: Cell<Option<LoadStats>> = const { Cell::new(None) };
     /// `inject_worker_panic` on this thread.
     static INJECT_PANIC: Cell<bool> = const { Cell::new(false) };
+    /// `set_after_workers` on this thread.
+    static AFTER_WORKERS: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
-/// Sets the mode of the program loads on this thread, in place of
-/// `GOPORT_RESOLVE_AHEAD` (`None`: the variable again). For tests.
+/// Tests (diagnostics): sets the mode of the program loads on this thread
+/// (`None`: `Mode::On`).
+#[cfg(feature = "diagnostics")]
 pub fn set_mode(mode: Option<Mode>) {
-    MODE.with(|m| m.set(mode));
+    MODE.with(|m| m.set(mode.unwrap_or(Mode::On)));
 }
 
-/// The mode of a program load on this thread.
+/// Tests (diagnostics): the mode of a program load on this thread.
+#[cfg(feature = "diagnostics")]
 #[must_use]
 pub fn mode() -> Mode {
-    static ENV: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
-    MODE.with(Cell::get).unwrap_or_else(|| {
-        *ENV.get_or_init(|| match std::env::var("GOPORT_RESOLVE_AHEAD").as_deref() {
-            Ok("0") => Mode::Off,
-            Ok("force") => Mode::Force,
-            _ => Mode::On,
-        })
-    })
+    MODE.with(Cell::get)
 }
 
-/// Whether a language server's first program load resolves ahead
-/// (`GOPORT_FIRST_LOAD_AHEAD`, on unless `0`): its parse workers resolve
-/// through the view of a resolve-ahead job as they parse, and the loader
-/// checks each of their answers as it checks a resolve-ahead answer
-/// (`FirstLoadJob`, stage S1a of docs/perf-rearch/design/loader.md).
+/// Whether the program loads on this thread resolve ahead: always, unless
+/// a test chose `Mode::Off` (diagnostics).
+#[inline]
 #[must_use]
-pub fn first_load_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    FIRST_LOAD.with(Cell::get).unwrap_or_else(|| {
-        *ON.get_or_init(|| std::env::var("GOPORT_FIRST_LOAD_AHEAD").as_deref() != Ok("0"))
-    })
+pub(crate) fn enabled() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if mode() == Mode::Off {
+        return false;
+    }
+    true
 }
 
-thread_local! {
-    /// `set_first_load` on this thread.
-    static FIRST_LOAD: Cell<Option<bool>> = const { Cell::new(None) };
+/// Whether a language server's first program load resolves ahead: its
+/// parse workers resolve through the view of a resolve-ahead job as they
+/// parse, and the loader checks each of their answers as it checks a
+/// resolve-ahead answer (`FirstLoadJob`, stage S1a of
+/// docs/perf-rearch/design/loader.md). Always, unless a test turned it off
+/// (`set_first_load`, diagnostics): the first load then has no job, as a
+/// first load with no parse workers.
+#[inline]
+#[must_use]
+pub(crate) fn first_load_enabled() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if !FIRST_LOAD.with(Cell::get) {
+        return false;
+    }
+    true
 }
 
-/// Sets whether the first loads on this thread resolve ahead, in place of
-/// `GOPORT_FIRST_LOAD_AHEAD` (`None`: the variable again). For tests.
-#[doc(hidden)]
+/// Tests (diagnostics): sets whether the first loads on this thread resolve
+/// ahead (`None`: they do).
+#[cfg(feature = "diagnostics")]
 pub fn set_first_load(on: Option<bool>) {
-    FIRST_LOAD.with(|first| first.set(on));
+    FIRST_LOAD.with(|first| first.set(on.unwrap_or(true)));
 }
 
-/// The counts of one resolve-ahead load.
+/// The counts of one resolve-ahead load (diagnostics).
+#[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LoadStats {
     /// Module keys of the previous load that the workers had.
@@ -130,7 +145,9 @@ pub struct LoadStats {
     pub first_load: bool,
 }
 
-/// The counts of the last resolve-ahead load on this thread. For tests.
+/// Tests (diagnostics): the counts of the last resolve-ahead load on this
+/// thread.
+#[cfg(feature = "diagnostics")]
 #[must_use]
 pub fn last_stats() -> Option<LoadStats> {
     LAST_STATS.with(Cell::get)
@@ -139,16 +156,16 @@ pub fn last_stats() -> Option<LoadStats> {
 /// Makes the workers of the loads on this thread panic outside a
 /// resolution, as a port bug would (`run_task`), after they resolved their
 /// keys: the answers are published, and the load must take none of them
-/// (`AheadQueue::fail`). For tests.
-#[doc(hidden)]
+/// (`AheadQueue::fail`). Tests (diagnostics).
+#[cfg(feature = "diagnostics")]
 pub fn inject_worker_panic(on: bool) {
     INJECT_PANIC.with(|inject| inject.set(on));
 }
 
 /// Takes the workers, as a load on another thread does, until the guard
 /// drops: the loads find them taken and resolve every key themselves.
-/// For tests.
-#[doc(hidden)]
+/// Tests (diagnostics).
+#[cfg(feature = "diagnostics")]
 #[must_use]
 pub fn hold_workers() -> HeldWorkers {
     if let Some(workers) = Workers::get() {
@@ -158,9 +175,10 @@ pub fn hold_workers() -> HeldWorkers {
 }
 
 /// The guard of `hold_workers`.
-#[doc(hidden)]
+#[cfg(feature = "diagnostics")]
 pub struct HeldWorkers(());
 
+#[cfg(feature = "diagnostics")]
 impl Drop for HeldWorkers {
     fn drop(&mut self) {
         if let Some(workers) = Workers::started() {
@@ -171,8 +189,8 @@ impl Drop for HeldWorkers {
 
 /// Waits until the workers have freed the jobs of the ended loads, so the
 /// next load starts with the files that they found (`EndedJob::free`).
-/// For tests.
-#[doc(hidden)]
+/// Tests (diagnostics).
+#[cfg(feature = "diagnostics")]
 pub fn wait_for_frees() {
     let Some(workers) = Workers::started() else {
         return;
@@ -186,26 +204,21 @@ pub fn wait_for_frees() {
     }
 }
 
-thread_local! {
-    /// `set_after_workers` on this thread.
-    static AFTER_WORKERS: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
-}
-
 /// Runs `hook` in each `Mode::Force` load on this thread after its workers
 /// left the job and before its loader starts (`None`: no hook). A test
-/// changes the disk there, during the load. For tests.
-#[doc(hidden)]
+/// changes the disk there, during the load. Tests (diagnostics).
+#[cfg(feature = "diagnostics")]
 pub fn set_after_workers(hook: Option<Rc<dyn Fn()>>) {
     AFTER_WORKERS.with(|after| *after.borrow_mut() = hook);
 }
 
-/// Tests: runs the `set_after_workers` hook of this thread before the
+/// Tests (diagnostics): runs the `set_after_workers` hook of this thread before the
 /// loader of a load starts (`FilesParser::parse`): in `Mode::Force`, in a
 /// first-load load after its parse workers have parsed and resolved all
 /// they could; in `Mode::Off`, at the same point of any load. A test changes
 /// the disk there, between the workers' answers and the loader's check of
 /// them, and compares with a serial load whose disk changed at that point.
-#[doc(hidden)]
+#[cfg(feature = "diagnostics")]
 pub fn after_first_load_workers() {
     if let Some(hook) = AFTER_WORKERS.with(|after| after.borrow().clone()) {
         hook();
@@ -339,7 +352,9 @@ pub struct ResolveAhead {
     /// lookup cache (a first load, or any load under the OS view).
     validated: bool,
     keep_keys: Option<Box<dyn FnOnce(Arc<KeyList>)>>,
-    /// The module keys and the package scope keys of the previous load.
+    /// The module keys and the package scope keys of the previous load
+    /// (`LoadStats`, diagnostics).
+    #[cfg(feature = "diagnostics")]
     previous_keys: (usize, usize),
 }
 
@@ -358,6 +373,7 @@ impl ResolveAhead {
             extra_extensions: resolver.extra_extensions.clone(),
             current_directory: resolver.host.get_current_directory().to_string(),
         });
+        #[cfg(feature = "diagnostics")]
         let previous_keys = host
             .previous_keys
             .as_ref()
@@ -383,7 +399,10 @@ impl ResolveAhead {
                     view: host.view,
                     stats: Arc::default(),
                     config: config.clone(),
+                    #[cfg(feature = "diagnostics")]
                     inject_panic: INJECT_PANIC.with(Cell::get),
+                    #[cfg(all(test, not(feature = "diagnostics")))]
+                    inject_panic: false,
                     os_view: std::sync::Mutex::new(crate::frontend::vfs::loadview::current()),
                 })
             });
@@ -424,8 +443,10 @@ impl ResolveAhead {
             cursor: Cell::new(0),
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
+            #[cfg(feature = "diagnostics")]
             missing: RefCell::default(),
-            log_missing: debug_log_enabled(),
+            #[cfg(feature = "diagnostics")]
+            log_missing: diag::debug_log_enabled(),
             // Every load adopts the package.json lookups of the answers it
             // takes (keyed loads too): the loader's package.json cache then
             // holds a serial load's entries whichever answers arrived in
@@ -433,8 +454,10 @@ impl ResolveAhead {
             package_json_text: Some(host.package_json_text),
             adopted: RefCell::default(),
         });
-        // A first-load job has no keys: its parse workers make the answers,
-        // and `FilesParser::parse` waits for them (`after_first_load_workers`).
+        // Tests (diagnostics): a first-load job has no keys: its parse
+        // workers make the answers, and `FilesParser::parse` waits for them
+        // (`after_first_load_workers`).
+        #[cfg(feature = "diagnostics")]
         if mode() == Mode::Force
             && !first_load
             && let Some((job, workers)) = job.as_ref().zip(Workers::get())
@@ -449,6 +472,7 @@ impl ResolveAhead {
             first_load,
             validated,
             keep_keys: Some(host.keep_keys),
+            #[cfg(feature = "diagnostics")]
             previous_keys,
         }
     }
@@ -473,11 +497,8 @@ impl ResolveAhead {
             return;
         };
         let loader = link.stats.get();
-        let known_files = self.job.as_ref().map_or(0, |job| job.known_files.len());
-        let worker_panic = link.queue.as_ref().is_some_and(|queue| queue.failed());
-        if debug_log_enabled() {
-            log_missing(&link, self.job.as_deref());
-        }
+        #[cfg(feature = "diagnostics")]
+        let (known_files, worker_panic) = diag::before_end(&link, self.job.as_deref());
         // A rejected answer can come from a kept package.json parse or a
         // known file that changed: the workers drop both now, so the next
         // job starts with neither, even when a load on another thread has
@@ -497,8 +518,9 @@ impl ResolveAhead {
             Some(Box::new((link.answers.take(), link.queue.take()))),
             rejected || self.validated,
         );
+        #[cfg(feature = "diagnostics")]
         if worker_panic {
-            debug_log(format_args!(
+            diag::debug_log(format_args!(
                 "resolve-ahead: a worker panicked; the load resolved its other keys itself"
             ));
         }
@@ -506,7 +528,8 @@ impl ResolveAhead {
             return;
         };
         let keys = Arc::new(link.keys.into_inner());
-        let stats = LoadStats {
+        #[cfg(feature = "diagnostics")]
+        diag::note_load(LoadStats {
             keys: self.previous_keys.0,
             new_keys: keys.len() - keys.scopes(),
             scopes: self.previous_keys.1,
@@ -515,9 +538,7 @@ impl ResolveAhead {
             known_files,
             worker_panic,
             first_load: self.first_load,
-        };
-        LAST_STATS.with(|last| last.set(Some(stats)));
-        debug_log(format_args!("resolve-ahead: {stats:?}"));
+        });
         keep_keys(keys);
     }
 
@@ -600,90 +621,6 @@ impl FirstLoadJob {
     }
 }
 
-/// Writes `line` (the counts of a load, a worker panic) when
-/// `GOPORT_RESOLVE_AHEAD_STATS` is set: to stderr for `1`, else appended to
-/// the file that it names (`write_debug_line`).
-fn debug_log(line: std::fmt::Arguments<'_>) {
-    let Some(to) = debug_log_to() else {
-        return;
-    };
-    write_debug_line(to, line);
-}
-
-fn debug_log_to() -> Option<&'static str> {
-    static TO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    TO.get_or_init(|| std::env::var("GOPORT_RESOLVE_AHEAD_STATS").ok())
-        .as_deref()
-}
-
-fn debug_log_enabled() -> bool {
-    debug_log_to().is_some()
-}
-
-/// The debug log of the keys that had no worker answer when the loader
-/// asked (`AheadLink::missing`), by why: `late` (a worker published a
-/// shareable answer after the loader asked), `unshareable` (the worker's
-/// resolution made a call that the check cannot make again: a directory
-/// listing, a stat, a read of an open file), `none` (no worker resolved
-/// the key: no worker parsed the file, or it resolved the name with
-/// another mode). A few keys of each with their mode.
-fn log_missing(link: &AheadLink, job: Option<&Job>) {
-    let missing = link.missing.borrow();
-    if missing.is_empty() {
-        return;
-    }
-    let mut kinds: [(&str, usize, Vec<String>); 3] = [
-        ("late", 0, Vec::new()),
-        ("unshareable", 0, Vec::new()),
-        ("none", 0, Vec::new()),
-    ];
-    for (directory, name, mode) in missing.iter() {
-        let found = job.and_then(|job| {
-            job.answers
-                .get_module(&(directory.as_str(), name.as_str(), *mode, ""))
-        });
-        let kind = match found {
-            Some(found) if found.ahead.is_some() => 0,
-            Some(_) => 1,
-            None => 2,
-        };
-        let entry = &mut kinds[kind];
-        entry.1 += 1;
-        if entry.2.len() < 4 {
-            entry.2.push(format!("{name:?} {mode:?} from {directory}"));
-        }
-    }
-    let parts: Vec<String> = kinds
-        .iter()
-        .map(|(kind, count, samples)| format!("{kind} {count} [{}]", samples.join("; ")))
-        .collect();
-    debug_log(format_args!(
-        "resolve-ahead: missing keys: {}",
-        parts.join(", ")
-    ));
-}
-
-/// Writes `line` and a newline to stderr (`to` is `1`) or to the end of
-/// file `to`. The workers (`log_panic`) and the loader write at the same
-/// time, so the line is built first and goes out in one write: a write
-/// per part of the format let the lines of two threads interleave. A
-/// failed write is dropped, never a panic: a worker logs a caught panic
-/// before it counts itself out of the job (`run_task`), so a panic here
-/// (`eprintln!` on a closed stderr) made a force load wait forever.
-fn write_debug_line(to: &str, line: std::fmt::Arguments<'_>) {
-    use std::io::Write;
-    let line = format!("{line}\n");
-    if to == "1" {
-        let _ = std::io::stderr().write_all(line.as_bytes());
-    } else if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(to)
-    {
-        let _ = file.write_all(line.as_bytes());
-    }
-}
-
 /// The number of workers: the parse threads of a program that is not
 /// large, less the loading thread (`GOPORT_RESOLVE_AHEAD_THREADS` sets it).
 /// 0 on wasm, which has one thread.
@@ -760,7 +697,9 @@ struct WorkerState {
     /// OS call, and the loader checks those answers
     /// (`AheadCall::FileExists`).
     known_files: Arc<FxHashSet<Path>>,
-    /// `hold_workers` (tests): the loads find the workers taken.
+    /// `hold_workers` (tests, diagnostics): the loads find the workers
+    /// taken.
+    #[cfg(feature = "diagnostics")]
     held: bool,
 }
 
@@ -875,7 +814,11 @@ impl Workers {
     /// on another thread): this load then resolves every key itself.
     fn post(&self, mut job: Job) -> Option<Arc<Job>> {
         let mut state = lock_state(self);
-        if state.job.is_some() || state.held {
+        if state.job.is_some() {
+            return None;
+        }
+        #[cfg(feature = "diagnostics")]
+        if state.held {
             return None;
         }
         job.epoch = state.epoch;
@@ -941,7 +884,8 @@ impl Workers {
         self.wake.notify_all();
     }
 
-    /// Waits until every worker has left `job` (`Mode::Force`).
+    /// Waits until every worker has left `job` (`Mode::Force`, diagnostics).
+    #[cfg(feature = "diagnostics")]
     fn wait_left(&self, job: &Job) {
         let count = self.count.load(Ordering::Relaxed);
         let mut state = lock_state(self);
@@ -1119,16 +1063,15 @@ fn run_task(workers: &Workers, task: Task) {
     }
 }
 
-/// Writes a worker panic that `run_task` caught to the debug log.
+/// A worker panic that `run_task` caught: the bin's panic hook printed it;
+/// the debug log (diagnostics, `GOPORT_RESOLVE_AHEAD_STATS`) has a line
+/// for it.
+#[inline]
 fn log_panic(task: &str, payload: &(dyn std::any::Any + Send)) {
-    let message = payload
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or_default();
-    debug_log(format_args!(
-        "resolve-ahead: a worker panicked in a {task} task: {message}"
-    ));
+    #[cfg(feature = "diagnostics")]
+    diag::log_panic(task, payload);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = (task, payload);
 }
 
 /// The workers' part of one load.
@@ -1154,6 +1097,7 @@ struct Job {
     config: Arc<ResolverConfig>,
     /// `inject_worker_panic` (tests): each worker panics in the job,
     /// outside its resolutions, after it resolved its keys.
+    #[cfg(any(test, feature = "diagnostics"))]
     inject_panic: bool,
     /// Loader v2 L1: the per-load OS view of the job's load
     /// (`vfs::loadview`), which the workers read through and fill.
@@ -1245,6 +1189,7 @@ fn run_job(job: &Arc<Job>) {
     if let Some(index) = current.get() {
         job.queue.done(index);
     }
+    #[cfg(any(test, feature = "diagnostics"))]
     if job.inject_panic {
         panic!("resolve ahead: a worker panic outside a resolution (inject_worker_panic)");
     }
@@ -1747,11 +1692,133 @@ fn describe(module: &ResolvedModule) -> String {
     )
 }
 
+/// The debug log of resolve ahead (`GOPORT_RESOLVE_AHEAD_STATS`) and the
+/// counts of each load (`last_stats`). Diagnostics only: shipped builds
+/// keep neither.
+#[cfg(feature = "diagnostics")]
+mod diag {
+    use super::{AheadLink, Cell, Job, LAST_STATS, LoadStats};
+
+    /// Before the end of a load's job: the known files that its workers
+    /// started with and whether a worker panicked, and the debug log of
+    /// its missing keys.
+    pub(super) fn before_end(link: &AheadLink, job: Option<&Job>) -> (usize, bool) {
+        let known_files = job.map_or(0, |job| job.known_files.len());
+        let worker_panic = link.queue.as_ref().is_some_and(|queue| queue.failed());
+        if debug_log_enabled() {
+            log_missing(link, job);
+        }
+        (known_files, worker_panic)
+    }
+
+    /// Keeps the counts of a load for `last_stats` and logs them.
+    pub(super) fn note_load(stats: LoadStats) {
+        LAST_STATS.with(|last| last.set(Some(stats)));
+        debug_log(format_args!("resolve-ahead: {stats:?}"));
+    }
+
+    /// Writes `line` (the counts of a load, a worker panic) when
+    /// `GOPORT_RESOLVE_AHEAD_STATS` is set: to stderr for `1`, else appended to
+    /// the file that it names (`write_debug_line`).
+    pub(super) fn debug_log(line: std::fmt::Arguments<'_>) {
+        let Some(to) = debug_log_to() else {
+            return;
+        };
+        write_debug_line(to, line);
+    }
+
+    fn debug_log_to() -> Option<&'static str> {
+        static TO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        TO.get_or_init(|| std::env::var("GOPORT_RESOLVE_AHEAD_STATS").ok())
+            .as_deref()
+    }
+
+    pub(super) fn debug_log_enabled() -> bool {
+        debug_log_to().is_some()
+    }
+
+    /// The debug log of the keys that had no worker answer when the loader
+    /// asked (`AheadLink::missing`), by why: `late` (a worker published a
+    /// shareable answer after the loader asked), `unshareable` (the worker's
+    /// resolution made a call that the check cannot make again: a directory
+    /// listing, a stat, a read of an open file), `none` (no worker resolved
+    /// the key: no worker parsed the file, or it resolved the name with
+    /// another mode). A few keys of each with their mode.
+    fn log_missing(link: &AheadLink, job: Option<&Job>) {
+        let missing = link.missing.borrow();
+        if missing.is_empty() {
+            return;
+        }
+        let mut kinds: [(&str, usize, Vec<String>); 3] = [
+            ("late", 0, Vec::new()),
+            ("unshareable", 0, Vec::new()),
+            ("none", 0, Vec::new()),
+        ];
+        for (directory, name, mode) in missing.iter() {
+            let found = job.and_then(|job| {
+                job.answers
+                    .get_module(&(directory.as_str(), name.as_str(), *mode, ""))
+            });
+            let kind = match found {
+                Some(found) if found.ahead.is_some() => 0,
+                Some(_) => 1,
+                None => 2,
+            };
+            let entry = &mut kinds[kind];
+            entry.1 += 1;
+            if entry.2.len() < 4 {
+                entry.2.push(format!("{name:?} {mode:?} from {directory}"));
+            }
+        }
+        let parts: Vec<String> = kinds
+            .iter()
+            .map(|(kind, count, samples)| format!("{kind} {count} [{}]", samples.join("; ")))
+            .collect();
+        debug_log(format_args!(
+            "resolve-ahead: missing keys: {}",
+            parts.join(", ")
+        ));
+    }
+
+    /// Writes `line` and a newline to stderr (`to` is `1`) or to the end of
+    /// file `to`. The workers (`log_panic`) and the loader write at the same
+    /// time, so the line is built first and goes out in one write: a write
+    /// per part of the format let the lines of two threads interleave. A
+    /// failed write is dropped, never a panic: a worker logs a caught panic
+    /// before it counts itself out of the job (`run_task`), so a panic here
+    /// (`eprintln!` on a closed stderr) made a force load wait forever.
+    pub(super) fn write_debug_line(to: &str, line: std::fmt::Arguments<'_>) {
+        use std::io::Write;
+        let line = format!("{line}\n");
+        if to == "1" {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        } else if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(to)
+        {
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
+
+    /// Writes a worker panic that `run_task` caught to the debug log.
+    pub(super) fn log_panic(task: &str, payload: &(dyn std::any::Any + Send)) {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or_default();
+        debug_log(format_args!(
+            "resolve-ahead: a worker panicked in a {task} task: {message}"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AheadLookups, AheadQueue, Job, KeyList, ResolverConfig, Task, WorkerStats, WorkerView,
-        Workers, run_task, write_debug_line,
+        Workers, run_task,
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1865,6 +1932,7 @@ mod tests {
     // PORT: not in Go (the resolve-ahead debug log). The workers' panic
     // lines and the loader's counts go to one file at the same time
     // (followups13b skeptic: 1,917 of 12,288 lines garbled).
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn debug_log_lines_of_parallel_writers_do_not_interleave() {
         let to = std::env::temp_dir().join(format!(
@@ -1878,7 +1946,7 @@ mod tests {
                 let to_text = &to_text;
                 scope.spawn(move || {
                     for line in 0..500 {
-                        write_debug_line(
+                        super::diag::write_debug_line(
                             to_text,
                             format_args!(
                                 "resolve-ahead: a worker panicked in a {} task: {} {}",

@@ -549,7 +549,8 @@ impl FilesParser {
             if let Some(early) = early {
                 early.discard();
             }
-            // Tests: see the hook below.
+            // Tests (diagnostics): see the hook below.
+            #[cfg(feature = "diagnostics")]
             if super::resolve_ahead::mode() == super::resolve_ahead::Mode::Off {
                 super::resolve_ahead::after_first_load_workers();
             }
@@ -631,11 +632,12 @@ impl FilesParser {
             .rank_roots(tasks, ROOT_RANK_PER_WORKER * pool.threads.len());
         // The root jobs are queued now, so the added workers start at once.
         pool.add_workers(extra_worker_count(large));
-        // Tests: with `resolve_ahead::Mode::Force`, the parse workers of a
-        // first-load job parse and resolve all they can before the loader
-        // starts, and a test hook runs then. With `Mode::Off` the hook runs
-        // at the same point of the load (after the root tasks), so a test
-        // compares with a serial load whose disk changed there.
+        // Tests (diagnostics): with `resolve_ahead::Mode::Force`, the parse
+        // workers of a first-load job parse and resolve all they can before
+        // the loader starts, and a test hook runs then. With `Mode::Off` the
+        // hook runs at the same point of the load (after the root tasks), so
+        // a test compares with a serial load whose disk changed there.
+        #[cfg(feature = "diagnostics")]
         match super::resolve_ahead::mode() {
             super::resolve_ahead::Mode::Force if loader.first_load_ahead.is_some() => {
                 pool.wait_idle();
@@ -897,6 +899,7 @@ impl FilesParser {
             loaded,
             depth,
         } = queued;
+        #[cfg(feature = "diagnostics")]
         if super::load_dump::loading() {
             let task = task.borrow();
             super::load_dump::note(|out| {
@@ -975,6 +978,7 @@ impl FilesParser {
             let task_by_file_name = data.borrow().tasks[index].clone();
             let mut load_sub_tasks = start_subtasks;
             if !task_by_file_name.borrow().loaded {
+                #[cfg(feature = "diagnostics")]
                 if super::load_dump::loading() {
                     let name = task_by_file_name.borrow().normalized_file_path.clone();
                     super::load_dump::note(|out| {
@@ -3686,9 +3690,9 @@ impl PrefetchPool {
         pool
     }
 
-    /// Starts `workers` more parse workers on the queue of this pool.
     /// Waits until no job is queued and every worker sleeps (tests,
-    /// `resolve_ahead::Mode::Force`). Panics after 60 seconds.
+    /// `resolve_ahead::Mode::Force`, diagnostics). Panics after 60 seconds.
+    #[cfg(feature = "diagnostics")]
     fn wait_idle(&self) {
         let start = std::time::Instant::now();
         loop {
@@ -3713,6 +3717,7 @@ impl PrefetchPool {
         }
     }
 
+    /// Starts `workers` more parse workers on the queue of this pool.
     fn add_workers(&mut self, workers: usize) {
         self.spawn_workers(workers, false);
     }

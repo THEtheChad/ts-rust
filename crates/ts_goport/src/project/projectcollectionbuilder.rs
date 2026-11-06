@@ -2587,6 +2587,7 @@ impl ProjectCollectionBuilder {
                                 .map_or_else(Vec::new, |c| c.content_mappers().to_vec()),
                         )
                     };
+                    #[cfg(feature = "diagnostics")]
                     if crate::frontend::compiler::load_dump::dump_enabled() {
                         dump_program_load(project, &new_host);
                     }
@@ -3005,6 +3006,7 @@ pub struct SearchResult {
 /// (`load_dump::take_last_load`), then the seen files with their names and
 /// the missing directories of the host, sorted (compiler/load_dump.rs).
 // PORT: not in Go (perf diagnostics).
+#[cfg(feature = "diagnostics")]
 fn dump_program_load(project: &Rc<RefCell<Project>>, host: &CompilerHost) {
     use crate::frontend::compiler::load_dump;
     use std::fmt::Write as _;
