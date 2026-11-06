@@ -934,3 +934,38 @@ once a **reconciliation step** is built and tested.
   - **Cost:** about 100 s more on the LSP tier. Root accepted the 1.5 s
     floor.
   - **Parity:** full OK (`runs/nd2-e92f96b39-full`), now `base-current`.
+- **2026-11-06, CV2: CAMPAIGN OK** on the D1 candidate (head `3a692d1a1`,
+  code `4c420eb57`). Run dir `~/.cache/perf-rearch/campaign/cv2-4c420eb57`
+  (+ `-supp`); campaign tools at `t3/checker-split-campaign` `085b4814a`.
+  - **Inputs:**
+
+    | part | items | result |
+    |---|---|---|
+    | parity66 × 7 CPU settings | 462 | all match Go |
+    | corpus | 3,441 | all match Go |
+    | holdouts | 80 | all match Go |
+    | gen | 656 | match, GO-BROKEN layouts, or 1 JS-AGREES |
+
+  - **Nondeterminism:** none in tsc-rs.
+  - **Mutants:** all detected; `commit-early` only in combination with
+    `early-skip`.
+  - **Raw divergences, every one caught by a fallback:** 24 reported-limit,
+    8 count-bound and 4 silent-limit.
+  - **Routes:** commit 4,030, fallback 225, exact 280, pass-through 104.
+  - **Cost:** every natural run ≤ Go.
+
+    | project | certified vs Go |
+    |---|---|
+    | vscode | 0.38× |
+    | t3-server | 0.31× |
+    | umami | 0.45× |
+    | zod (natural fallback) | 0.81× |
+
+    Memory caps give Go's bytes. Forced n16 at 1.0× is killed (report-only).
+  - **Needs reviewer acceptance:**
+    - `GlobalDiagnosticVariant`: unreachable by audit and by search;
+    - `commit-early`: detected only in combination.
+  - **Parity full** on the candidate: OK.
+  - **Next:** Astra's campaign acceptance review. If it passes, merge D1 into
+    perf/first-principles: the certified split becomes the default, per
+    Chad's "default if tests pass". C3 then deletes fast mode.
