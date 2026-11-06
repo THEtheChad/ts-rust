@@ -548,12 +548,15 @@ fn plain_early_emit_reports_failed_writes_as_the_barrier() {
         "dir at output: {}",
         run.stdout
     );
+    // A file where the out dir goes is not an ordinary layout
+    // (`output_aliases::ordinary_layout`): the barrier, whose emit writes
+    // everything serially.
     let out_is_file = |out: &Path| fs::write(out, "not a dir\n").expect("out file");
     let run = compare_with(
         &root,
         "out is a file",
         &["--declaration"],
-        Start::Early,
+        Start::Late,
         Some(&out_is_file),
     );
     assert!(
