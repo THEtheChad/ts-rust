@@ -1,0 +1,179 @@
+# P2: hono open12 (12 didOpens, then the first diagnostic pull)
+
+Lane P2, branch `t3/56ab9e90` on `perf/first-principles` @ `65c2c2625` (compiler source equal to
+W2's head `64014edb4`; the commits between touch only the parity harness). W2's `open12.mjs`,
+`window2.sh` and `bench.py` changes are cherry-picked (`206958171`).
+
+## W2's record (`~/.cache/perf-rearch/window2/run/open12/runs.jsonl`)
+first_ms per run: go 301 / 109 / 120; main 119 / 623 / 138; head 198 / 91 / 536. The 536 ms in the
+brief is head's worst run; head's best (91 ms) beats Go's best. The two slowest tsc-rs runs and Go's
+slowest each came first after a long load wait (load 0.0 to 0.16 at start). So the first step is a
+real reproduction with more runs.
+
+## Notes (in time order)
+
+### 1. Client-side timeline (2026-11-05, machine loaded 10–19, not gated: shape only)
+`p2/open12-timeline.mjs` logs every server message against the first didOpen. Both servers log
+`handled method 'textDocument/didOpen' in X`, so the per-open cost is visible on both sides.
+
+- Both servers handle the 12 opens one after another (Go: `Session.DidOpenFile` holds
+  `snapshotUpdateMu` and calls `UpdateSnapshot` synchronously, session.go:318; tsc-rs
+  `Session::did_open_file`, project/session.rs:466, the same). The first diagnostic pull answers
+  1–2 ms after the last open on both. **first_ms = the sum of four loading opens + ~2 ms.**
+- The four opens that load (the other eight take 0.3–0.8 ms):
+
+| open | project loaded | files | Go ms (2 runs) | tsc-rs head ms (2 runs) |
+|---|---|---|---|---|
+| 1 `benchmarks/routers/src/bench.mts` | benchmarks/routers/tsconfig.json | 108 | 35.7 / 36.1 | 18.5 / 17.3 |
+| 2 `runtime-tests/deno/ssg.test.tsx` | inferred | 138 | 17.5 / 19.2 | 15.6 / 17.1 |
+| 3 `src/adapter/.../handler.test.ts` | tsconfig.spec.json | 846 | 49.2 / 53.8 | 45.8 / 46.3 |
+| 4 `src/client/fetch-result-please.ts` | tsconfig.build.json (composite) | 352 | 8.8 / 17.8 | 20.1 / 25.9 |
+| first_ms | | | 119.5 / 134.2 | 105.6 / 111.8 |
+
+  Warm, tsc-rs is already faster than Go in this session. The only open where Go is faster is the
+  build load (all its files are in the parse cache from the spec load).
+- Hono's solution `tsconfig.json` (`files: []`, 9 references) puts build (composite, `src/` minus
+  tests) and spec (not composite, `src/` with tests) on one BFS level. Open 3 (a test file): build
+  fails its composite include check without a load, spec loads. Open 4 (a source file): spec is
+  already loaded, build loads. So the two big loads fall in **different opens**, and Go's parallel
+  BFS level does not overlap them either.
+
+### 2. Why W2 saw 536 ms: the first run after a load wait starts cold
+W2's slow runs are exactly the first run after each long wait for load < 1.5: go run 1 (after
+34 min: 301 ms), main run 2 (after 5.5 min: 623 ms), head run 3 (after 1 min: 536 ms). The
+`.wslconfig` on this machine sets `autoMemoryReclaim=gradual` ("hand idle page cache back to
+Windows"): when the CPU goes idle, WSL drops page cache. Only 78 of 805 MiB of hono's tree was
+resident when checked. `p2/pagecache.py evict` (posix_fadvise DONTNEED on hono's files and the
+server binary; reads only) reproduces the state:
+
+| (ungated, load 6–9) | Go | tsc-rs head |
+|---|---|---|
+| cold (evicted) | 309 / 236 | 286 / 262 |
+| warm | 125 / 116 | 280 (all four opens 2.5× slower: contention) / 115 |
+
+Cold, open 3 (the spec load, 846 files plus node_modules) takes 153–226 ms in Go and 181–195 ms
+in tsc-rs. Cold is comparable on both; neither shows a tsc-rs-only stall. Gated runs follow.
+
+### 3. Correction: W2's outliers are the first run after a VM boot
+`journalctl --list-boots`: the VM booted at 22:33:56, 23:12:56, 23:19:00 and 23:20:23 (WSL
+shutdowns). W2's three slow runs are each the first run after a boot:
+
+| run | started | after boot | first_ms |
+|---|---|---|---|
+| go run 1 | 23:13:29 | 33 s (23:12:56) | 301 ms |
+| main run 2 | 23:19:09 | 9 s (23:19:00) | 623 ms |
+| head run 3 | 23:20:30 | 7 s (23:20:23) | 536 ms |
+
+Every other run (warm): go 109 / 120, main 119 / 138, head 198 / 91. So "head 0.536 s against Go
+0.120 s" compares a boot-cold tsc-rs run with a warm Go run. After a boot everything is cold: the
+page cache (binaries, shared libraries, hono's files) and the dentry/inode caches. `pagecache.py
+evict` reproduces only the page-cache part (it can't drop dentries without root). The remaining
+question is whether tsc-rs is slower than Go *boot-cold*: Go's one boot-cold run (301 ms, 33 s
+after its boot) against tsc-rs's two (536, 623 ms, 7–9 s after theirs) suggests up to 2×.
+
+### 4. Boot-cold emulation without root: the runner's own cgroup, reclaimed
+`open12-runs.py --cold` copies hono (and both binaries) inside its own systemd unit, so their page
+cache, dentries and inodes are charged to that cgroup, and before each run writes
+`memory.reclaim` of its own cgroup (the unit has `MemorySwapMax=0`, so only file pages and
+reclaimable slab go). Per run: file 49–56 → 9 MiB, slab_reclaimable 2–3 → 1 MiB (the first:
+1,644 → 9 MiB file, 67 → 11 MiB slab). Ungated shape check (load 11–12, 6 runs per side):
+
+| cold, first_ms | Go | tsc-rs head |
+|---|---|---|
+| runs | 198, 201, 205, 196, 194, 198 | 195, 200, 198, 192, 200, 187 |
+
+Cold is a tie. Nothing in tsc-rs makes it slower than Go on cold caches.
+
+### 5. Hono's two-project open: Go loads build and spec concurrently, tsc-rs serially
+Opening `src/index.ts` alone (in build and spec) makes one BFS level create both projects.
+Go's `findOrCreateDefaultConfiguredProjectWorker` (projectcollectionbuilder.go:1086,
+`core.BreadthFirstSearchParallelEx`) runs `updateProgram` for both in goroutines; tsc-rs's
+`core_bfs::breadth_first_search_parallel_ex` (frontend/core_bfs.rs:139) visits them in queue
+order on the dispatch thread (projectcollectionbuilder.rs:1790, `update_program` at the
+`ProjectLoadKind::CREATE` branch). Diagnostics bin, `GOPORT_LOAD_TIMES`: build 352 files 43–52 ms,
+then spec 846 files 68–79 ms, back to back. Even so (ungated, load 13–16, goport bins):
+Go 91 / 110 ms (and one 1,374 ms first run), tsc-rs 73 / 85 / 88 ms. The serial sum is still
+not slower than Go's concurrent pair, because each tsc-rs load is cheaper.
+
+The open12 session never puts two loads on one level: its third file is a test (build fails the
+composite include check without a load) and its fourth is a source file (spec is already
+loaded). So this serial path is not in open12's timeline.
+
+### 6. Gated reproduction (warm): tsc-rs is faster than Go
+`open12-runs.py`, 7 rounds, sides alternating, each run started at 1-minute load < 1.5 (1.37–1.47
+before, 1.40–1.47 after; no repeats). Results `~/.cache/perf-rearch/p2/repro1/`. Bins: Go oracle
+`tsgo-lsp-oracle-3e9236361fa9`, head W2's `tsgo-w2head-64014edb4-goport` (the compiler source of
+this branch: `git diff a8392a002 HEAD -- crates` is empty).
+
+| first_ms | runs | median | range |
+|---|---|---|---|
+| Go | 142.6, 121.8, 113.6, 116.5, 118.4, 124.8, 111.5 | **118.4** | 111.5–142.6 |
+| tsc-rs head | 108.6, 105.1, 111.3, 111.4, 106.7, 100.0, 93.6 | **106.7** | 93.6–111.4 |
+
+The other processes used 1.1–1.4 cores during the runs (one Go run 6.1); bench.py's 1.0-core
+limit would have repeated most of them on both sides, so the machine was not fully idle, alike for
+both. **tsc-rs is 0.90× Go's time.** CPU: Go 1.1–1.3 s, tsc-rs 0.5–0.6 s.
+
+### 7. umami ttfd (L1's method), gated
+`bench.sh lsp --scenarios ttfd --runs 5` (1 warm-up per cell, load < 1.5; results
+`~/.cache/perf-rearch/p2/ttfd/run/`): Go **302 ms** [283–356], tsc-rs head **292 ms** [283–339]
+(0.97×). CPU 3.36 s against 1.45 s. Same as L1's 280 against 288 within the spread.
+
+### 8. Cold (page cache dropped), gated: here tsc-rs is behind
+`open12-runs.py --cold`, 5 rounds, load < 1.5 (results `~/.cache/perf-rearch/p2/cold1/`). The
+reclaim dropped the file pages every run (40–47 → 0 MiB); slab stayed at 3 MiB from round 2, so
+the dentries of the touched paths were probably not dropped (this part of "boot-cold" is not
+emulated).
+
+| first_ms | r1 | r2 | r3 | r4 | r5 | median r2–r5 |
+|---|---|---|---|---|---|---|
+| Go | 1,929.6 (first open 1,794 ms) | 231.9 | 228.6 | 215.2 | 288.9 | **230** |
+| tsc-rs head | 287.7 | 286.2 | 263.0 | 267.7 | 292.3 | **277** |
+
+Other processes used 0.2–12 cores in these runs (r4: 0.2–0.3 on both: Go 215, tsc-rs 268).
+Per open, cold minus warm (medians): the spec load (open 3) Go +80 ms (128 against 47), tsc-rs
++118 ms (163 against 45); the build load (open 4) Go +1 ms, tsc-rs +0–25 ms. Opens 1 and 2 are
+not slower than Go's. Go's own first cold run (1.9 s, the first open) is far worse than any
+tsc-rs run.
+
+Load-view counters of the spec load (diagnostics bin, warm): 4,017 demands, 3,685 worker hits,
+**332 misses** (309 stats, 16 reads, 7 realpaths) that the loader thread makes itself, in its
+serial order. Warm they cost about 1–2 ms; cold, each is a disk access on the loading thread.
+Default parse workers: `ThreadBudget::parse_threads` 8 (jemalloc), so 7 workers beside the
+loader; Go runs one goroutine per parse task and its blocked syscalls take extra Ms, so its I/O
+depth is about the file count of a BFS-of-imports level.
+
+### 9. Cold again, with 31 parse threads: the cold gap does not hold
+Same `--cold` method, 6 rounds, 3 sides (head with `GOPORT_PARSE_THREADS=31` as `head31`),
+results `~/.cache/perf-rearch/p2/cold2/`. The reclaim dropped the file pages every run (41–48 →
+1 MiB), but this time init (binary page-in) took 42–45 ms against 97–124 ms in section 8, and the
+loads were near warm speed: the reads were served from the Windows host's cache of the VM disk,
+which nothing here can drop.
+
+| first_ms, r2–r6 | median | runs |
+|---|---|---|
+| Go | **131.4** | 159.5, 131.4, 123.5, 143.7, 126.9 |
+| tsc-rs head | **124.7** | 124.7, 132.2, 116.8, 122.0, 129.7 |
+| head, 31 parse threads | 140.3 | 174.6, 206.3, 135.8, 132.1, 140.3 |
+
+More parse workers make it slower, so I/O depth is not the limit. Section 8's gap (277 against
+230 ms) appears only when the host's cache is cold too, which can't be reproduced on demand.
+Section 8's 332 loader-thread misses are the candidate for that case (each is a serial disk
+access there); not proven.
+
+## Result
+- **No serial or waiting defect in tsc-rs's open12.** The 4.5× of window 2 compares a run 7 s
+  after a VM boot (536 ms) with a warm Go run (120 ms); all three of W2's outliers (Go 301, main
+  623, head 536) were the first run after a boot. Gated warm: tsc-rs 106.7 ms against Go 118.4 ms.
+- Both servers handle the opens one at a time (session.go:318 `DidOpenFile` under
+  `snapshotUpdateMu`; tsc-rs session.rs:466), and first_ms is the sum of four loading opens.
+  tsc-rs is faster on three of them; Go is faster on the build load (8–18 against 17–26 ms).
+- Go loads the projects of one BFS level concurrently (projectcollectionbuilder.go:1086);
+  tsc-rs visits them serially (core_bfs.rs, projectcollectionbuilder.rs:1790). It doesn't
+  occur in open12; opening `src/index.ts` alone loads build and spec back to back, and tsc-rs is
+  still not slower (73–88 against 91–110 ms, ungated). Loading them in parallel would give about
+  max(build, spec) instead of their sum (about 30–40 ms less), but the builder, the hosts and the
+  program state are `Rc`/`RefCell` and thread-local: that is a redesign of the language
+  service's threading, not a lane-sized change, and nothing in the ≤ Go goal needs it now.
+- **Fix (tooling):** bench.py waits `BOOT_SETTLE` (300) s after the VM's boot before any gated
+  run and records `uptime_s` per run. `open12-runs.py` waits the same.
