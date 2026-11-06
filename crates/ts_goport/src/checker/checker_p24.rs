@@ -2900,4 +2900,136 @@ type I = A & M;
             }
         }
     }
+
+    /// A member lookup and shape query case: `instantiatedReferenceLazyMembers.ts`
+    /// of microsoft/TypeScript#64475 (head 2aefafb51b54) and its `.errors.txt`
+    /// baseline, which the PR made on unmodified main. It covers generic
+    /// inheritance, private members, weak types, callable types and index
+    /// signatures on instantiated class and interface references. Base,
+    /// head and Go at the pin give the same 10 diagnostics.
+    const MEMBER_CASE_NAME: &str = "instantiatedReferenceLazyMembers.ts";
+    const MEMBER_CASE: &str =
+        include_str!("../../tests/fixtures/lazy_members/instantiatedReferenceLazyMembers.ts");
+    const MEMBER_ERRORS: &str = include_str!(
+        "../../tests/fixtures/lazy_members/instantiatedReferenceLazyMembers.errors.txt"
+    );
+
+    /// Loads `name` with `text` (strict, target esnext, noEmit), checks the
+    /// file, and calls `f` with the checker, the diagnostics in the
+    /// `.errors.txt` header format and the types of the file's type aliases
+    /// in source order. Each call writes its file in a temp dir of its own.
+    fn with_checked<R: Send + 'static>(
+        name: &'static str,
+        text: &str,
+        f: impl FnOnce(&mut Checker, String, Vec<TypeId>) -> R + Send + 'static,
+    ) -> R {
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("ts_goport_members_{}_{call}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+        std::fs::write(
+            dir.join("tsconfig.json"),
+            format!(
+                r#"{{ "compilerOptions": {{ "strict": true, "target": "esnext", "noEmit": true }}, "files": [{name:?}] }}"#
+            ),
+        )
+        .unwrap();
+        let config = dir.join("tsconfig.json");
+        let program = crate::program::try_load_version(&config.to_string_lossy(), |_| {})
+            .unwrap_or_else(|e| panic!("cannot load {}: {e}", config.display()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let scope = crate::core::enter_program(Some(program));
+        let file = program
+            .source_files()
+            .find(|file| file.info.file_name.ends_with(&format!("/{name}")))
+            .expect("the test file is not in the program")
+            .root;
+        let result = crate::program::with_type_checker_for_file(file, move |checker| {
+            let ctx = crate::gostd::context::background();
+            let mut errors = String::new();
+            for diagnostic in checker.get_diagnostics_exported(&ctx, file) {
+                let text = crate::program::format_diagnostic(&diagnostic);
+                // Keep the path from the file name on, as the baseline has it.
+                for line in text.lines() {
+                    errors.push_str(line.find(name).map_or(line, |i| &line[i..]));
+                    errors.push('\n');
+                }
+            }
+            let types = file
+                .statements()
+                .iter()
+                .filter(|s| s.kind() == SyntaxKind::TypeAliasDeclaration)
+                .map(|alias| checker.get_type_from_type_node(alias.type_()))
+                .collect();
+            f(checker, errors, types)
+        });
+        drop(scope);
+        crate::program::release_program(program);
+        result
+    }
+
+    /// The case as the compiler runner compiles it: the `// @` option lines
+    /// and the blank line after them are not in the unit, so the baseline
+    /// lines count from the first comment line.
+    fn member_case_unit() -> String {
+        MEMBER_CASE
+            .lines()
+            .skip_while(|line| line.starts_with("// @") || line.trim().is_empty())
+            .map(|line| format!("{line}\n"))
+            .collect()
+    }
+
+    /// The diagnostic lines at the top of a `.errors.txt` baseline.
+    fn baseline_header(baseline: &str) -> String {
+        let mut header = String::new();
+        for line in baseline.lines().map(|line| line.trim_end_matches('\r')) {
+            if line.is_empty() {
+                break;
+            }
+            header.push_str(line);
+            header.push('\n');
+        }
+        header
+    }
+
+    fn members_resolved(c: &Checker, t: TypeId) -> bool {
+        c.ty(t)
+            .object_flags
+            .intersects(ObjectFlags::MEMBERS_RESOLVED)
+    }
+
+    /// The member case gives Go's 10 diagnostics (13 header lines: two
+    /// diagnostics have related lines).
+    #[test]
+    fn member_case_diagnostics_match_go() {
+        let expected = baseline_header(MEMBER_ERRORS);
+        assert_eq!(expected.lines().count(), 13, "baseline header");
+        let diagnostics = expected
+            .lines()
+            .filter(|line| line.starts_with(MEMBER_CASE_NAME))
+            .count();
+        assert_eq!(diagnostics, 10, "baseline diagnostics");
+        let errors = with_checked(MEMBER_CASE_NAME, &member_case_unit(), |_, errors, _| errors);
+        assert_eq!(errors, expected);
+    }
+
+    /// A member lookup on an instantiated reference resolves its full member
+    /// table: an own member is found and the type's members are resolved.
+    #[test]
+    fn member_lookup_resolves_full_table() {
+        const LOOKUPS: &str = r#"
+interface Base<T> { value: T; shared: string; }
+interface Derived<T> extends Base<T[]> { own: T; shared: "derived"; }
+type T0 = Derived<number>;
+"#;
+        with_checked("a.ts", LOOKUPS, |c, _, types| {
+            let t = types[0];
+            assert!(!members_resolved(c, t));
+            let own = c.get_property_of_type(t, "own");
+            assert!(own.is_some());
+            assert!(members_resolved(c, t), "the lookup resolved the full table");
+        });
+    }
 }
