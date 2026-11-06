@@ -737,3 +737,12 @@ once a **reconciliation step** is built and tested.
       (`runs/recheck-a8392a002-lsp`).
   - **The interim rule is dropped.** The brief now says to add refills after
     any lspdiff edit.
+- **2026-11-05/06: WSL VM power-offs.** Clean shutdowns started from the
+  Windows side cancelled D1-I3 and W2. D1-I3 was resumed from its worktree,
+  and W2's resumable unit `w2-resume.service` is running again.
+- **W2 partial results** (in `~/.cache/perf-rearch/window2/run/gap.md`):
+  - CLI emit and emit-js: 0.47–0.61× Go.
+  - Warm incremental `--noEmit` after an edit: 0.50–0.58× Go.
+  - **hono 12-open first request: 0.536 s against Go's 0.120 s (4.5×
+    slower) with less CPU.** Lane P2 is investigating. Most likely the opens
+    or the project loads run serially.
