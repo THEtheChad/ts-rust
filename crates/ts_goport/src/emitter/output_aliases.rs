@@ -182,76 +182,80 @@ impl Scanner {
     /// directory. `last`: the component is the output itself, whose kind
     /// sets `all_regular`.
     fn step(&mut self, place: Place, component: Component, links: &mut usize, last: bool) -> Place {
-        match component {
-            Component::Prefix(_) | Component::RootDir => match place {
-                Place::Existing(mut dir) => {
-                    dir.push(component.as_os_str());
-                    Place::Existing(dir)
-                }
-                missing => missing,
-            },
-            Component::CurDir => place,
-            Component::ParentDir => match place {
-                Place::Existing(dir) => Place::Existing(
-                    dir.parent()
-                        .map_or_else(|| dir.clone(), OsPathBuf::to_path_buf),
-                ),
-                // `base/rest` with one component less (`rest` is never
-                // empty): back at `base` when it was the last.
-                Place::Missing { base, mut rest } => {
-                    rest.pop();
-                    if rest.is_empty() {
-                        Place::Existing(base)
-                    } else {
-                        Place::Missing { base, rest }
-                    }
-                }
-            },
-            Component::Normal(name) => match place {
-                Place::Missing { base, mut rest } => {
-                    rest.push(name.to_os_string());
-                    Place::Missing { base, rest }
-                }
-                Place::Existing(dir) => {
-                    let entry = dir.join(name);
-                    let Ok(meta) = std::fs::symlink_metadata(&entry) else {
-                        return Place::Missing {
-                            base: dir,
-                            rest: vec![name.to_os_string()],
-                        };
-                    };
-                    if !meta.file_type().is_symlink() {
-                        if last && !meta.file_type().is_file() {
-                            self.all_regular = false;
-                        }
-                        return Place::Existing(entry);
-                    }
-                    if last {
-                        self.all_regular = false;
-                    }
-                    *links += 1;
-                    let target = match std::fs::read_link(&entry) {
-                        Ok(target) if *links <= MAX_LINKS => target,
-                        // A link loop or an unreadable link: the write
-                        // fails wherever it is; key it here.
-                        _ => {
-                            return Place::Missing {
-                                base: dir,
-                                rest: vec![name.to_os_string()],
-                            };
-                        }
-                    };
-                    let mut place = if target.is_absolute() {
-                        Place::Existing(PathBuf::new())
-                    } else {
-                        Place::Existing(dir)
-                    };
-                    for component in target.components() {
-                        place = self.step(place, component, links, false);
-                    }
-                    place
-                }
-            },
+        match (component, place) {
+            (Component::Prefix(_) | Component::RootDir, Place::Existing(mut dir)) => {
+                dir.push(component.as_os_str());
+                Place::Existing(dir)
+            }
+            (Component::Prefix(_) | Component::RootDir | Component::CurDir, place) => place,
+            (Component::ParentDir, place) => parent_of(place),
+            (Component::Normal(name), Place::Missing { base, mut rest }) => {
+                rest.push(name.to_os_string());
+                Place::Missing { base, rest }
+            }
+            (Component::Normal(name), Place::Existing(dir)) => self.enter(dir, name, links, last),
+        }
+    }
+
+    /// The entry `name` of the existing directory `dir`: missing, an
+    /// existing entry, or a link, whose target is resolved from `dir`.
+    fn enter(
+        &mut self,
+        dir: PathBuf,
+        name: &std::ffi::OsStr,
+        links: &mut usize,
+        last: bool,
+    ) -> Place {
+        let entry = dir.join(name);
+        let missing = |dir: PathBuf| Place::Missing {
+            base: dir,
+            rest: vec![name.to_os_string()],
+        };
+        let Ok(meta) = std::fs::symlink_metadata(&entry) else {
+            return missing(dir);
+        };
+        let is_link = meta.file_type().is_symlink();
+        if last && (is_link || !meta.file_type().is_file()) {
+            self.all_regular = false;
+        }
+        if !is_link {
+            return Place::Existing(entry);
+        }
+        *links += 1;
+        let target = match std::fs::read_link(&entry) {
+            Ok(target) if *links <= MAX_LINKS => target,
+            // A link loop or an unreadable link: the write fails wherever
+            // it is; key it here.
+            _ => return missing(dir),
+        };
+        let mut place = if target.is_absolute() {
+            Place::Existing(PathBuf::new())
+        } else {
+            Place::Existing(dir)
+        };
+        for component in target.components() {
+            place = self.step(place, component, links, false);
+        }
+        place
+    }
+}
+
+/// `place` with one component less: the parent of an existing directory
+/// (the root stays), or `base/rest` without its last component (`rest` is
+/// never empty), back at `base` when it was the last.
+fn parent_of(place: Place) -> Place {
+    match place {
+        Place::Existing(dir) => Place::Existing(
+            dir.parent()
+                .map_or_else(|| dir.clone(), OsPathBuf::to_path_buf),
+        ),
+        Place::Missing { base, mut rest } => {
+            rest.pop();
+            if rest.is_empty() {
+                Place::Existing(base)
+            } else {
+                Place::Missing { base, rest }
+            }
         }
     }
 }
