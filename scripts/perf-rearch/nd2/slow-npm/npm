@@ -1,0 +1,12 @@
+#!/bin/bash
+# Lane ND2 probe: an npm that waits ND2_NPM_DELAY seconds (default 0), then runs the real npm (the
+# next npm on PATH after this dir), and appends "<start> <end> <rc> <args>" (epoch seconds) to
+# ND2_NPM_TIMES when set. First on a language server's PATH, a delay makes ATA's npm calls slower than
+# the scenario's checkpoints: the watch-ts-pattern-f12 load race on demand.
+self=$(cd "$(dirname -- "$0")" && pwd)
+t0=$(date +%s.%N)
+sleep "${ND2_NPM_DELAY:-0}"
+PATH=$(printf %s "$PATH" | tr : '\n' | grep -vx "$self" | paste -sd:)
+npm "$@"; rc=$?
+[ -n "${ND2_NPM_TIMES:-}" ] && echo "$t0 $(date +%s.%N) $rc $*" >> "$ND2_NPM_TIMES"
+exit $rc
