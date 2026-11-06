@@ -40,7 +40,7 @@ import oracle  # noqa: E402  (difffuzz: corpus case writer and runner)
 import seeds  # noqa: E402
 from difffuzz import DEFAULT_UPSTREAM  # noqa: E402
 
-SETTINGS = ['c1', 'c2', 'c4', 'c8', 'c16', 'fast', 'faststeal', 'fastnolazy']
+SETTINGS = ['c1', 'c2', 'c4', 'c8', 'c16']
 DEFAULT = 'c4'
 VARIANTS = ['noemit', 'emit', 'extdiag']
 TIMEOUT = 600
@@ -133,12 +133,12 @@ def run_projects(args):
     print(f'projects: done {done}', flush=True)
 
 
-PROBE_SETTINGS = ['c1', 'c4', 'fast']
+PROBE_SETTINGS = ['c1', 'c4']
 
 
 def probe_config(p, c, out, launch):
     """The checker count of each probed setting for one config: one `types_<n>.json` trace per checker
-    (--generateTrace, as tsgo_fast.rs counts them). Runs on the overlay, so the project never changes."""
+    (--generateTrace). Runs on the overlay, so the project never changes."""
     name = f'{p["name"]}__{c["label"]}'
     dest = out / 'probe' / f'{name}.json'
     if dest.exists():

@@ -137,49 +137,6 @@ fn skip_to_aligned_grow() {
     std::hint::black_box(&mut grow);
 }
 
-/// fastmode2: the manual arenas (`arenas.create`) of the process, with true
-/// while a checker holds one. A checker gives its arena back when its thread
-/// ends (`ManualArena`), so the pools of watch mode and `tsc -b` reuse the
-/// arenas: jemalloc keeps an arena until the process ends.
-static MANUAL_ARENAS: Mutex<Vec<(u32, bool)>> = Mutex::new(Vec::new());
-
-/// A manual arena that a checker thread holds (`ArenaClaims::claim`). The
-/// drop gives it back to `MANUAL_ARENAS`: keep it until the thread ends.
-pub struct ManualArena(u32);
-
-impl Drop for ManualArena {
-    fn drop(&mut self) {
-        let mut arenas = MANUAL_ARENAS.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, held)) = arenas.iter_mut().find(|(arena, _)| *arena == self.0) {
-            *held = false;
-        }
-    }
-}
-
-/// Moves this thread to a manual arena that no checker holds, made with
-/// `arenas.create` (and laid out for B) when there is none. None when
-/// jemalloc refuses.
-fn take_manual_arena() -> Option<ManualArena> {
-    let mut arenas = MANUAL_ARENAS.lock().unwrap_or_else(PoisonError::into_inner);
-    let slot = match arenas.iter().position(|&(_, held)| !held) {
-        Some(slot) => {
-            b"thread.arena\0".name().write(arenas[slot].0).ok()?;
-            slot
-        }
-        None => {
-            let arena = Access::<u32>::read(b"arenas.create\0".name()).ok()?;
-            arenas.push((arena, false));
-            b"thread.arena\0".name().write(arena).ok()?;
-            if layout_enabled() {
-                skip_to_aligned_grow();
-            }
-            arenas.len() - 1
-        }
-    };
-    arenas[slot].1 = true;
-    Some(ManualArena(arenas[slot].0))
-}
-
 /// The auto arenas that the checkers of one pool hold. Not a Go port
 /// (arenabind0, arenabind1).
 ///
@@ -196,10 +153,6 @@ fn take_manual_arena() -> Option<ManualArena> {
 /// With many arenas (a user `_RJEM_MALLOC_CONF` without `narenas`) or one
 /// thread per arena (no watcher), jemalloc already gives each checker an
 /// arena of its own, and `claim` moves none.
-///
-/// fastmode1: fast mode can start more checkers than auto arenas. Then a
-/// checker that finds no free auto arena gets a manual arena of its own
-/// (`crate::fast_mode::own_arenas`, `take_manual_arena`).
 pub struct ArenaClaims {
     /// Bit i: arena i is an auto arena below 64.
     auto: u64,
@@ -228,27 +181,24 @@ impl ArenaClaims {
     /// empties an arena (jemalloc purges every free page of an arena that
     /// loses its last thread). Keeps jemalloc's choice when every auto arena
     /// has a checker, when the arena is not an auto arena below 64, and when
-    /// jemalloc refuses the move (`percpu_arena`). In fast mode, when every
-    /// auto arena has a checker, moves the thread to a manual arena and
-    /// returns it: keep it until the thread ends.
-    pub fn claim(&self) -> Option<ManualArena> {
+    /// jemalloc refuses the move (`percpu_arena`).
+    pub fn claim(&self) {
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-        let own = Access::<u32>::read(b"thread.arena\0".name()).ok()?;
+        let Ok(own) = Access::<u32>::read(b"thread.arena\0".name()) else {
+            return;
+        };
         let own = 1u64.checked_shl(own).unwrap_or(0) & self.auto;
         if *held & own == 0 {
             *held |= own;
-            return None;
+            return;
         }
         let free = self.auto & !*held;
         if free == 0 {
-            return crate::fast_mode::own_arenas()
-                .then(take_manual_arena)
-                .flatten();
+            return;
         }
         let arena = free.trailing_zeros();
         if b"thread.arena\0".name().write(arena).is_ok() {
             *held |= 1 << arena;
         }
-        None
     }
 }

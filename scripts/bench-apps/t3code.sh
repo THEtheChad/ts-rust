@@ -63,7 +63,7 @@ TS6E="node --max-old-space-size=16384 $work/ts6effect/node_modules/typescript/li
 if [[ ${PREPARE_ONLY:-0} == 1 ]]; then echo ready; exit 0; fi
 # --composite false: apps/web is composite, which needs incremental.
 F="--noEmit --incremental false --composite false"
-names=(tsc6 tsc7 tsc-rs tsc-rs-fast bun)
+names=(tsc6 tsc7 tsc-rs bun)
 sel=()
 for i in "${!names[@]}"; do [[ " ${TOOLS:-${names[*]}} " == *" ${names[$i]} "* ]] && sel+=("$i"); done
 tag=${TOOLS:+.${TOOLS// /+}}
@@ -76,11 +76,10 @@ for p in $PROJECTS; do
     if [[ $mode == noeffect ]]; then
       c=tsconfig.noeffect.json
       cmds=("$TS6 -p $c $F --pretty false" "$GO -p $c $F --pretty false" "$RS -p $c $F --pretty false"
-            "$RS -p $c $F --fast --pretty false" "$BUN check -p $c $F --no-pretty --all")
+            "$BUN check -p $c $F --no-pretty --all")
     else
       c=tsconfig.json
       cmds=("$TS6E -p $c $F --pretty false" "$GOE -p $c $F --pretty false" "$RS -p $c $F --pretty false"
-            "$RS -p $c $F --fast --pretty false"
             "sh -c '$BUN check -p $c $F --no-pretty --all; rc=\$?; [ \"\$rc\" -le 2 ] || exit \"\$rc\"; $ETSGO diagnostics --project $PWD/$c --format text'")
     fi
     out=$work/results/t3-$slug-$mode$tag

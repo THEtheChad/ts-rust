@@ -1166,12 +1166,8 @@ thread_local! {
 // program finds it.
 pub(super) fn start_checker_associations(program: &NewProgram) {
     let files = &program.files;
-    // The count of `program::checker_count`. Fast mode picks its own.
-    if program.single_threaded()
-        || crate::fast_mode::enabled()
-        || crate::fast_mode::cost_split_enabled()
-        || cfg!(target_family = "wasm")
-    {
+    // The count of `program::checker_count`.
+    if program.single_threaded() || cfg!(target_family = "wasm") {
         return;
     }
     let checker_count = program

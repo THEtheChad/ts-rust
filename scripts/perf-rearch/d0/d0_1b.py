@@ -7,7 +7,7 @@ the output key and the monitor's summary: event counts per kind, the peaks of ev
 first time each milestone was crossed. `report` applies firing policies offline (margins on the peaks), so one
 run serves every margin.
 
-  d0_1b.py run projects --tsgo BIN --out DIR [--jobs 2] [--runs 1] [--steal-runs 3] [--only REGEX]
+  d0_1b.py run projects --tsgo BIN --out DIR [--jobs 2] [--runs 1] [--only REGEX]
   d0_1b.py run corpus   --tsgo BIN --out DIR [--jobs 4] [--count N]
   d0_1b.py run fixtures --tsgo BIN --out DIR --fixtures FXDIR
   d0_1b.py report --out DIR
@@ -118,8 +118,7 @@ def run_projects(args):
     jobs = []
     for (n, p, c, v) in items:
         for s in SETTINGS:
-            runs = args.steal_runs if s == 'faststeal' else args.runs
-            jobs += [(n, p, c, v, s, k) for k in range(runs)]
+            jobs += [(n, p, c, v, s, k) for k in range(args.runs)]
     print(f'projects: {len(items)} items, {len(jobs)} runs', flush=True)
 
     def one(j):
@@ -202,7 +201,7 @@ def run_corpus(args):
     print(f'corpus: done {done}', flush=True)
 
 
-FIXTURE_SETTINGS = ['c1', 'c2', 'c4', 'c8', 'c16', 'fast', 'faststeal']
+FIXTURE_SETTINGS = ['c1', 'c2', 'c4', 'c8', 'c16']
 
 
 def run_fixtures(args):
@@ -221,15 +220,15 @@ def run_fixtures(args):
         row['go'] = {'code': go.returncode, 'stdout': go.stdout.decode('utf-8', 'replace')}
         for s in FIXTURE_SETTINGS:
             runs = []
-            for k in range(3 if s == 'faststeal' else 1):
-                mpath = mon_dir(out) / f'fx-{fx.name}.{s}.{k}.jsonl'
-                mpath.unlink(missing_ok=True)
-                r = subprocess.run(['env', f'GOPORT_PARTITION_MONITOR={mpath}', launch[s], '-p', '.', '--pretty',
-                                    'false'], cwd=fx, capture_output=True, env=pc.ENV)
-                runs.append({'code': r.returncode, 'stdout': r.stdout.decode('utf-8', 'replace'),
-                             'stdoutSha': d0.sha(r.stdout), 'stderrSha': d0.sha(r.stderr), 'tree': {},
-                             'monitor': read_monitor(mpath)})
-                mpath.unlink(missing_ok=True)
+            k = 0
+            mpath = mon_dir(out) / f'fx-{fx.name}.{s}.{k}.jsonl'
+            mpath.unlink(missing_ok=True)
+            r = subprocess.run(['env', f'GOPORT_PARTITION_MONITOR={mpath}', launch[s], '-p', '.', '--pretty',
+                                'false'], cwd=fx, capture_output=True, env=pc.ENV)
+            runs.append({'code': r.returncode, 'stdout': r.stdout.decode('utf-8', 'replace'),
+                         'stdoutSha': d0.sha(r.stdout), 'stderrSha': d0.sha(r.stderr), 'tree': {},
+                         'monitor': read_monitor(mpath)})
+            mpath.unlink(missing_ok=True)
             row[s] = runs
         res[fx.name] = row
         print('fixture', fx.name, flush=True)
@@ -451,7 +450,6 @@ def main():
     r.add_argument('--out', required=True)
     r.add_argument('--jobs', type=int, default=2)
     r.add_argument('--runs', type=int, default=1)
-    r.add_argument('--steal-runs', type=int, default=3)
     r.add_argument('--only')
     r.add_argument('--count', type=int, default=0)
     r.add_argument('--fixtures')
