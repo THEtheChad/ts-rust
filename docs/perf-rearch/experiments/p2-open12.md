@@ -98,3 +98,18 @@ not slower than Go's concurrent pair, because each tsc-rs load is cheaper.
 The open12 session never puts two loads on one level: its third file is a test (build fails the
 composite include check without a load) and its fourth is a source file (spec is already
 loaded). So this serial path is not in open12's timeline.
+
+### 6. Gated reproduction (warm): tsc-rs is faster than Go
+`open12-runs.py`, 7 rounds, sides alternating, each run started at 1-minute load < 1.5 (1.37–1.47
+before, 1.40–1.47 after; no repeats). Results `~/.cache/perf-rearch/p2/repro1/`. Bins: Go oracle
+`tsgo-lsp-oracle-3e9236361fa9`, head W2's `tsgo-w2head-64014edb4-goport` (the compiler source of
+this branch: `git diff a8392a002 HEAD -- crates` is empty).
+
+| first_ms | runs | median | range |
+|---|---|---|---|
+| Go | 142.6, 121.8, 113.6, 116.5, 118.4, 124.8, 111.5 | **118.4** | 111.5–142.6 |
+| tsc-rs head | 108.6, 105.1, 111.3, 111.4, 106.7, 100.0, 93.6 | **106.7** | 93.6–111.4 |
+
+The other processes used 1.1–1.4 cores during the runs (one Go run 6.1); bench.py's 1.0-core
+limit would have repeated most of them on both sides, so the machine was not fully idle, alike for
+both. **tsc-rs is 0.90× Go's time.** CPU: Go 1.1–1.3 s, tsc-rs 0.5–0.6 s.
