@@ -21,7 +21,8 @@
 // Writes <out prefix>.dump (the load dump), <out prefix>.stream (the whole message
 // stream in order, see below; the proof compares it) and <out prefix>.json (a summary:
 // server requests, notifications other than window/logMessage, responses, diagnostics).
-// Server env passes through (GOPORT_FIRST_LOAD_AHEAD).
+// Server env passes through (GOPORT_RESOLVE_AHEAD=0 and GOPORT_LOAD_TIMES in a
+// `diagnostics` build).
 // S1A_FILE / S1A_FILE2: the file to open (relative to root / second root), else the first
 // of lspdiff's pickFiles.
 import { readFileSync, writeFileSync, rmSync, existsSync, cpSync, mkdirSync, unlinkSync, readdirSync, symlinkSync } from "node:fs";

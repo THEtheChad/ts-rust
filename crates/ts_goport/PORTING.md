@@ -1293,8 +1293,7 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   worker count), because such a job mostly waits for the mapper. The
   compiler host, the `tsc -b` project host and the watch host take part
   (`CompilerHost::prefetch_content_mapped`); the language server
-  transforms on its dispatch thread. `GOPORT_MAPPED_PREFETCH=0` turns the
-  worker transforms off.
+  transforms on its dispatch thread.
 - A thread that runs Go code (the work thread of a binary, the parse,
   bind, checker, emit, search and goroutine threads, the `tsc -b` config
   and build info threads, the file watcher thread and the LSP read thread)

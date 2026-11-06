@@ -41,13 +41,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use xxhash_rust::xxh3::xxh3_128;
 
-/// Tests (diagnostics): how the program loads on a thread resolve ahead
-/// (`set_mode`). Shipped builds always resolve ahead (`On`).
+/// Tests and proof tools (diagnostics): how the program loads on a thread
+/// resolve ahead (`set_mode`, `GOPORT_RESOLVE_AHEAD`). Shipped builds always
+/// resolve ahead (`On`).
 #[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// No resolve ahead: the loader resolves every key itself, as a load
-    /// whose host has no resolve-ahead view does (the serial oracle).
+    /// whose host has no resolve-ahead view does (the serial oracle;
+    /// `GOPORT_RESOLVE_AHEAD=0`).
     Off,
     /// The shipped behavior: the workers resolve while the loader runs.
     On,
@@ -59,7 +61,7 @@ pub enum Mode {
 #[cfg(feature = "diagnostics")]
 thread_local! {
     /// `set_mode` on this thread.
-    static MODE: Cell<Mode> = const { Cell::new(Mode::On) };
+    static MODE: Cell<Option<Mode>> = const { Cell::new(None) };
     /// `set_first_load` on this thread.
     static FIRST_LOAD: Cell<bool> = const { Cell::new(true) };
     /// The counts of the last resolve-ahead load on this thread.
@@ -70,18 +72,27 @@ thread_local! {
     static AFTER_WORKERS: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
-/// Tests (diagnostics): sets the mode of the program loads on this thread
-/// (`None`: `Mode::On`).
+/// Tests (diagnostics): sets the mode of the program loads on this thread,
+/// in place of `GOPORT_RESOLVE_AHEAD` (`None`: the variable again).
 #[cfg(feature = "diagnostics")]
 pub fn set_mode(mode: Option<Mode>) {
-    MODE.with(|m| m.set(mode.unwrap_or(Mode::On)));
+    MODE.with(|m| m.set(mode));
 }
 
-/// Tests (diagnostics): the mode of a program load on this thread.
+/// Diagnostics: the mode of a program load on this thread: the test's
+/// choice, else `Mode::Off` when `GOPORT_RESOLVE_AHEAD` is `0` (the serial
+/// loader of the load-dump proofs, scripts/perf-rearch/loader/l1-dumps.sh
+/// and l1-replay-oracle.sh), else `Mode::On`.
 #[cfg(feature = "diagnostics")]
 #[must_use]
 pub fn mode() -> Mode {
-    MODE.with(Cell::get)
+    static ENV: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
+    MODE.with(Cell::get).unwrap_or_else(|| {
+        *ENV.get_or_init(|| match std::env::var("GOPORT_RESOLVE_AHEAD").as_deref() {
+            Ok("0") => Mode::Off,
+            _ => Mode::On,
+        })
+    })
 }
 
 /// Whether the program loads on this thread resolve ahead: always, unless

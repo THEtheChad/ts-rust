@@ -1649,13 +1649,11 @@ impl FileLoader {
     /// transform opened the mapper project, keeps what the workers send
     /// the later transforms with. Go opens the project on the first
     /// transform too, so no request goes out that Go does not send.
-    /// `GOPORT_MAPPED_PREFETCH=0` turns it off (an A/B switch).
     // PORT: not in Go (see `concurrent_transforms`).
     fn note_content_mapper_transform(&self, mapper: &Rc<Mapper>) {
         let key = Rc::as_ptr(mapper);
         if self.concurrent_transforms.borrow().contains_key(&key)
             || !self.host.prefetch_content_mapped()
-            || std::env::var_os("GOPORT_MAPPED_PREFETCH").is_some_and(|value| value == "0")
         {
             return;
         }
@@ -3112,8 +3110,8 @@ fn emit_syntax_for_usage(
 /// from` or `export .. from` in `file_name`, the most common form. A parse
 /// worker resolves the synthetic imports with this mode. It resolves the
 /// imports with it too when it has no usages that fit them: a job without
-/// a prep (`GOPORT_LOAD_PREP=0`, a cached file, a bundled lib, or no
-/// metadata), `GOPORT_LOAD_NAMES=0`, or names that are not those of its
+/// a prep (a cached file, a bundled lib, no metadata, or a loader that
+/// takes no worker answers), or names that are not those of its
 /// references. A wrong guess only resolves another cache key: the loader
 /// resolves each import with its real mode, and takes a worker answer only
 /// when the answer has that mode (`FilePrep::answer`).
@@ -3240,8 +3238,8 @@ pub(crate) fn make_synthetic_import(
 #[cfg(test)]
 mod tests {
     use super::super::files_parser::{
-        early_pools_taken, names_own, preps_taken, set_job_map, set_load_commit, set_load_names,
-        set_load_prep, set_meta_wait, set_move_up, set_prep_wait, start_default_lib_prefetch,
+        early_pools_taken, names_own, preps_taken, set_meta_wait, set_prep_wait,
+        start_default_lib_prefetch,
     };
     use super::*;
     use crate::frontend::bundled;
@@ -3610,14 +3608,13 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
                 "declare var nodeIsh: number;\n",
             ),
         ];
-        set_load_prep(Some(true));
         let before = preps_taken();
         let with_prep = parallel_load("prep_on", tsconfig, &files);
         let taken = preps_taken() - before;
-        set_load_prep(Some(false));
-        let without_prep = parallel_load("prep_off", tsconfig, &files);
-        set_load_prep(None);
-        assert_eq!(with_prep, without_prep);
+        // A load with no parse workers: the loader resolves every name
+        // itself.
+        let single = load_text("prep_single", tsconfig, &files, true, None);
+        assert_eq!(with_prep, single);
         assert!(with_prep.contains(r#"module "lib""#), "{with_prep}");
         // With no parse workers (one CPU, or `GOPORT_PARSE_THREADS=0`) the
         // loader resolves every name itself.
@@ -3745,8 +3742,6 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         ];
         // With no parse workers the loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        set_load_prep(Some(true));
-        set_load_names(Some(true));
         set_meta_wait(workers);
         set_prep_wait(workers);
         PREPS_NAMED.with(|files| files.borrow_mut().clear());
@@ -3756,29 +3751,12 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         let (taken, own) = (preps_taken() - taken, names_own() - own);
         let named = PREPS_NAMED.with(|files| std::mem::take(&mut *files.borrow_mut()));
         let committed = PREPS_COMMITTED.with(|files| std::mem::take(&mut *files.borrow_mut()));
-        set_load_commit(Some(false));
-        let without_commit = parallel_load("names_commit_off", tsconfig, &files);
-        set_load_commit(None);
-        assert!(
-            PREPS_COMMITTED.with(|files| files.borrow().is_empty()),
-            "a commit with GOPORT_LOAD_COMMIT=0"
-        );
-        // loadpar3b step A: the loader finds the jobs under the queue lock.
-        set_job_map(Some(false));
-        let without_job_map = parallel_load("names_job_map_off", tsconfig, &files);
-        set_job_map(None);
         set_meta_wait(false);
         set_prep_wait(false);
-        set_load_names(Some(false));
-        let without_names = parallel_load("names_off", tsconfig, &files);
-        set_load_names(None);
-        set_load_prep(Some(false));
-        let without_prep = parallel_load("names_prep_off", tsconfig, &files);
-        set_load_prep(None);
-        assert_eq!(with_names, without_commit);
-        assert_eq!(with_names, without_job_map);
-        assert_eq!(with_names, without_names);
-        assert_eq!(with_names, without_prep);
+        // A load with no parse workers: the loader resolves every name
+        // itself.
+        let single = load_text("names_single", tsconfig, &files, true, None);
+        assert_eq!(with_names, single);
         assert!(
             with_names.contains(r#"module "lib" ModuleKind(1)"#),
             "{with_names}"
@@ -3909,19 +3887,6 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         );
         assert_eq!(other, single);
         assert_eq!(early_pools_taken() - before, 0);
-        // The move-up of queued jobs (`GOPORT_PREFETCH_MOVE_UP`) changes only
-        // the order of the worker parses: the load with it off, in this
-        // process, finds the same.
-        set_move_up(Some(false));
-        let no_move_up = load_text(
-            "early_no_move_up",
-            tsconfig,
-            &files,
-            false,
-            Some(&bundled::lib_path()),
-        );
-        set_move_up(None);
-        assert_eq!(no_move_up, single);
     }
 
     /// A program with a project reference (`lib`) that it loads by the
@@ -3989,9 +3954,8 @@ export const a: T | Dep | number = x + (h as never);
     // threaded load finds.
     #[test]
     fn workers_resolve_with_the_reference_redirect_of_the_loader() {
-        let load = |label: &str, prep: bool, single_threaded: bool| {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && !single_threaded);
+        let load = |label: &str, single_threaded: bool| {
+            set_meta_wait(!single_threaded);
             let text = load_text(
                 label,
                 REFERENCE_TSCONFIG,
@@ -3999,12 +3963,10 @@ export const a: T | Dep | number = x + (h as never);
                 single_threaded,
                 None,
             );
-            set_load_prep(None);
             set_meta_wait(false);
             text
         };
-        let single = load("refs_st", false, true);
-        assert_eq!(load("refs_prep_off", false, false), single);
+        let single = load("refs_st", true);
         for name in [
             "lib/out/index.d.ts",
             "lib/out/helper.d.ts",
@@ -4030,7 +3992,7 @@ export const a: T | Dep | number = x + (h as never);
         let mut fitted = [false; 3];
         for run in 0..20 {
             PREP_FITS.with(|fits| fits.borrow_mut().clear());
-            assert_eq!(load(&format!("refs_prep_on_{run}"), true, false), single);
+            assert_eq!(load(&format!("refs_prep_on_{run}"), false), single);
             let fits = PREP_FITS.with(|fits| std::mem::take(&mut *fits.borrow_mut()));
             assert!(fits.iter().all(|(_, fit)| *fit), "unfit preps: {fits:?}");
             for (index, name) in redirected.iter().enumerate() {
@@ -4066,24 +4028,22 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
             ("lib/out/amb.d.ts", AMBIENT),
             ("src/z.ts", "import \"../lib/src/amb\";\nexport {};\n"),
         ]);
-        let load = |label: &str, prep: bool, single_threaded: bool| {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && !single_threaded);
-            set_prep_wait(prep && !single_threaded);
+        let load = |label: &str, single_threaded: bool| {
+            set_meta_wait(!single_threaded);
+            set_prep_wait(!single_threaded);
             let text = load_text(label, REFERENCE_TSCONFIG, &files, single_threaded, None);
-            set_load_prep(None);
             set_meta_wait(false);
             set_prep_wait(false);
             text
         };
-        let single = load("ambient_trace_st", false, true);
+        let single = load("ambient_trace_st", true);
         let trace = format!(
             "trace TS{} [\"amb\", \"<dir>/lib/out/amb.d.ts\"]",
             diag::Module_0_was_resolved_as_locally_declared_ambient_module_in_file_1.code()
         );
         assert!(single.contains(&trace), "{single}");
         PREPS_COMMITTED.with(|files| files.borrow_mut().clear());
-        assert_eq!(load("ambient_trace_prep_on", true, false), single);
+        assert_eq!(load("ambient_trace_prep_on", false), single);
         let committed = PREPS_COMMITTED.with(|files| std::mem::take(&mut *files.borrow_mut()));
         assert!(
             !committed
@@ -4282,48 +4242,39 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         // With no parse workers (one CPU, or `GOPORT_PARSE_THREADS=0`) the
         // loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        for prep in [true, false] {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && workers);
-            let before = crate::frontend::module::cache::adopted_package_jsons();
-            let (processed, dir, cwd) =
-                load_with_workers(&format!("keeps_package_jsons_{prep}"), tsconfig, &files);
-            for path in ["package.json", "node_modules/lib/package.json"] {
-                std::fs::write(dir.join(path), r#"{ "name": "changed" }"#).unwrap();
-            }
-            let resolver = processed
-                .resolver
-                .as_ref()
-                .and_then(|resolver| resolver.as_default_resolver())
-                .expect("the default resolver");
-            // The name in the package.json of the package scope of `path`.
-            let name = |path: &str| {
-                resolver
-                    .get_package_scope_for_path(path)
-                    .and_then(|entry| entry.contents.clone())
-                    .map(|contents| contents.fields.header_fields.name.get_value().0)
-            };
-            // The resolver gives a node_modules file by its real path (Go
-            // `resolutionState.realPath`, module/resolver.go:1859), so the
-            // scope of `lib/index.d.ts` is under the real path of the dir.
-            // On macOS the temp dir is under /var, a symlink to /private/var.
-            let real = osvfs_fs().realpath(&cwd);
-            let names = (
-                name(&format!("{cwd}/src")),
-                name(&format!("{real}/node_modules/lib")),
-            );
-            let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
-            let _ = std::fs::remove_dir_all(&dir);
-            assert_eq!(
-                names,
-                (Some("app".to_string()), Some("lib".to_string())),
-                "prep {prep}"
-            );
-            if prep && workers {
-                assert!(adopted > 0, "no worker package.json taken");
-            }
+        set_meta_wait(workers);
+        let before = crate::frontend::module::cache::adopted_package_jsons();
+        let (processed, dir, cwd) = load_with_workers("keeps_package_jsons", tsconfig, &files);
+        for path in ["package.json", "node_modules/lib/package.json"] {
+            std::fs::write(dir.join(path), r#"{ "name": "changed" }"#).unwrap();
         }
-        set_load_prep(None);
+        let resolver = processed
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.as_default_resolver())
+            .expect("the default resolver");
+        // The name in the package.json of the package scope of `path`.
+        let name = |path: &str| {
+            resolver
+                .get_package_scope_for_path(path)
+                .and_then(|entry| entry.contents.clone())
+                .map(|contents| contents.fields.header_fields.name.get_value().0)
+        };
+        // The resolver gives a node_modules file by its real path (Go
+        // `resolutionState.realPath`, module/resolver.go:1859), so the
+        // scope of `lib/index.d.ts` is under the real path of the dir.
+        // On macOS the temp dir is under /var, a symlink to /private/var.
+        let real = osvfs_fs().realpath(&cwd);
+        let names = (
+            name(&format!("{cwd}/src")),
+            name(&format!("{real}/node_modules/lib")),
+        );
+        let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(names, (Some("app".to_string()), Some("lib".to_string())));
+        if workers {
+            assert!(adopted > 0, "no worker package.json taken");
+        }
         set_meta_wait(false);
     }
 
@@ -4375,13 +4326,11 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
                 ..Default::default()
             },
         );
-        set_load_prep(Some(true));
         set_meta_wait(true);
         let before = crate::frontend::module::cache::adopted_package_jsons();
         let (processed, dir, cwd) =
             load_with_workers_on("no_package_json_reads", tsconfig, &files, fs);
         let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
-        set_load_prep(None);
         set_meta_wait(false);
         let _ = std::fs::remove_dir_all(&dir);
         let resolver = processed
@@ -4421,7 +4370,6 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         *PANIC_IN_JOB.lock().unwrap() = Some(a.clone());
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            set_load_prep(Some(true));
             set_meta_wait(true);
             let tsconfig = r#"{ "compilerOptions": { "module": "nodenext", "types": [],
                  "noEmit": true }, "include": ["src"] }"#;
@@ -4474,7 +4422,6 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         *PANIC_IN_JOB.lock().unwrap() = Some(output.clone());
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            set_load_prep(Some(true));
             set_meta_wait(true);
             let (processed, dir, _) =
                 load_with_workers(label, REFERENCE_TSCONFIG, &REFERENCE_FILES);
@@ -4535,40 +4482,33 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         ];
         // With no parse workers the loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        for prep in [true, false] {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && workers);
-            set_answer_wait(prep && workers);
-            let (processed, dir, cwd) = load_with_workers(
-                &format!("keeps_answer_package_jsons_{prep}"),
-                tsconfig,
-                &files,
-            );
-            std::fs::write(
-                dir.join("node_modules/lib/package.json"),
-                r#"{ "name": "changed" }"#,
-            )
-            .unwrap();
-            let resolver = processed
-                .resolver
-                .as_ref()
-                .and_then(|resolver| resolver.as_default_resolver())
-                .expect("the default resolver");
-            let cache = &resolver.package_json_info_cache;
-            let package_json = format!("{cwd}/node_modules/lib/package.json");
-            // The loader took the answer for "lib" and did not read the file.
-            let loader_read = cache.contains_key(&cache.key(&package_json));
-            let name = resolver
-                .get_package_scope_for_path(&format!("{cwd}/node_modules/lib"))
-                .and_then(|entry| entry.contents.clone())
-                .map(|contents| contents.fields.header_fields.name.get_value().0);
-            let _ = std::fs::remove_dir_all(&dir);
-            assert_eq!(name, Some("lib".to_string()), "prep {prep}");
-            if prep && workers {
-                assert!(!loader_read, "the loader read the package.json of lib");
-            }
+        set_meta_wait(workers);
+        set_answer_wait(workers);
+        let (processed, dir, cwd) =
+            load_with_workers("keeps_answer_package_jsons", tsconfig, &files);
+        std::fs::write(
+            dir.join("node_modules/lib/package.json"),
+            r#"{ "name": "changed" }"#,
+        )
+        .unwrap();
+        let resolver = processed
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.as_default_resolver())
+            .expect("the default resolver");
+        let cache = &resolver.package_json_info_cache;
+        let package_json = format!("{cwd}/node_modules/lib/package.json");
+        // The loader took the answer for "lib" and did not read the file.
+        let loader_read = cache.contains_key(&cache.key(&package_json));
+        let name = resolver
+            .get_package_scope_for_path(&format!("{cwd}/node_modules/lib"))
+            .and_then(|entry| entry.contents.clone())
+            .map(|contents| contents.fields.header_fields.name.get_value().0);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(name, Some("lib".to_string()));
+        if workers {
+            assert!(!loader_read, "the loader read the package.json of lib");
         }
-        set_load_prep(None);
         set_meta_wait(false);
         set_answer_wait(false);
     }

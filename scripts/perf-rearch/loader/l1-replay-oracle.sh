@@ -14,7 +14,8 @@
 # The replay must equal the record in every dump record and every stream message
 # (dump-sections.py with the record as the reference); replay_miss must be 0. A replayed
 # view is not reconciled (it holds no live observation); the record's disk does not change
-# during its session. Needs a bin built with the `diagnostics` cargo feature.
+# during its session. Needs bins built with the `diagnostics` cargo feature (the base too: its
+# serial loader, GOPORT_RESOLVE_AHEAD=0, and the load dump are compiled only with it).
 # usage: l1-replay-oracle.sh <tsgo bin, diagnostics build> <base tsgo bin> <out dir>   (ONLY=<regex> picks cases)
 set -u
 bin=$(realpath "$1"); base=$(realpath "$2"); mkdir -p "$3"; out=$(realpath "$3")
