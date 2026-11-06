@@ -800,3 +800,15 @@ once a **reconciliation step** is built and tested.
     - IDENTITY OK, 66/66: 20 items split, 13 forced fallbacks proven;
     - 0 raw divergences with fallbacks off.
   - **Next:** a focused Astra recheck, then the validation campaign.
+- **2026-11-06, D1-I3 round 3; `fix/output-layout-serial` merged.**
+  - **Ordinary layout:** no symlink or reparse point, ancestors are dirs,
+    existing outputs are regular with nlink 1, no case-fold collision, and
+    every read succeeds. Ordinary layouts write in parallel; any other layout
+    writes everything serially in program order.
+  - **Smaller:** `output_aliases.rs` went 501 → 363 lines.
+  - **Determinism:** all repros give 20/20 in every mode.
+  - **No slowdown:** umami icount −0.1 to −0.3%.
+  - **Identity:** mirrors the compiler's core count (cgroup v1/v2 through
+    mountinfo). The coverage checks fail closed, and 9 mutation controls fail.
+  - **D1 `521601cfe`:** parity full OK; IDENTITY OK, 66/66.
+  - **Next:** a narrow Astra recheck, then the campaign.
