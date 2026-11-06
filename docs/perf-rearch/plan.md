@@ -866,3 +866,25 @@ once a **reconciliation step** is built and tested.
   - **Timing:** forced late fallbacks are report-only.
   - **Windows disk:** `C:\tsrs-scratch` is approved for the case-insensitive
     file-system checks only. It is cleaned up afterwards.
+- **2026-11-06, CV2-prep done** (`t3/checker-split-campaign` `7ae1f2f28`).
+  - **New witnesses:**
+    - a warm-count divergence when all count triggers are off;
+    - `layout-ascii` nondeterminism on the case-insensitive `/mnt/c` folder;
+    - a relation-budget overflow;
+    - a template-literal size case.
+  - **Holdouts:** date-fns, nest and vue-core now reach the certified route.
+  - **Cost gates:** natural runs ≤ Go; the memory cap at c4's peak must
+    complete.
+  - **Self-tests:** 45/45.
+  - **Detection only by evidence or coverage (unobservable in output on every
+    input found):** the cycle triggers (TypeScript marks every stack
+    participant), the collection triggers, and the conservative bound
+    variants. That informs the future policy decision; every fallback stays.
+  - **`GlobalDiagnosticVariant`** is excluded as unreachable by audit, with
+    its reason recorded.
+  - **`ConstraintDepth` has no witness.** Root decision: if CV2 can't build
+    one, record it as unreachable-by-search with the attempts listed, for
+    Astra's campaign review to accept or reject. Its fallback stays on, so an
+    unwitnessed trigger only falls back more often.
+  - **Estimate:** about 20.6 machine-hours, 5.5–6.5 h wall here.
+  - **CV2 starts after D1-I4 lands** and the mutant patch is rebased.
