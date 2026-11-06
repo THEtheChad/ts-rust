@@ -888,3 +888,25 @@ once a **reconciliation step** is built and tested.
     unwitnessed trigger only falls back more often.
   - **Estimate:** about 20.6 machine-hours, 5.5–6.5 h wall here.
   - **CV2 starts after D1-I4 lands** and the mutant patch is rebased.
+- **2026-11-06, D1-I4 done** (branch `t3/memory-aware-fallback`, head
+  `4004b75e8`, code `e42526dbb`; the campaign branch is merged in).
+  - **Memory-aware N:** the largest n whose estimated peak plus 10% fits the
+    budget, else exact. A runtime `MemoryBudget` guard falls back at 95% of
+    the budget and releases pages before the exact attempt.
+    - Calibration: tight on large programs, loose on small ones; type-fest is
+      the 10× outlier, which the guard covers.
+    - Every capped run (1.0×, 1.25× and 1.5× c4's peak) gives Go's bytes.
+  - **Early fires:** bounds and cycle agreement are checked at file and job
+    boundaries; the time from a fire to the fallback dropped from 50–100 ms to
+    about 2 ms.
+  - **Natural fallbacks, all under Go:** zod 0.49×, react-hook-form 0.63×,
+    ts-pattern tests 0.57×, rxjs 0.58×.
+  - **Forced late fallback** (vscode, report-only): +4.5% against Go.
+  - **Gates:** identity 66/66. Parity full lost 3 `watch-ts-pattern-f12`
+    items as rs-nondet at load 31; the LSP rerun at low load lost 0.
+  - **Next:**
+    - CV2: rebase the mutant patch, add mutants for `MemoryBudget` and the
+      early fires, freeze, run.
+    - An Astra review of D1-I4, in parallel.
+    - ND2: the `watch-ts-pattern-f12` rs-nondet. It's the third time; tsc-rs
+      or the harness is racy under load.
