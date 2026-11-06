@@ -16,13 +16,14 @@ const take = (flag) => {
 };
 const count = Number(take("--files") ?? 12);
 const out = take("--out");
+const only = take("--open"); // one file (relative to the project) instead of pickFiles' 12
 const [bin, root] = args;
 if (!bin || !root) {
-  console.error("usage: node scripts/perf-rearch/p2/open12-timeline.mjs <server binary> <project dir> [--files N] [--out FILE]");
+  console.error("usage: node scripts/perf-rearch/p2/open12-timeline.mjs <server binary> <project dir> [--files N] [--open FILE] [--out FILE]");
   process.exit(2);
 }
 process.env.GOPORT_LAUNCH = "0";
-const files = pickFiles(resolve(root), count);
+const files = only ? [resolve(root, only)] : pickFiles(resolve(root), count);
 const t0 = performance.now();
 const client = await startServer([bin, "--lsp", "--stdio"], resolve(root), { ata: false, stderr: process.stderr });
 const initMs = performance.now() - t0;

@@ -70,3 +70,31 @@ page cache (binaries, shared libraries, hono's files) and the dentry/inode cache
 evict` reproduces only the page-cache part (it can't drop dentries without root). The remaining
 question is whether tsc-rs is slower than Go *boot-cold*: Go's one boot-cold run (301 ms, 33 s
 after its boot) against tsc-rs's two (536, 623 ms, 7–9 s after theirs) suggests up to 2×.
+
+### 4. Boot-cold emulation without root: the runner's own cgroup, reclaimed
+`open12-runs.py --cold` copies hono (and both binaries) inside its own systemd unit, so their page
+cache, dentries and inodes are charged to that cgroup, and before each run writes
+`memory.reclaim` of its own cgroup (the unit has `MemorySwapMax=0`, so only file pages and
+reclaimable slab go). Per run: file 49–56 → 9 MiB, slab_reclaimable 2–3 → 1 MiB (the first:
+1,644 → 9 MiB file, 67 → 11 MiB slab). Ungated shape check (load 11–12, 6 runs per side):
+
+| cold, first_ms | Go | tsc-rs head |
+|---|---|---|
+| runs | 198, 201, 205, 196, 194, 198 | 195, 200, 198, 192, 200, 187 |
+
+Cold is a tie. Nothing in tsc-rs makes it slower than Go on cold caches.
+
+### 5. Hono's two-project open: Go loads build and spec concurrently, tsc-rs serially
+Opening `src/index.ts` alone (in build and spec) makes one BFS level create both projects.
+Go's `findOrCreateDefaultConfiguredProjectWorker` (projectcollectionbuilder.go:1086,
+`core.BreadthFirstSearchParallelEx`) runs `updateProgram` for both in goroutines; tsc-rs's
+`core_bfs::breadth_first_search_parallel_ex` (frontend/core_bfs.rs:139) visits them in queue
+order on the dispatch thread (projectcollectionbuilder.rs:1790, `update_program` at the
+`ProjectLoadKind::CREATE` branch). Diagnostics bin, `GOPORT_LOAD_TIMES`: build 352 files 43–52 ms,
+then spec 846 files 68–79 ms, back to back. Even so (ungated, load 13–16, goport bins):
+Go 91 / 110 ms (and one 1,374 ms first run), tsc-rs 73 / 85 / 88 ms. The serial sum is still
+not slower than Go's concurrent pair, because each tsc-rs load is cheaper.
+
+The open12 session never puts two loads on one level: its third file is a test (build fails the
+composite include check without a load) and its fourth is a source file (spec is already
+loaded). So this serial path is not in open12's timeline.

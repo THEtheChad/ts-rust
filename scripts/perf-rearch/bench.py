@@ -22,6 +22,10 @@ GO_LSP_DEFAULT = HOME / ".local/bin/tsgo-lsp-oracle-3e9236361fa9"
 MAX_LOAD = float(os.environ.get("MAX_LOAD", "1.5"))
 REPEAT_LOAD = float(os.environ.get("REPEAT_LOAD", "3"))
 OTHER_CORES = float(os.environ.get("OTHER_CORES", "1.0"))
+# Lane P2: a run never starts in the first BOOT_SETTLE seconds after the VM booted. WSL shuts the VM down without
+# warning; the first runs after a boot find every cache cold and the other agents restarting (W2's open12 outliers:
+# 301, 623 and 536 ms, each 7-33 s after a boot, against 91-138 ms warm).
+BOOT_SETTLE = float(os.environ.get("BOOT_SETTLE", "300"))
 CLI_SCENARIOS = ["noemit", "emit", "emit-js", "emit-cjs", "single", "icount", "icount-emit", "icount-emit-js",
                  "icount-emit-cjs", "incr", "incr-edit", "build"]
 LSP_SCENARIOS = ["concurrent", "probe", "ttfd", "open12"]
@@ -76,7 +80,7 @@ lsp options (project umami unless --project DIR)
 Method (docs/perf-rearch/brief.md): every run waits for the 1-minute load < MAX_LOAD (1.5). Labels are interleaved
 run by run (the order rotates each run). Load is recorded before and after each run. A run is repeated (at most
 twice) when the load after it is above REPEAT_LOAD (3) plus the load the run itself adds (its CPU/wall, decayed as
-the kernel's 1-minute average). Each CLI run records wall, user+sys CPU, max RSS (wait4 rusage;
+the kernel's 1-minute average). No run starts within BOOT_SETTLE (300) s of the VM's boot. Each CLI run records wall, user+sys CPU, max RSS (wait4 rusage;
 GOPORT_LAUNCH is left at its default and the tool is a child
 subreaper, so tsc-rs's worker is measured too, see run_measured), exit code, a hash of stdout+stderr, the CPU the rest of the machine used
 during the run (/proc/stat), and for emit a hash of the emitted tree. The table reports median and spread
@@ -98,14 +102,18 @@ def machine_busy_s():
     return (sum(vals[:8]) - idle) / os.sysconf("SC_CLK_TCK")
 
 
+def uptime_s():
+    return float(open("/proc/uptime").read().split()[0])
+
+
 def wait_quiet(log):
     waited = 0
     while True:
         l = load1()
-        if l < MAX_LOAD:
+        if l < MAX_LOAD and uptime_s() >= BOOT_SETTLE:
             return l
         if waited % 300 == 0:
-            log(f"  waiting for load < {MAX_LOAD} (now {l})")
+            log(f"  waiting for load < {MAX_LOAD} (now {l}) and {BOOT_SETTLE:.0f} s after boot (now {uptime_s():.0f})")
         time.sleep(10)
         waited += 10
 
@@ -316,7 +324,7 @@ def gated_run(rec, desc, fn, ungated=False):
         self_load = (cpu / wall if wall else 0) * (1 - decay)
         limit = REPEAT_LOAD + self_load
         other = r.get("other_cpu", 0) / wall if wall else 0
-        r.update(load_before=before, load_after=after, load_limit=round(limit, 2), attempt=attempt,
+        r.update(uptime_s=round(uptime_s()), load_before=before, load_after=after, load_limit=round(limit, 2), attempt=attempt,
                  other_cores=round(other, 2))
         instr = f" instr {r['instr'] / 1e9:.3f}G" if r.get("instr") else ""
         rec.log(f"  {desc}: wall {wall:.3f}s cpu {cpu:.2f}s rss {r.get('maxrss_mb', 0) or 0:.0f}MB rc {r.get('rc')}"
