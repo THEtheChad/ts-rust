@@ -105,7 +105,7 @@ impl ProgramLike for CompilerProgram {
 /// `tsgo` command): any other `WriteFile` (tests, bins) keeps the barrier,
 /// so no callback sees its writes held. With an output path that exists
 /// and is not a regular file it keeps the barrier too
-/// (`plain_emit_outputs_are_regular_files`).
+/// (`program_emit::start_plain_emit`).
 ///
 /// When the rules do not allow it, or the semantic diagnostics are not
 /// asked for (syntactic, option or global errors, `--listFilesOnly`),
@@ -177,13 +177,11 @@ impl ProgramLike for EarlyEmitCompilerProgram {
         // While the checkers check: with an output path that is not a
         // regular file, the emit waits for the check (Go's order), as with
         // the rules off; the checks and reads sent above are the barrier's.
-        if crate::emitter::program_emit::plain_emit_outputs_are_regular_files() {
-            let emit = crate::emitter::program_emit::start_plain_emit(&EmitOptions {
+        self.started.borrow_mut().emit =
+            crate::emitter::program_emit::start_plain_emit(&EmitOptions {
                 write_file: self.write_file.clone(),
                 ..EmitOptions::default()
             });
-            self.started.borrow_mut().emit = Some(emit);
-        }
         check.wait()
     }
     fn get_declaration_diagnostics(&self, file: Node) -> Vec<Diagnostic> {
