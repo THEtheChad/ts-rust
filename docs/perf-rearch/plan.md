@@ -757,3 +757,32 @@ once a **reconciliation step** is built and tested.
     opening `src/index.ts`. It would need an LS threading redesign.
   - **Host-cold disk:** one session lost about 35 ms on the spec load. Not
     reproducible on demand.
+- **2026-11-06, D1-I3 done** (branch `t3/checker-split-review-fixes`,
+  candidate `3d65c3bc5`). All of Astra's I2 findings are fixed.
+  - **Fresh files** exclude globally exposed modules (scripts, augmentations,
+    UMD) and everything they reach. t3-server still commits.
+  - **Bound tool:** it fails on a bad run, and its `--go-count` mode compares
+    against an instrumented pinned Go. Go's real peaks equal Rust c4's, and
+    the margin to 5M is 17%.
+  - **Diagnostics builds** hash the protected state at each attempt and pool
+    creation.
+  - **Cycles:** synthetic node identities are rejected, and end-to-end tests
+    were added.
+  - **Identity manifest:** inputs are frozen.
+  - **Umami:** the +3.8% doesn't reproduce (10-run A/B: I1 483, I2 477, I3
+    482 ms).
+  - **New D1 bug fixed** (`3d65c3bc5`): on `fuzz/1:16682` the certified path
+    lost Go's JS output written before a panic.
+  - **Gates:**
+    - Parity full OK.
+    - Identity 66/66.
+    - Wall time vs Go: t3-server 0.27×, umami 0.36×, vscode 0.33×.
+- **2026-11-06, `fix/aliased-output-order` merged into perf/first-principles.**
+  - **Fix:** outputs that alias one file are written in program order, which
+    removes tsc-rs nondeterminism on the shipped c4 path. Go is GO-BROKEN
+    there: 8 hashes in 8 runs.
+  - **Parity:** quick OK. In the full run, cli, tests and fuzz were clean;
+    2 LSP items were rs-nondet under host load, and the LSP rerun was clean.
+  - **Backlog (harness):** the `watch-ts-pattern-f12` session is timing-racy
+    on both sides: Go varies (0016, 0018), and tsc-rs was rs-nondet under
+    load. Add event barriers.
