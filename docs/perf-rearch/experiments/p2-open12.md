@@ -113,3 +113,32 @@ this branch: `git diff a8392a002 HEAD -- crates` is empty).
 The other processes used 1.1–1.4 cores during the runs (one Go run 6.1); bench.py's 1.0-core
 limit would have repeated most of them on both sides, so the machine was not fully idle, alike for
 both. **tsc-rs is 0.90× Go's time.** CPU: Go 1.1–1.3 s, tsc-rs 0.5–0.6 s.
+
+### 7. umami ttfd (L1's method), gated
+`bench.sh lsp --scenarios ttfd --runs 5` (1 warm-up per cell, load < 1.5; results
+`~/.cache/perf-rearch/p2/ttfd/run/`): Go **302 ms** [283–356], tsc-rs head **292 ms** [283–339]
+(0.97×). CPU 3.36 s against 1.45 s. Same as L1's 280 against 288 within the spread.
+
+### 8. Cold (page cache dropped), gated: here tsc-rs is behind
+`open12-runs.py --cold`, 5 rounds, load < 1.5 (results `~/.cache/perf-rearch/p2/cold1/`). The
+reclaim dropped the file pages every run (40–47 → 0 MiB); slab stayed at 3 MiB from round 2, so
+the dentries of the touched paths were probably not dropped (this part of "boot-cold" is not
+emulated).
+
+| first_ms | r1 | r2 | r3 | r4 | r5 | median r2–r5 |
+|---|---|---|---|---|---|---|
+| Go | 1,929.6 (first open 1,794 ms) | 231.9 | 228.6 | 215.2 | 288.9 | **230** |
+| tsc-rs head | 287.7 | 286.2 | 263.0 | 267.7 | 292.3 | **277** |
+
+Other processes used 0.2–12 cores in these runs (r4: 0.2–0.3 on both: Go 215, tsc-rs 268).
+Per open, cold minus warm (medians): the spec load (open 3) Go +80 ms (128 against 47), tsc-rs
++118 ms (163 against 45); the build load (open 4) Go +1 ms, tsc-rs +0–25 ms. Opens 1 and 2 are
+not slower than Go's. Go's own first cold run (1.9 s, the first open) is far worse than any
+tsc-rs run.
+
+Load-view counters of the spec load (diagnostics bin, warm): 4,017 demands, 3,685 worker hits,
+**332 misses** (309 stats, 16 reads, 7 realpaths) that the loader thread makes itself, in its
+serial order. Warm they cost about 1–2 ms; cold, each is a disk access on the loading thread.
+Default parse workers: `ThreadBudget::parse_threads` 8 (jemalloc), so 7 workers beside the
+loader; Go runs one goroutine per parse task and its blocked syscalls take extra Ms, so its I/O
+depth is about the file count of a BFS-of-imports level.
