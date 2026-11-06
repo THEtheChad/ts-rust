@@ -862,3 +862,7 @@ once a **reconciliation step** is built and tested.
   - **CV2-prep (campaign, in parallel):** witnesses for the 4 triggers and for
     cycle-key coarsening, and fixed holdout configs. Then CV2 freezes on the
     D1-I4 candidate.
+- **2026-11-06, two decisions from Chad:**
+  - **Timing:** forced late fallbacks are report-only.
+  - **Windows disk:** `C:\tsrs-scratch` is approved for the case-insensitive
+    file-system checks only. It is cleaned up afterwards.
