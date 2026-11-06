@@ -486,6 +486,126 @@ pub fn new_project(
     Rc::new(RefCell::new(project))
 }
 
+/// Go `CreateProgram`'s `createModuleResolver` (ts#64299).
+type CreateModuleResolver = Option<Rc<dyn Fn(module::ResolverOptions) -> Rc<dyn module::Resolver>>>;
+
+/// Go `CreateProgram`'s `cleanupModuleResolver`, which its resolver sets.
+type ResolverCleanup = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+
+/// The program that `Project::create_program` made, before the bind.
+struct ProgramBuild {
+    program: Rc<compiler::NewProgram>,
+    update_kind: ProgramUpdateKind,
+    /// The new program shares the old one's loads and parse cache counts
+    /// (`ReuseOutcome::reused_storage`).
+    program_cloned: bool,
+    /// Go clones the program (`ReuseOutcome::go_reuses`).
+    go_cloned: bool,
+    /// The parse cache entries of a cloned program.
+    file_refs: Option<ProgramFileRefs>,
+    #[cfg(feature = "diagnostics")]
+    reuse_outcome: Option<crate::frontend::compiler::ReuseOutcome>,
+}
+
+impl ProgramBuild {
+    fn new(program: Rc<compiler::NewProgram>) -> Self {
+        ProgramBuild {
+            program,
+            update_kind: ProgramUpdateKind::NEW_FILES,
+            program_cloned: false,
+            go_cloned: false,
+            file_refs: None,
+            #[cfg(feature = "diagnostics")]
+            reuse_outcome: None,
+        }
+    }
+}
+
+/// Go `p.host.builder`.
+fn project_builder(host: &CompilerHost) -> Rc<ProjectCollectionBuilder> {
+    host.builder
+        .borrow()
+        .clone()
+        .unwrap_or_else(|| crate::core::go_nil_dereference())
+}
+
+/// Go `CreateProgram`'s `CreateCheckerPool` option, and the cell that keeps
+/// the pool it made.
+// PORT: Go reads `p.host.sessionOptions.CheckerPoolOptions` when the
+// closure runs; the session options never change, so the value is
+// copied here. Go passes the method value `p.log`, whose body is
+// empty (`// !!!`); a closure that holds the project would make a
+// reference cycle (project -> program -> pool -> project), so the
+// pool gets an empty closure. Go reads the pool back with
+// `result.Program.GetCheckerPool().(*checkerPool)`; a Rust trait
+// object can not be downcast, so the closure also keeps the pool it
+// made and `CreateProgramResult.checker_pool` returns it.
+fn checker_pool_factory(
+    host: &CompilerHost,
+) -> (
+    Rc<RefCell<Option<Rc<CheckerPool>>>>,
+    ls_program::CreateCheckerPool,
+) {
+    let created_checker_pool: Rc<RefCell<Option<Rc<CheckerPool>>>> = Rc::new(RefCell::new(None));
+    let checker_pool_options = host.session_options.checker_pool_options.clone();
+    let created = created_checker_pool.clone();
+    let create_checker_pool: ls_program::CreateCheckerPool = Rc::new(
+        move |program: &Rc<compiler::NewProgram>| -> Rc<dyn ls_program::CheckerPool> {
+            let log: Rc<dyn Fn(&str)> = Rc::new(|_msg: &str| {
+                // Go: p.log(msg) (empty body)
+            });
+            let pool =
+                new_checker_pool(checker_pool_options.clone(), Rc::clone(program), Some(log));
+            *created.borrow_mut() = Some(pool.clone());
+            pool
+        },
+    );
+    (created_checker_pool, create_checker_pool)
+}
+
+/// Refs the duplicate source files of a cloned program (Go `CreateProgram`,
+/// tsgo#4712): `UpdateProgram` acquired only the changed file.
+fn ref_duplicate_source_files(builder: &ProjectCollectionBuilder, program: &compiler::NewProgram) {
+    for file in program.duplicate_source_files() {
+        if file.is_content_mapper_failure_stub {
+            continue;
+        }
+        if !file.content_mapper.is_empty() {
+            builder
+                .content_mapped_parse_cache
+                .ref_(&content_mapped_parse_cache_key_for_duplicate(file));
+        } else {
+            ref_program_file(
+                &builder.parse_cache,
+                &file.parse_options,
+                file.source_hash(),
+                file.script_kind,
+            );
+        }
+    }
+}
+
+/// Releases the acquire of the dirty file that `UpdateProgram` made before
+/// it fell back to a new program (Go `CreateProgram`).
+fn release_dirty_file(
+    builder: &ProjectCollectionBuilder,
+    dirty_file: &crate::frontend::parser::ParsedSourceFile,
+) {
+    if !dirty_file.content_mapper().is_empty() {
+        deref_content_mapped_file(
+            &builder.content_mapped_parse_cache,
+            &content_mapped_parse_cache_key_for_file(dirty_file),
+        );
+    } else {
+        deref_program_file(
+            &builder.parse_cache,
+            dirty_file.parse_options(),
+            dirty_file.source_hash(),
+            dirty_file.script_kind,
+        );
+    }
+}
+
 impl Project {
     // Go: project/project.go:328 Project.CurrentDirectory (ts#63935)
     pub fn current_directory(&self) -> String {
@@ -719,65 +839,92 @@ impl Project {
     // `ls_program::update_program(p.Program, ..)` (contract C3). Go
     // `ProgramOptions.CreateCheckerPool` is their last argument.
     pub fn create_program(&self) -> CreateProgramResult {
-        let mut update_kind = ProgramUpdateKind::NEW_FILES;
-        let mut program_cloned = false;
-        let mut go_cloned = false;
-        #[cfg(feature = "diagnostics")]
-        let mut reuse_outcome = None;
-        let new_program: Rc<compiler::NewProgram>;
-        let mut file_refs: Option<ProgramFileRefs> = None;
-
         let host = self
             .host
             .clone()
             .unwrap_or_else(|| crate::core::go_nil_dereference());
+        let (created_checker_pool, create_checker_pool) = checker_pool_factory(&host);
+        let (cleanup_module_resolver, create_module_resolver) = self.module_resolver_of(&host);
 
-        // PORT: Go reads `p.host.sessionOptions.CheckerPoolOptions` when the
-        // closure runs; the session options never change, so the value is
-        // copied here. Go passes the method value `p.log`, whose body is
-        // empty (`// !!!`); a closure that holds the project would make a
-        // reference cycle (project -> program -> pool -> project), so the
-        // pool gets an empty closure. Go reads the pool back with
-        // `result.Program.GetCheckerPool().(*checkerPool)`; a Rust trait
-        // object can not be downcast, so the closure also keeps the pool it
-        // made and `CreateProgramResult.checker_pool` returns it.
-        let created_checker_pool: Rc<RefCell<Option<Rc<CheckerPool>>>> =
-            Rc::new(RefCell::new(None));
-        let create_checker_pool: ls_program::CreateCheckerPool = {
-            let checker_pool_options = host.session_options.checker_pool_options.clone();
-            let created_checker_pool = created_checker_pool.clone();
-            Rc::new(
-                move |program: &Rc<compiler::NewProgram>| -> Rc<dyn ls_program::CheckerPool> {
-                    let log: Rc<dyn Fn(&str)> = Rc::new(|_msg: &str| {
-                        // Go: p.log(msg) (empty body)
-                    });
-                    let pool = new_checker_pool(
-                        checker_pool_options.clone(),
-                        Rc::clone(program),
-                        Some(log),
-                    );
-                    *created_checker_pool.borrow_mut() = Some(pool.clone());
-                    pool
-                },
-            )
+        // Create the command line, potentially augmented with typing files
+        let command_line = self.get_command_line_with_typings_files();
+
+        let same_command_line = match (&self.program, &command_line) {
+            (Some(program), Some(command_line)) => Rc::ptr_eq(program.command_line(), command_line),
+            _ => false,
+        };
+        let mut build = match &self.program {
+            Some(program) if !self.dirty_file_path.is_empty() && same_command_line => self
+                .update_dirty_program(program, &host, create_checker_pool, create_module_resolver),
+            _ => ProgramBuild::new(self.new_program_of(
+                &host,
+                command_line,
+                create_checker_pool,
+                create_module_resolver,
+            )),
         };
 
-        // ts#64299
-        // PORT: Go always passes `createModuleResolver`; without a factory it
-        // returns `module.NewResolver(options)`, which is the loader's own
-        // default. The port passes `None` then, so the loader keeps its
-        // default resolver and its parse-worker resolution (PERF, see
-        // `file_loader.rs`). Go `cleanupModuleResolver` is the shared cell;
-        // Go's `defer` runs it at the end of this function.
-        let cleanup_module_resolver: Rc<RefCell<Option<Box<dyn FnOnce()>>>> =
-            Rc::new(RefCell::new(None));
-        let create_module_resolver: Option<
-            Rc<dyn Fn(module::ResolverOptions) -> Rc<dyn module::Resolver>>,
-        > = self.module_resolver_factory.clone().map(|factory| {
+        if !build.go_cloned
+            && self
+                .program
+                .as_ref()
+                .is_some_and(|program| program.has_same_file_names(&build.program))
+        {
+            build.update_kind = ProgramUpdateKind::SAME_FILE_NAMES;
+        }
+
+        ls_program::bind_source_files(&build.program);
+
+        // Not in Go (perf/first-principles A1): the reuse verify mode and
+        // the reuse stats of a `diagnostics` feature build.
+        #[cfg(feature = "diagnostics")]
+        super::reuse_verify::after_update(self, &host, build.reuse_outcome, &build.program);
+
+        // Go: defer cleanupModuleResolver() (ts#64299)
+        let cleanup = cleanup_module_resolver.borrow_mut().take();
+        if let Some(cleanup) = cleanup {
+            cleanup();
+        }
+
+        // Not in Go: a program that is not cloned holds its counts through
+        // its own loads; collect their entries.
+        let file_refs = build.file_refs.unwrap_or_else(|| {
+            let builder = project_builder(&host);
+            ProgramFileRefs::new(
+                &builder.parse_cache,
+                &builder.content_mapped_parse_cache,
+                build.program.source_files(),
+                false,
+                None,
+                None,
+            )
+        });
+
+        let checker_pool = created_checker_pool.borrow().clone();
+        CreateProgramResult {
+            program: build.program,
+            update_kind: build.update_kind,
+            reused_storage: build.program_cloned,
+            checker_pool,
+            file_refs: Rc::new(file_refs),
+        }
+    }
+
+    /// Go `CreateProgram`'s `createModuleResolver` (ts#64299) and the cell
+    /// of its `cleanupModuleResolver`.
+    // PORT: Go always passes `createModuleResolver`; without a factory it
+    // returns `module.NewResolver(options)`, which is the loader's own
+    // default. The port passes `None` then, so the loader keeps its
+    // default resolver and its parse-worker resolution (PERF, see
+    // `file_loader.rs`). Go `cleanupModuleResolver` is the shared cell;
+    // Go's `defer` runs it at the end of `create_program`.
+    fn module_resolver_of(&self, host: &CompilerHost) -> (ResolverCleanup, CreateModuleResolver) {
+        let cleanup_module_resolver: ResolverCleanup = Rc::new(RefCell::new(None));
+        let create_module_resolver = self.module_resolver_factory.clone().map(|factory| {
             let cleanup_module_resolver = cleanup_module_resolver.clone();
             // Go: p.host.builder.ctx (ts#64519, project.go:529 at fed0bf24149f)
-            // PORT: read once here; the builder does not change while this
-            // function runs, and the closure runs only inside it.
+            // PORT: read once here; the builder does not change while
+            // `create_program` runs, and the closure runs only inside it.
             let ctx = host
                 .builder
                 .borrow()
@@ -793,172 +940,101 @@ impl Project {
                 });
             create
         });
+        (cleanup_module_resolver, create_module_resolver)
+    }
 
-        // Create the command line, potentially augmented with typing files
-        let command_line = self.get_command_line_with_typings_files();
-
-        let same_command_line = match (&self.program, &command_line) {
-            (Some(program), Some(command_line)) => Rc::ptr_eq(program.command_line(), command_line),
-            _ => false,
-        };
-        if !self.dirty_file_path.is_empty() && self.program.is_some() && same_command_line {
-            let program = self.program.as_deref().expect("checked above");
-            let host_rc: Rc<dyn compiler::CompilerHost> = host.clone();
-            let (updated_program, dirty_file, outcome) = ls_program::update_program(
-                program,
-                &self.dirty_file_path,
-                host_rc,
-                Some(create_checker_pool.clone()),
-                create_module_resolver.clone(),
-            );
-            new_program = updated_program;
-            // PORT (perf/first-principles A1): `program_cloned` is the
-            // storage (the new program shares the old one's loads and parse
-            // cache counts); the update kind is Go's. Go builds a new
-            // program where `outcome` is `ReusedSynthetic`, so the kind is
-            // then `SAME_FILE_NAMES` (below), as Go's `HasSameFileNames`
-            // finds for a program with the same files.
-            program_cloned = outcome.reused_storage();
-            go_cloned = outcome.go_reuses();
-            #[cfg(feature = "diagnostics")]
-            {
-                reuse_outcome = Some(outcome);
-            }
-            // Go: p.host.builder (read in each branch below)
-            let builder = || {
-                host.builder
-                    .borrow()
-                    .clone()
-                    .unwrap_or_else(|| crate::core::go_nil_dereference())
-            };
-            if program_cloned {
-                if go_cloned {
-                    update_kind = ProgramUpdateKind::CLONED;
-                }
-                let builder = builder();
-                // UpdateProgram acquired the changed file only, so we need to ref everything else
-                // PORT: through the old program's entries (`ProgramFileRefs`),
-                // so only the changed files build a key.
-                let old = self
-                    .program_file_refs
-                    .as_deref()
-                    .map(|old_refs| (program.source_files(), old_refs));
-                file_refs = Some(ProgramFileRefs::new(
-                    &builder.parse_cache,
-                    &builder.content_mapped_parse_cache,
-                    new_program.source_files(),
-                    true,
-                    dirty_file.as_ref(),
-                    old,
-                ));
-                for file in new_program.duplicate_source_files() {
-                    if !file.is_content_mapper_failure_stub {
-                        if !file.content_mapper.is_empty() {
-                            builder
-                                .content_mapped_parse_cache
-                                .ref_(&content_mapped_parse_cache_key_for_duplicate(file));
-                        } else {
-                            ref_program_file(
-                                &builder.parse_cache,
-                                &file.parse_options,
-                                file.source_hash(),
-                                file.script_kind,
-                            );
-                        }
-                    }
-                }
-            } else if let Some(dirty_file) = &dirty_file {
-                // UpdateProgram always acquires the dirty file before deciding whether it can
-                // reuse the old program. If it falls back to a full rebuild, release that
-                // speculative acquire so the rebuilt program is the only remaining owner.
-                if !dirty_file.content_mapper().is_empty() {
-                    deref_content_mapped_file(
-                        &builder().content_mapped_parse_cache,
-                        &content_mapped_parse_cache_key_for_file(dirty_file),
-                    );
-                } else {
-                    deref_program_file(
-                        &builder().parse_cache,
-                        dirty_file.parse_options(),
-                        dirty_file.source_hash(),
-                        dirty_file.script_kind,
-                    );
-                }
-            }
-        } else {
-            let mut typings_location = String::new();
-            let type_acquisition = self
-                .get_type_acquisition()
-                .unwrap_or_else(|| crate::core::go_nil_dereference());
-            if type_acquisition.enable.is_true() {
-                typings_location = host.session_options.typings_location.clone();
-            }
-            let host_rc: Rc<dyn compiler::CompilerHost> = host.clone();
-            new_program = ls_program::new_program(
-                compiler::ProgramOptions {
-                    host: host_rc,
-                    config: command_line.unwrap_or_else(|| crate::core::go_nil_dereference()),
-                    use_source_of_project_reference: true,
-                    single_threaded: Tristate::Unknown,
-                    typings_location,
-                    project_name: String::new(),
-                    // ts#64299
-                    create_module_resolver: create_module_resolver.clone(),
-                    // ts#64024: Go leaves `SkipModuleResolution` zero here.
-                    skip_module_resolution: false,
-                },
-                Some(create_checker_pool),
-            );
-        }
-
-        if !go_cloned
-            && self
-                .program
-                .as_ref()
-                .is_some_and(|program| program.has_same_file_names(&new_program))
-        {
-            update_kind = ProgramUpdateKind::SAME_FILE_NAMES;
-        }
-
-        ls_program::bind_source_files(&new_program);
-
-        // Not in Go (perf/first-principles A1): the reuse verify mode and
-        // the reuse stats of a `diagnostics` feature build.
+    /// Go `CreateProgram` with a dirty file and the same command line:
+    /// `p.Program.UpdateProgram(..)` and the parse cache refs of its result.
+    fn update_dirty_program(
+        &self,
+        program: &compiler::NewProgram,
+        host: &Rc<CompilerHost>,
+        create_checker_pool: ls_program::CreateCheckerPool,
+        create_module_resolver: CreateModuleResolver,
+    ) -> ProgramBuild {
+        let host_rc: Rc<dyn compiler::CompilerHost> = host.clone();
+        let (new_program, dirty_file, outcome) = ls_program::update_program(
+            program,
+            &self.dirty_file_path,
+            host_rc,
+            Some(create_checker_pool),
+            create_module_resolver,
+        );
+        let mut build = ProgramBuild::new(new_program);
+        // PORT (perf/first-principles A1): `program_cloned` is the
+        // storage (the new program shares the old one's loads and parse
+        // cache counts); the update kind is Go's. Go builds a new
+        // program where `outcome` is `ReusedSynthetic`, so the kind is
+        // then `SAME_FILE_NAMES` (`create_program`), as Go's
+        // `HasSameFileNames` finds for a program with the same files.
+        build.program_cloned = outcome.reused_storage();
+        build.go_cloned = outcome.go_reuses();
         #[cfg(feature = "diagnostics")]
-        super::reuse_verify::after_update(self, &host, reuse_outcome, &new_program);
-
-        // Go: defer cleanupModuleResolver() (ts#64299)
-        let cleanup = cleanup_module_resolver.borrow_mut().take();
-        if let Some(cleanup) = cleanup {
-            cleanup();
+        {
+            build.reuse_outcome = Some(outcome);
         }
-
-        // Not in Go: a program that is not cloned holds its counts through
-        // its own loads; collect their entries.
-        let file_refs = file_refs.unwrap_or_else(|| {
-            let builder = host
-                .builder
-                .borrow()
-                .clone()
-                .unwrap_or_else(|| crate::core::go_nil_dereference());
-            ProgramFileRefs::new(
+        // Go: p.host.builder (read in each branch below)
+        if build.program_cloned {
+            if build.go_cloned {
+                build.update_kind = ProgramUpdateKind::CLONED;
+            }
+            let builder = project_builder(host);
+            // UpdateProgram acquired the changed file only, so we need to ref everything else
+            // PORT: through the old program's entries (`ProgramFileRefs`),
+            // so only the changed files build a key.
+            let old = self
+                .program_file_refs
+                .as_deref()
+                .map(|old_refs| (program.source_files(), old_refs));
+            build.file_refs = Some(ProgramFileRefs::new(
                 &builder.parse_cache,
                 &builder.content_mapped_parse_cache,
-                new_program.source_files(),
-                false,
-                None,
-                None,
-            )
-        });
-
-        let checker_pool = created_checker_pool.borrow().clone();
-        CreateProgramResult {
-            program: new_program,
-            update_kind,
-            reused_storage: program_cloned,
-            checker_pool,
-            file_refs: Rc::new(file_refs),
+                build.program.source_files(),
+                true,
+                dirty_file.as_ref(),
+                old,
+            ));
+            ref_duplicate_source_files(&builder, &build.program);
+        } else if let Some(dirty_file) = &dirty_file {
+            // UpdateProgram always acquires the dirty file before deciding whether it can
+            // reuse the old program. If it falls back to a full rebuild, release that
+            // speculative acquire so the rebuilt program is the only remaining owner.
+            release_dirty_file(&project_builder(host), dirty_file);
         }
+        build
+    }
+
+    /// Go `CreateProgram` without a reusable program: `compiler.NewProgram`.
+    fn new_program_of(
+        &self,
+        host: &Rc<CompilerHost>,
+        command_line: Option<Rc<tsoptions::ParsedCommandLine>>,
+        create_checker_pool: ls_program::CreateCheckerPool,
+        create_module_resolver: CreateModuleResolver,
+    ) -> Rc<compiler::NewProgram> {
+        let mut typings_location = String::new();
+        let type_acquisition = self
+            .get_type_acquisition()
+            .unwrap_or_else(|| crate::core::go_nil_dereference());
+        if type_acquisition.enable.is_true() {
+            typings_location = host.session_options.typings_location.clone();
+        }
+        let host_rc: Rc<dyn compiler::CompilerHost> = host.clone();
+        ls_program::new_program(
+            compiler::ProgramOptions {
+                host: host_rc,
+                config: command_line.unwrap_or_else(|| crate::core::go_nil_dereference()),
+                use_source_of_project_reference: true,
+                single_threaded: Tristate::Unknown,
+                typings_location,
+                project_name: String::new(),
+                // ts#64299
+                create_module_resolver,
+                // ts#64024: Go leaves `SkipModuleResolution` zero here.
+                skip_module_resolution: false,
+            },
+            Some(create_checker_pool),
+        )
     }
 
     // Go: project/project.go:606 Project.CloneWatchers
