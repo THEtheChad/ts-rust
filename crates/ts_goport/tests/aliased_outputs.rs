@@ -57,6 +57,24 @@ fn project() -> PathBuf {
     root
 }
 
+/// A symlink `link` to `target`. Windows tells file links from directory
+/// links when it makes one (`dir`); that needs Developer Mode or an
+/// elevated process, as CI's Windows runner has.
+fn symlink(target: &str, link: &Path, dir: bool) {
+    #[cfg(unix)]
+    let made = {
+        let _ = dir;
+        std::os::unix::fs::symlink(target, link)
+    };
+    #[cfg(windows)]
+    let made = if dir {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    };
+    made.unwrap_or_else(|error| panic!("symlink {}: {error}", link.display()));
+}
+
 fn tsgo(root: &Path, args: &[&str]) -> std::process::Output {
     let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
         .current_dir(root)
@@ -126,7 +144,7 @@ fn prepare(root: &Path, alias: Alias) -> PathBuf {
         let link = out.join(format!("f{index}.js"));
         match alias {
             Alias::Symlink | Alias::Dangling => {
-                std::os::unix::fs::symlink("shared", &link).expect("symlink");
+                symlink("shared", &link, false);
             }
             Alias::HardLink => fs::hard_link(&shared, &link).expect("hard link"),
         }
@@ -237,7 +255,7 @@ fn outputs_through_a_symlinked_directory_alias() {
     for run in 0..RUNS {
         let _ = fs::remove_dir_all(root.join("out"));
         fs::create_dir_all(root.join("out/src")).expect("out/src");
-        std::os::unix::fs::symlink("src", root.join("out/src2")).expect("dir symlink");
+        symlink("src", &root.join("out/src2"), true);
         tsgo(&root, &[]);
         for (index, expected) in expected.iter().enumerate() {
             let text = fs::read(root.join(format!("out/src/f{index}.js"))).expect("output");
@@ -345,7 +363,8 @@ fn dirlink_run(
     let _ = fs::remove_dir_all(&out);
     let _ = fs::remove_file(root.join("x.tsbuildinfo"));
     fs::create_dir(&out).expect("out");
-    std::os::unix::fs::symlink(layout.link_target, out.join("left")).expect("link");
+    // `out/left` is used as a directory, whatever it names.
+    symlink(layout.link_target, &out.join("left"), true);
     if layout.right_file {
         fs::write(out.join("right"), "not a directory").expect("right file");
     }
