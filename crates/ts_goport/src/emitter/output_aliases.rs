@@ -1,264 +1,39 @@
-//! PORT: not in Go (determinism). The outputs of one emit that may share a
-//! file system destination.
+//! PORT: not in Go (determinism). Whether an emit's outputs lie in an
+//! ordinary layout, where their writes may run in parallel.
 //!
 //! Go `Program.Emit` writes each file's outputs inside a parallel work
-//! group, so when two output paths name one file (a symlink or a hard
-//! link to one inode, a symlinked directory, a case-insensitive directory,
-//! or one path emitted by two source files) the content that is left
-//! depends on the goroutine schedule: Go is not deterministic there. The
-//! port must give one answer, and the one it gives is the one Go gives
-//! when its goroutines happen to run in file order: the outputs written
-//! one after the other in program file order, each file's in its emitter
-//! order (`program_emit::DeferredWrites::finish`).
+//! group. When two outputs reach one file, or one output's directory
+//! creation decides whether another's write fails (a symlink on the way, a
+//! file where a directory is needed, a hard link, names that differ only in
+//! case), what is left depends on the goroutine schedule: Go is not
+//! deterministic there. The port must give one answer on every run.
 //!
-//! `scan` finds those outputs before the emit, from the output paths of
-//! the files to emit (`get_output_paths_for_source_file`). It resolves each
-//! path one component at a time, as the kernel does when the write opens
-//! it, through every symlink, also a dangling one: a link whose target is
-//! missing names that target, which the write (or the emit's directory
-//! creation, `mkdir -p`) makes. The rest of a path below its deepest
-//! existing directory is missing: the emit makes it as plain directories,
-//! so it is kept lexically (`..` drops a component). A path is then keyed
-//! by where its write lands:
+//! Rather than model which writes depend on each other, `ordinary_layout`
+//! accepts only a layout where none can: then the writes stay parallel.
+//! Any other layout writes everything one at a time in program file order,
+//! each file's in its emitter's order, directory creation included
+//! (`program_emit::DeferredWrites::finish`). That is the schedule of Go's
+//! goroutines running in file order, so the answer is one that Go gives.
 //!
-//! - an existing entry (after its links) by its file identity: device and
-//!   inode on unix, volume serial number and file index on Windows;
-//! - a missing one by the identity of its deepest existing directory and
-//!   the missing rest, lowercased.
+//! A layout is ordinary when, for every output path:
+//! - no existing component of it is a symlink (dangling ones included; on
+//!   Windows also a junction or other name-surrogate reparse point);
+//! - every existing ancestor is a directory;
+//! - the output does not exist, or is a regular file with one link;
+//! - no other output equals it after case folding (one path emitted twice
+//!   included);
+//! - every metadata read succeeds (a failed read is not ordinary: the check
+//!   fails closed).
 //!
-//! So `out/left/f.js` with `out/left -> right` and no `out/right` keys as
-//! `out/right/f.js` does, before the emit makes `out/right`.
-//!
-//! Two paths with one key alias. The keys group more than needed (the
-//! lowercased rest groups names that only differ in case on a
-//! case-sensitive directory): a write that waits for no reason still lands
-//! where it would have, after the earlier writes of the files before it,
-//! so grouping more never changes an output. Grouping less would, so the
-//! scan errs on that side: a component that cannot be read, or a link
-//! loop, keys the path by the directory where resolution stopped.
-//!
-//! A path that changes between the scan and the write (another process
+//! A path that changes between the check and the write (another process
 //! makes a symlink meanwhile) is outside the contract, as for Go.
 
 use crate::prelude::*;
 
-use std::ffi::OsString;
-use std::path::{Component, Path as OsPathBuf, PathBuf};
+use std::path::{Path as OsPathBuf, PathBuf};
 
 use crate::frontend::outputpaths::ForceEmitPaths;
 use crate::frontend::vfs::os_path;
-
-/// The result of `scan`.
-#[derive(Default)]
-pub struct OutputScan {
-    /// False when an output path exists and is not a regular file (a
-    /// symlink, a directory, a FIFO, a device, a socket).
-    pub all_regular: bool,
-    /// The output names whose destination another output of the emit may
-    /// share (or that two files of the emit write).
-    pub aliased: FxHashSet<String>,
-}
-
-/// Where a write of an output path lands.
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum Destination {
-    /// An existing file system entry.
-    Entry(EntryId),
-    /// A missing entry: the existing directory that its write makes it
-    /// in (with the missing directories), and the rest of its path,
-    /// lowercased.
-    Missing(EntryId, String),
-}
-
-/// A file identity: device and inode (unix), volume serial number and
-/// file index (Windows), or a hash of the lowercased canonical path where
-/// neither exists.
-type EntryId = (u64, u64);
-
-/// The identity of the existing entry `path`, after its links.
-#[cfg(unix)]
-fn existing_id(path: &OsPathBuf) -> Option<EntryId> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path)
-        .ok()
-        .map(|meta| (meta.dev(), meta.ino()))
-}
-
-/// The identity of the existing entry `path`, after its links (Go
-/// `os.SameFile` on Windows compares the same two numbers). Opens files
-/// and directories (`FILE_FLAG_BACKUP_SEMANTICS`); a hard link of a file
-/// shares its index.
-#[cfg(windows)]
-fn existing_id(path: &OsPathBuf) -> Option<EntryId> {
-    let handle = winapi_util::Handle::from_path_any(path).ok()?;
-    let info = winapi_util::file::information(&handle).ok()?;
-    Some((info.volume_serial_number(), info.file_index()))
-}
-
-#[cfg(not(any(unix, windows)))]
-fn existing_id(path: &OsPathBuf) -> Option<EntryId> {
-    use std::hash::{Hash, Hasher};
-    let path = std::fs::canonicalize(path).ok()?;
-    let mut h = std::hash::DefaultHasher::new();
-    path.to_string_lossy().to_lowercase().hash(&mut h);
-    Some((0, h.finish()))
-}
-
-/// Where resolution stands: an existing directory (or entry) with no link
-/// in its path, or a missing path below the deepest existing directory.
-#[derive(Clone)]
-enum Place {
-    Existing(PathBuf),
-    Missing { base: PathBuf, rest: Vec<OsString> },
-}
-
-/// The destinations of one thread's share of the paths, with the
-/// resolution of each directory it met.
-#[derive(Default)]
-struct Scanner {
-    directories: FxHashMap<PathBuf, Place>,
-    all_regular: bool,
-}
-
-/// The most symlinks that one resolution follows (Linux `MAXSYMLINKS`).
-const MAX_LINKS: usize = 40;
-
-impl Scanner {
-    fn new() -> Self {
-        Self {
-            directories: FxHashMap::default(),
-            all_regular: true,
-        }
-    }
-
-    fn destination(&mut self, path: &OsPathBuf) -> Destination {
-        let mut links = 0;
-        let place = match (path.parent(), path.file_name()) {
-            (Some(parent), Some(name)) => {
-                let dir = self.directory(parent, &mut links);
-                self.step(dir, Component::Normal(name), &mut links, true)
-            }
-            _ => self.resolve(path, &mut links),
-        };
-        match place {
-            Place::Existing(entry) => match existing_id(&entry) {
-                Some(id) => Destination::Entry(id),
-                None => self.missing_key(entry.parent().unwrap_or(&entry), &[]),
-            },
-            Place::Missing { base, rest } => self.missing_key(&base, &rest),
-        }
-    }
-
-    /// The key of the missing path `rest` below the existing `base`.
-    fn missing_key(&mut self, base: &OsPathBuf, rest: &[OsString]) -> Destination {
-        let rest: Vec<String> = rest
-            .iter()
-            .map(|part| part.to_string_lossy().to_lowercase())
-            .collect();
-        Destination::Missing(existing_id(base).unwrap_or_default(), rest.join("/"))
-    }
-
-    /// The resolution of the directory `dir` (memoized).
-    fn directory(&mut self, dir: &OsPathBuf, links: &mut usize) -> Place {
-        if let Some(place) = self.directories.get(dir) {
-            return place.clone();
-        }
-        let place = self.resolve(dir, links);
-        self.directories.insert(dir.to_path_buf(), place.clone());
-        place
-    }
-
-    /// Resolves `path` from its root, component by component.
-    fn resolve(&mut self, path: &OsPathBuf, links: &mut usize) -> Place {
-        let mut place = Place::Existing(PathBuf::new());
-        for component in path.components() {
-            place = self.step(place, component, links, false);
-        }
-        place
-    }
-
-    /// Resolves one more `component` from `place`. A link is followed
-    /// (also a dangling one) and its target resolved from the link's
-    /// directory. `last`: the component is the output itself, whose kind
-    /// sets `all_regular`.
-    fn step(&mut self, place: Place, component: Component, links: &mut usize, last: bool) -> Place {
-        match (component, place) {
-            (Component::Prefix(_) | Component::RootDir, Place::Existing(mut dir)) => {
-                dir.push(component.as_os_str());
-                Place::Existing(dir)
-            }
-            (Component::Prefix(_) | Component::RootDir | Component::CurDir, place) => place,
-            (Component::ParentDir, place) => parent_of(place),
-            (Component::Normal(name), Place::Missing { base, mut rest }) => {
-                rest.push(name.to_os_string());
-                Place::Missing { base, rest }
-            }
-            (Component::Normal(name), Place::Existing(dir)) => self.enter(dir, name, links, last),
-        }
-    }
-
-    /// The entry `name` of the existing directory `dir`: missing, an
-    /// existing entry, or a link, whose target is resolved from `dir`.
-    fn enter(
-        &mut self,
-        dir: PathBuf,
-        name: &std::ffi::OsStr,
-        links: &mut usize,
-        last: bool,
-    ) -> Place {
-        let entry = dir.join(name);
-        let missing = |dir: PathBuf| Place::Missing {
-            base: dir,
-            rest: vec![name.to_os_string()],
-        };
-        let Ok(meta) = std::fs::symlink_metadata(&entry) else {
-            return missing(dir);
-        };
-        let is_link = meta.file_type().is_symlink();
-        if last && (is_link || !meta.file_type().is_file()) {
-            self.all_regular = false;
-        }
-        if !is_link {
-            return Place::Existing(entry);
-        }
-        *links += 1;
-        let target = match std::fs::read_link(&entry) {
-            Ok(target) if *links <= MAX_LINKS => target,
-            // A link loop or an unreadable link: the write fails wherever
-            // it is; key it here.
-            _ => return missing(dir),
-        };
-        let mut place = if target.is_absolute() {
-            Place::Existing(PathBuf::new())
-        } else {
-            Place::Existing(dir)
-        };
-        for component in target.components() {
-            place = self.step(place, component, links, false);
-        }
-        place
-    }
-}
-
-/// `place` with one component less: the parent of an existing directory
-/// (the root stays), or `base/rest` without its last component (`rest` is
-/// never empty), back at `base` when it was the last.
-fn parent_of(place: Place) -> Place {
-    match place {
-        Place::Existing(dir) => Place::Existing(
-            dir.parent()
-                .map_or_else(|| dir.clone(), OsPathBuf::to_path_buf),
-        ),
-        Place::Missing { base, mut rest } => {
-            rest.pop();
-            if rest.is_empty() {
-                Place::Existing(base)
-            } else {
-                Place::Missing { base, rest }
-            }
-        }
-    }
-}
 
 /// The output paths of `files` (each with its force flags), in file order,
 /// each file's in its emitter's write order. Loading thread (it reads the
@@ -283,72 +58,164 @@ pub fn output_paths(files: &[Node], force: impl Fn(Node) -> ForceEmitPaths) -> V
     outputs
 }
 
-/// Paths per scan thread below which the scan stays on the calling thread.
+/// What `lstat` says of one existing component.
+enum Entry {
+    Missing,
+    Directory,
+    /// A regular file with one link.
+    File,
+    /// Anything else (a symlink, a hard-linked file, a FIFO, a device), or
+    /// a failed read.
+    Unordinary,
+}
+
+#[cfg(not(windows))]
+fn entry(path: &OsPathBuf) -> Entry {
+    match std::fs::symlink_metadata(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Entry::Missing,
+        Err(_) => Entry::Unordinary,
+        Ok(meta) => {
+            let kind = meta.file_type();
+            if kind.is_dir() {
+                Entry::Directory
+            } else if kind.is_file() && links(&meta) == 1 {
+                Entry::File
+            } else {
+                Entry::Unordinary
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn links(meta: &std::fs::Metadata) -> u64 {
+    std::os::unix::fs::MetadataExt::nlink(meta)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn links(_meta: &std::fs::Metadata) -> u64 {
+    // No link count here: only one link can be told safely, so none is.
+    2
+}
+
+/// Windows: the attributes of the entry itself (`FILE_FLAG_OPEN_REPARSE_POINT`,
+/// so a link or junction is not followed), through a handle opened for
+/// `FILE_READ_ATTRIBUTES` only, which a write-only or locked file still
+/// grants; its link count comes from the same handle.
+#[cfg(windows)]
+fn entry(path: &OsPathBuf) -> Entry {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_DIRECTORY: u64 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u64 = 0x400;
+    let file = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path);
+    let file = match file {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Entry::Missing,
+        Err(_) => return Entry::Unordinary,
+        Ok(file) => file,
+    };
+    let Ok(info) = winapi_util::file::information(&file) else {
+        return Entry::Unordinary;
+    };
+    let attributes = info.file_attributes();
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        Entry::Unordinary
+    } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        Entry::Directory
+    } else if info.number_of_links() == 1
+        && winapi_util::file::typ(&file).is_ok_and(|kind| kind.is_disk())
+    {
+        Entry::File
+    } else {
+        Entry::Unordinary
+    }
+}
+
+/// One thread's share of the check, with the directories it has judged.
+struct Checker {
+    /// Each ancestor directory met: true when it and its ancestors are a
+    /// directory or missing (no link, no non-directory, no failed read).
+    directories: FxHashMap<PathBuf, bool>,
+}
+
+impl Checker {
+    /// The directory `dir` and its ancestors may hold outputs: each is a
+    /// directory or missing.
+    fn directory_ok(&mut self, dir: &OsPathBuf) -> bool {
+        if let Some(&ok) = self.directories.get(dir) {
+            return ok;
+        }
+        let ok = match entry(dir) {
+            Entry::Directory | Entry::Missing => {
+                dir.parent().is_none_or(|parent| self.directory_ok(parent))
+            }
+            Entry::File | Entry::Unordinary => false,
+        };
+        self.directories.insert(dir.to_path_buf(), ok);
+        ok
+    }
+
+    /// The output `path` lies in an ordinary layout (but for case
+    /// collisions, which `ordinary_layout` checks across outputs).
+    fn output_ok(&mut self, path: &OsPathBuf) -> bool {
+        matches!(entry(path), Entry::Missing | Entry::File)
+            && path.parent().is_none_or(|parent| self.directory_ok(parent))
+    }
+}
+
+/// Paths per check thread below which the check stays on the calling
+/// thread.
 const PATHS_PER_THREAD: usize = 512;
 
-/// The scan of `outputs` (see the module): which may share a destination,
-/// and whether each existing one is a regular file. Any thread.
+/// True when `outputs` lie in an ordinary layout (see the module): the
+/// emit's writes may run in parallel. Any thread.
 #[must_use]
-pub fn scan(outputs: &[String]) -> OutputScan {
+pub fn ordinary_layout(outputs: &[String]) -> bool {
+    let mut folded = FxHashSet::default();
+    if !outputs
+        .iter()
+        .all(|path| folded.insert(path.to_lowercase()))
+    {
+        return false;
+    }
     let threads = std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
         .clamp(1, 8)
         .min(outputs.len().div_ceil(PATHS_PER_THREAD))
         .max(1);
     let chunk = outputs.len().div_ceil(threads).max(1);
-    let scan_chunk = |paths: &[String]| {
-        let mut scanner = Scanner::new();
-        let destinations: Vec<Destination> = paths
-            .iter()
-            .map(|path| scanner.destination(&os_path(path)))
+    let check = |paths: &[String]| {
+        let mut checker = Checker {
+            directories: FxHashMap::default(),
+        };
+        paths.iter().all(|path| checker.output_ok(&os_path(path)))
+    };
+    if threads == 1 {
+        return check(outputs);
+    }
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = outputs
+            .chunks(chunk)
+            .map(|paths| scope.spawn(move || check(paths)))
             .collect();
-        (scanner.all_regular, destinations)
-    };
-    let parts: Vec<(bool, Vec<Destination>)> = if threads == 1 {
-        vec![scan_chunk(outputs)]
-    } else {
-        std::thread::scope(|scope| {
-            let workers: Vec<_> = outputs
-                .chunks(chunk)
-                .map(|paths| scope.spawn(move || scan_chunk(paths)))
-                .collect();
-            workers
-                .into_iter()
-                .map(|worker| {
-                    worker
-                        .join()
-                        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
-                })
-                .collect()
+        workers.into_iter().fold(true, |ok, worker| {
+            let chunk_ok = worker
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+            ok && chunk_ok
         })
-    };
-    let mut all_regular = true;
-    let mut first: FxHashMap<Destination, usize> = FxHashMap::default();
-    let mut aliased = FxHashSet::default();
-    let destinations = parts.into_iter().flat_map(|(regular, destinations)| {
-        all_regular &= regular;
-        destinations
-    });
-    for (index, destination) in destinations.enumerate() {
-        match first.entry(destination) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(index);
-            }
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                aliased.insert(outputs[*entry.get()].clone());
-                aliased.insert(outputs[index].clone());
-            }
-        }
-    }
-    OutputScan {
-        all_regular,
-        aliased,
-    }
+    })
 }
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::scan;
+    use super::ordinary_layout;
+    use std::os::unix::fs::symlink;
 
     fn names(dir: &std::path::Path, names: &[&str]) -> Vec<String> {
         names
@@ -358,144 +225,139 @@ mod tests {
     }
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "goport-output-aliases-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("goport-output-layout-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("out")).unwrap();
         dir
     }
 
     #[test]
-    fn distinct_missing_and_existing_outputs_do_not_alias() {
-        let dir = scratch("distinct");
-        std::fs::write(dir.join("a.js"), "").unwrap();
-        let outputs = names(&dir, &["a.js", "b.js", "out/c.js", "out/d.js"]);
-        let result = scan(&outputs);
-        assert!(result.all_regular);
-        assert!(result.aliased.is_empty());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn links_directories_case_and_repeats_alias() {
-        let dir = scratch("links");
-        std::fs::create_dir(dir.join("out")).unwrap();
-        std::fs::write(dir.join("out/shared"), "").unwrap();
-        std::os::unix::fs::symlink("shared", dir.join("out/a.js")).unwrap();
-        std::os::unix::fs::symlink("shared", dir.join("out/b.js")).unwrap();
-        std::fs::hard_link(dir.join("out/shared"), dir.join("out/c.js")).unwrap();
-        std::os::unix::fs::symlink("missing", dir.join("out/d.js")).unwrap();
-        std::os::unix::fs::symlink("out", dir.join("out2")).unwrap();
+    fn plain_new_and_existing_outputs_are_ordinary() {
+        let dir = scratch("plain");
+        std::fs::write(dir.join("out/a.js"), "").unwrap();
         let outputs = names(
             &dir,
-            &[
-                "out/a.js",
-                "out/b.js",
-                "out/c.js",
-                "out/d.js",
-                "out/missing",
-                "out/sub/e.js",
-                "out2/sub/e.js",
-                "out/F.js",
-                "out/f.js",
-                "out/g.js",
-                "out/g.js",
-                "out/h.js",
-            ],
+            &["out/a.js", "out/b.js", "out/sub/c.js", "out/sub/d.js"],
         );
-        let result = scan(&outputs);
-        assert!(!result.all_regular);
-        let mut aliased: Vec<_> = result.aliased.iter().map(String::as_str).collect();
-        aliased.sort_unstable();
-        let mut expected: Vec<_> = outputs[..11].iter().map(String::as_str).collect();
-        expected.sort_unstable();
-        expected.dedup();
-        assert_eq!(aliased, expected);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_large_scan_finds_aliases_across_threads() {
-        let dir = scratch("large");
-        let mut outputs: Vec<String> = (0..3000)
-            .map(|i| dir.join(format!("f{i}.js")).to_string_lossy().into_owned())
+        assert!(ordinary_layout(&outputs));
+        // Many outputs: the check runs on several threads.
+        let many: Vec<String> = (0..3000)
+            .map(|i| {
+                dir.join(format!("out/f{i}.js"))
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
-        outputs.push(dir.join("F0.js").to_string_lossy().into_owned());
-        let result = scan(&outputs);
-        assert_eq!(result.aliased.len(), 2);
-        assert!(result.aliased.contains(&outputs[0]));
+        assert!(ordinary_layout(&many));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Astra D1-I3 finding 1: a dangling directory link aliases the
-    /// directory the emit makes for it, also through a missing chain, a
-    /// `..` in the target, an absolute target and a link to a link.
+    /// Each of these makes the layout not ordinary.
     #[test]
-    fn dangling_directory_links_alias_the_directories_the_emit_makes() {
-        let dir = scratch("dirlinks");
-        let out = dir.join("out");
-        std::fs::create_dir(&out).unwrap();
-        std::os::unix::fs::symlink("right", out.join("left")).unwrap();
-        std::os::unix::fs::symlink("deep/er", out.join("chain")).unwrap();
-        std::os::unix::fs::symlink("../out/up", out.join("dotdot")).unwrap();
-        std::os::unix::fs::symlink(out.join("abs"), out.join("absolute")).unwrap();
-        std::os::unix::fs::symlink("left", out.join("twice")).unwrap();
-        let pairs = [
-            ("out/left/f.js", "out/right/f.js"),
-            ("out/chain/g.js", "out/deep/er/g.js"),
-            ("out/dotdot/h.js", "out/up/h.js"),
-            ("out/absolute/i.js", "out/abs/i.js"),
-            ("out/twice/j.js", "out/right/j.js"),
-            ("out/left/x/../k.js", "out/right/k.js"),
+    fn links_non_directories_hard_links_and_case_are_not_ordinary() {
+        let cases: [(&str, &dyn Fn(&std::path::Path), &[&str]); 9] = [
+            (
+                "dangling dir link",
+                &|d| symlink("right", d.join("out/left")).unwrap(),
+                &["out/left/f.js", "out/right/g.js"],
+            ),
+            (
+                "dir link",
+                &|d| {
+                    std::fs::create_dir(d.join("out/right")).unwrap();
+                    symlink("right", d.join("out/left")).unwrap()
+                },
+                &["out/left/f.js"],
+            ),
+            (
+                "link to a file",
+                &|d| symlink("right.js", d.join("out/left")).unwrap(),
+                &["out/left/f.js", "out/right.js"],
+            ),
+            (
+                "file link",
+                &|d| {
+                    std::fs::write(d.join("out/shared"), "").unwrap();
+                    symlink("shared", d.join("out/a.js")).unwrap()
+                },
+                &["out/a.js"],
+            ),
+            (
+                "hard link",
+                &|d| {
+                    std::fs::write(d.join("out/shared"), "").unwrap();
+                    std::fs::hard_link(d.join("out/shared"), d.join("out/a.js")).unwrap()
+                },
+                &["out/a.js"],
+            ),
+            (
+                "file where a dir is needed",
+                &|d| std::fs::write(d.join("out/sub"), "").unwrap(),
+                &["out/sub/a.js"],
+            ),
+            (
+                "dir at an output",
+                &|d| std::fs::create_dir(d.join("out/a.js")).unwrap(),
+                &["out/a.js"],
+            ),
+            ("case-only names", &|_| {}, &["out/a.js", "out/A.js"]),
+            ("one path twice", &|_| {}, &["out/a.js", "out/a.js"]),
         ];
-        for (a, b) in pairs {
-            let outputs = names(&dir, &[a, b, "out/alone.js"]);
-            let result = scan(&outputs);
-            assert!(
-                result.aliased.contains(&outputs[0]) && result.aliased.contains(&outputs[1]),
-                "{a} and {b} share a file"
-            );
-            assert!(!result.aliased.contains(&outputs[2]), "{a}: alone.js");
+        for (label, setup, paths) in cases {
+            let dir = scratch(&label.replace(' ', "-"));
+            setup(&dir);
+            assert!(!ordinary_layout(&names(&dir, paths)), "{label}");
+            std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    /// An unreadable directory fails closed.
+    #[test]
+    fn an_unreadable_component_is_not_ordinary() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("unreadable");
+        std::fs::create_dir(dir.join("out/locked")).unwrap();
+        std::fs::set_permissions(
+            dir.join("out/locked"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        let readable = std::fs::read_dir(dir.join("out/locked")).is_ok();
+        let result = ordinary_layout(&names(&dir, &["out/locked/a.js"]));
+        std::fs::set_permissions(
+            dir.join("out/locked"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        // Root reads anything; elsewhere the lstat of the output fails.
+        assert!(readable || !result);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
 
-/// Windows file identity (Astra D1-I3 finding 3): hard links of one file
-/// and paths through a directory symlink share the volume serial number
-/// and file index. Runs on the Windows CI job; this host cannot run it.
+/// Windows (Astra D1-I3 findings 3 and round 2): hard links, links and
+/// junctions are not ordinary. Runs on the Windows CI job; this host cannot
+/// run it.
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use super::scan;
+    use super::ordinary_layout;
 
     #[test]
-    fn hard_links_and_case_alias_on_windows() {
+    fn hard_links_and_case_are_not_ordinary_on_windows() {
         let dir =
-            std::env::temp_dir().join(format!("goport-output-aliases-win-{}", std::process::id()));
+            std::env::temp_dir().join(format!("goport-output-layout-win-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("out")).unwrap();
+        let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        assert!(ordinary_layout(&[path("out/a.js"), path("out/sub/b.js")]));
         std::fs::write(dir.join("out/shared.js"), "").unwrap();
         std::fs::hard_link(dir.join("out/shared.js"), dir.join("out/a.js")).unwrap();
-        std::fs::write(dir.join("out/b.js"), "").unwrap();
-        let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
-        let outputs = vec![
-            path("out/shared.js"),
-            path("out/a.js"),
-            path("out/b.js"),
-            // Not made yet, two cases of one name.
+        assert!(!ordinary_layout(&[path("out/a.js")]));
+        assert!(!ordinary_layout(&[
             path("out/new/C.js"),
-            path("out/new/c.js"),
-            path("out/new/d.js"),
-        ];
-        let result = scan(&outputs);
-        for alias in &outputs[..2] {
-            assert!(result.aliased.contains(alias), "{alias}");
-        }
-        assert!(!result.aliased.contains(&outputs[2]));
-        assert!(result.aliased.contains(&outputs[3]) && result.aliased.contains(&outputs[4]));
-        assert!(!result.aliased.contains(&outputs[5]));
+            path("out/new/c.js")
+        ]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
