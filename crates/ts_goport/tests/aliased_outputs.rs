@@ -430,3 +430,95 @@ fn directory_link_layouts_give_one_result_in_every_emit_mode() {
         fs::remove_dir_all(root).expect("remove scratch");
     }
 }
+
+/// Astra D1-I3 round 3, P1: 64 pairs `src/p<i>.ts` and `src/p<i>.js/x.ts`
+/// emit `out/p<i>.js` as a file and as the directory of `out/p<i>.js/x.js`
+/// into a fresh `out`. The layout is not ordinary (an output is another's
+/// ancestor), so the writes run serially in program order: every mode gives
+/// one result on every run, and the default route, Go's split, incremental
+/// and `-b` give the same one.
+#[test]
+fn an_output_that_is_another_output_s_directory_gives_one_result() {
+    let root = scratch_dir();
+    for index in 0..64 {
+        fs::create_dir_all(root.join(format!("src/p{index}.js"))).expect("src dir");
+        fs::write(
+            root.join(format!("src/p{index}.ts")),
+            format!("export const p{index} = {index};\n"),
+        )
+        .expect("module");
+        fs::write(
+            root.join(format!("src/p{index}.js/x.ts")),
+            format!("export const x{index} = {index};\n"),
+        )
+        .expect("module");
+    }
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions": {"outDir": "out", "rootDir": "src", "target": "esnext", "module": "esnext"}, "include": ["src"]}"#,
+    )
+    .expect("tsconfig");
+    let run = |args: &[&str]| {
+        let out = root.join("out");
+        let _ = fs::remove_dir_all(&out);
+        let _ = fs::remove_file(root.join("x.tsbuildinfo"));
+        let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+            .current_dir(&root)
+            .args(args)
+            .env_remove("GOPORT_EMIT_THREADS")
+            .output()
+            .expect("run tsgo");
+        let mut tree = Vec::new();
+        let mut stack = vec![out.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries {
+                let path = entry.expect("entry").path();
+                let rel = path
+                    .strip_prefix(&out)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                if path.is_dir() {
+                    tree.push((format!("d {rel}"), Vec::new()));
+                    stack.push(path);
+                } else {
+                    tree.push((format!("f {rel}"), fs::read(&path).expect("read")));
+                }
+            }
+        }
+        tree.sort();
+        (tree, output.stdout, output.status.code())
+    };
+    let modes: [&[&str]; 5] = [
+        &["-p", "tsconfig.json"],
+        &["-p", "tsconfig.json", "--checkers", "4"],
+        &[
+            "-p",
+            "tsconfig.json",
+            "--incremental",
+            "--tsBuildInfoFile",
+            "x.tsbuildinfo",
+        ],
+        &["-b", "tsconfig.json", "--force"],
+        &["-p", "tsconfig.json", "--singleThreaded"],
+    ];
+    let mut results = Vec::new();
+    for args in modes {
+        let first = run(args);
+        for n in 1..RUNS {
+            assert!(run(args) == first, "{args:?} run {n} differs");
+        }
+        results.push((args, first));
+    }
+    for (args, result) in &results[1..4] {
+        assert!(
+            *result == results[0].1,
+            "{args:?} differs from {:?}",
+            results[0].0
+        );
+    }
+    fs::remove_dir_all(root).expect("remove scratch");
+}

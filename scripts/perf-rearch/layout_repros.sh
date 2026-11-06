@@ -18,7 +18,7 @@ for mode in $modes; do
     plain) m=plain extra=() ;; c4) m=plain extra=(--arg=--checkers --arg=4) ;;
     incremental) m=incremental extra=() ;; build) m=build extra=() ;;
   esac
-  for case in round1 different-names target-file case-only target-created-file absolute chain deep parent input-dir; do
+  for case in round1 different-names target-file case-only target-created-file absolute chain deep parent input-dir prefix-many; do
     c=(); [ $case = round1 ] || c=(--case $case)
     python3 -I $here/dirlink_repro.py "$bin" --runs $runs --mode $m "${c[@]}" "${extra[@]}" --allow-varying | line $case $mode || bad=1
   done
