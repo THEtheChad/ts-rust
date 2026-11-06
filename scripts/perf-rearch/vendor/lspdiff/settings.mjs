@@ -1,7 +1,8 @@
 // Every setting from the environment that changes what an lspdiff session does or how it is judged
 // (lane H4). No other lspdiff module reads an LSPDIFF_* or ATA_* setting (selftest/h4-selftest.mjs
 // greps for it; the plumbing variables PLUMBING are not settings: the sandbox's mounts, keyed by their
-// snapshots' hashes, and what scenario.mjs passes to the stand-in npm from SETTINGS), so these are
+// snapshots' hashes, what scenario.mjs passes to the stand-in npm from SETTINGS, and the npm the
+// user-npm shim runs, the npm on lspdiff's PATH that parity_lsp.py keys), so these are
 // all of them: parity_lsp.py puts SETTINGS in every Go and JS cache key (it asks `node lspdiff.mjs
 // info`), and lspdiff writes them to <out>/settings.json, which parity_lsp.py checks against the key
 // it used.
@@ -10,7 +11,8 @@
 //   LSPDIFF_REQUEST_TIMEOUT_MS  a request without an answer in this time ends the run (client.mjs, tsserver.mjs)
 //   LSPDIFF_SHUTDOWN_MS         the time a server gets to answer shutdown, and then to exit by itself (it
 //                               may wait for ATA's npm: both servers take up to about 5 s at a high load)
-//   ATA_IDLE_MS                 ata-overlay: ATA is idle when no stand-in npm call started for this long
+//   ATA_IDLE_MS                 ATA is idle when no npm call of it started or ended for this long (scenario.mjs
+//                               npmIdle: ata-overlay's stand-in npm, the user-npm shim)
 //   ATA_NPM_DELAY_MS            the stand-in npm's time per call (ata-npm/fake-npm.mjs)
 //   ATA_DEADLINE_MS             an ATA wait longer than this fails the run (never a success)
 const num = (k, d) => {
@@ -21,7 +23,7 @@ const num = (k, d) => {
   return n;
 };
 
-export const PLUMBING = ["LSPDIFF_SANDBOX", "ATA_NODE", "ATA_STORE", "ATA_NPM_LOG", "ATA_NPM_DELAY_MS"];
+export const PLUMBING = ["LSPDIFF_SANDBOX", "ATA_NODE", "ATA_STORE", "ATA_NPM_LOG", "ATA_NPM_DELAY_MS", "ATA_REAL_NPM"];
 
 export const SETTINGS = Object.freeze({
   LSPDIFF_SETTLE_MS: num("LSPDIFF_SETTLE_MS", 1000),

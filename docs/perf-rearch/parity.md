@@ -76,8 +76,8 @@ material and is read only when it matches (lane H4).
 - **lsp:** the session's definition (project, files, positions, scenario), the project's path and
   its snapshot's hash, and for scenarios with ATA on the user's npm the snapshot of the typings cache
   their ATA reads (`~/.cache/typescript/7.1`) and the npm on `PATH` (its realpath and version). It
-  also holds the lspdiff sources that script the session (the stand-in npm, `sandbox.mjs` and
-  `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
+  also holds the lspdiff sources that script the session (the stand-in npm, the user-npm shim,
+  `sandbox.mjs` and `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
   `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
   `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
@@ -245,7 +245,9 @@ runs, and 34 in all three tsc-rs runs. Every item masks `<n>` except one per ses
 tsc-rs's rs-nondet check on the raw ids.
 
 Scripts also let the server go quiet (300 ms) after each `didOpen`, so one snapshot's watch
-update ends before the next snapshot starts. Without that, Go's concurrent background tasks
+update ends before the next snapshot starts. In the scenarios with ATA on, that wait and every
+checkpoint also wait for ATA's npm and last at least `ATA_IDLE_MS` (lane ND2, "ATA's npm and the
+scenario waits"). Without that, Go's concurrent background tasks
 reorder registrations. In the probes, Go registered `auto-import watcher 11.0` before the older
 `10.0`, unregistered 11 and registered 10 again. Under load, it also registered a second
 `program files for /dev/null/inferred` watcher with a glob the configured project already held.
@@ -508,7 +510,7 @@ Not every watch scenario keeps ATA on:
 
 | scenario | ATA |
 |---|---|
-| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose snapshot and npm are in their Go cache key ("Input identities"). Since lane H4 every server run starts from that snapshot (an overlay; what ATA's npm writes is thrown away), so a run no longer sees an earlier run's installs. npm itself still reads the registry over the network: that input is not keyed. Their refereed answers are on configured projects |
+| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose snapshot and npm are in their Go cache key ("Input identities"). Since lane H4 every server run starts from that snapshot (an overlay; what ATA's npm writes is thrown away), so a run no longer sees an earlier run's installs. npm itself still reads the registry over the network: that input is not keyed. Since lane ND2 the npm runs behind the logging shim `user-npm/`, and the scenario's waits cover its calls (below). Their refereed answers are on configured projects |
 | `pkgjson-overlay` | off (lane H2: its npm call raced the overlay steps) |
 | `ata-overlay` | on, deterministic: a private typings cache and the stand-in npm |
 
@@ -538,6 +540,94 @@ Go's design and in tsc-rs. With the idle waits, 4 Go runs and 3 tsc-rs runs of
 - the load sends `workspace/inlayHint/refresh` and `workspace/diagnostic/refresh`;
 - the overlay's import installs `@types/ata-fake-two`;
 - closing the last file unregisters the inferred project's watchers.
+
+## ATA's npm and the scenario waits (lane ND2, 2026-11-06)
+
+`watch-ts-pattern-f12` items `0016 load server messages`, `0018 benchmarks/random-digit.ts:126:1
+auto-import completion` and `0026 completion server messages` were `rs-nondet` in three gate runs
+at load about 30 (20261105-232849-quick, 20261106-095914-full and D1-I3's runs), and GO-BROKEN on
+Go's own runs (`go | go2,go3,go4`). The odd run's `load` checkpoint had
+`workspace/inlayHint/refresh` alone, without `workspace/diagnostic/refresh`. Its auto-import
+completion had 1,115 items instead of 1,150: the 35 it lacked (`__filename`, `global`, `exports`,
+`expect`, `afterEach`, `fdescribe`, `SuppressedError`, ...) are `@types/node`'s and
+`@types/jest`'s. The refresh then came at the `completion` checkpoint, or later. Go's run 1 is the
+same late variant.
+
+**Cause: the harness, not tsc-rs.** It is the ND1 race again, now in the scenario's waits:
+
+- ts-pattern's tsconfig includes only `src/`. `benchmarks/random-digit.ts`, the first file opened,
+  and the `tests/` files go into the inferred project, which has type acquisition on.
+- Its first ATA request runs `npm install --ignore-scripts types-registry@latest` in the typings
+  cache (Go `project/ata/ata.go:379` in `init`; tsc-rs `project/ata/ata.rs` `init`), then finds the
+  project's typings, and sets them as the project's pending ATA change with a diagnostics refresh
+  500 ms later (Go `project/session.go:2061-2069`; tsc-rs `project/session.rs` around 3669-3678).
+  The next request's snapshot adopts the pending change (Go `session.go:1737` `flushChanges`; a
+  `didOpen`'s snapshot does not, `session.go:332` `flushChangesLocked`).
+- The LSP stream shows none of that: the server is silent while npm runs. A checkpoint ended after
+  1 s of quiet, so when npm took long enough the `load` checkpoint ended first. The completion's
+  snapshot then lacked the typings, and the refresh moved to a later checkpoint. npm took 0.3 to
+  1.15 s here at low load; the margin was about 1 s.
+- Go and tsc-rs share it. The protocol has no "ATA done" signal (the work-done progress Go sends
+  is delayed and needs `window.workDoneProgress`), so only the harness can wait for it.
+
+**Repro** (`scripts/perf-rearch/nd2/`): `repro.py` runs the scenario in the parity sandbox N times
+and tags each run by those three items; `burn.sh` is a CPU burner scope; `slow-npm/npm` delays
+ATA's npm calls (`ND2_NPM_DELAY`, fixed or `rand:<max>`) and logs their times; `load-runs.sh` runs
+4 repro instances side by side under 48 burners with a random npm delay.
+
+| harness | load | npm | tsc-rs runs | variants |
+|---|---|---|---|---|
+| before | 40 to 57, 48 burners | as is | 54 | 1 (CPU load alone does not tip it) |
+| before | idle | 2.5 s more | 3, and 3 Go | the late one, every run of both servers |
+| before | 48 burners, 4 side by side (load 37 to 48) | 0 to 3 s more | 32, and 16 Go | 4 for tsc-rs (18 of 32 late), 3 for Go (9 of 16 late) |
+| after | 48 burners, 4 side by side (load 50 to 62) | 0 to 3 s more | 32, and 16 Go | 1: all 32 tsc-rs runs equal on every answer; every round MATCH 52 of 52 |
+
+**Fix.** The scenarios with ATA on the user's typings run the user's npm behind a logging shim,
+and every wait covers it:
+
+- `vendor/lspdiff/user-npm/npm` is first on the server's `PATH`. It writes the call's start line
+  (pid) itself, before node starts, then runs `user-npm.mjs` with the same pid. That script runs
+  the real npm (`ATA_REAL_NPM`, the npm on lspdiff's `PATH`, which parity_lsp.py keys) with the
+  same arguments, directory and output, and writes the done line (args, exit code). The log is in
+  a new temporary dir per server run.
+- `Script.settle` (`scenario.mjs`), used by `quiet()`, `checkpoint()` and `ataIdle()`: the server is
+  quiet for the wait's window with no request pending, and with ATA on, `npmIdle` holds: every
+  started call is done and has exited, and the log has not changed for `ATA_IDLE_MS` (1.5 s),
+  counted from the start of the wait too, so that a call ATA is about to start is seen. After an
+  npm wait the server must be quiet again, which takes the refresh that ATA's result schedules. A
+  wait that reaches `ATA_DEADLINE_MS` fails the run. `ata-overlay` keeps its barrier, now the same
+  code.
+- The first draft counted the idle window only from the last log change and wrote the start line
+  from node. At load 90, npm's start line came up to about 0.6 s after the `didOpen` (Go and
+  tsc-rs alike), after the 300 ms quiet window. The 12 opens then went out back to back, and the
+  refreshes their ATA requests schedule coalesced: one `diagnostic/refresh` at `load` instead of
+  two in 8 of 32 tsc-rs and 11 of 16 Go runs. A quiet wait right after a notification ends at once
+  when the server was quiet before it, since a notification has no answer to wait for. The
+  `ATA_IDLE_MS` floor gives every wait of these scenarios time for the server's work to show.
+- With the fix, each `didOpen`'s ATA request ends, and its refresh fires, before the next open:
+  the `load` checkpoint has `workspace/inlayHint/refresh` and 12 `workspace/diagnostic/refresh`
+  on both servers, and the completion sees the typings (1,150 items).
+- Cost: about 1.5 s per wait in these scenarios. Per server run, from the gate runs below:
+  watch-ts-pattern-f12 6.3 to 28.5 s, watch-umami-f12 and watch-hono-f12 about 7 to 29 s,
+  fsevents 19.4 to 25 s. Over the three tsc-rs runs of the full lsp tier that is about 340 s more
+  session time, about 100 s more wall time with 4 sessions side by side (warm: 141 s before).
+
+**Gate.** Go fills first for the sessions where Go races
+(`parity_lsp.py --tier full --only <re> --go-refill <re>` with hono-f12-p6, umami-f12-p6,
+watch-hono-f12, watch-umami-f12, watch-narrow-umami-f12 and second-project-query), then `parity.sh
+full` of `tsgo-head-46578c173-rel` (harness 7658e8e35, the source of perf/first-principles at
+46578c173) against `base-current` (h4r3-a8392a002-full): run `nd2-e92f96b39-full`, **PARITY OK**,
+187,187 items, 0 lost, 0 not run, 0 new not good, 36 grandfathered (the known fuzz items), the
+known FLAKY `watch_ends_soon_after_sigint_or_sigterm`. lsp: 2,631 MATCH and 27 GO-BROKEN (the
+references of hono-f12-p6 and umami-f12-p6, as in the base), no DIFF. Every watch scenario is MATCH
+on every item, including the Go-race items of the base (watch-umami-f12 and
+watch-narrow-umami-f12 `load watch events` and `end watch ids`, watch-hono-f12 `end watch ids`):
+with the waits, Go's background tasks run in order there too.
+
+Negative controls (`selftest/h4-selftest.mjs`, part `nd2`): a wait sees an npm call that starts
+after the wait began and lasts until its done line, then waits for quiet again; with ATA on a wait
+lasts `ATA_IDLE_MS` even when npm never runs; with ATA off it is the server's quiet window alone.
+They fail with the idle window counted from the last log change only.
 
 ## LSP watch scenarios on the perf head (2026-11-04)
 
@@ -1590,7 +1680,8 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
-  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
+  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm; `user-npm/`
+  the logging shim of the user's npm; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
   the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process and its session result,
   `settings.mjs` every setting, `selftest/` their self-tests) and `vendor/difffuzz/` (feat/difffuzz
   033e55442; `oracle.py` checks the inputs since lane H4).

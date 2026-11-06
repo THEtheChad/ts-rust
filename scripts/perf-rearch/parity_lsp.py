@@ -193,7 +193,7 @@ JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsse
 # The lspdiff sources that script a session, so Go's (and JS's) answers depend on them; the diff and
 # referee code (lspdiff.mjs, referee.mjs) and the bench scripts do not change a cached answer.
 SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
-                   'ata-npm/npm', 'ata-npm/fake-npm.mjs')
+                   'ata-npm/npm', 'ata-npm/fake-npm.mjs', 'user-npm/npm', 'user-npm/user-npm.mjs')
 CACHE_VERSION = 2  # bump when the form of the cached logs changes (2: lane H4, session results, snapshots)
 
 
