@@ -38,9 +38,12 @@
 //                   install more typings, and the watchers when the overlay and the file close
 // ATA: the scenarios that set `ata: false` turn it off (pkgjson-overlay); ata-overlay runs it against
 // the stand-in npm; the others leave it on with the user's npm and typings cache
-// (~/.cache/typescript/7.1, which parity_lsp.py keys their Go cache by).
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+// (~/.cache/typescript/7.1, which parity_lsp.py keys their Go cache by), the npm run through the
+// logging shim user-npm/. Every wait of a scenario with ATA on (quiet, checkpoint) also waits until
+// ATA's npm is idle (Script.settle), so an answer never depends on how long npm took.
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
@@ -190,18 +193,20 @@ class Script {
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(a), type: 3 }, { uri: fileUri(b), type: 1 }] });
   }
 
-  // ata-overlay: waits until ATA is idle and logs the npm calls since the last wait as an item
-  // ("<label> ata npm", method ata/npm: each call's arguments and exit code), compared like an answer.
-  // The barrier (lane H4) is the stand-in npm's own log: every call writes a start line and, when its
-  // work is done, a done line with the same pid. ATA is idle when every started call is done, its
-  // process has exited, and no call started for ATA_IDLE_MS. A wait that reaches ATA_DEADLINE_MS
-  // fails the run (a timeout of that server: for tsc-rs a DIFF, for Go GO-BROKEN), never a success.
-  // The scenario waits after every step, so no request is ever sent while ATA's npm call runs: a
-  // request in that window starts a second install of the same typings and makes the next answers
-  // depend on which install a snapshot sees (Go and tsc-rs alike; the race ND1 found with the real npm).
-  async ataIdle(label) {
+  // ATA's npm calls so far, from the npm shim's log: every call writes a start line and, when its
+  // work is done, a done line with the same pid (ata-npm/fake-npm.mjs for ata-overlay, user-npm/ for
+  // the scenarios with the user's npm).
+  npmCalls() {
     const file = this.ata.log;
-    const read = () => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+    return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  }
+
+  // Waits until ATA's npm is idle: every started call is done and its process has exited, and the log
+  // has not changed for ATA_IDLE_MS, counted from `since` too (settle passes the start of its wait
+  // first, so that a call ATA is about to start is seen, then -Infinity). Returns whether it waited
+  // (false: npm was idle at once). A wait that reaches ATA_DEADLINE_MS fails the run (a timeout of
+  // that server: for tsc-rs a DIFF, for Go GO-BROKEN), never a success.
+  async npmIdle(label, since) {
     const alive = (pid) => {
       try {
         process.kill(pid, 0);
@@ -211,22 +216,46 @@ class Script {
       }
     };
     const start = performance.now();
-    let last = performance.now();
-    let seen = -1;
-    for (;;) {
-      const log = read();
-      if (log.length !== seen) [seen, last] = [log.length, performance.now()];
+    for (let polls = 0; ; polls++) {
+      const log = this.npmCalls();
+      if (log.length !== this.ata.seen) [this.ata.seen, this.ata.changedAt] = [log.length, performance.now()];
       const done = new Set(log.filter((e) => e.done).map((e) => e.pid));
       const busy = log.some((e) => e.start && (!done.has(e.pid) || alive(e.pid)));
-      if (!busy && performance.now() - last >= SETTINGS.ATA_IDLE_MS) break;
-      if (performance.now() - start > SETTINGS.ATA_DEADLINE_MS) {
-        const open = log.filter((e) => e.start && !done.has(e.pid)).map((e) => e.args.join(" "));
+      const now = performance.now();
+      if (!busy && now - Math.max(since, this.ata.changedAt) >= SETTINGS.ATA_IDLE_MS) return polls > 0;
+      if (now - start > SETTINGS.ATA_DEADLINE_MS) {
+        const open = log.filter((e) => e.start && !done.has(e.pid)).map((e) => (e.args ? e.args.join(" ") : `pid ${e.pid}`));
         throw Object.assign(new Error(`ATA did not finish in ${SETTINGS.ATA_DEADLINE_MS} ms at ${label} (npm still running: ${open.join("; ") || "a process that has not exited"})`), { timeout: true });
       }
       await new Promise((r) => setTimeout(r, 50));
     }
-    await this.client.settle(SETTLE_MS);
-    const done = read().filter((e) => e.done);
+  }
+
+  // The scenario's waits (quiet, checkpoint, ataIdle): the server has been quiet for `ms` with no
+  // request pending and, with ATA on, ATA's npm is idle (npmIdle) and was for ATA_IDLE_MS since the
+  // wait began; after an npm wait the server must be quiet again, which takes the diagnostics refresh
+  // that ATA's result schedules. The LSP stream does not show ATA's npm: on ts-pattern the inferred
+  // project's `npm install types-registry@latest` starts up to about 0.6 s after the didOpen at load
+  // 90 and takes 0.3 to 1 s and more, and its result reaches the next request's snapshot. A wait on
+  // the stream alone ended before or during that call at random (lane ND2), so the next answers and
+  // refreshes depended on npm's time and the host's load, for Go and tsc-rs alike.
+  async settle(ms, label) {
+    const start = performance.now();
+    for (let since = start; ; since = -Infinity) {
+      await this.client.settle(ms);
+      if (!this.ata || !(await this.npmIdle(label, since))) return performance.now() - start;
+    }
+  }
+
+  // ata-overlay: waits until ATA is idle (settle, the barrier of lane H4: the stand-in npm's own log)
+  // and logs the npm calls since the last wait as an item ("<label> ata npm", method ata/npm: each
+  // call's arguments and exit code), compared like an answer. The scenario waits after every step, so
+  // no request is ever sent while ATA's npm call runs: a request in that window starts a second
+  // install of the same typings and makes the next answers depend on which install a snapshot sees
+  // (Go and tsc-rs alike; the race ND1 found with the real npm).
+  async ataIdle(label) {
+    await this.settle(SETTLE_MS, label);
+    const done = this.npmCalls().filter((e) => e.done);
     this.log.push({ step: `${label} ata npm`, method: "ata/npm", result: done.slice(this.ata.reported).map((e) => ({ args: e.args, code: e.code })), ms: 0 });
     this.ata.reported = done.length;
   }
@@ -235,11 +264,11 @@ class Script {
   // background task (watch updates) ends before the next snapshot starts. Go runs those tasks as
   // concurrent goroutines, and back-to-back snapshots make its registrations race.
   quiet(ms = SETTINGS.LSPDIFF_QUIET_MS) {
-    return this.client.settle(ms);
+    return this.settle(ms, "quiet");
   }
 
   async checkpoint(name) {
-    const waited = await this.client.settle(SETTLE_MS);
+    const waited = await this.settle(SETTLE_MS, `checkpoint ${name}`);
     const fresh = this.client.events.slice(this.seen);
     this.seen = this.client.events.length;
     const events = [];
@@ -567,6 +596,18 @@ function fixtureChanges(root, expected) {
   return out;
 }
 
+// The npm that ATA would run with lspdiff's PATH: the first executable `npm` on it (the one
+// parity_lsp.py keys the Go cache by).
+function userNpm() {
+  for (const d of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    try {
+      accessSync(join(d, "npm"), constants.X_OK);
+      return join(d, "npm");
+    } catch {}
+  }
+  throw new Error("no npm on PATH: the scenarios with ATA on the user's typings run it");
+}
+
 // Runs a scenario on one server and returns { log: [{ step, method, params, result, error }],
 // session } (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
 // fixture dir is not what the script made it). A fixture scenario first writes its fixture into
@@ -580,27 +621,37 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   // A private typings cache: <root>-ata/xdg as XDG_CACHE_HOME (so <root>-ata/xdg/typescript/7.1 is the
   // typings location; it reads "<root>-ata" in answers), the stand-in npm first on PATH, its store
   // and log beside it. Written fresh before every server run.
+  // With ATA on and the user's typings cache, the user's npm runs behind the logging shim user-npm/
+  // (first on PATH; it runs the npm that PATH held for lspdiff, ATA_REAL_NPM), whose log is in a new
+  // temporary dir: the scenario's waits see ATA's npm calls (Script.settle).
   let ata;
+  const here = dirname(fileURLToPath(import.meta.url));
   if (scenario.typings === "private") {
     const dir = `${root}-ata`;
     writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
     mkdirSync(join(dir, "xdg"), { recursive: true });
-    ata = { log: join(dir, "npm.log"), reported: 0 };
+    ata = { dir, log: join(dir, "npm.log") };
     env = {
       ...env,
-      PATH: `${join(dirname(fileURLToPath(import.meta.url)), "ata-npm")}:${process.env.PATH}`,
+      PATH: `${join(here, "ata-npm")}:${process.env.PATH}`,
       ATA_NODE: process.execPath,
       ATA_STORE: join(dir, "store"),
       ATA_NPM_LOG: ata.log,
       ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
       XDG_CACHE_HOME: join(dir, "xdg"),
     };
+  } else if (scenario.ata ?? true) {
+    const dir = mkdtempSync(join(tmpdir(), "lspdiff-npm-"));
+    ata = { dir, log: join(dir, "npm.log") };
+    env = { ...env, PATH: `${join(here, "user-npm")}:${process.env.PATH}`, ATA_NODE: process.execPath, ATA_REAL_NPM: userNpm(), ATA_NPM_LOG: ata.log };
   }
+  if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
   try {
     client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
+    if (ata) rmSync(ata.dir, { recursive: true, force: true });
     throw Object.assign(e, { log: [], session: e.session });
   }
   const s = new Script(client, root);
@@ -625,7 +676,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     writeFileSync(serverLog, lines.join("\n") + "\n");
   }
   if (scenario.fixture) rmSync(root, { recursive: true, force: true });
-  if (ata) rmSync(`${root}-ata`, { recursive: true, force: true });
+  if (ata) rmSync(ata.dir, { recursive: true, force: true });
   if (failure) throw Object.assign(failure, { log: s.log, session });
   return { log: s.log, session };
 }

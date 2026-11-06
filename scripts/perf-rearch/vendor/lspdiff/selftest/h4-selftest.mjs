@@ -1,5 +1,6 @@
 // Negative controls of lane H4 (LSP side): Astra's H3 re-review (docs/perf-rearch/reviews/
-// 2026-11-05-astra-h3.md), findings 5, 6, 9, 10 and 11, each run as the reviewer ran it
+// 2026-11-05-astra-h3.md), findings 5, 6, 9, 10 and 11, each run as the reviewer ran it, and lane ND2's
+// scenario waits (the npm barrier of the scenarios with ATA on)
 // (~/.cache/perf-rearch/scratch/review-h3-astra/: js-probes.mjs, malformed-tsserver.cjs, late-crash/,
 // alignment/, ata-probe.mjs), plus the session result's other outcomes (stderr, a server that does not
 // exit, a server that writes into its project). The Python side is scripts/perf-rearch/parity_h4_test.py.
@@ -259,32 +260,14 @@ await part("go variants", async () => {
 await part("finding 11", async () => {
   const { PLUMBING } = await import(join(LSPDIFF, "settings.mjs"));
   const reads = [];
-  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs"]) {
+  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs", "user-npm/user-npm.mjs"]) {
     for (const m of readFileSync(join(LSPDIFF, f), "utf8").matchAll(/process\.env\.((?:LSPDIFF|ATA)_\w+)|process\.env\[["'`]((?:LSPDIFF|ATA)_\w+)/g)) reads.push(`${f}:${m[1] ?? m[2]}`);
   }
   const stray = reads.filter((r) => !PLUMBING.includes(r.split(":")[1]));
   check("finding 11: every LSPDIFF_*/ATA_* setting is read in settings.mjs only (so the cache key has them all)", stray.length === 0, stray.join(", "));
-  const src = readFileSync(join(LSPDIFF, "scenario.mjs"), "utf8");
-  const method = src.match(/  async ataIdle\(label\) \{[\s\S]*?\n  \}/)[0];
+  const probe = scriptProbe(() => '{"start":true,"pid":4242,"args":["install"]}\n', () => (clock += 20000));
   let clock = 0;
-  const env = { ATA_IDLE_MS: "1500" };
-  const ctx = {
-    process: { env, kill: () => true },
-    performance: { now: () => (clock += 20000) },
-    existsSync: () => true,
-    readFileSync: () => '{"start":true,"pid":4242,"args":["install"]}\n',
-    SETTLE_MS: 0,
-    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
-    setTimeout: (cb) => cb(),
-    Error,
-    Object,
-    JSON,
-  };
-  const cls = vm.runInNewContext(`(class {${method}})`, ctx);
-  const s = new cls();
-  s.ata = { log: "fake", reported: 0 };
-  s.client = { settle: async () => {} };
-  s.log = [];
+  const s = probe.script;
   let threw = null;
   try {
     await s.ataIdle("deadline");
@@ -292,6 +275,68 @@ await part("finding 11", async () => {
     threw = e;
   }
   check("finding 11: an ATA wait that reaches its deadline with npm still running fails the run (probe ata-probe)", !!threw && threw.timeout === true && s.log.length === 0, threw ? String(threw.message) : JSON.stringify(s.log));
+});
+
+// The Script waits of scenario.mjs (npmCalls, npmIdle, settle, ataIdle) in a context of their own:
+// `npmLog(polls)` gives the npm log's text at each read, `now()` the clock (ms); `alive`: whether a
+// logged npm process still runs (finding 11: always).
+function scriptProbe(npmLog, now, alive = true) {
+  const src = readFileSync(join(LSPDIFF, "scenario.mjs"), "utf8");
+  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async settle(ms, label) {", "async ataIdle(label) {"].map((head) => {
+    const at = src.indexOf(`\n  ${head}`);
+    if (at < 0) throw new Error(`scenario.mjs has no ${head}`);
+    return src.slice(at, src.indexOf("\n  }\n", at) + 4);
+  });
+  let reads = 0;
+  const ctx = {
+    process: {
+      env: {},
+      kill: () => {
+        if (!alive) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    },
+    performance: { now },
+    existsSync: () => true,
+    readFileSync: () => npmLog(reads++),
+    SETTLE_MS: 0,
+    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
+    setTimeout: (cb) => cb(),
+    Error,
+    Object,
+    JSON,
+  };
+  const cls = vm.runInNewContext(`(class {${methods.join("")}})`, ctx);
+  const script = new cls();
+  const settles = [];
+  script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
+  script.client = { settle: async () => settles.push(now()) };
+  script.log = [];
+  return { script, settles, reads: () => reads };
+}
+
+// ---- lane ND2: the scenarios' waits cover ATA's npm calls ----------------------------------------
+await part("nd2", async () => {
+  // A call that starts on the 3rd read of the log (ATA was about to start it when the wait began) and
+  // is done on the 20th: a wait ends only after the done line, and only after the server was quiet
+  // again after it. 100 ms per clock read.
+  let clock = 0;
+  const start = '{"start":true,"pid":1}\n';
+  const done = '{"done":true,"pid":1,"args":["install"],"code":0}\n';
+  const late = scriptProbe((n) => (n < 2 ? "" : n < 19 ? start : start + done), () => (clock += 100), false);
+  const ended = await late.script.settle(300, "probe");
+  check("nd2: a scenario wait sees an npm call that starts after the wait began and lasts until it is done", late.reads() > 19 && late.settles.length >= 2 && late.settles.at(-1) > 1900, `reads ${late.reads()}, settles ${late.settles}, waited ${ended}`);
+  // No npm call at all: the wait still lasts ATA_IDLE_MS from its start (a call ATA is about to make).
+  clock = 0;
+  const none = scriptProbe(() => "", () => (clock += 100), false);
+  const waited = await none.script.settle(300, "probe");
+  check("nd2: with ATA on, a scenario wait lasts ATA_IDLE_MS even when npm never runs", waited >= 1500, `waited ${waited}`);
+  // ATA off (no npm log): the wait is the server's quiet window alone.
+  clock = 0;
+  const off = scriptProbe(() => "", () => (clock += 100), false);
+  off.script.ata = undefined;
+  const quick = await off.script.settle(300, "probe");
+  check("nd2: with ATA off, a scenario wait is the server's quiet window alone", off.reads() === 0 && quick < 1500, `reads ${off.reads()}, waited ${quick}`);
 });
 
 rmSync(ROOT, { recursive: true, force: true });
