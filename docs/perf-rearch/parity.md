@@ -607,8 +607,22 @@ and every wait covers it:
 - With the fix, each `didOpen`'s ATA request ends, and its refresh fires, before the next open:
   the `load` checkpoint has `workspace/inlayHint/refresh` and 12 `workspace/diagnostic/refresh`
   on both servers, and the completion sees the typings (1,150 items).
-- Cost: these scenarios are slower, about 1.5 s per wait (watch-ts-pattern-f12 about 25 s a run
-  instead of 8 at low load).
+- Cost: about 1.5 s per wait in these scenarios. Per server run, from the gate runs below:
+  watch-ts-pattern-f12 6.3 to 28.5 s, watch-umami-f12 and watch-hono-f12 about 7 to 29 s,
+  fsevents 19.4 to 25 s. Over the three tsc-rs runs of the full lsp tier that is about 340 s more
+  session time, about 100 s more wall time with 4 sessions side by side (warm: 141 s before).
+
+**Gate.** Go fills first for the sessions where Go races
+(`parity_lsp.py --tier full --only <re> --go-refill <re>` with hono-f12-p6, umami-f12-p6,
+watch-hono-f12, watch-umami-f12, watch-narrow-umami-f12 and second-project-query), then `parity.sh
+full` of `tsgo-head-46578c173-rel` (harness 7658e8e35, the source of perf/first-principles at
+46578c173) against `base-current` (h4r3-a8392a002-full): run `nd2-e92f96b39-full`, **PARITY OK**,
+187,187 items, 0 lost, 0 not run, 0 new not good, 36 grandfathered (the known fuzz items), the
+known FLAKY `watch_ends_soon_after_sigint_or_sigterm`. lsp: 2,631 MATCH and 27 GO-BROKEN (the
+references of hono-f12-p6 and umami-f12-p6, as in the base), no DIFF. Every watch scenario is MATCH
+on every item, including the Go-race items of the base (watch-umami-f12 and
+watch-narrow-umami-f12 `load watch events` and `end watch ids`, watch-hono-f12 `end watch ids`):
+with the waits, Go's background tasks run in order there too.
 
 Negative controls (`selftest/h4-selftest.mjs`, part `nd2`): a wait sees an npm call that starts
 after the wait began and lasts until its done line, then waits for quiet again; with ATA on a wait
