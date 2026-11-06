@@ -32,11 +32,11 @@ real reproduction with more runs.
 
   Warm, tsc-rs is already faster than Go in this session. The only open where Go is faster is the
   build load (all its files are in the parse cache from the spec load).
-- Hono's solution `tsconfig.json` (`files: []`, 9 references): the spec project is not composite,
-  build is. For open 3, build is rejected by its composite include check without a load; for
-  open 4 spec already contains the file *as a source* of ... no: the BFS level visits build and
-  spec; spec is up to date, build loads. So the two big loads fall in **different opens**; Go's
-  parallel BFS level does not overlap them either.
+- Hono's solution `tsconfig.json` (`files: []`, 9 references) puts build (composite, `src/` minus
+  tests) and spec (not composite, `src/` with tests) on one BFS level. Open 3 (a test file): build
+  fails its composite include check without a load, spec loads. Open 4 (a source file): spec is
+  already loaded, build loads. So the two big loads fall in **different opens**, and Go's parallel
+  BFS level does not overlap them either.
 
 ### 2. Why W2 saw 536 ms: the first run after a load wait starts cold
 W2's slow runs are exactly the first run after each long wait for load < 1.5: go run 1 (after
