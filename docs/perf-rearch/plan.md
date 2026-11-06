@@ -812,3 +812,16 @@ once a **reconciliation step** is built and tested.
     mountinfo). The coverage checks fail closed, and 9 mutation controls fail.
   - **D1 `521601cfe`:** parity full OK; IDENTITY OK, 66/66.
   - **Next:** a narrow Astra recheck, then the campaign.
+- **2026-11-06, D1-I3 round 4; `fix/output-layout-prefix` merged.**
+  - **Layout check:** an output that is another output's ancestor, or a
+    collision under Unicode lower *or* upper case, makes the layout
+    non-ordinary. Every repro gives 20/20 in every mode.
+  - **Identity:** `compiler_cores` matches the compiler on 33 parse cases
+    under a real CPU quota.
+  - **D1 `3178750e6`:** parity full OK, IDENTITY OK.
+- **Decision:** no further recheck round on the layout rule. Each fix moves
+  layouts toward the serial path, so a misclassification can only cost
+  parallelism, never correctness. The campaign adds a randomized output-layout
+  fuzzer instead, so the campaign tests this rule too.
+- **Validation campaign started:** lane CV1 writes the spec and builds the
+  tools; CV2 runs it.
