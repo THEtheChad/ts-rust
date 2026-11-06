@@ -21,7 +21,9 @@
 //! - every existing ancestor is a directory;
 //! - the output does not exist, or is a regular file with one link;
 //! - no other output equals it after case folding (one path emitted twice
-//!   included);
+//!   included), and none is a proper ancestor of it after case folding
+//!   (`out/p.js` and `out/p.js/x.js`: one write makes a file where the
+//!   other makes a directory), `names_collide`;
 //! - every metadata read succeeds (a failed read is not ordinary: the check
 //!   fails closed).
 //!
@@ -168,6 +170,36 @@ impl Checker {
     }
 }
 
+/// True when two outputs may name one entry, or one an ancestor directory
+/// of another, on a case-insensitive file system. Two names are taken as
+/// one when they are equal under full Unicode lowercasing or under full
+/// Unicode uppercasing (Windows compares names through its uppercase
+/// table). That errs toward "may collide", which costs only parallelism:
+/// it groups `σ`, `ς` and `Σ` (equal uppercased, as on Windows), the
+/// Kelvin sign `K` with `k` (equal lowercased), dotless `ı` with `i`
+/// (equal uppercased), and `ß` with `ss` (equal uppercased; not one name on
+/// any file system this port knows of). Dotted `İ` and `i` stay apart (no
+/// folding makes them equal), as on Windows. O(n·d) for n outputs of d
+/// components: a set of folded names and a lookup per ancestor.
+fn names_collide(outputs: &[String]) -> bool {
+    for fold in [str::to_lowercase, str::to_uppercase] {
+        let folded: Vec<String> = outputs.iter().map(|path| fold(path)).collect();
+        let mut names = FxHashSet::default();
+        if !folded.iter().all(|path| names.insert(path.as_str())) {
+            return true;
+        }
+        let is_ancestor = |path: &String| {
+            path.char_indices()
+                .filter(|&(at, c)| at > 0 && (c == '/' || c == '\\'))
+                .any(|(at, _)| names.contains(&path[..at]))
+        };
+        if folded.iter().any(is_ancestor) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Paths per check thread below which the check stays on the calling
 /// thread.
 const PATHS_PER_THREAD: usize = 512;
@@ -176,11 +208,7 @@ const PATHS_PER_THREAD: usize = 512;
 /// emit's writes may run in parallel. Any thread.
 #[must_use]
 pub fn ordinary_layout(outputs: &[String]) -> bool {
-    let mut folded = FxHashSet::default();
-    if !outputs
-        .iter()
-        .all(|path| folded.insert(path.to_lowercase()))
-    {
+    if names_collide(outputs) {
         return false;
     }
     let threads = std::thread::available_parallelism()
@@ -310,6 +338,57 @@ mod tests {
             assert!(!ordinary_layout(&names(&dir, paths)), "{label}");
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    /// Astra D1-I3 round 3, P1: an output that is a proper ancestor of
+    /// another (case-folded too) is not ordinary, though neither exists.
+    #[test]
+    fn an_output_that_is_another_output_s_directory_is_not_ordinary() {
+        let dir = scratch("prefix");
+        for paths in [
+            &["out/p.js", "out/p.js/x.js"][..],
+            &["out/p.js/x.js", "out/p.js"][..],
+            &["out/a/P.JS", "out/a/p.js/deep/x.js"][..],
+        ] {
+            assert!(!ordinary_layout(&names(&dir, paths)), "{paths:?}");
+        }
+        // Siblings that only share a prefix of characters stay ordinary.
+        assert!(ordinary_layout(&names(
+            &dir,
+            &["out/p.js", "out/p.jsx/x.js", "out/p/x.js"]
+        )));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Astra D1-I3 round 3, P2: names equal under full Unicode lowercasing
+    /// or uppercasing are taken as one (see `names_collide`).
+    #[test]
+    fn unicode_case_pairs() {
+        use super::names_collide;
+        let collide =
+            |a: &str, b: &str| names_collide(&[format!("out/{a}.js"), format!("out/{b}.js")]);
+        // Windows compares names uppercased: σ, ς and Σ are one name.
+        assert!(collide("σ", "ς"));
+        assert!(collide("Σ", "ς"));
+        assert!(collide("σ", "Σ"));
+        // Kelvin sign and k; dotless ı and i; ß and ss (conservative).
+        assert!(collide("\u{212A}", "k"));
+        assert!(collide("ı", "i"));
+        assert!(collide("ß", "ss"));
+        assert!(collide("Straße", "STRASSE"));
+        // Dotted İ and i: no folding makes them equal.
+        assert!(!collide("İ", "i"));
+        assert!(!collide("a", "b"));
+        // In a directory component too.
+        assert!(names_collide(&[
+            "out/σ/a.js".to_owned(),
+            "out/ς/a.js".to_owned()
+        ]));
+        // And as an ancestor: `out/Σ` against `out/ς/a.js`.
+        assert!(names_collide(&[
+            "out/Σ".to_owned(),
+            "out/ς/a.js".to_owned()
+        ]));
     }
 
     /// An unreadable directory fails closed.

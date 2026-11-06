@@ -11,7 +11,8 @@ usage: dirlink_repro.py BIN [--runs 20] [--mode plain|incremental|build] [--arg 
                          [--case CASE]
   CASE (Astra's round-2 edges, ~/.cache/perf-rearch/scratch/astra-dirlink-edges-*/<case>/work, whose out/
   holds the link to recreate): different-names, target-file, case-only, target-created-file, absolute,
-  chain, deep, parent, input-dir. Without --case: the round-1 repro (out/left -> right).
+  chain, deep, parent, input-dir; prefix-many (round 3: an output that is another's directory,
+  ~/.cache/perf-rearch/scratch/astra-i3r3-prefix-many-*). Without --case: the round-1 repro.
   plain        tsgo -p tsconfig.json <args>
   incremental  tsgo -p tsconfig.json --incremental --tsBuildInfoFile <scratch>/x.tsbuildinfo <args>
                (the build info is removed before each run: every run is a full build)
@@ -50,7 +51,11 @@ def main():
     ap.add_argument("--arg", dest="extra", action="append", default=[])
     a = ap.parse_args()
     links = [("left", "right", False)]
-    if a.case:
+    if a.case == "prefix-many":
+        # Astra D1-I3 round 3: 64 pairs src/pN.ts + src/pN.js/x.ts into a fresh out/ (no link).
+        project = sorted(glob.glob(os.path.expanduser("~/.cache/perf-rearch/scratch/astra-i3r3-prefix-many-*")))[0]
+        links = []
+    elif a.case:
         edges = sorted(glob.glob(os.path.expanduser("~/.cache/perf-rearch/scratch/astra-dirlink-edges-*")))[0]
         project = os.path.join(edges, a.case, "work")
         links = []
