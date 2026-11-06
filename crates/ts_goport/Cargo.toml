@@ -48,6 +48,9 @@ tikv-jemalloc-ctl = { version = "=0.7.0", optional = true }
 # execute/tsc/diagnostics.rs `init_local`.
 jiff = { version = "=0.2.37", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform"] }
 miow = "=0.6.1"
+# emitter/output_aliases.rs: file identity (volume serial number and file
+# index, Go `os.SameFile`) through its safe `Handle` and `information`.
+winapi-util = "=0.1.11"
 same-file = "=1.0.6"
 
 # `process`: prctl(PR_SET_THP_DISABLE) in thp_guard.rs. `signal`: the
