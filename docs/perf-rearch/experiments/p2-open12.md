@@ -53,3 +53,20 @@ server binary; reads only) reproduces the state:
 
 Cold, open 3 (the spec load, 846 files plus node_modules) takes 153–226 ms in Go and 181–195 ms
 in tsc-rs. Cold is comparable on both; neither shows a tsc-rs-only stall. Gated runs follow.
+
+### 3. Correction: W2's outliers are the first run after a VM boot
+`journalctl --list-boots`: the VM booted at 22:33:56, 23:12:56, 23:19:00 and 23:20:23 (WSL
+shutdowns). W2's three slow runs are each the first run after a boot:
+
+| run | started | after boot | first_ms |
+|---|---|---|---|
+| go run 1 | 23:13:29 | 33 s (23:12:56) | 301 ms |
+| main run 2 | 23:19:09 | 9 s (23:19:00) | 623 ms |
+| head run 3 | 23:20:30 | 7 s (23:20:23) | 536 ms |
+
+Every other run (warm): go 109 / 120, main 119 / 138, head 198 / 91. So "head 0.536 s against Go
+0.120 s" compares a boot-cold tsc-rs run with a warm Go run. After a boot everything is cold: the
+page cache (binaries, shared libraries, hono's files) and the dentry/inode caches. `pagecache.py
+evict` reproduces only the page-cache part (it can't drop dentries without root). The remaining
+question is whether tsc-rs is slower than Go *boot-cold*: Go's one boot-cold run (301 ms, 33 s
+after its boot) against tsc-rs's two (536, 623 ms, 7–9 s after theirs) suggests up to 2×.
