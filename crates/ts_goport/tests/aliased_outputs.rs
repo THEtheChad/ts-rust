@@ -541,3 +541,70 @@ fn an_output_that_is_another_output_s_directory_gives_one_result() {
     }
     fs::remove_dir_all(root).expect("remove scratch");
 }
+
+/// Lane WIN: 8.3 short names. `src/AB<i>CD~1.ts` (made first) and
+/// `src/ab<i>cdefgh.ts` emit `out/AB<i>CD~1.js` and `out/ab<i>cdefgh.js`.
+/// On a volume that makes short names (NTFS on a system drive, by
+/// default), `out/ab<i>cdefgh.js` made first is also `out/AB<i>CD~1.js`,
+/// and the other write lands in it. The layout is not ordinary, so the
+/// writes run in program order (`AB<i>CD~1` first): each output keeps its
+/// own module, in every mode and on every run. Elsewhere the names never
+/// meet and the test holds trivially.
+#[test]
+fn short_name_outputs_are_written_in_program_order() {
+    const PAIRS: usize = 60;
+    let root = scratch_dir();
+    fs::create_dir(root.join("src")).expect("src");
+    let module = |name: &str, value: &str| {
+        fs::write(
+            root.join(format!("src/{name}.ts")),
+            format!("export const {value} = \"{value}\";\n"),
+        )
+        .expect("module");
+    };
+    for index in 0..PAIRS {
+        module(&format!("AB{index:02}CD~1"), &format!("short{index}"));
+    }
+    for index in 0..PAIRS {
+        module(&format!("ab{index:02}cdefgh"), &format!("long{index}"));
+    }
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions": {"outDir": "out", "rootDir": "src", "declaration": true, "target": "es2020", "module": "commonjs"}, "include": ["src"]}"#,
+    )
+    .expect("tsconfig");
+    let modes: [&[&str]; 3] = [
+        &["-p", "tsconfig.json"],
+        &["-p", "tsconfig.json", "--checkers", "4"],
+        &["-b", "tsconfig.json", "--force"],
+    ];
+    for args in modes {
+        for run in 0..RUNS {
+            let _ = fs::remove_dir_all(root.join("out"));
+            let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+                .current_dir(&root)
+                .args(args)
+                .env_remove("GOPORT_EMIT_THREADS")
+                .output()
+                .expect("run tsgo");
+            assert_eq!(output.status.code(), Some(0), "{args:?} run {run}");
+            for index in 0..PAIRS {
+                for (name, value) in [
+                    (format!("AB{index:02}CD~1"), format!("short{index}")),
+                    (format!("ab{index:02}cdefgh"), format!("long{index}")),
+                ] {
+                    for ext in ["js", "d.ts"] {
+                        let path = root.join(format!("out/{name}.{ext}"));
+                        let text = fs::read_to_string(&path).expect("output");
+                        assert!(
+                            text.contains(&format!("\"{value}\"")),
+                            "{args:?} run {run}: {} holds another module",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    fs::remove_dir_all(root).expect("remove scratch");
+}
