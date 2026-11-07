@@ -190,6 +190,8 @@ def linux_setup(root, links):
 
 
 def tree_hash(root, windows):
+    """The tree under root without src/ and tsconfig.json: paths, kinds, link targets and the
+    bytes of each file, with the scratch dir masked."""
     h = hashlib.sha256()
     for top, dirs, files in os.walk(root):
         dirs.sort()
@@ -207,20 +209,22 @@ def tree_hash(root, windows):
                 h.update(f"d {rel}\n".encode())
             else:
                 try:
-                    data = open(p, "rb").read()
+                    # Build info and messages hold the scratch dir: mask it, so runs in other
+                    # scratch dirs (another bin, another platform) compare.
+                    data = mask(open(p, "rb").read(), root, crlf=False)
                 except OSError as e:
                     data = f"<unreadable {e.errno}>".encode()
                 h.update(f"f {rel} ".encode() + hashlib.sha256(data).digest() + b"\n")
     return h.hexdigest()[:16]
 
 
-def mask(text, root):
+def mask(text, root, crlf=True):
     for form in (root, win_path(root) if root.startswith("/mnt/") else None):
         if form:
             text = text.replace(form.encode(), b"<dir>")
             text = text.replace(form.replace("\\", "/").encode(), b"<dir>")
             text = text.replace(form[0].lower().encode() + form[1:].replace("\\", "/").encode(), b"<dir>")
-    return text.replace(b"\r\n", b"\n")
+    return text.replace(b"\r\n", b"\n") if crlf else text
 
 
 def run_case(bin_path, case, modes, runs, work):
@@ -253,7 +257,13 @@ def run_case(bin_path, case, modes, runs, work):
                         raise RuntimeError(f"setup {case}: {r.stdout!r} {r.stderr!r}")
                 else:
                     linux_setup(root, links)
-                r = subprocess.run([bin_path] + args, cwd=root, capture_output=True)
+                for attempt in range(5):
+                    r = subprocess.run([bin_path] + args, cwd=root, capture_output=True)
+                    # WSL interop under load: the Windows process did not start or its output was
+                    # lost (exit 1, "UtilAcceptVsock"). Not the bin's result: set up and run again.
+                    if not (windows and b"UtilAcceptVsock" in r.stdout + r.stderr):
+                        break
+                    subprocess.run([CMD, "/c", setup], cwd=root, capture_output=True)
                 exits[r.returncode] = exits.get(r.returncode, 0) + 1
                 tree = tree_hash(root, windows)
                 stdout = mask(r.stdout + r.stderr, root)
