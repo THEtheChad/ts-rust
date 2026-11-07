@@ -1030,3 +1030,17 @@ once a **reconciliation step** is built and tested.
   - **ttfd:** not measured; there was no idle window.
   - **Next:** a full parity run on the combined head (C2 + C3 + WIN) to make
     the new base, ttfd on umami, and Astra's C2 review (running).
+- **2026-11-07, paused at Chad's request (WSL cleanup).** Status at the pause:
+  - **Frozen or stopped:**
+    - `head-gate-0bf6ff2a7` and the `c2f-*` units are frozen in
+      `app-batch.slice`. After the thaw, treat timeouts as suspect and re-run
+      those cases.
+    - `w2-resume.service` is stopped.
+  - **C2 follow-up:** branch `t3/c2-followup`, head `5e463bf9d`, code
+    complete.
+    - Commits: `b8b23e1a0` gates the debug counts, `675038068` fixes the
+      `quality.py` cfg boundary, `5e463bf9d` dedups the wait loops.
+    - In flight: tests, parity quick, and the base and head goport builds.
+      Logs are in `~/.cache/perf-rearch/c2f/`.
+    - Still to do after the thaw: nm and disassembly checks, icount
+      (CLI and LSP), clippy, and removing `../ts-rust-c2fbase`.
