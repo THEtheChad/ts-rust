@@ -12,7 +12,29 @@ use std::rc::Weak;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+use super::load_times::WaitTimer;
 use crate::contentmapper::{ConcurrentTransform, PrefetchedTransform};
+
+/// Updates the debug counts of the parse workers (`GOPORT_PREFETCH_STATS`)
+/// of the pool `$shared` with `$update` (`PrefetchShared::count`).
+/// Diagnostics only: without the feature it expands to nothing, so a
+/// shipped build keeps no counts and runs none of their updates.
+macro_rules! prefetch_count {
+    ($shared:expr, $update:expr) => {{
+        #[cfg(feature = "diagnostics")]
+        $shared.count($update);
+    }};
+}
+
+/// `prefetch_count!` for the pool of the load on this thread
+/// (`count_prep_with`), from the loader's code.
+macro_rules! count_prep {
+    ($update:expr) => {{
+        #[cfg(feature = "diagnostics")]
+        $crate::frontend::compiler::files_parser::count_prep_with($update);
+    }};
+}
+pub(crate) use count_prep;
 
 // Go: filesparser.go:19 parseTask
 // PORT: Go `*parseTask` is shared by the root task list, sub task lists,
@@ -591,8 +613,8 @@ impl FilesParser {
                 PrefetchPool::start(config, workers)
             }
         };
-        pool.shared
-            .count(|c| c.loader_started = Some(std::time::Instant::now()));
+        prefetch_count!(pool.shared, |c| c.loader_started =
+            Some(std::time::Instant::now()));
         pool.shared.take_load_view();
         if let Some(cache) = build_host_cache {
             cache.start_load();
@@ -1954,10 +1976,12 @@ struct PrefetchJob {
     // PORT: not in Go, where the parse goroutines transform (tsgo#4712).
     mapped: Option<Arc<ConcurrentTransform>>,
     /// When the job was queued, for the debug counts of a claim
-    /// (`GOPORT_PREFETCH_STATS`). `None` without them.
+    /// (`GOPORT_PREFETCH_STATS`, diagnostics). `None` without them.
+    #[cfg(feature = "diagnostics")]
     queued_at: Option<std::time::Instant>,
     /// True when a loader batch put the job below the others
-    /// (`queue_batch`), for the debug counts.
+    /// (`queue_batch`), for the debug counts (diagnostics).
+    #[cfg(feature = "diagnostics")]
     under: AtomicBool,
     /// Tests: set when the worker that parsed the file has stored its prep
     /// or made none (`set_prep_wait`).
@@ -2260,7 +2284,7 @@ impl TakenParse {
         }
         let prep = lock(&self.0.prep).take();
         if prep.is_none() {
-            count_prep(|c| c.preps_missing += 1);
+            count_prep!(|c| c.preps_missing += 1);
         }
         prep
     }
@@ -2316,11 +2340,11 @@ fn take_prefetched_meta(loader: &FileLoader, file_name: &str) -> Option<SourceFi
         return None;
     }
     let mut state = lock(&job.state);
-    let mut waited: Option<std::time::Instant> = None;
+    let mut waited = WaitTimer::default();
     let meta = loop {
         match &*state {
             PrefetchState::Running => {
-                waited.get_or_insert_with(std::time::Instant::now);
+                waited.start();
                 state = job.wait_done(state);
             }
             // A test can make the loader wait for a job that no worker has
@@ -2335,10 +2359,10 @@ fn take_prefetched_meta(loader: &FileLoader, file_name: &str) -> Option<SourceFi
         }
     };
     drop(state);
-    shared.count(|c| {
-        if let Some(start) = waited {
+    prefetch_count!(shared, |c| {
+        if let Some(wait) = waited.elapsed() {
             c.waited += 1;
-            c.wait += start.elapsed();
+            c.wait += wait;
         }
         if meta.is_some() {
             c.meta_taken += 1;
@@ -2350,21 +2374,12 @@ fn take_prefetched_meta(loader: &FileLoader, file_name: &str) -> Option<SourceFi
     Some(meta.meta)
 }
 
+#[cfg(test)]
 thread_local! {
     /// The preps that loads on this thread took (`FilePrep`), for tests.
     static PREPS_TAKEN: Cell<usize> = const { Cell::new(0) };
     /// The names that loads on this thread resolved themselves, for tests.
-    #[cfg(test)]
     static NAMES_OWN: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Counts whether the loader took the commit of a named prep
-/// (`FilePrep::commit`).
-pub(crate) fn note_commit(taken: bool) {
-    count_prep(|c| {
-        c.commits_taken += usize::from(taken);
-        c.commits_missing += usize::from(!taken);
-    });
 }
 
 /// The module names that loads on this thread resolved themselves so far
@@ -2416,14 +2431,18 @@ pub(crate) fn preps_taken() -> usize {
     PREPS_TAKEN.with(Cell::get)
 }
 
-/// Notes a prep that the loader took.
+/// Notes a prep that the loader took (tests).
+#[inline]
 pub(crate) fn note_prep_taken() {
+    #[cfg(test)]
     PREPS_TAKEN.with(|count| count.set(count.get() + 1));
 }
 
 /// Updates the debug counts of the prefetch of this load
-/// (`GOPORT_PREFETCH_STATS`), when parse workers run.
-pub(crate) fn count_prep(update: impl FnOnce(&mut PrefetchStats)) {
+/// (`GOPORT_PREFETCH_STATS`), when parse workers run (`count_prep!`;
+/// diagnostics).
+#[cfg(feature = "diagnostics")]
+pub(crate) fn count_prep_with(update: impl FnOnce(&mut PrefetchStats)) {
     if let Some(shared) = PREFETCH.with(|p| p.borrow().clone()) {
         shared.count(update);
     }
@@ -2559,8 +2578,9 @@ struct PrefetchQueue {
     /// They wait on `ready` too (`PrefetchShared::wake`).
     // PORT: not in Go (see `PrefetchJob::mapped`).
     mapped_workers: bool,
-    /// True when the debug counts are kept (`GOPORT_PREFETCH_STATS`): jobs
-    /// note when they are queued.
+    /// True when the debug counts are kept (`GOPORT_PREFETCH_STATS`,
+    /// diagnostics): jobs note when they are queued.
+    #[cfg(feature = "diagnostics")]
     timed: bool,
 }
 
@@ -2598,7 +2618,9 @@ impl PrefetchQueue {
             waited: AtomicBool::new(false),
             prep: Mutex::new(None),
             mapped,
+            #[cfg(feature = "diagnostics")]
             queued_at: self.timed.then(std::time::Instant::now),
+            #[cfg(feature = "diagnostics")]
             under: AtomicBool::new(false),
             #[cfg(test)]
             prep_settled: AtomicBool::new(false),
@@ -2869,7 +2891,8 @@ struct PrefetchShared {
     /// Until it is set, and with `None` inside, the workers do not resolve.
     resolve: OnceLock<Option<WorkerResolveConfig>>,
     /// Debug counts of `take_prefetched`, kept when `GOPORT_PREFETCH_STATS`
-    /// is set and printed to stderr when the pool stops.
+    /// is set and printed to stderr when the pool stops (diagnostics).
+    #[cfg(feature = "diagnostics")]
     counts: Option<Mutex<PrefetchStats>>,
     /// Loader v2 L1: the per-load OS view of the loader's load
     /// (`vfs::loadview`), set with the load. The workers read through it
@@ -2877,7 +2900,9 @@ struct PrefetchShared {
     view: Mutex<Option<Arc<crate::frontend::vfs::loadview::LoadView>>>,
 }
 
-/// What `take_prefetched` gave the loader during one program load.
+/// What `take_prefetched` gave the loader during one program load
+/// (`GOPORT_PREFETCH_STATS`, diagnostics).
+#[cfg(feature = "diagnostics")]
 #[derive(Default)]
 pub(crate) struct PrefetchStats {
     /// Worker parses that the loader took.
@@ -2904,8 +2929,8 @@ pub(crate) struct PrefetchStats {
     pub(crate) preps_named: usize,
     /// Named preps whose commit the loader took, and with none
     /// (`FilePrep::commit`).
-    commits_taken: usize,
-    commits_missing: usize,
+    pub(crate) commits_taken: usize,
+    pub(crate) commits_missing: usize,
     /// Worker parses with no prep when the loader needed it: the worker
     /// still resolved, or it made none.
     preps_missing: usize,
@@ -2930,8 +2955,10 @@ pub(crate) struct PrefetchStats {
 
 /// The start of the load whose claims the debug counts list
 /// (`PrefetchStats::early_claims`).
+#[cfg(feature = "diagnostics")]
 const EARLY_CLAIMS: std::time::Duration = std::time::Duration::from_millis(50);
 
+#[cfg(feature = "diagnostics")]
 impl PrefetchStats {
     /// Prints the counts to stderr. The sizes are read here, so only a
     /// debug run pays for them.
@@ -3111,6 +3138,7 @@ impl PrefetchShared {
         let jobs = Arc::new(JobMap::default());
         Self {
             queue: Mutex::new(PrefetchQueue {
+                #[cfg(feature = "diagnostics")]
                 timed: std::env::var_os("GOPORT_PREFETCH_STATS").is_some(),
                 by_name: jobs.clone(),
                 ..PrefetchQueue::default()
@@ -3123,6 +3151,7 @@ impl PrefetchShared {
             stats: Arc::new(SharedStatCache::default()),
             resolve: OnceLock::new(),
             view: Mutex::new(None),
+            #[cfg(feature = "diagnostics")]
             counts: std::env::var_os("GOPORT_PREFETCH_STATS").map(|_| {
                 Mutex::new(PrefetchStats {
                     started: Some(std::time::Instant::now()),
@@ -3164,7 +3193,9 @@ impl PrefetchShared {
         self.closed.load(AtomicOrdering::Relaxed)
     }
 
-    /// Updates the debug counts, when they are kept (`GOPORT_PREFETCH_STATS`).
+    /// Updates the debug counts, when they are kept (`GOPORT_PREFETCH_STATS`,
+    /// diagnostics; `prefetch_count!`).
+    #[cfg(feature = "diagnostics")]
     fn count(&self, update: impl FnOnce(&mut PrefetchStats)) {
         if let Some(counts) = &self.counts {
             update(&mut lock(counts));
@@ -3317,6 +3348,7 @@ impl PrefetchShared {
         }
         if let Some(newest) = jobs.pop() {
             woken += jobs.len();
+            #[cfg(feature = "diagnostics")]
             if queue.timed {
                 newest.under.store(true, AtomicOrdering::Relaxed);
             }
@@ -3483,7 +3515,7 @@ impl PrefetchShared {
         queue.pending.splice(0..0, jobs);
         self.wake(&mut queue, count);
         drop(queue);
-        self.count(|c| c.early_roots = count);
+        prefetch_count!(self, |c| c.early_roots = count);
     }
 
     /// Queues the files that a parsed file references, so their parses do
@@ -3668,7 +3700,7 @@ impl Drop for PrefetchPool {
         let (untaken, untaken_bytes) = self.shared.untaken();
         UNTAKEN_READS.fetch_add(untaken, AtomicOrdering::Relaxed);
         UNTAKEN_BYTES.fetch_add(untaken_bytes, AtomicOrdering::Relaxed);
-        self.shared.count(|c| {
+        prefetch_count!(self.shared, |c| {
             c.untaken = untaken;
             c.untaken_bytes = untaken_bytes;
             c.workers = workers;
@@ -4011,6 +4043,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
         }
     }
     let ahead_thread = EndAhead(Cell::new(false));
+    #[cfg(feature = "diagnostics")]
     let timed = shared.counts.is_some();
     loop {
         let job = {
@@ -4059,6 +4092,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
         }
         files.refresh(shared);
         let (os_fs, fs, viewed) = (files.os.clone(), files.fs.clone(), files.viewed);
+        #[cfg(feature = "diagnostics")]
         let started = timed.then(std::time::Instant::now);
         let running = RunningJob(&job);
         #[cfg(test)]
@@ -4203,9 +4237,10 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
             }
         }
         // A job with no references (an unread file) is busy time too.
+        #[cfg(feature = "diagnostics")]
         if let Some(started) = started {
             let busy = started.elapsed();
-            shared.count(|c| c.busy += busy);
+            prefetch_count!(shared, |c| c.busy += busy);
         }
     }
 }
@@ -5722,29 +5757,29 @@ pub(crate) fn take_prefetched_mapped(
                 .0;
         }
     }
-    let mut waited: Option<std::time::Instant> = None;
+    let mut waited = WaitTimer::default();
     let result = loop {
         match std::mem::replace(&mut *state, PrefetchState::Claimed) {
             PrefetchState::Queued | PrefetchState::Claimed => {
-                shared.count(|c| c.claimed.push(opts.file_name.clone()));
+                prefetch_count!(shared, |c| c.claimed.push(opts.file_name.clone()));
                 return None;
             }
             PrefetchState::Running => {
                 *state = PrefetchState::Running;
-                waited.get_or_insert_with(std::time::Instant::now);
+                waited.start();
                 state = job.wait_done(state);
             }
             PrefetchState::Done(result) => break result,
         }
     };
     drop(state);
-    if let Some(start) = waited {
-        shared.count(|c| {
+    prefetch_count!(shared, |c| {
+        if let Some(wait) = waited.elapsed() {
             c.waited += 1;
-            c.wait += start.elapsed();
-        });
-    }
-    let unusable = || shared.count(|c| c.unusable.push(opts.file_name.clone()));
+            c.wait += wait;
+        }
+    });
+    let unusable = || prefetch_count!(shared, |c| c.unusable.push(opts.file_name.clone()));
     let Some(PrefetchResult {
         text,
         parse,
@@ -5774,7 +5809,7 @@ pub(crate) fn take_prefetched_mapped(
             unusable();
             return None;
         }
-        shared.count(|c| c.taken += 1);
+        prefetch_count!(shared, |c| c.taken += 1);
         Some(adopt_detached_parse(parse, &want))
     });
     #[cfg(test)]
@@ -5798,21 +5833,22 @@ pub fn take_prefetched(
         return Prefetched::Nothing;
     };
     let Some(job) = shared.job(&opts.file_name) else {
-        shared.count(|c| c.not_queued.push(opts.file_name.clone()));
+        prefetch_count!(shared, |c| c.not_queued.push(opts.file_name.clone()));
         return Prefetched::Nothing;
     };
     // The jobs on the worker stack, for the debug counts only.
+    #[cfg(feature = "diagnostics")]
     let stack = if shared.counts.is_some() {
         lock(&shared.queue).pending.len()
     } else {
         0
     };
     let mut state = lock(&job.state);
-    let mut waited: Option<std::time::Instant> = None;
+    let mut waited = WaitTimer::default();
     let result = loop {
         match std::mem::replace(&mut *state, PrefetchState::Claimed) {
             PrefetchState::Queued | PrefetchState::Claimed => {
-                shared.count(|c| {
+                prefetch_count!(shared, |c| {
                     c.claimed.push(opts.file_name.clone());
                     if let Some(at) = c.loader_started.map(|started| started.elapsed())
                         && at < EARLY_CLAIMS
@@ -5831,19 +5867,19 @@ pub fn take_prefetched(
             }
             PrefetchState::Running => {
                 *state = PrefetchState::Running;
-                waited.get_or_insert_with(std::time::Instant::now);
+                waited.start();
                 state = job.wait_done(state);
             }
             PrefetchState::Done(result) => break result,
         }
     };
     drop(state);
-    if let Some(start) = waited {
-        shared.count(|c| {
+    prefetch_count!(shared, |c| {
+        if let Some(wait) = waited.elapsed() {
             c.waited += 1;
-            c.wait += start.elapsed();
-        });
-    }
+            c.wait += wait;
+        }
+    });
     let Some(PrefetchResult {
         text: worker_text,
         parse,
@@ -5852,7 +5888,7 @@ pub fn take_prefetched(
     else {
         return Prefetched::Nothing;
     };
-    let unusable = || shared.count(|c| c.unusable.push(opts.file_name.clone()));
+    let unusable = || prefetch_count!(shared, |c| c.unusable.push(opts.file_name.clone()));
     // Loader v2 L1: a text read through the per-load OS view is the
     // worker's `Arc`, so a pointer compare decides first.
     if text
@@ -5873,7 +5909,7 @@ pub fn take_prefetched(
             || file_opts.external_module_indicator_options
                 == opts.external_module_indicator_options);
     if same {
-        shared.count(|c| c.taken += 1);
+        prefetch_count!(shared, |c| c.taken += 1);
         let file = adopt_detached_parse(parse, opts);
         TAKEN.with(|taken| *taken.borrow_mut() = Some((job, file.root)));
         Prefetched::Parse(file)

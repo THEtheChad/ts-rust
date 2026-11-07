@@ -1,5 +1,6 @@
 //! Port of module/cache.go.
 
+use crate::frontend::compiler::load_times::WaitTimer;
 use crate::frontend::prelude::*;
 use std::cell::Cell;
 use std::sync::Arc;
@@ -335,6 +336,11 @@ pub struct AheadLink {
     /// The index in the queue after the last key of the loader that was
     /// found there (`AheadQueue::find`).
     pub cursor: Cell<usize>,
+    /// True once the loader rejected a worker answer (a module or a package
+    /// scope): the workers then drop what they keep from job to job
+    /// (`ResolveAhead::finish`).
+    pub rejected: Cell<bool>,
+    /// The debug counts of the load (diagnostics; a no-op without).
     pub stats: Cell<AheadStats>,
     /// The package scope of each directory that the load asked for, by
     /// directory (`Caches::package_scope_ahead`).
@@ -537,7 +543,7 @@ impl AheadQueue {
             Err(_) => {
                 // Most resolutions end within a few microseconds: spin a
                 // little, then sleep until the worker ends the key (`done`).
-                let start = std::time::Instant::now();
+                let timer = WaitTimer::now();
                 let mut ended = false;
                 for _ in 0..WAIT_SPINS {
                     if state.load(Ordering::Acquire) != KEY_WORKER {
@@ -547,7 +553,6 @@ impl AheadQueue {
                     std::hint::spin_loop();
                 }
                 if !ended {
-                    stats.slept += 1;
                     self.waiting.store(index, Ordering::SeqCst);
                     let mut done = self.lock_done();
                     while state.load(Ordering::SeqCst) == KEY_WORKER {
@@ -559,9 +564,7 @@ impl AheadQueue {
                     drop(done);
                     self.waiting.store(usize::MAX, Ordering::SeqCst);
                 }
-                stats.waited += 1;
-                let waited = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
-                stats.wait_ns = stats.wait_ns.saturating_add(waited);
+                stats.waited(!ended, timer);
                 true
             }
         }
@@ -693,28 +696,91 @@ impl KeyList {
     }
 }
 
-/// What the loader did with the keys of a resolve-ahead load that its own
-/// cache did not have.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AheadStats {
-    /// Worker answers that passed the check.
-    pub taken: usize,
-    /// Worker answers that failed the check.
-    pub rejected: usize,
-    /// Keys with no worker answer (not resolved yet, new or not shareable),
-    /// or after a worker panic (`AheadQueue::fail`).
-    pub missing: usize,
-    /// Keys whose worker answer the loader waited for.
-    pub waited: usize,
-    /// Of `waited`: the waits that slept after the spin.
-    pub slept: usize,
-    /// The time of all the waits, in nanoseconds.
-    pub wait_ns: u64,
-    /// `taken`, `rejected` and `missing` of the package scope keys (the
-    /// other counts have both kinds of keys).
-    pub scopes_taken: usize,
-    pub scopes_rejected: usize,
-    pub scopes_missing: usize,
+#[cfg(feature = "diagnostics")]
+pub use ahead_stats::AheadStats;
+#[cfg(not(feature = "diagnostics"))]
+pub use ahead_stats_off::AheadStats;
+
+#[cfg(feature = "diagnostics")]
+mod ahead_stats {
+    use crate::frontend::compiler::load_times::WaitTimer;
+
+    /// What the loader did with the keys of a resolve-ahead load that its
+    /// own cache did not have (diagnostics: `LoadStats`, the
+    /// `GOPORT_RESOLVE_AHEAD_STATS` log and `GOPORT_LOAD_TIMES`).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct AheadStats {
+        /// Worker answers that passed the check.
+        pub taken: usize,
+        /// Worker answers that failed the check.
+        pub rejected: usize,
+        /// Keys with no worker answer (not resolved yet, new or not
+        /// shareable), or after a worker panic (`AheadQueue::fail`).
+        pub missing: usize,
+        /// Keys whose worker answer the loader waited for.
+        pub waited: usize,
+        /// Of `waited`: the waits that slept after the spin.
+        pub slept: usize,
+        /// The time of all the waits, in nanoseconds.
+        pub wait_ns: u64,
+        /// `taken`, `rejected` and `missing` of the package scope keys
+        /// (the other counts have both kinds of keys).
+        pub scopes_taken: usize,
+        pub scopes_rejected: usize,
+        pub scopes_missing: usize,
+    }
+
+    impl AheadStats {
+        /// A key with no worker answer.
+        pub fn missing(&mut self, scope: bool) {
+            *if scope {
+                &mut self.scopes_missing
+            } else {
+                &mut self.missing
+            } += 1;
+        }
+
+        /// A worker answer that the check `accepted` or rejected.
+        pub fn answer(&mut self, scope: bool, accepted: bool) {
+            *match (scope, accepted) {
+                (false, true) => &mut self.taken,
+                (false, false) => &mut self.rejected,
+                (true, true) => &mut self.scopes_taken,
+                (true, false) => &mut self.scopes_rejected,
+            } += 1;
+        }
+
+        /// A wait for a worker's answer that `slept` after the spin, timed
+        /// by `timer`.
+        pub fn waited(&mut self, slept: bool, timer: WaitTimer) {
+            self.waited += 1;
+            self.slept += usize::from(slept);
+            let ns = timer.elapsed().map_or(0, |elapsed| elapsed.as_nanos());
+            self.wait_ns = self
+                .wait_ns
+                .saturating_add(u64::try_from(ns).unwrap_or(u64::MAX));
+        }
+    }
+}
+
+#[cfg(not(feature = "diagnostics"))]
+mod ahead_stats_off {
+    use crate::frontend::compiler::load_times::WaitTimer;
+
+    /// No counts.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct AheadStats;
+
+    impl AheadStats {
+        #[inline(always)]
+        pub fn missing(&mut self, _scope: bool) {}
+
+        #[inline(always)]
+        pub fn answer(&mut self, _scope: bool, _accepted: bool) {}
+
+        #[inline(always)]
+        pub fn waited(&mut self, _slept: bool, _timer: WaitTimer) {}
+    }
 }
 
 impl Caches {
@@ -1671,7 +1737,7 @@ impl Caches {
         let answers = ahead.answers.as_ref()?;
         let mut stats = ahead.stats.get();
         if ahead.queue.as_ref().is_some_and(|queue| queue.failed()) {
-            stats.missing += 1;
+            stats.missing(false);
             ahead.stats.set(stats);
             return None;
         }
@@ -1690,7 +1756,7 @@ impl Caches {
             .and_then(|found| Some((found, found.ahead.as_ref()?)))
         {
             None => {
-                stats.missing += 1;
+                stats.missing(false);
                 #[cfg(feature = "diagnostics")]
                 if ahead.log_missing && redirect_config_name.is_empty() {
                     ahead.missing.borrow_mut().push((
@@ -1703,10 +1769,9 @@ impl Caches {
             }
             Some((found, calls)) => {
                 let accepted = (ahead.accept)(AheadAnswer::Module(key, &found.value), calls);
-                if accepted {
-                    stats.taken += 1;
-                } else {
-                    stats.rejected += 1;
+                stats.answer(false, accepted);
+                if !accepted {
+                    ahead.rejected.set(true);
                 }
                 accepted
             }
@@ -1779,16 +1844,15 @@ impl Caches {
             .and_then(|found| Some((found, found.ahead.as_ref()?)))
         {
             None => {
-                stats.scopes_missing += 1;
+                stats.missing(true);
                 false
             }
             Some((found, calls)) => {
                 let accepted =
                     (ahead.accept)(AheadAnswer::Scope(directory, found.value.as_ref()), calls);
-                if accepted {
-                    stats.scopes_taken += 1;
-                } else {
-                    stats.scopes_rejected += 1;
+                stats.answer(true, accepted);
+                if !accepted {
+                    ahead.rejected.set(true);
                 }
                 accepted
             }
@@ -2115,6 +2179,7 @@ mod tests {
             keys: RefCell::new(KeyList::default()),
             queue: None,
             cursor: Cell::new(0),
+            rejected: Cell::new(false),
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
             #[cfg(feature = "diagnostics")]
@@ -2235,7 +2300,7 @@ mod tests {
     /// The loader's wait for a key in a worker's hands (`wait_or_take`): a
     /// free key is the loader's, an ended key needs no sleep, and a key
     /// that a worker holds past the spin makes the loader sleep until the
-    /// worker's `done`. The load stats count the waits, the sleeps and the
+    /// worker's `done`. The load stats (diagnostics) count the waits, the sleeps and the
     /// time.
     #[test]
     fn loader_waits_spin_then_sleep() {
@@ -2248,12 +2313,14 @@ mod tests {
 
         // Key 0 is free: the loader takes it, and no worker starts it.
         assert!(!queue.wait_or_take(0, &mut stats));
+        #[cfg(feature = "diagnostics")]
         assert_eq!(stats, AheadStats::default());
         assert_eq!(queue.take_next().map(|(index, _)| index), Some(1));
 
         // Key 1 ended: the answer is there, with no sleep.
         queue.done(1);
         assert!(queue.wait_or_take(1, &mut stats));
+        #[cfg(feature = "diagnostics")]
         assert_eq!((stats.waited, stats.slept), (1, 0));
 
         // Key 2 stays with a worker until the loader sleeps: the loader
@@ -2288,7 +2355,10 @@ mod tests {
             worker.join().unwrap(),
             "the loader set no waiting mark in 60 s"
         );
-        assert_eq!((stats.waited, stats.slept), (2, 1));
-        assert!(stats.wait_ns >= 5_000_000, "{stats:?}");
+        #[cfg(feature = "diagnostics")]
+        {
+            assert_eq!((stats.waited, stats.slept), (2, 1));
+            assert!(stats.wait_ns >= 5_000_000, "{stats:?}");
+        }
     }
 }

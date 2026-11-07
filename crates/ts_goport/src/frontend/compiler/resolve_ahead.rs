@@ -452,6 +452,7 @@ impl ResolveAhead {
             keys: RefCell::new(keys),
             queue: job.as_ref().map(|job| job.queue.clone()),
             cursor: Cell::new(0),
+            rejected: Cell::new(false),
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
             #[cfg(feature = "diagnostics")]
@@ -507,6 +508,7 @@ impl ResolveAhead {
             self.end_job(None, true);
             return;
         };
+        #[cfg(feature = "diagnostics")]
         let loader = link.stats.get();
         #[cfg(feature = "diagnostics")]
         let (known_files, worker_panic) = diag::before_end(&link, self.job.as_deref());
@@ -514,7 +516,7 @@ impl ResolveAhead {
         // known file that changed: the workers drop both now, so the next
         // job starts with neither, even when a load on another thread has
         // the workers first.
-        let rejected = loader.rejected + loader.scopes_rejected > 0;
+        let rejected = link.rejected.get();
         if rejected && let Some((job, workers)) = self.job.as_ref().zip(Workers::started()) {
             workers.forget(job.epoch);
         }
