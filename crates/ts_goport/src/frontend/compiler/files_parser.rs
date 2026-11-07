@@ -23,6 +23,8 @@ macro_rules! prefetch_count {
     ($shared:expr, $update:expr) => {{
         #[cfg(feature = "diagnostics")]
         $shared.count($update);
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = &$shared;
     }};
 }
 
@@ -5757,28 +5759,9 @@ pub(crate) fn take_prefetched_mapped(
                 .0;
         }
     }
-    let mut waited = WaitTimer::default();
-    let result = loop {
-        match std::mem::replace(&mut *state, PrefetchState::Claimed) {
-            PrefetchState::Queued | PrefetchState::Claimed => {
-                prefetch_count!(shared, |c| c.claimed.push(opts.file_name.clone()));
-                return None;
-            }
-            PrefetchState::Running => {
-                *state = PrefetchState::Running;
-                waited.start();
-                state = job.wait_done(state);
-            }
-            PrefetchState::Done(result) => break result,
-        }
-    };
-    drop(state);
-    prefetch_count!(shared, |c| {
-        if let Some(wait) = waited.elapsed() {
-            c.waited += 1;
-            c.wait += wait;
-        }
-    });
+    let result = claim_or_wait(&shared, &job, state, || {
+        prefetch_count!(shared, |c| c.claimed.push(opts.file_name.clone()));
+    })?;
     let unusable = || prefetch_count!(shared, |c| c.unusable.push(opts.file_name.clone()));
     let Some(PrefetchResult {
         text,
@@ -5817,6 +5800,41 @@ pub(crate) fn take_prefetched_mapped(
     Some(PrefetchedTransform { result, parse })
 }
 
+/// The worker's result of `job`, whose state lock is `state`: claims the
+/// job for the loader when no worker has started it (`on_claimed` runs
+/// with the lock held, then `None`), else waits for its running worker.
+/// The wait counts in the debug counts (`GOPORT_PREFETCH_STATS`).
+fn claim_or_wait<'j>(
+    shared: &PrefetchShared,
+    job: &'j PrefetchJob,
+    mut state: std::sync::MutexGuard<'j, PrefetchState>,
+    on_claimed: impl FnOnce(),
+) -> Option<Option<PrefetchResult>> {
+    let mut waited = WaitTimer::default();
+    let result = loop {
+        match std::mem::replace(&mut *state, PrefetchState::Claimed) {
+            PrefetchState::Queued | PrefetchState::Claimed => {
+                on_claimed();
+                return None;
+            }
+            PrefetchState::Running => {
+                *state = PrefetchState::Running;
+                waited.start();
+                state = job.wait_done(state);
+            }
+            PrefetchState::Done(result) => break result,
+        }
+    };
+    drop(state);
+    prefetch_count!(shared, |c| {
+        if let Some(wait) = waited.elapsed() {
+            c.waited += 1;
+            c.wait += wait;
+        }
+    });
+    Some(result)
+}
+
 /// What the loader can take from the parse workers for the file of
 /// `opts`: the worker parse, adopted into the stores of this thread, when
 /// it equals what `parse_source_file(opts, text, script_kind)` would make
@@ -5843,48 +5861,29 @@ pub fn take_prefetched(
     } else {
         0
     };
-    let mut state = lock(&job.state);
-    let mut waited = WaitTimer::default();
-    let result = loop {
-        match std::mem::replace(&mut *state, PrefetchState::Claimed) {
-            PrefetchState::Queued | PrefetchState::Claimed => {
-                prefetch_count!(shared, |c| {
-                    c.claimed.push(opts.file_name.clone());
-                    if let Some(at) = c.loader_started.map(|started| started.elapsed())
-                        && at < EARLY_CLAIMS
-                    {
-                        c.early_claims.push((at, opts.file_name.clone()));
-                    }
-                    if let Some(queued_at) = job.queued_at {
-                        c.claims.push((
-                            queued_at.elapsed(),
-                            stack,
-                            job.under.load(AtomicOrdering::Relaxed),
-                        ));
-                    }
-                });
-                return Prefetched::Nothing;
+    let state = lock(&job.state);
+    let result = claim_or_wait(&shared, &job, state, || {
+        prefetch_count!(shared, |c| {
+            c.claimed.push(opts.file_name.clone());
+            if let Some(at) = c.loader_started.map(|started| started.elapsed())
+                && at < EARLY_CLAIMS
+            {
+                c.early_claims.push((at, opts.file_name.clone()));
             }
-            PrefetchState::Running => {
-                *state = PrefetchState::Running;
-                waited.start();
-                state = job.wait_done(state);
+            if let Some(queued_at) = job.queued_at {
+                c.claims.push((
+                    queued_at.elapsed(),
+                    stack,
+                    job.under.load(AtomicOrdering::Relaxed),
+                ));
             }
-            PrefetchState::Done(result) => break result,
-        }
-    };
-    drop(state);
-    prefetch_count!(shared, |c| {
-        if let Some(wait) = waited.elapsed() {
-            c.waited += 1;
-            c.wait += wait;
-        }
+        });
     });
-    let Some(PrefetchResult {
+    let Some(Some(PrefetchResult {
         text: worker_text,
         parse,
         ..
-    }) = result
+    })) = result
     else {
         return Prefetched::Nothing;
     };
