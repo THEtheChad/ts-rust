@@ -17,13 +17,19 @@
 //!
 //! A layout is ordinary when, for every output path:
 //! - no existing component of it is a symlink (dangling ones included; on
-//!   Windows also a junction or other name-surrogate reparse point);
+//!   Windows any reparse point: a junction or symlink, but also a cloud or
+//!   dedup placeholder, which costs only parallelism);
 //! - every existing ancestor is a directory;
 //! - the output does not exist, or is a regular file with one link;
 //! - no other output equals it after case folding (one path emitted twice
 //!   included), and none is a proper ancestor of it after case folding
 //!   (`out/p.js` and `out/p.js/x.js`: one write makes a file where the
 //!   other makes a directory), `names_collide`;
+//! - no output names a directory entry that looks like an 8.3 short name
+//!   (`AB00CD~1.js`) beside another output's entry in that directory:
+//!   Windows gives a new file a short name when it makes it, so whether
+//!   `AB00CD~1.js` opens `ab00cdefgh.js` depends on which write comes first,
+//!   `short_names_may_alias`;
 //! - every metadata read succeeds (a failed read is not ordinary: the check
 //!   fails closed).
 //!
@@ -173,15 +179,20 @@ impl Checker {
 /// True when two outputs may name one entry, or one an ancestor directory
 /// of another, on a case-insensitive file system. Two names are taken as
 /// one when they are equal under full Unicode lowercasing or under full
-/// Unicode uppercasing (Windows compares names through its uppercase
-/// table). That errs toward "may collide", which costs only parallelism:
-/// it groups `σ`, `ς` and `Σ` (equal uppercased, as on Windows), the
-/// Kelvin sign `K` with `k` (equal lowercased), dotless `ı` with `i`
-/// (equal uppercased), and `ß` with `ss` (equal uppercased; not one name on
-/// any file system this port knows of). Dotted `İ` and `i` stay apart (no
-/// folding makes them equal), as on Windows. O(n·d) for n outputs of d
-/// components: a set of folded names and a lookup per ancestor.
+/// Unicode uppercasing (NTFS compares names through its one-to-one
+/// uppercase table). Every pair of BMP characters that NTFS took as one
+/// name on Windows 11 (973 pairs, lane WIN) is equal under one of the
+/// two. The rule errs toward "may collide", which costs only parallelism:
+/// besides `σ` and `Σ` (one name on NTFS) it groups final `ς` with them,
+/// the Kelvin sign `K` with `k` (equal lowercased), dotless `ı` with `i`
+/// (equal uppercased) and `ß` with `ss`, which NTFS keeps apart. Dotted
+/// `İ` and `i` stay apart (no folding makes them equal), as on NTFS. O(n·d)
+/// for n outputs of d components: a set of folded names and a lookup per
+/// ancestor.
 fn names_collide(outputs: &[String]) -> bool {
+    if short_names_may_alias(outputs) {
+        return true;
+    }
     for fold in [str::to_lowercase, str::to_uppercase] {
         let folded: Vec<String> = outputs.iter().map(|path| fold(path)).collect();
         let mut names = FxHashSet::default();
@@ -195,6 +206,56 @@ fn names_collide(outputs: &[String]) -> bool {
         };
         if folded.iter().any(is_ancestor) {
             return true;
+        }
+    }
+    false
+}
+
+/// True when an output path names, in some directory, an entry that looks
+/// like an 8.3 short name (a `~` then a digit, as in `AB00CD~1.JS`) and
+/// another output names a different entry of that directory. NTFS (with
+/// short names on, the default for a system drive) and FAT give a new
+/// file a short name when it is made: if `out/ab00cdefgh.js` is made
+/// first it gets `AB00CD~1.JS`, and a write of `out/AB00CD~1.js` then
+/// opens it; made the other way round, the two are separate files. Which
+/// comes first is the write schedule, so such a layout is not ordinary.
+/// A short-looking name with no other output beside it (a home dir
+/// `C:/Users/RUNNER~1`, above every output) cannot alias an output and
+/// does not count. Names are compared uppercased, as Windows does. O(n·d)
+/// for n outputs of d components.
+fn short_names_may_alias(outputs: &[String]) -> bool {
+    let looks_short = |name: &str| {
+        name.as_bytes()
+            .windows(2)
+            .any(|pair| pair[0] == b'~' && pair[1].is_ascii_digit())
+    };
+    if !outputs.iter().any(|path| looks_short(path)) {
+        return false;
+    }
+    // Each directory met (uppercased): one entry name in it, and whether
+    // it holds a short-looking entry and more than one distinct entry.
+    let mut dirs: FxHashMap<String, (String, bool, bool)> = FxHashMap::default();
+    for path in outputs {
+        let path = path.to_uppercase();
+        let mut start = 0;
+        for (at, c) in path.char_indices().chain([(path.len(), '/')]) {
+            if c != '/' && c != '\\' {
+                continue;
+            }
+            let name = &path[start..at];
+            let dir = &path[..start];
+            start = at + c.len_utf8();
+            if name.is_empty() || dir.is_empty() {
+                continue;
+            }
+            let (first, short, several) = dirs
+                .entry(dir.to_owned())
+                .or_insert_with(|| (name.to_owned(), false, false));
+            *short |= looks_short(name);
+            *several |= first != name;
+            if *short && *several {
+                return true;
+            }
         }
     }
     false
@@ -238,6 +299,43 @@ pub fn ordinary_layout(outputs: &[String]) -> bool {
             ok && chunk_ok
         })
     })
+}
+
+/// The name rules, on every platform.
+#[cfg(test)]
+mod name_tests {
+    use super::names_collide;
+
+    /// An 8.3-looking name beside another output in its directory may be
+    /// that output's short name (lane WIN: Windows gave two results in 30
+    /// runs with `out/AB00CD~1.js` and `out/ab00cdefgh.js`).
+    #[test]
+    fn short_names_beside_other_outputs_may_alias() {
+        let collide = |paths: &[&str]| {
+            names_collide(
+                &paths
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(collide(&["C:/p/out/AB00CD~1.js", "C:/p/out/ab00cdefgh.js"]));
+        assert!(collide(&["/p/out/ab00cdefgh.js", "/p/out/ab00cd~1.js"]));
+        // A directory: `out/LONGDI~1/a.js` may be `out/longdirname/b.js`'s.
+        assert!(collide(&[
+            "C:/p/out/LONGDI~1/a.js",
+            "C:/p/out/longdirname/b.js"
+        ]));
+        assert!(collide(&["C:\\p\\out\\LONGDI~1\\a.js", "C:\\p\\out\\b.js"]));
+        // Alone in its directory, or above every output: no alias.
+        assert!(!collide(&["C:/p/out/AB00CD~1.js"]));
+        assert!(!collide(&[
+            "C:/Users/RUNNER~1/p/out/a.js",
+            "C:/Users/RUNNER~1/p/out/b.js",
+        ]));
+        assert!(!collide(&["C:/p/out/a~b.js", "C:/p/out/c.js"]));
+        assert!(!collide(&["C:/p/out/a.js", "C:/p/out/b.js"]));
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -367,7 +465,7 @@ mod tests {
         use super::names_collide;
         let collide =
             |a: &str, b: &str| names_collide(&[format!("out/{a}.js"), format!("out/{b}.js")]);
-        // Windows compares names uppercased: σ, ς and Σ are one name.
+        // σ and Σ are one name on NTFS; ς is grouped with them too.
         assert!(collide("σ", "ς"));
         assert!(collide("Σ", "ς"));
         assert!(collide("σ", "Σ"));
@@ -415,19 +513,47 @@ mod tests {
     }
 }
 
-/// Windows (Astra D1-I3 findings 3 and round 2): hard links, links and
-/// junctions are not ordinary. Runs on the Windows CI job; this host cannot
-/// run it.
+/// Windows (Astra D1-I3 findings 3 and round 2; lane WIN): hard links,
+/// links and junctions are not ordinary. Runs on the Windows CI job.
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::ordinary_layout;
+    use std::path::{Path, PathBuf};
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "goport-output-layout-win-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("out")).unwrap();
+        dir
+    }
+
+    fn names(dir: &Path, names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .map(|name| dir.join(name).to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// `mklink /J`: std has no junctions, and they need no privilege.
+    /// cmd reads a `/` in a path as a switch.
+    fn junction(link: &Path, target: &Path) {
+        let native = |path: &Path| path.to_string_lossy().replace('/', "\\");
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(native(link))
+            .arg(native(target))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J {}", link.display());
+    }
 
     #[test]
     fn hard_links_and_case_are_not_ordinary_on_windows() {
-        let dir =
-            std::env::temp_dir().join(format!("goport-output-layout-win-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("out")).unwrap();
+        let dir = scratch("hard");
         let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
         assert!(ordinary_layout(&[path("out/a.js"), path("out/sub/b.js")]));
         std::fs::write(dir.join("out/shared.js"), "").unwrap();
@@ -437,6 +563,86 @@ mod windows_tests {
             path("out/new/C.js"),
             path("out/new/c.js")
         ]));
+        // NTFS folds names through its uppercase table: σ and Σ.
+        assert!(!ordinary_layout(&[
+            path("out/new/\u{3c3}.js"),
+            path("out/new/\u{3a3}.js")
+        ]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Junctions and symlinks (to directories, to files, dangling) are
+    /// reparse points, read without following them: not ordinary. A
+    /// symlink needs Developer Mode or an elevated process (CI's runner);
+    /// without either those cases are skipped.
+    #[test]
+    fn junctions_and_symlinks_are_not_ordinary() {
+        let dir = scratch("links");
+        std::fs::create_dir(dir.join("out/right")).unwrap();
+        junction(&dir.join("out/left"), &dir.join("out/right"));
+        junction(&dir.join("out/dangling"), &dir.join("out/missing"));
+        assert!(!ordinary_layout(&names(&dir, &["out/left/f.js"])));
+        assert!(!ordinary_layout(&names(&dir, &["out/dangling/f.js"])));
+        assert!(ordinary_layout(&names(&dir, &["out/right/f.js"])));
+        let symlinks = std::os::windows::fs::symlink_dir("right", dir.join("out/dirlink"))
+            .and_then(|()| std::os::windows::fs::symlink_dir("gone", dir.join("out/dirdangling")))
+            .and_then(|()| std::fs::write(dir.join("out/shared.js"), ""))
+            .and_then(|()| std::os::windows::fs::symlink_file("shared.js", dir.join("out/a.js")))
+            .and_then(|()| std::os::windows::fs::symlink_file("gone.js", dir.join("out/b.js")));
+        match symlinks {
+            Ok(()) => {
+                for paths in [
+                    &["out/dirlink/f.js"][..],
+                    &["out/dirdangling/f.js"],
+                    &["out/a.js"],
+                    &["out/b.js"],
+                ] {
+                    assert!(!ordinary_layout(&names(&dir, paths)), "{paths:?}");
+                }
+            }
+            // ERROR_PRIVILEGE_NOT_HELD: no Developer Mode, not elevated.
+            Err(error) if error.raw_os_error() == Some(1314) => {}
+            Err(error) => panic!("symlink: {error}"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A file where a directory is needed, a directory at an output and
+    /// an output that is another's directory are not ordinary. A file held
+    /// open with no sharing still gives its attributes (the handle asks for
+    /// `FILE_READ_ATTRIBUTES` only): an existing, locked output is ordinary.
+    #[test]
+    fn non_directories_and_locked_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = scratch("kinds");
+        std::fs::write(dir.join("out/sub"), "").unwrap();
+        std::fs::create_dir(dir.join("out/a.js")).unwrap();
+        assert!(!ordinary_layout(&names(&dir, &["out/sub/a.js"])));
+        assert!(!ordinary_layout(&names(&dir, &["out/a.js"])));
+        assert!(!ordinary_layout(&names(
+            &dir,
+            &["out/p.js", "out/p.js/x.js"]
+        )));
+        std::fs::write(dir.join("out/locked.js"), "").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(0)
+            .open(dir.join("out/locked.js"))
+            .unwrap();
+        assert!(ordinary_layout(&names(&dir, &["out/locked.js"])));
+        drop(held);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 8.3 short names (`short_names_may_alias`): on a volume that makes
+    /// them, `out/ab00cdefgh.js` made first is also `out/AB00CD~1.js`.
+    #[test]
+    fn short_names_are_not_ordinary() {
+        let dir = scratch("short");
+        assert!(!ordinary_layout(&names(
+            &dir,
+            &["out/AB00CD~1.js", "out/ab00cdefgh.js"]
+        )));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

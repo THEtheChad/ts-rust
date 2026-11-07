@@ -132,8 +132,12 @@ fn print_scope_trace_types_are_go_types() {
     let text = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     fs::remove_dir_all(&out).unwrap_or_else(|error| panic!("remove {}: {error}", out.display()));
+    // The trace prints Go path keys: `/` separators, lowercased where the
+    // file system ignores case (Windows: `c:/...`).
+    let fixture = FIXTURE.replace('\\', "/");
     assert_eq!(
-        text.replace(FIXTURE, "{fixture}"),
+        text.replace(&fixture, "{fixture}")
+            .replace(&fixture.to_lowercase(), "{fixture}"),
         expected("types_0.json"),
         "types_0.json"
     );

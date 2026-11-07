@@ -48,8 +48,9 @@ tikv-jemalloc-ctl = { version = "=0.7.0", optional = true }
 # execute/tsc/diagnostics.rs `init_local`.
 jiff = { version = "=0.2.37", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform"] }
 miow = "=0.6.1"
-# emitter/output_aliases.rs: file identity (volume serial number and file
-# index, Go `os.SameFile`) through its safe `Handle` and `information`.
+# emitter/output_aliases.rs: an entry's own attributes, link count and file
+# type (reparse points, hard links) through `information` and `typ` on a
+# `FILE_READ_ATTRIBUTES` handle.
 winapi-util = "=0.1.11"
 same-file = "=1.0.6"
 
