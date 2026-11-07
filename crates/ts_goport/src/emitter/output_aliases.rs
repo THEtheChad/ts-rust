@@ -17,7 +17,8 @@
 //!
 //! A layout is ordinary when, for every output path:
 //! - no existing component of it is a symlink (dangling ones included; on
-//!   Windows also a junction or other name-surrogate reparse point);
+//!   Windows any reparse point: a junction or symlink, but also a cloud or
+//!   dedup placeholder, which costs only parallelism);
 //! - every existing ancestor is a directory;
 //! - the output does not exist, or is a regular file with one link;
 //! - no other output equals it after case folding (one path emitted twice
@@ -178,14 +179,16 @@ impl Checker {
 /// True when two outputs may name one entry, or one an ancestor directory
 /// of another, on a case-insensitive file system. Two names are taken as
 /// one when they are equal under full Unicode lowercasing or under full
-/// Unicode uppercasing (Windows compares names through its uppercase
-/// table). That errs toward "may collide", which costs only parallelism:
-/// it groups `σ`, `ς` and `Σ` (equal uppercased, as on Windows), the
-/// Kelvin sign `K` with `k` (equal lowercased), dotless `ı` with `i`
-/// (equal uppercased), and `ß` with `ss` (equal uppercased; not one name on
-/// any file system this port knows of). Dotted `İ` and `i` stay apart (no
-/// folding makes them equal), as on Windows. O(n·d) for n outputs of d
-/// components: a set of folded names and a lookup per ancestor.
+/// Unicode uppercasing (NTFS compares names through its one-to-one
+/// uppercase table). Every pair of BMP characters that NTFS took as one
+/// name on Windows 11 (973 pairs, lane WIN) is equal under one of the
+/// two. The rule errs toward "may collide", which costs only parallelism:
+/// besides `σ` and `Σ` (one name on NTFS) it groups final `ς` with them,
+/// the Kelvin sign `K` with `k` (equal lowercased), dotless `ı` with `i`
+/// (equal uppercased) and `ß` with `ss`, which NTFS keeps apart. Dotted
+/// `İ` and `i` stay apart (no folding makes them equal), as on NTFS. O(n·d)
+/// for n outputs of d components: a set of folded names and a lookup per
+/// ancestor.
 fn names_collide(outputs: &[String]) -> bool {
     if short_names_may_alias(outputs) {
         return true;
@@ -462,7 +465,7 @@ mod tests {
         use super::names_collide;
         let collide =
             |a: &str, b: &str| names_collide(&[format!("out/{a}.js"), format!("out/{b}.js")]);
-        // Windows compares names uppercased: σ, ς and Σ are one name.
+        // σ and Σ are one name on NTFS; ς is grouped with them too.
         assert!(collide("σ", "ς"));
         assert!(collide("Σ", "ς"));
         assert!(collide("σ", "Σ"));
@@ -560,10 +563,10 @@ mod windows_tests {
             path("out/new/C.js"),
             path("out/new/c.js")
         ]));
-        // Windows folds names through its uppercase table: σ, ς and Σ.
+        // NTFS folds names through its uppercase table: σ and Σ.
         assert!(!ordinary_layout(&[
             path("out/new/\u{3c3}.js"),
-            path("out/new/\u{3c2}.js")
+            path("out/new/\u{3a3}.js")
         ]));
         std::fs::remove_dir_all(dir).unwrap();
     }
