@@ -82,7 +82,8 @@ impl CachedFs {
     }
 
     /// The cached answers, sorted, as text lines (`GOPORT_LOAD_DUMP`,
-    /// compiler/load_dump.rs).
+    /// compiler/load_dump.rs). Diagnostics only.
+    #[cfg(feature = "diagnostics")]
     pub fn dump(&self, out: &mut String) {
         let _ = writeln_enabled(out, self.enabled.get());
         sorted_lines(out, "file_exists", self.file_exists_cache.borrow().iter());
@@ -247,8 +248,10 @@ impl Fs for CachedFs {
     }
 }
 
-/// Appends `label key value` lines for `entries`, sorted.
-fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
+/// Appends `label key value` lines for `entries`, sorted by key (the load
+/// dump, compiler/load_dump.rs). Diagnostics only.
+#[cfg(feature = "diagnostics")]
+pub fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
     out: &mut String,
     label: &str,
     entries: impl IntoIterator<Item = (K, V)>,
@@ -265,6 +268,7 @@ fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
 }
 
 /// The first line of `CachedFs::dump`.
+#[cfg(feature = "diagnostics")]
 fn writeln_enabled(out: &mut String, enabled: bool) -> std::fmt::Result {
     use std::fmt::Write as _;
     writeln!(out, "lookup_cache enabled={enabled}")

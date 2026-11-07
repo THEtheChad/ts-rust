@@ -131,7 +131,7 @@ jobs:
       - name: Build
         run: |
           cargo test --release --locked --workspace --no-run
-          cargo test --release --locked -p ts_goport --test go_baselines --no-run
+          cargo test --release --locked -p ts_goport --features diagnostics --test go_baselines --no-run
       - name: Unit and integration tests
         run: cargo test --release --locked --workspace --no-fail-fast
       # The diagnostic and verify code (flow skip, reuse verify, d.ts twin check, the plain early
@@ -141,7 +141,9 @@ jobs:
         run: cargo test --release --locked -p goport_core -p ts_goport --features ts_goport/diagnostics,ts_goport/test-hooks --no-fail-fast
       # go_baselines has `test = false`, so --workspace skips it. TestLocal (about 12,700 compiler
       # cases) runs in 4 shards in goport-tests.sh, in the revision pipeline; the rest of the default
-      # go_baselines set runs here, also after a failed unit test.
+      # go_baselines set runs here, also after a failed unit test. It builds with the diagnostics
+      # feature, as the parity gate's tests tier does: the resolve-ahead tests choose the loader's
+      # mode and hooks, which only that feature has.
       - name: Go baselines
         if: ${{ !cancelled() }}
         run: |
@@ -150,7 +152,7 @@ jobs:
           # after the macOS port) have never passed there. 9 find no resolve-ahead load and 1 finds
           # no configured project. They pass on Linux.
           [[ $RUNNER_OS != macOS ]] || skip+=(--skip project_lsp::resolveahead_test::)
-          cargo test --release --locked --no-fail-fast -p ts_goport --test go_baselines -- "${skip[@]}"
+          cargo test --release --locked --no-fail-fast -p ts_goport --features diagnostics --test go_baselines -- "${skip[@]}"
       # Windows: the tsc against Go's tsc on Windows path forms, CRLF sources and a junction
       # (scripts/goport/win-go-compare.sh). Go's tsc builds from the pinned Go source with the pin's
       # Go (oracle.go), as the oracle does; both embed the lib files.

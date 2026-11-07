@@ -549,7 +549,8 @@ impl FilesParser {
             if let Some(early) = early {
                 early.discard();
             }
-            // Tests: see the hook below.
+            // Tests (diagnostics): see the hook below.
+            #[cfg(feature = "diagnostics")]
             if super::resolve_ahead::mode() == super::resolve_ahead::Mode::Off {
                 super::resolve_ahead::after_first_load_workers();
             }
@@ -631,11 +632,12 @@ impl FilesParser {
             .rank_roots(tasks, ROOT_RANK_PER_WORKER * pool.threads.len());
         // The root jobs are queued now, so the added workers start at once.
         pool.add_workers(extra_worker_count(large));
-        // Tests: with `resolve_ahead::Mode::Force`, the parse workers of a
-        // first-load job parse and resolve all they can before the loader
-        // starts, and a test hook runs then. With `Mode::Off` the hook runs
-        // at the same point of the load (after the root tasks), so a test
-        // compares with a serial load whose disk changed there.
+        // Tests (diagnostics): with `resolve_ahead::Mode::Force`, the parse
+        // workers of a first-load job parse and resolve all they can before
+        // the loader starts, and a test hook runs then. With `Mode::Off` the
+        // hook runs at the same point of the load (after the root tasks), so
+        // a test compares with a serial load whose disk changed there.
+        #[cfg(feature = "diagnostics")]
         match super::resolve_ahead::mode() {
             super::resolve_ahead::Mode::Force if loader.first_load_ahead.is_some() => {
                 pool.wait_idle();
@@ -897,6 +899,7 @@ impl FilesParser {
             loaded,
             depth,
         } = queued;
+        #[cfg(feature = "diagnostics")]
         if super::load_dump::loading() {
             let task = task.borrow();
             super::load_dump::note(|out| {
@@ -975,6 +978,7 @@ impl FilesParser {
             let task_by_file_name = data.borrow().tasks[index].clone();
             let mut load_sub_tasks = start_subtasks;
             if !task_by_file_name.borrow().loaded {
+                #[cfg(feature = "diagnostics")]
                 if super::load_dump::loading() {
                     let name = task_by_file_name.borrow().normalized_file_path.clone();
                     super::load_dump::note(|out| {
@@ -2072,11 +2076,11 @@ pub(crate) struct FilePrep {
     /// The names, usages and flags of the file's imports and module
     /// augmentations, read while the nodes were on the worker thread
     /// (parload1). The loader reads them in place of the nodes. `None`
-    /// with `GOPORT_LOAD_NAMES=0` (an A/B switch).
+    /// when they are not the names of the parse's imports.
     pub(crate) names: Option<Box<ImportNames>>,
     /// The worker's commit of the answers (loadpar3b), when it read the
     /// names and every answer is one that the loader adds without its own
-    /// state. `None` with `GOPORT_LOAD_COMMIT=0` (an A/B switch).
+    /// state.
     pub(crate) commit: Option<Box<PrepCommit>>,
 }
 
@@ -2347,32 +2351,11 @@ fn take_prefetched_meta(loader: &FileLoader, file_name: &str) -> Option<SourceFi
 }
 
 thread_local! {
-    /// A test's choice of `load_prep_enabled` for its loads on this thread.
-    static LOAD_PREP: Cell<Option<bool>> = const { Cell::new(None) };
     /// The preps that loads on this thread took (`FilePrep`), for tests.
     static PREPS_TAKEN: Cell<usize> = const { Cell::new(0) };
-    /// A test's choice of `load_names_enabled` for its loads on this thread.
-    static LOAD_NAMES: Cell<Option<bool>> = const { Cell::new(None) };
     /// The names that loads on this thread resolved themselves, for tests.
     #[cfg(test)]
     static NAMES_OWN: Cell<usize> = const { Cell::new(0) };
-    /// A test's choice of `load_commit_enabled` for its loads on this thread.
-    static LOAD_COMMIT: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-/// True when the parse workers make the commit of their answers for the
-/// loader (`FilePrep::commit`): unless `GOPORT_LOAD_COMMIT` is `0` (an A/B
-/// switch), or a test chose (`set_load_commit`).
-fn load_commit_enabled() -> bool {
-    LOAD_COMMIT
-        .with(Cell::get)
-        .unwrap_or_else(|| std::env::var_os("GOPORT_LOAD_COMMIT").is_none_or(|value| value != "0"))
-}
-
-/// Sets `load_commit_enabled` for the loads on this thread (tests).
-#[cfg(test)]
-pub(crate) fn set_load_commit(on: Option<bool>) {
-    LOAD_COMMIT.with(|commit| commit.set(on));
 }
 
 /// Counts whether the loader took the commit of a named prep
@@ -2382,30 +2365,6 @@ pub(crate) fn note_commit(taken: bool) {
         c.commits_taken += usize::from(taken);
         c.commits_missing += usize::from(!taken);
     });
-}
-
-/// True when the parse workers of a load on this thread make preps for
-/// the loader (`FilePrep`): unless `GOPORT_LOAD_PREP` is `0` (an A/B
-/// switch), or a test chose (`set_load_prep`).
-fn load_prep_enabled() -> bool {
-    LOAD_PREP
-        .with(Cell::get)
-        .unwrap_or_else(|| std::env::var_os("GOPORT_LOAD_PREP").is_none_or(|value| value != "0"))
-}
-
-/// True when the parse workers read the import names of their parses for
-/// the loader (`FilePrep::names`): unless `GOPORT_LOAD_NAMES` is `0` (an
-/// A/B switch), or a test chose (`set_load_names`).
-fn load_names_enabled() -> bool {
-    LOAD_NAMES
-        .with(Cell::get)
-        .unwrap_or_else(|| std::env::var_os("GOPORT_LOAD_NAMES").is_none_or(|value| value != "0"))
-}
-
-/// Sets `load_names_enabled` for the loads on this thread (tests).
-#[cfg(test)]
-pub(crate) fn set_load_names(on: Option<bool>) {
-    LOAD_NAMES.with(|names| names.set(on));
 }
 
 /// The module names that loads on this thread resolved themselves so far
@@ -2420,12 +2379,6 @@ pub(crate) fn note_names_own(count: usize) {
     #[cfg(test)]
     NAMES_OWN.with(|own| own.set(own.get() + count));
     let _ = count;
-}
-
-/// Sets `load_prep_enabled` for the loads on this thread (tests).
-#[cfg(test)]
-pub(crate) fn set_load_prep(on: Option<bool>) {
-    LOAD_PREP.with(|prep| prep.set(on));
 }
 
 #[cfg(test)]
@@ -2555,31 +2508,6 @@ impl JobMap {
     }
 }
 
-/// False when `GOPORT_JOB_MAP=0`: the loader finds jobs under the queue
-/// lock (`PrefetchShared::job`) and `queue_batch` locks for every batch, as
-/// at R224. An A/B switch, read once, or a test's choice for the pools that
-/// start on its thread (`set_job_map`).
-fn job_map_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(on) = JOB_MAP.with(Cell::get) {
-        return on;
-    }
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("GOPORT_JOB_MAP").is_none_or(|value| value != "0"))
-}
-
-#[cfg(test)]
-thread_local! {
-    /// A test's choice of `job_map_enabled` for the pools of this thread.
-    static JOB_MAP: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-/// Sets `job_map_enabled` for the pools that start on this thread (tests).
-#[cfg(test)]
-pub(crate) fn set_job_map(on: Option<bool>) {
-    JOB_MAP.with(|job_map| job_map.set(on));
-}
-
 #[derive(Default)]
 struct PrefetchQueue {
     /// Jobs no worker has taken yet. Workers take the newest first, like
@@ -2634,8 +2562,6 @@ struct PrefetchQueue {
     /// True when the debug counts are kept (`GOPORT_PREFETCH_STATS`): jobs
     /// note when they are queued.
     timed: bool,
-    /// `move_up_enabled` of the thread that started the pool.
-    move_up: bool,
 }
 
 impl PrefetchQueue {
@@ -2811,17 +2737,6 @@ struct WorkerResolveConfig {
     // resolves it with one, takes none of those answers (`FilePrep::fits`
     // and the cache key).
     redirects: FxHashMap<Path, (String, usize)>,
-    /// True when the workers find the metadata of each file and resolve
-    /// its names for the loader (`FilePrep`): the loader takes worker
-    /// answers, and `GOPORT_LOAD_PREP` is not `0`.
-    prep: bool,
-    /// True when, with `prep`, the workers read the import names of each
-    /// parse for the loader and resolve each name with its own mode
-    /// (`FilePrep::names`): `GOPORT_LOAD_NAMES` is not `0`.
-    names: bool,
-    /// True when, with `names`, the workers make the commit of the
-    /// answers (`FilePrep::commit`): `GOPORT_LOAD_COMMIT` is not `0`.
-    commit: bool,
     /// S1a: the resolve-ahead job of a language server's first load
     /// (`FileLoader::first_load_ahead`). The workers resolve with a
     /// resolver of the job and publish their answers to it
@@ -2880,12 +2795,9 @@ impl WorkerResolveConfig {
             typings_location: loader.opts.typings_location.clone(),
             project_name: loader.opts.project_name.clone(),
             extra_extensions: loader.content_mapper_extensions.clone(),
-            prep: shared.is_some() && load_prep_enabled(),
             shared,
             references,
             redirects,
-            names: load_names_enabled(),
-            commit: load_commit_enabled(),
             ahead: loader.first_load_ahead.clone(),
         })
     }
@@ -2911,9 +2823,6 @@ impl WorkerResolveConfig {
             shared: Some(Arc::default()),
             references: Vec::new(),
             redirects: FxHashMap::default(),
-            prep: load_prep_enabled(),
-            names: load_names_enabled(),
-            commit: load_commit_enabled(),
             ahead: None,
         })
     }
@@ -2932,9 +2841,6 @@ impl WorkerResolveConfig {
             && self.extra_extensions == other.extra_extensions
             && self.references == other.references
             && self.redirects == other.redirects
-            && self.prep == other.prep
-            && self.names == other.names
-            && self.commit == other.commit
             && match (&self.ahead, &other.ahead) {
                 (Some(a), Some(b)) => a.same(b),
                 (a, b) => a.is_none() && b.is_none(),
@@ -2946,10 +2852,8 @@ impl WorkerResolveConfig {
 struct PrefetchShared {
     queue: Mutex<PrefetchQueue>,
     /// `PrefetchQueue::by_name`, which the loader reads without the queue
-    /// lock (`job`) unless `GOPORT_JOB_MAP=0`.
+    /// lock (`job`).
     jobs: Arc<JobMap>,
-    /// `job_map_enabled` when the pool started.
-    job_map: bool,
     /// True when `PrefetchQueue::redirects` has an entry.
     has_redirects: AtomicBool,
     ready: Condvar,
@@ -3208,12 +3112,10 @@ impl PrefetchShared {
         Self {
             queue: Mutex::new(PrefetchQueue {
                 timed: std::env::var_os("GOPORT_PREFETCH_STATS").is_some(),
-                move_up: move_up_enabled(),
                 by_name: jobs.clone(),
                 ..PrefetchQueue::default()
             }),
             jobs,
-            job_map: job_map_enabled(),
             has_redirects: AtomicBool::new(false),
             ready: Condvar::new(),
             closed: AtomicBool::new(false),
@@ -3350,17 +3252,14 @@ impl PrefetchShared {
     // that a root file or an earlier parse queued, deep in the list, moves
     // up, as the loader's own batches move up the jobs it reaches
     // (`queue_batch`). Else the loader reaches it first and parses it
-    // itself. `GOPORT_PREFETCH_MOVE_UP=0` turns it off.
+    // itself.
     fn queue_locked(
         queue: &mut PrefetchQueue,
         opts: SourceFileParseOptions,
         script_kind: ScriptKind,
     ) -> bool {
         if let Some(job) = queue.by_name.get(&opts.file_name) {
-            if queue.move_up
-                && !queue.is_first(&job)
-                && matches!(*lock(&job.state), PrefetchState::Queued)
-            {
+            if !queue.is_first(&job) && matches!(*lock(&job.state), PrefetchState::Queued) {
                 queue.push_pending(job);
             }
             return false;
@@ -3395,9 +3294,7 @@ impl PrefetchShared {
         // queue lock. Port-only: Go has no prefetch queue (its
         // `taskDataByPath` `SyncMap`, filesparser.go:235, is a lock-free map
         // of a different kind, keyed by path). The lock is for the rest.
-        if self.job_map {
-            requests.retain(|request| !self.settled(request));
-        }
+        requests.retain(|request| !self.settled(request));
         if requests.is_empty() {
             return;
         }
@@ -3452,15 +3349,9 @@ impl PrefetchShared {
                 .is_some_and(|job| !matches!(*lock(&job.state), PrefetchState::Queued))
     }
 
-    /// The job of `file_name`, if any: without the queue lock unless
-    /// `GOPORT_JOB_MAP=0`.
+    /// The job of `file_name`, if any, without the queue lock.
     fn job(&self, file_name: &str) -> Option<Arc<PrefetchJob>> {
-        if self.job_map {
-            self.jobs.get(file_name)
-        } else {
-            let _queue = lock(&self.queue);
-            self.jobs.get(file_name)
-        }
+        self.jobs.get(file_name)
     }
 
     /// Wakes the workers for `jobs` new jobs, with the queue lock held: a
@@ -3686,9 +3577,9 @@ impl PrefetchPool {
         pool
     }
 
-    /// Starts `workers` more parse workers on the queue of this pool.
     /// Waits until no job is queued and every worker sleeps (tests,
-    /// `resolve_ahead::Mode::Force`). Panics after 60 seconds.
+    /// `resolve_ahead::Mode::Force`, diagnostics). Panics after 60 seconds.
+    #[cfg(feature = "diagnostics")]
     fn wait_idle(&self) {
         let start = std::time::Instant::now();
         loop {
@@ -3713,6 +3604,7 @@ impl PrefetchPool {
         }
     }
 
+    /// Starts `workers` more parse workers on the queue of this pool.
     fn add_workers(&mut self, workers: usize) {
         self.spawn_workers(workers, false);
     }
@@ -3797,8 +3689,7 @@ impl Drop for PrefetchPool {
 /// with its workers (`WorkerResolveConfig::of_config`), the workers also
 /// parse the root files and resolve their imports with that cache, which
 /// the loader takes (`early_shared_resolution`). Pass it only for a host
-/// with no stat cache of its own (not `tsc -b`). `GOPORT_EARLY_ROOTS=0`
-/// turns it off.
+/// with no stat cache of its own (not `tsc -b`).
 // PORT: not in Go. Go starts the lib parses when `NewProgram` queues its
 // root tasks; here the lib.dom parse is the longest path of small
 // programs, so it starts earlier. PERF (parload2): the root parses start
@@ -3859,10 +3750,7 @@ pub fn start_default_lib_prefetch(
     );
     // Set before the root jobs, so the workers resolve and parse them with
     // the program options.
-    if roots
-        && early_roots_enabled()
-        && let Some(resolve) = WorkerResolveConfig::of_config(config)
-    {
+    if roots && let Some(resolve) = WorkerResolveConfig::of_config(config) {
         let _ = pool.shared.resolve.set(Some(resolve));
         let mut queue = lock(&pool.shared.queue);
         queue.roots = Some(config.file_names().to_vec());
@@ -3878,38 +3766,6 @@ pub fn start_default_lib_prefetch(
     if let Some(old) = EARLY_POOL.with(|early| early.borrow_mut().replace(pool)) {
         old.discard();
     }
-}
-
-/// False when `GOPORT_EARLY_ROOTS=0`: an early pool parses no root files
-/// (`start_default_lib_prefetch`). An A/B switch.
-fn early_roots_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("GOPORT_EARLY_ROOTS").is_none_or(|value| value != "0"))
-}
-
-/// False when `GOPORT_PREFETCH_MOVE_UP=0`: a worker does not move up the
-/// queued jobs of the files that a parse references (`PrefetchShared::queue`).
-/// An A/B switch, read once, or a test's choice for the pools that start on
-/// its thread (`set_move_up`).
-fn move_up_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(on) = MOVE_UP.with(Cell::get) {
-        return on;
-    }
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("GOPORT_PREFETCH_MOVE_UP").is_none_or(|value| value != "0"))
-}
-
-#[cfg(test)]
-thread_local! {
-    /// A test's choice of `move_up_enabled` for the pools of this thread.
-    static MOVE_UP: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-/// Sets `move_up_enabled` for the pools that start on this thread (tests).
-#[cfg(test)]
-pub(crate) fn set_move_up(on: Option<bool>) {
-    MOVE_UP.with(|move_up| move_up.set(on));
 }
 
 /// The shared resolution cache of the early pool of this thread, for the
@@ -4244,7 +4100,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
         // task's metadata is a constant) and a cached file get none.
         let prep_config = match (shared.resolve.get(), &resolver) {
             (Some(Some(config)), Some(_))
-                if config.prep
+                if config.shared.is_some()
                     && job.cached.is_none()
                     && bundled_text(&job.opts.file_name).is_none() =>
             {
@@ -4284,7 +4140,7 @@ fn run_prefetch_worker(shared: &PrefetchShared, mapped_only: bool) {
                                 ),
                             ..job.opts.clone()
                         });
-                let read_names = prep_config.is_some_and(|config| config.names) && meta.is_some();
+                let read_names = prep_config.is_some() && meta.is_some();
                 let (mut result, names) = match prefetch_parse(
                     &*fs,
                     &job,
@@ -4712,7 +4568,7 @@ impl WorkerResolver {
         // and the names that the worker read.
         let mut commit = import_names
             .as_ref()
-            .filter(|_| config.commit && answers_from.is_some())
+            .filter(|_| answers_from.is_some())
             .map(|names| {
                 let mut resolutions = ModeAwareCache::default();
                 resolutions.reserve(synthetic_names + names.len());
@@ -6031,39 +5887,30 @@ pub fn take_prefetched(
 mod move_up_tests {
     use super::*;
 
-    // `GOPORT_PREFETCH_MOVE_UP` is read once per process, so a test chooses
-    // the switch per pool (`set_move_up`), and both run here. A job that no
-    // worker took moves up when a parse references its file again: it is
-    // pushed again, on top. With the switch off, it stays where it is.
+    // A job that no worker took moves up when a parse references its file
+    // again: it is pushed again, on top.
     #[test]
-    fn a_queued_job_moves_up_only_with_the_switch() {
+    fn a_queued_job_moves_up() {
         let opts = |name: &str| SourceFileParseOptions {
             file_name: format!("/p/{name}"),
             path: Path(format!("/p/{name}")),
             external_module_indicator_options: ExternalModuleIndicatorOptions::default(),
         };
-        for (on, pending) in [
-            (false, ["/p/a.ts", "/p/b.ts"].as_slice()),
-            (true, ["/p/a.ts", "/p/b.ts", "/p/a.ts"].as_slice()),
-        ] {
-            set_move_up(Some(on));
-            let shared = PrefetchShared::new(PrefetchConfig {
-                current_directory: "/p".to_string(),
-                use_case_sensitive_file_names: true,
-                default_library_path: String::new(),
-            });
-            set_move_up(None);
-            for name in ["a.ts", "b.ts", "a.ts"] {
-                shared.queue(opts(name), ScriptKind::TS);
-            }
-            let queue = lock(&shared.queue);
-            let names: Vec<&str> = queue
-                .pending
-                .iter()
-                .map(|job| job.opts.file_name.as_str())
-                .collect();
-            assert_eq!(names, pending, "move-up {on}");
+        let shared = PrefetchShared::new(PrefetchConfig {
+            current_directory: "/p".to_string(),
+            use_case_sensitive_file_names: true,
+            default_library_path: String::new(),
+        });
+        for name in ["a.ts", "b.ts", "a.ts"] {
+            shared.queue(opts(name), ScriptKind::TS);
         }
+        let queue = lock(&shared.queue);
+        let names: Vec<&str> = queue
+            .pending
+            .iter()
+            .map(|job| job.opts.file_name.as_str())
+            .collect();
+        assert_eq!(names, ["/p/a.ts", "/p/b.ts", "/p/a.ts"]);
     }
 }
 

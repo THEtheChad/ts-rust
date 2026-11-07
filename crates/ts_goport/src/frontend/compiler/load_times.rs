@@ -138,8 +138,11 @@ mod on {
         }
     }
 
-    /// The loader's phase times of one load (`GOPORT_LOAD_TIMES`).
-    pub struct LoadTimes {
+    /// The loader's phase times of one load (`GOPORT_LOAD_TIMES`): none
+    /// when the times are off.
+    pub struct LoadTimes(Option<Phases>);
+
+    struct Phases {
         start: Instant,
         last: Instant,
         phases: Vec<(&'static str, f64)>,
@@ -150,12 +153,12 @@ mod on {
     }
 
     impl LoadTimes {
-        /// Starts the timer of a load, or `None` when the times are off.
+        /// Starts the timer of a load (a no-op timer when the times are off).
         #[must_use]
-        pub fn start() -> Option<Self> {
-            times_enabled().then(|| {
+        pub fn start() -> Self {
+            LoadTimes(times_enabled().then(|| {
                 let now = Instant::now();
-                LoadTimes {
+                Phases {
                     start: now,
                     last: now,
                     phases: Vec::new(),
@@ -163,47 +166,56 @@ mod on {
                     usage_last: ThreadUsage::now(),
                     records: Vec::new(),
                 }
-            })
+            }))
         }
 
         /// Ends the phase `name` now.
         pub fn mark(&mut self, name: &'static str) {
+            let Some(times) = &mut self.0 else {
+                return;
+            };
             let now = Instant::now();
-            self.phases
-                .push((name, now.duration_since(self.last).as_secs_f64() * 1e3));
-            self.last = now;
+            times
+                .phases
+                .push((name, now.duration_since(times.last).as_secs_f64() * 1e3));
+            times.last = now;
             let t = monotonic_ms();
             let usage = ThreadUsage::now();
             // The loader's `parse` phase is its run of the task queue.
             let name = if name == "parse" { "run_queue" } else { name };
-            self.records.push(PhaseRecord {
+            times.records.push(PhaseRecord {
                 name,
-                t0: self.t_last,
+                t0: times.t_last,
                 t1: t,
-                usage: usage.since(self.usage_last),
+                usage: usage.since(times.usage_last),
             });
-            self.t_last = t;
-            self.usage_last = usage;
+            times.t_last = t;
+            times.usage_last = usage;
         }
 
-        /// Writes the line of the load, with `extra` after the phases.
-        pub fn report(self, files: usize, extra: &str) {
+        /// Writes the line of the load, with the counts of its resolve
+        /// ahead after the phases when it `resolved_ahead`.
+        pub fn report(self, files: usize, resolved_ahead: bool) {
             use std::io::Write;
+            let Some(times) = self.0 else {
+                return;
+            };
             let mut line = format!(
                 "goport load-times: files={files} total={:.2}ms",
-                self.start.elapsed().as_secs_f64() * 1e3
+                times.start.elapsed().as_secs_f64() * 1e3
             );
-            for (name, ms) in &self.phases {
+            for (name, ms) in &times.phases {
                 let _ = write!(line, " {name}={ms:.2}ms");
             }
-            if !extra.is_empty() {
-                line.push(' ');
-                line.push_str(extra);
+            if let Some(stats) =
+                super::super::resolve_ahead::last_stats().filter(|_| resolved_ahead)
+            {
+                let _ = write!(line, " ahead={stats:?}");
             }
             line.push('\n');
             // Loader v2 L0: the timestamps and thread CPU of each phase.
             line.push_str("goport load-phases:");
-            for record in &self.records {
+            for record in &times.records {
                 line.push(' ');
                 line.push_str(&record.describe());
             }
@@ -215,21 +227,21 @@ mod on {
 
 #[cfg(not(feature = "diagnostics"))]
 mod off {
-    /// No timer: `start` gives none.
+    /// No timer.
     pub struct LoadTimes;
 
     impl LoadTimes {
         #[inline(always)]
         #[must_use]
-        pub fn start() -> Option<Self> {
-            None
+        pub fn start() -> Self {
+            LoadTimes
         }
 
         #[inline(always)]
         pub fn mark(&mut self, _name: &'static str) {}
 
         #[inline(always)]
-        pub fn report(self, _files: usize, _extra: &str) {}
+        pub fn report(self, _files: usize, _resolved_ahead: bool) {}
     }
 
     /// No timer: `start` gives none.

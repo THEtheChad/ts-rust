@@ -139,6 +139,7 @@ mod lsp_server_projectreference_updates_test;
 mod lsp_server_semantictokens_test;
 mod lsp_server_shutdown_test;
 mod lsp_stack_sanitizer_test;
+mod os_project;
 mod overlayfs_test;
 mod parseahead_test;
 mod project_test;
@@ -151,6 +152,10 @@ mod released_program_test;
 mod requestfilesystem_filechanges_test;
 mod requestfilesystem_pathtree_test;
 mod requestfilesystem_test;
+// The resolve-ahead tests choose the loader's mode and hooks
+// (`resolve_ahead::set_mode`, `set_first_load`, ...), which only the
+// `diagnostics` feature builds have.
+#[cfg(feature = "diagnostics")]
 mod resolveahead_test;
 mod selectionranges_test;
 mod session_test;

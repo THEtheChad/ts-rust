@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Runs the Go LSP oracle through load-dump-session.mjs on each scenario of an s1a-dumps.sh
-# run (same scenario, roots and files) and compares the server requests and diagnostics of
-# the tsc-rs runs (S1a on, off, serial) with Go (compare-requests.py).
-# usage: s1a-go-requests.sh <s1a-dumps out dir> <go out dir>
+# Runs the Go LSP oracle through load-dump-session.mjs on each scenario of an S1a dumps run
+# (same scenario, roots and files) and compares the server requests and diagnostics of the
+# tsc-rs runs (<name>-1a, -0a and -serial: S1a on, off, serial) with Go
+# (compare-requests.py). The S1a runner (s1a-dumps.sh) was removed in lane C2 with
+# GOPORT_FIRST_LOAD_AHEAD; this reads the runs that it made.
+# usage: s1a-go-requests.sh <S1a dumps out dir> <go out dir>
 set -u
 D=$1; O=$2; mkdir -p "$O"
 here=$(cd "$(dirname "$0")" && pwd)

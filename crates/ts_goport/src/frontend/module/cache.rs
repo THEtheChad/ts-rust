@@ -342,8 +342,10 @@ pub struct AheadLink {
     /// The module keys that had no worker answer when the loader asked
     /// (`AheadStats::missing`), for the debug log of the load's end
     /// (compiler/resolve_ahead.rs `ResolveAhead::finish`). Kept only when
-    /// that log is on (`log_missing`).
+    /// that log is on (`log_missing`). Diagnostics only.
+    #[cfg(feature = "diagnostics")]
     pub missing: RefCell<Vec<(String, String, ResolutionMode)>>,
+    #[cfg(feature = "diagnostics")]
     pub log_missing: bool,
     /// The text of a package.json that the check read in this load. Each
     /// package.json lookup of a taken answer then goes into the loader's
@@ -1689,6 +1691,7 @@ impl Caches {
         {
             None => {
                 stats.missing += 1;
+                #[cfg(feature = "diagnostics")]
                 if ahead.log_missing && redirect_config_name.is_empty() {
                     ahead.missing.borrow_mut().push((
                         containing_directory.to_string(),
@@ -2114,7 +2117,9 @@ mod tests {
             cursor: Cell::new(0),
             stats: Cell::new(AheadStats::default()),
             scopes: RefCell::default(),
+            #[cfg(feature = "diagnostics")]
             missing: RefCell::default(),
+            #[cfg(feature = "diagnostics")]
             log_missing: false,
             package_json_text: Some(Rc::new(|file_name: &str| {
                 std::fs::read_to_string(file_name).ok().map(Arc::from)

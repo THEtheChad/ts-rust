@@ -51,7 +51,9 @@ below list every run.
   - **Type-ref answers stay per worker.** Worker resolvers on an ahead thread no longer take
     type-reference answers from other workers. Those answers would carry package.json entries
     the worker never read.
-- **Off switch:** `GOPORT_FIRST_LOAD_AHEAD=0`.
+- **Off switch:** `GOPORT_FIRST_LOAD_AHEAD=0` (removed in lane C2, with `s1a-dumps.sh`, which
+  compared the two sides in one bin; `l1-dumps.sh` compares a bin with its base commit's).
+  The S0 tools below need a `diagnostics` build since C2.
 - **S0:**
   - `GOPORT_LOAD_TIMES=1` prints a stderr line per load: setup, parse, finish, collect and the
     resolve-ahead counts.

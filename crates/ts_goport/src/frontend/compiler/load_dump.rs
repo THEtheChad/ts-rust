@@ -1,7 +1,9 @@
-//! Loader diagnostics for the perf work (perf/first-principles, stage S0):
+//! Loader diagnostics for the perf work (perf/first-principles, stage S0;
+//! cargo feature `diagnostics`, never in a shipped build: the module and
+//! every call site are compiled only with it):
 //!
-//! - `GOPORT_LOAD_TIMES=1` (cargo feature `diagnostics`, load_times.rs): one
-//!   line per program load on stderr with the loader's phase times.
+//! - `GOPORT_LOAD_TIMES=1` (load_times.rs): one line per program load on
+//!   stderr with the loader's phase times.
 //! - `GOPORT_LOAD_DUMP=<file>`: a canonical text dump of the observable
 //!   effects of each program load, appended to `<file>`. Two loads with the
 //!   same effects give the same text. Sections:
@@ -29,6 +31,7 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 /// The file of `GOPORT_LOAD_DUMP`, if set.
+#[cfg(feature = "diagnostics")]
 fn dump_file() -> Option<&'static str> {
     static FILE: OnceLock<Option<String>> = OnceLock::new();
     FILE.get_or_init(|| {
@@ -117,21 +120,7 @@ pub fn write_section(kind: &str, text: &str) {
 }
 
 /// Appends `label key value` lines for `entries`, sorted by key.
-pub fn sorted_lines<K: AsRef<str>, V: std::fmt::Debug>(
-    out: &mut String,
-    label: &str,
-    entries: impl IntoIterator<Item = (K, V)>,
-) {
-    let mut lines: Vec<String> = entries
-        .into_iter()
-        .map(|(key, value)| format!("{label} {} {value:?}", key.as_ref()))
-        .collect();
-    lines.sort_unstable();
-    for line in lines {
-        out.push_str(&line);
-        out.push('\n');
-    }
-}
+pub use crate::frontend::vfs::cachedvfs::sorted_lines;
 
 /// The canonical text of a diagnostic: span, code, category, source,
 /// message, arguments, flags, and the chain and related information in

@@ -3,7 +3,8 @@
 //! on worker threads. A load whose loader takes every worker answer that
 //! passes the check (`Mode::Force`) must give the same program, module
 //! resolutions, seen files, missing directories and cached files as a load
-//! whose loader resolves every key itself (`Mode::Off`).
+//! whose loader resolves every key itself (`Mode::Off`). The modes and the
+//! test hooks are in `diagnostics` feature builds only.
 //!
 //! Resolve ahead runs only on the OS file system, so each test writes a
 //! project to a temp directory and runs with no OS override (not
@@ -22,6 +23,7 @@ use ts_goport::frontend::vfs::osvfs_fs;
 use ts_goport::lsp::lsproto;
 use ts_goport::project::{self, Session, SessionInit, SessionOptions};
 
+use super::os_project::{os_session, write};
 use super::projecttestutil;
 use super::util::{CHANGED, DELETED, bg, close, edit, generate_file_events, open, program, uri};
 
@@ -141,39 +143,8 @@ fn make_project(label: &str) -> String {
         .replace('\\', "/")
 }
 
-pub(super) fn write(root: &str, name: &str, text: &str) {
-    let path = std::path::Path::new(root).join(name);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-}
-
 pub(super) fn file_uri(root: &str, name: &str) -> String {
     format!("file://{root}/{name}")
-}
-
-/// A session on the OS file system in `root`, with no client, watch or
-/// typings installer.
-pub(super) fn os_session(root: &str) -> Rc<Session> {
-    project::new_session(&SessionInit {
-        background_ctx: bg(),
-        options: Rc::new(SessionOptions {
-            current_directory: root.to_string(),
-            default_library_path: bundled::lib_path(),
-            typings_location: String::new(),
-            position_encoding: lsproto::PositionEncodingKind::UTF8,
-            watch_enabled: false,
-            logging_enabled: false,
-            ..projecttestutil::session_options(root)
-        }),
-        fs: bundled::wrap_fs(osvfs_fs()),
-        client: None,
-        logger: None,
-        npm_executor: None,
-        spawner: None,
-        content_mapper_logger: None,
-        parse_cache: None,
-        content_mapped_parse_cache: None,
-    })
 }
 
 /// What a program load leaves: the program's files, their package scopes

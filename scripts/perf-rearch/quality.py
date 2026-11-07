@@ -28,7 +28,7 @@ from array import array
 from collections import Counter, defaultdict
 from pathlib import Path
 
-VERSION = 11  # bump when snapshot content changes (invalidates the cache)
+VERSION = 12  # bump when snapshot content changes (invalidates the cache)
 CACHE = Path(os.environ.get("PERF_QUALITY_CACHE", Path.home() / ".cache/perf-rearch/quality"))
 RCA = Path(os.environ.get("PERF_QUALITY_RCA", Path.home() / ".cache/perf-rearch/tools/rca/bin/rust-code-analysis-cli"))
 REPO = Path(__file__).resolve().parents[2]
@@ -187,7 +187,8 @@ def test_spans(texts: list[str], lines: list[int]):
                     if b2[:1] == ["path"] and len(b2) >= 3:
                         path_attr = b2[2].strip('"')
                     j = j2
-                # item: up to '{' or ';' at depth 0
+                # item: up to '{' or ';' at depth 0, or a '}' first (a struct field or a struct
+                # literal's field, which ends at a ','; the span runs to the end of its struct)
                 depth = 0
                 k = j
                 while k < n:
@@ -196,11 +197,15 @@ def test_spans(texts: list[str], lines: list[int]):
                         depth += 1
                     elif t in (")", "]"):
                         depth -= 1
-                    elif depth == 0 and t in ("{", ";"):
+                    elif depth == 0 and t in ("{", ";", "}"):
                         break
                     k += 1
                 if k >= n:
                     break
+                if texts[k] == "}":
+                    spans.append((start_line, lines[k]))
+                    i = k
+                    continue
                 if texts[k] == ";":
                     if k >= 2 and texts[k - 2] == "mod":
                         mods.append((texts[k - 1], path_attr))
@@ -246,12 +251,14 @@ def feature_spans(texts: list[str], lines: list[int]):
                         depth += 1
                     elif t in (")", "]"):
                         depth -= 1
-                    elif depth == 0 and t in ("{", ";"):
+                    elif depth == 0 and t in ("{", ";", "}"):
                         break
                     k += 1
                 if k >= n:
                     break
-                end = k if texts[k] == ";" else match_close(texts, k, "{", "}")
+                # A `}` first: the item was a struct field or a struct literal's field, which
+                # ends at a `,`; the span runs to the end of its struct, not into what follows.
+                end = k if texts[k] in (";", "}") else match_close(texts, k, "{", "}")
                 out.append([lines[i], lines[end], feat])
                 i = after
                 continue

@@ -262,161 +262,16 @@ pub fn process_all_program_files(
 ) -> (ProcessedFiles, Option<GoError>) {
     let ProgramHosts { host } = hosts;
     let mut times = super::load_times::LoadTimes::start();
+    #[cfg(feature = "diagnostics")]
     super::load_dump::begin_load();
-    let compiler_options = opts.config.compiler_options().clone();
     // PERF (buildprog1): the root names are read from the config, as Go
     // reads `opts.Config.FileNames()`, not from a copy of the list.
     let config = Rc::clone(&opts.config);
     let root_files: &[String] = config.file_names();
-    let supported_extensions =
-        get_supported_extensions(&compiler_options, &opts.config.content_mapper_extensions());
-    let supported_extensions_with_json_if_resolve_json_module =
-        get_supported_extensions_with_json_if_resolve_json_module(
-            Some(&compiler_options),
-            supported_extensions.clone(),
-        );
-    let mut max_node_module_js_depth = 0;
-    if let Some(p) = opts.config.compiler_options().max_node_module_js_depth {
-        // PORT: Go `int` (64-bit). The loader depth is `i32`; the file depth
-        // is small and not negative, so a saturated limit compares the same.
-        max_node_module_js_depth =
-            i32::try_from(p).unwrap_or(if p < 0 { i32::MIN } else { i32::MAX });
-    }
-    let current_directory = host.get_current_directory();
-    let mut loader = FileLoader {
-        default_library_path: get_normalized_absolute_path(
-            &host.default_library_path(),
-            &current_directory,
-        ),
-        compare_paths_options: ComparePathsOptions {
-            use_case_sensitive_file_names: host.fs().use_case_sensitive_file_names(),
-            current_directory: current_directory.clone(),
-        },
-        files_parser: RefCell::new(FilesParser {
-            queue: Vec::new(),
-            task_data_by_path: Default::default(),
-            max_depth: max_node_module_js_depth,
-            single_threaded,
-            load_stats: Cell::new(None),
-        }),
-        root_tasks: Vec::with_capacity(
-            root_files.len() + compiler_options.lib.as_ref().map_or(0, Vec::len),
-        ),
-        supported_extensions,
-        supported_extensions_with_json_if_resolve_json_module,
-        content_mapper_extensions: opts.config.content_mapper_extensions(),
-        resolver: None,
-        total_file_count: Cell::new(0),
-        lib_file_count: Cell::new(0),
-        // PORT: Go uses the zero `ast.NodeFactory`, which makes synthetic nodes.
-        factory: NodeFactory::new(),
-        synthetic_owner: Rc::new(crate::ast::LoadSyntheticOwner::new()),
-        project_reference_file_mapper: Rc::new(RefCell::new(ProjectReferenceFileMapper::new(
-            &opts,
-            host.clone(),
-        ))),
-        dts_directories: FxHashSet::default(),
-        path_for_lib_file_cache: RefCell::new(FxHashMap::default()),
-        path_for_lib_file_resolutions: RefCell::new(FxHashMap::default()),
-        shared_resolution: None,
-        keeps_import_names: false,
-        first_load_ahead: None,
-        noted_worker_logs: RefCell::new(FxHashSet::default()),
-        content_mapper_failures: RefCell::new(FxHashMap::default()),
-        content_mapper_init_failed: RefCell::new(FxHashSet::default()),
-        content_mapper_diagnostics: RefCell::new(Vec::new()),
-        concurrent_transforms: RefCell::new(FxHashMap::default()),
-        mapped_prefetch_ready: Cell::new(false),
-        module_resolution_error: RefCell::new(None),
-        custom_module_resolver: factories.create_module_resolver.is_some(),
-        opts,
-        host,
-    };
+    let custom_module_resolver = factories.create_module_resolver.is_some();
+    let mut loader = FileLoader::new(opts, host, custom_module_resolver, single_threaded);
     loader.add_project_reference_tasks(single_threaded);
-    let resolver_host: Rc<dyn ResolutionHost> = loader
-        .project_reference_file_mapper
-        .borrow()
-        .host
-        .clone()
-        .expect("projectReferenceFileMapper.host is set until processing ends");
-    let mut resolve_ahead = None;
-    let resolver_options = ResolverOptions {
-        host: Some(resolver_host),
-        compiler_options: Some(compiler_options.clone()),
-        typings_location: loader.opts.typings_location.clone(),
-        project_name: loader.opts.project_name.clone(),
-        extra_extensions: loader.opts.config.content_mapper_extensions(),
-        package_json_cache: None,
-    };
-    if let Some(create_module_resolver) = factories.create_module_resolver {
-        loader.resolver = Some(create_module_resolver(resolver_options));
-    } else {
-        let mut resolver = new_resolver(resolver_options);
-        // PERF: Go resolves in all parse tasks with one shared cache. Here the
-        // parse workers resolve ahead of the loader, and the loader reads their
-        // answers. Only when every resolver sees the same files: the plain OS
-        // file system (for `tsc -b`, the workers read the host's cache,
-        // `BuildStatCache`), no project reference faking host (only a
-        // program that uses the sources of its references has one) and no
-        // traced resolution (Go then skips the cache too). A worker resolves
-        // the files of a project reference with its redirect, from the
-        // source file, as the loader does (Go `getRedirectForResolution`,
-        // `WorkerResolveConfig::redirects`); the redirect is part of the
-        // cache key, and the loader takes a file's answers only when the
-        // worker used its redirect and containing file (`FilePrep::fits`).
-        // Only for the default resolver: a parse worker cannot run a
-        // `create_module_resolver` one.
-        // PORT: with `skip_module_resolution` the loader resolves nothing
-        // (ts#64024), so the workers do not either.
-        if !single_threaded
-            && super::files_parser::parse_workers_enabled()
-            && workers_resolve_imports(&compiler_options)
-            && !loader.opts.skip_module_resolution
-            && loader.host.is_plain_os_fs()
-            && compiler_options.trace_resolution != Tristate::True
-            && !loader.opts.can_use_project_reference_source()
-        {
-            // PERF (parload2): the cache of the early workers, which
-            // resolved the root files with this config already.
-            let shared = super::files_parser::early_shared_resolution(&loader).unwrap_or_default();
-            resolver.caches.shared = Some(SharedResolutionLink {
-                cache: shared.clone(),
-                publish: false,
-            });
-            loader.shared_resolution = Some(shared);
-        } else if !single_threaded
-            && super::resolve_ahead::mode() != super::resolve_ahead::Mode::Off
-            && workers_resolve_imports(&compiler_options)
-            && !loader.opts.skip_module_resolution
-            && compiler_options.trace_resolution != Tristate::True
-            && loader
-                .opts
-                .config
-                .resolved_project_reference_paths()
-                .is_empty()
-            && let Some(host) = loader.host.resolve_ahead()
-        {
-            // PERF: a language server load after the first: workers resolve
-            // the keys of the previous load ahead of the loader
-            // (resolve_ahead.rs). Same conditions as above, but the host's
-            // file system is not the plain OS one: the host checks each
-            // answer before the loader takes it. No project references, so
-            // no key has a redirect and the resolver host fakes no file.
-            // S1a: a first load has no keys of a previous load. When parse
-            // workers run (the host's first load), they resolve through the
-            // job's view as they parse, and the loader checks each answer
-            // as it checks a resolve-ahead answer (`FirstLoadJob`).
-            let first_load = loader.host.prefetch_parses()
-                && super::files_parser::parse_workers_enabled()
-                && super::resolve_ahead::first_load_enabled();
-            let started = super::resolve_ahead::ResolveAhead::start(host, &resolver, first_load);
-            loader.first_load_ahead = started.first_load_job();
-            resolve_ahead = Some(started);
-            loader.keeps_import_names = true;
-            drop_dead_import_names();
-        }
-        loader.resolver = Some(Rc::new(resolver));
-    }
+    let resolve_ahead = loader.set_resolver(factories, single_threaded);
     let _trace = crate::tracing::get().map(|tr| {
         tr.push(
             crate::tracing::Phase::Program,
@@ -425,135 +280,18 @@ pub fn process_all_program_files(
             false,
         )
     });
-    for (index, root_file) in root_files.iter().enumerate() {
-        // ts#64159 (Go N' fileloader.go:210): the diagnostics name a root
-        // file as the command line gave it.
-        let reference_text = config.root_file_name_for_diagnostic(index);
-        loader.add_root_file_task(
-            root_file,
-            reference_text,
-            None,
-            new_file_include_reason(
-                FileIncludeKind::ROOT_FILE,
-                FileIncludeData::Index(index as i32),
-            ),
-        );
-    }
-    if !root_files.is_empty() && compiler_options.no_lib.is_false_or_unknown() {
-        if let Some(libs) = &compiler_options.lib {
-            for (index, lib) in libs.iter().enumerate() {
-                let (name, ok) = get_lib_file_name(lib);
-                if ok {
-                    let lib_file = loader.path_for_lib_file(&name);
-                    loader.add_root_task(
-                        &lib_file.path,
-                        Some(lib_file.clone()),
-                        new_file_include_reason(
-                            FileIncludeKind::LIB_FILE,
-                            FileIncludeData::Index(index as i32),
-                        ),
-                    );
-                }
-                // !!! error on unknown name
-            }
-        } else {
-            let name = get_default_lib_file_name(&compiler_options);
-            let lib_file = loader.path_for_lib_file(&name);
-            loader.add_root_task(
-                &lib_file.path,
-                Some(lib_file.clone()),
-                new_file_include_reason(FileIncludeKind::LIB_FILE, FileIncludeData::None),
-            );
-        }
-    }
-
-    if !root_files.is_empty() && !loader.opts.skip_module_resolution {
-        loader.add_automatic_type_directive_tasks();
-    }
+    loader.add_root_tasks_of(&config);
 
     let root_tasks = loader.root_tasks.clone();
-    if let Some(times) = &mut times {
-        times.mark("setup");
-    }
+    times.mark("setup");
     loader.files_parser.borrow_mut().parse(&loader, &root_tasks);
-    if let Some(times) = &mut times {
-        times.mark("parse");
-    }
-    // The parse workers have ended: no worker uses the first-load job.
-    loader.first_load_ahead = None;
+    times.mark("parse");
     let resolved_ahead = resolve_ahead.is_some();
-    if let Some(resolve_ahead) = resolve_ahead
-        && let Some(resolver) = loader
-            .resolver
-            .as_ref()
-            .and_then(|resolver| resolver.as_default_resolver())
-    {
-        resolve_ahead.finish(resolver);
-    }
-    // The parse workers have ended. The `tsc -b` host's cache keeps the
-    // lookups of the worker answers that the loader took, as Go's cache
-    // keeps the lookups of its parse tasks, and drops the other worker
-    // lookups (`BuildStatCache`). Only the default resolver takes worker
-    // answers.
-    if let Some(stats) = loader.host.stat_cache() {
-        let taken = loader
-            .resolver
-            .as_ref()
-            .and_then(|resolver| resolver.as_default_resolver())
-            .map(|resolver| resolver.take_worker_lookups())
-            .unwrap_or_default();
-        stats.end_load(&taken);
-    }
-
-    // The parse workers have ended: the program resolver's package.json
-    // cache keeps the package.json texts that they read first and the
-    // loader did not take, and parses one only when a lookup asks for it.
-    if let Some(shared) = &loader.shared_resolution
-        && let Some(resolver) = loader
-            .resolver
-            .as_ref()
-            .and_then(|resolver| resolver.as_default_resolver())
-    {
-        shared.end_package_json_reads(&resolver.package_json_info_cache);
-    }
-
-    // PORT: Go ts#64519 keeps the loader and the host in a
-    // `projectReferenceFileMapperBuilder`, and the program gets only its
-    // mapper. Here the mapper holds them while loading, and loses them now.
-    {
-        let mut mapper = loader.project_reference_file_mapper.borrow_mut();
-        mapper.loader = None;
-        mapper.host = None;
-    }
-
-    if let Some(times) = &mut times {
-        times.mark("finish");
-    }
-    let files_parser = loader.files_parser.borrow();
-    // The collect takes the tasks' resolutions: the dump reads them first.
-    if super::load_dump::loading() {
-        let host_takes = !loader.host.is_plain_os_fs();
-        super::load_dump::end_load(
-            |out| dump_loader_state(&loader, &files_parser, out),
-            host_takes,
-        );
-    }
-    let processed_files = files_parser.get_processed_files(&loader);
-    let module_resolution_error = loader.module_resolution_error.borrow().clone();
-    if let Some(times) = &mut times {
-        times.mark("collect");
-    }
-    drop(files_parser);
-    if let Some(times) = times {
-        let extra = if resolved_ahead {
-            super::resolve_ahead::last_stats()
-                .map(|stats| format!("ahead={stats:?}"))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        times.report(processed_files.files.len(), &extra);
-    }
+    loader.end_parse(resolve_ahead);
+    times.mark("finish");
+    let (processed_files, module_resolution_error) = loader.collect();
+    times.mark("collect");
+    times.report(processed_files.files.len(), resolved_ahead);
     drop(root_tasks);
     // PERF: in a one-program process the loader state (every parse task)
     // lives until the process ends anyway; freeing it is serial work before
@@ -564,9 +302,314 @@ pub fn process_all_program_files(
     (processed_files, module_resolution_error)
 }
 
+impl FileLoader {
+    /// The loader of `processAllProgramFiles` (Go fileloader.go:180), with
+    /// no tasks and no resolver yet.
+    fn new(
+        opts: ProgramConfig,
+        host: Rc<dyn CompilerHost>,
+        custom_module_resolver: bool,
+        single_threaded: bool,
+    ) -> Self {
+        let compiler_options = opts.config.compiler_options().clone();
+        let supported_extensions =
+            get_supported_extensions(&compiler_options, &opts.config.content_mapper_extensions());
+        let supported_extensions_with_json_if_resolve_json_module =
+            get_supported_extensions_with_json_if_resolve_json_module(
+                Some(&compiler_options),
+                supported_extensions.clone(),
+            );
+        let mut max_node_module_js_depth = 0;
+        if let Some(p) = opts.config.compiler_options().max_node_module_js_depth {
+            // PORT: Go `int` (64-bit). The loader depth is `i32`; the file depth
+            // is small and not negative, so a saturated limit compares the same.
+            max_node_module_js_depth =
+                i32::try_from(p).unwrap_or(if p < 0 { i32::MIN } else { i32::MAX });
+        }
+        let root_task_count =
+            opts.config.file_names().len() + compiler_options.lib.as_ref().map_or(0, Vec::len);
+        let current_directory = host.get_current_directory();
+        FileLoader {
+            default_library_path: get_normalized_absolute_path(
+                &host.default_library_path(),
+                &current_directory,
+            ),
+            compare_paths_options: ComparePathsOptions {
+                use_case_sensitive_file_names: host.fs().use_case_sensitive_file_names(),
+                current_directory: current_directory.clone(),
+            },
+            files_parser: RefCell::new(FilesParser {
+                queue: Vec::new(),
+                task_data_by_path: Default::default(),
+                max_depth: max_node_module_js_depth,
+                single_threaded,
+                load_stats: Cell::new(None),
+            }),
+            root_tasks: Vec::with_capacity(root_task_count),
+            supported_extensions,
+            supported_extensions_with_json_if_resolve_json_module,
+            content_mapper_extensions: opts.config.content_mapper_extensions(),
+            resolver: None,
+            total_file_count: Cell::new(0),
+            lib_file_count: Cell::new(0),
+            // PORT: Go uses the zero `ast.NodeFactory`, which makes synthetic nodes.
+            factory: NodeFactory::new(),
+            synthetic_owner: Rc::new(crate::ast::LoadSyntheticOwner::new()),
+            project_reference_file_mapper: Rc::new(RefCell::new(ProjectReferenceFileMapper::new(
+                &opts,
+                host.clone(),
+            ))),
+            dts_directories: FxHashSet::default(),
+            path_for_lib_file_cache: RefCell::new(FxHashMap::default()),
+            path_for_lib_file_resolutions: RefCell::new(FxHashMap::default()),
+            shared_resolution: None,
+            keeps_import_names: false,
+            first_load_ahead: None,
+            noted_worker_logs: RefCell::new(FxHashSet::default()),
+            content_mapper_failures: RefCell::new(FxHashMap::default()),
+            content_mapper_init_failed: RefCell::new(FxHashSet::default()),
+            content_mapper_diagnostics: RefCell::new(Vec::new()),
+            concurrent_transforms: RefCell::new(FxHashMap::default()),
+            mapped_prefetch_ready: Cell::new(false),
+            module_resolution_error: RefCell::new(None),
+            custom_module_resolver,
+            opts,
+            host,
+        }
+    }
+
+    /// Sets the loader's resolver (Go fileloader.go:198): the factory's,
+    /// or the default resolver, which takes the answers of the parse
+    /// workers or of resolve ahead when the load allows them. The resolve
+    /// ahead of the load, if it has one.
+    fn set_resolver(
+        &mut self,
+        factories: ProgramFactories,
+        single_threaded: bool,
+    ) -> Option<super::resolve_ahead::ResolveAhead> {
+        let resolver_host: Rc<dyn ResolutionHost> = self
+            .project_reference_file_mapper
+            .borrow()
+            .host
+            .clone()
+            .expect("projectReferenceFileMapper.host is set until processing ends");
+        let resolver_options = ResolverOptions {
+            host: Some(resolver_host),
+            compiler_options: Some(self.opts.config.compiler_options().clone()),
+            typings_location: self.opts.typings_location.clone(),
+            project_name: self.opts.project_name.clone(),
+            extra_extensions: self.opts.config.content_mapper_extensions(),
+            package_json_cache: None,
+        };
+        if let Some(create_module_resolver) = factories.create_module_resolver {
+            self.resolver = Some(create_module_resolver(resolver_options));
+            return None;
+        }
+        let mut resolver = new_resolver(resolver_options);
+        let mut resolve_ahead = None;
+        if self.workers_share_resolutions(single_threaded) {
+            // PERF (parload2): the cache of the early workers, which
+            // resolved the root files with this config already.
+            let shared = super::files_parser::early_shared_resolution(self).unwrap_or_default();
+            resolver.caches.shared = Some(SharedResolutionLink {
+                cache: shared.clone(),
+                publish: false,
+            });
+            self.shared_resolution = Some(shared);
+        } else if let Some(host) = self.resolve_ahead_host(single_threaded) {
+            // PERF: a language server load after the first: workers resolve
+            // the keys of the previous load ahead of the loader
+            // (resolve_ahead.rs). Same conditions as
+            // `workers_share_resolutions`, but the host's file system is not
+            // the plain OS one: the host checks each answer before the
+            // loader takes it. No project references, so no key has a
+            // redirect and the resolver host fakes no file.
+            // S1a: a first load has no keys of a previous load. When parse
+            // workers run (the host's first load), they resolve through the
+            // job's view as they parse, and the loader checks each answer
+            // as it checks a resolve-ahead answer (`FirstLoadJob`).
+            let first_load = self.host.prefetch_parses()
+                && super::files_parser::parse_workers_enabled()
+                && super::resolve_ahead::first_load_enabled();
+            let started = super::resolve_ahead::ResolveAhead::start(host, &resolver, first_load);
+            self.first_load_ahead = started.first_load_job();
+            resolve_ahead = Some(started);
+            self.keeps_import_names = true;
+            drop_dead_import_names();
+        }
+        self.resolver = Some(Rc::new(resolver));
+        resolve_ahead
+    }
+
+    /// PERF: Go resolves in all parse tasks with one shared cache. Here the
+    /// parse workers resolve ahead of the loader, and the loader reads their
+    /// answers. Only when every resolver sees the same files: the plain OS
+    /// file system (for `tsc -b`, the workers read the host's cache,
+    /// `BuildStatCache`), no project reference faking host (only a
+    /// program that uses the sources of its references has one) and no
+    /// traced resolution (Go then skips the cache too). A worker resolves
+    /// the files of a project reference with its redirect, from the
+    /// source file, as the loader does (Go `getRedirectForResolution`,
+    /// `WorkerResolveConfig::redirects`); the redirect is part of the
+    /// cache key, and the loader takes a file's answers only when the
+    /// worker used its redirect and containing file (`FilePrep::fits`).
+    /// Only for the default resolver: a parse worker cannot run a
+    /// `create_module_resolver` one.
+    // PORT: with `skip_module_resolution` the loader resolves nothing
+    // (ts#64024), so the workers do not either.
+    fn workers_share_resolutions(&self, single_threaded: bool) -> bool {
+        let options = self.opts.config.compiler_options();
+        !single_threaded
+            && super::files_parser::parse_workers_enabled()
+            && workers_resolve_imports(options)
+            && !self.opts.skip_module_resolution
+            && self.host.is_plain_os_fs()
+            && options.trace_resolution != Tristate::True
+            && !self.opts.can_use_project_reference_source()
+    }
+
+    /// The host of the resolve ahead of this load, when it has one: a
+    /// language server load (resolve_ahead.rs) with no project references.
+    fn resolve_ahead_host(
+        &self,
+        single_threaded: bool,
+    ) -> Option<super::resolve_ahead::ResolveAheadHost> {
+        let options = self.opts.config.compiler_options();
+        if single_threaded
+            || !super::resolve_ahead::enabled()
+            || !workers_resolve_imports(options)
+            || self.opts.skip_module_resolution
+            || options.trace_resolution == Tristate::True
+            || !self
+                .opts
+                .config
+                .resolved_project_reference_paths()
+                .is_empty()
+        {
+            return None;
+        }
+        self.host.resolve_ahead()
+    }
+
+    /// The root tasks of `config` (Go fileloader.go:206 to :236): its root
+    /// files, the lib files and the automatic type directives.
+    fn add_root_tasks_of(&mut self, config: &ParsedCommandLine) {
+        let root_files = config.file_names();
+        for (index, root_file) in root_files.iter().enumerate() {
+            // ts#64159 (Go N' fileloader.go:210): the diagnostics name a root
+            // file as the command line gave it.
+            let reference_text = config.root_file_name_for_diagnostic(index);
+            self.add_root_file_task(
+                root_file,
+                reference_text,
+                None,
+                new_file_include_reason(
+                    FileIncludeKind::ROOT_FILE,
+                    FileIncludeData::Index(index as i32),
+                ),
+            );
+        }
+        let compiler_options = Rc::clone(config.compiler_options());
+        if !root_files.is_empty() && compiler_options.no_lib.is_false_or_unknown() {
+            self.add_lib_tasks(&compiler_options);
+        }
+
+        if !root_files.is_empty() && !self.opts.skip_module_resolution {
+            self.add_automatic_type_directive_tasks();
+        }
+    }
+
+    /// The lib files of `compiler_options` as root tasks: its `lib` list,
+    /// or the default lib.
+    fn add_lib_tasks(&mut self, compiler_options: &CompilerOptions) {
+        let Some(libs) = &compiler_options.lib else {
+            let name = get_default_lib_file_name(compiler_options);
+            let lib_file = self.path_for_lib_file(&name);
+            self.add_root_task(
+                &lib_file.path,
+                Some(lib_file.clone()),
+                new_file_include_reason(FileIncludeKind::LIB_FILE, FileIncludeData::None),
+            );
+            return;
+        };
+        for (index, lib) in libs.iter().enumerate() {
+            let (name, ok) = get_lib_file_name(lib);
+            if ok {
+                let lib_file = self.path_for_lib_file(&name);
+                self.add_root_task(
+                    &lib_file.path,
+                    Some(lib_file.clone()),
+                    new_file_include_reason(
+                        FileIncludeKind::LIB_FILE,
+                        FileIncludeData::Index(index as i32),
+                    ),
+                );
+            }
+            // !!! error on unknown name
+        }
+    }
+
+    /// After the parse of the load's tasks: the parse workers have ended.
+    /// Ends the resolve ahead of the load, hands the worker lookups and
+    /// package.json reads that the loader took to their caches, and drops
+    /// the mapper's loader and host.
+    fn end_parse(&mut self, resolve_ahead: Option<super::resolve_ahead::ResolveAhead>) {
+        // No worker uses the first-load job.
+        self.first_load_ahead = None;
+        let default_resolver = self
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.as_default_resolver());
+        if let Some((resolve_ahead, resolver)) = resolve_ahead.zip(default_resolver) {
+            resolve_ahead.finish(resolver);
+        }
+        // The `tsc -b` host's cache keeps the lookups of the worker answers
+        // that the loader took, as Go's cache keeps the lookups of its parse
+        // tasks, and drops the other worker lookups (`BuildStatCache`).
+        // Only the default resolver takes worker answers.
+        if let Some(stats) = self.host.stat_cache() {
+            let taken = default_resolver
+                .map(|resolver| resolver.take_worker_lookups())
+                .unwrap_or_default();
+            stats.end_load(&taken);
+        }
+        // The program resolver's package.json cache keeps the package.json
+        // texts that the parse workers read first and the loader did not
+        // take, and parses one only when a lookup asks for it.
+        if let Some((shared, resolver)) = self.shared_resolution.as_ref().zip(default_resolver) {
+            shared.end_package_json_reads(&resolver.package_json_info_cache);
+        }
+        // PORT: Go ts#64519 keeps the loader and the host in a
+        // `projectReferenceFileMapperBuilder`, and the program gets only its
+        // mapper. Here the mapper holds them while loading, and loses them now.
+        let mut mapper = self.project_reference_file_mapper.borrow_mut();
+        mapper.loader = None;
+        mapper.host = None;
+    }
+
+    /// The processed files of the load and its module resolution error (Go
+    /// fileloader.go:238 `getProcessedFiles`).
+    fn collect(&self) -> (ProcessedFiles, Option<GoError>) {
+        let files_parser = self.files_parser.borrow();
+        // The collect takes the tasks' resolutions: the dump reads them first.
+        #[cfg(feature = "diagnostics")]
+        if super::load_dump::loading() {
+            let host_takes = !self.host.is_plain_os_fs();
+            super::load_dump::end_load(
+                |out| dump_loader_state(self, &files_parser, out),
+                host_takes,
+            );
+        }
+        let processed_files = files_parser.get_processed_files(self);
+        let module_resolution_error = self.module_resolution_error.borrow().clone();
+        (processed_files, module_resolution_error)
+    }
+}
+
 /// The processed state of a load for `GOPORT_LOAD_DUMP` (load_dump.rs):
 /// each path's task data and tasks, sorted by path, and the resolver's
 /// package.json cache entries, sorted.
+#[cfg(feature = "diagnostics")]
 // PORT: not in Go (perf diagnostics).
 fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut String) {
     use std::fmt::Write as _;
@@ -741,6 +784,7 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
 }
 
 /// The canonical text of a type reference resolution (`GOPORT_LOAD_DUMP`).
+#[cfg(feature = "diagnostics")]
 fn describe_type_reference(resolved: &ResolvedTypeReferenceDirective) -> String {
     format!(
         "file={:?} path={:?} original={:?} primary={} pkg={:?} external={} diags=[{}]",
@@ -760,6 +804,7 @@ fn describe_type_reference(resolved: &ResolvedTypeReferenceDirective) -> String 
 }
 
 /// The canonical text of a processing diagnostic (`GOPORT_LOAD_DUMP`).
+#[cfg(feature = "diagnostics")]
 fn describe_processing_diagnostic(
     diagnostic: &super::processing_diagnostic::ProcessingDiagnostic,
 ) -> String {
@@ -1604,13 +1649,11 @@ impl FileLoader {
     /// transform opened the mapper project, keeps what the workers send
     /// the later transforms with. Go opens the project on the first
     /// transform too, so no request goes out that Go does not send.
-    /// `GOPORT_MAPPED_PREFETCH=0` turns it off (an A/B switch).
     // PORT: not in Go (see `concurrent_transforms`).
     fn note_content_mapper_transform(&self, mapper: &Rc<Mapper>) {
         let key = Rc::as_ptr(mapper);
         if self.concurrent_transforms.borrow().contains_key(&key)
             || !self.host.prefetch_content_mapped()
-            || std::env::var_os("GOPORT_MAPPED_PREFETCH").is_some_and(|value| value == "0")
         {
             return;
         }
@@ -3067,8 +3110,8 @@ fn emit_syntax_for_usage(
 /// from` or `export .. from` in `file_name`, the most common form. A parse
 /// worker resolves the synthetic imports with this mode. It resolves the
 /// imports with it too when it has no usages that fit them: a job without
-/// a prep (`GOPORT_LOAD_PREP=0`, a cached file, a bundled lib, or no
-/// metadata), `GOPORT_LOAD_NAMES=0`, or names that are not those of its
+/// a prep (a cached file, a bundled lib, no metadata, or a loader that
+/// takes no worker answers), or names that are not those of its
 /// references. A wrong guess only resolves another cache key: the loader
 /// resolves each import with its real mode, and takes a worker answer only
 /// when the answer has that mode (`FilePrep::answer`).
@@ -3195,8 +3238,8 @@ pub(crate) fn make_synthetic_import(
 #[cfg(test)]
 mod tests {
     use super::super::files_parser::{
-        early_pools_taken, names_own, preps_taken, set_job_map, set_load_commit, set_load_names,
-        set_load_prep, set_meta_wait, set_move_up, set_prep_wait, start_default_lib_prefetch,
+        early_pools_taken, names_own, preps_taken, set_meta_wait, set_prep_wait,
+        start_default_lib_prefetch,
     };
     use super::*;
     use crate::frontend::bundled;
@@ -3565,14 +3608,13 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
                 "declare var nodeIsh: number;\n",
             ),
         ];
-        set_load_prep(Some(true));
         let before = preps_taken();
         let with_prep = parallel_load("prep_on", tsconfig, &files);
         let taken = preps_taken() - before;
-        set_load_prep(Some(false));
-        let without_prep = parallel_load("prep_off", tsconfig, &files);
-        set_load_prep(None);
-        assert_eq!(with_prep, without_prep);
+        // A load with no parse workers: the loader resolves every name
+        // itself.
+        let single = load_text("prep_single", tsconfig, &files, true, None);
+        assert_eq!(with_prep, single);
         assert!(with_prep.contains(r#"module "lib""#), "{with_prep}");
         // With no parse workers (one CPU, or `GOPORT_PARSE_THREADS=0`) the
         // loader resolves every name itself.
@@ -3700,8 +3742,6 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         ];
         // With no parse workers the loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        set_load_prep(Some(true));
-        set_load_names(Some(true));
         set_meta_wait(workers);
         set_prep_wait(workers);
         PREPS_NAMED.with(|files| files.borrow_mut().clear());
@@ -3711,29 +3751,12 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         let (taken, own) = (preps_taken() - taken, names_own() - own);
         let named = PREPS_NAMED.with(|files| std::mem::take(&mut *files.borrow_mut()));
         let committed = PREPS_COMMITTED.with(|files| std::mem::take(&mut *files.borrow_mut()));
-        set_load_commit(Some(false));
-        let without_commit = parallel_load("names_commit_off", tsconfig, &files);
-        set_load_commit(None);
-        assert!(
-            PREPS_COMMITTED.with(|files| files.borrow().is_empty()),
-            "a commit with GOPORT_LOAD_COMMIT=0"
-        );
-        // loadpar3b step A: the loader finds the jobs under the queue lock.
-        set_job_map(Some(false));
-        let without_job_map = parallel_load("names_job_map_off", tsconfig, &files);
-        set_job_map(None);
         set_meta_wait(false);
         set_prep_wait(false);
-        set_load_names(Some(false));
-        let without_names = parallel_load("names_off", tsconfig, &files);
-        set_load_names(None);
-        set_load_prep(Some(false));
-        let without_prep = parallel_load("names_prep_off", tsconfig, &files);
-        set_load_prep(None);
-        assert_eq!(with_names, without_commit);
-        assert_eq!(with_names, without_job_map);
-        assert_eq!(with_names, without_names);
-        assert_eq!(with_names, without_prep);
+        // A load with no parse workers: the loader resolves every name
+        // itself.
+        let single = load_text("names_single", tsconfig, &files, true, None);
+        assert_eq!(with_names, single);
         assert!(
             with_names.contains(r#"module "lib" ModuleKind(1)"#),
             "{with_names}"
@@ -3864,19 +3887,6 @@ export declare namespace JSX { interface IntrinsicElements { [name: string]: any
         );
         assert_eq!(other, single);
         assert_eq!(early_pools_taken() - before, 0);
-        // The move-up of queued jobs (`GOPORT_PREFETCH_MOVE_UP`) changes only
-        // the order of the worker parses: the load with it off, in this
-        // process, finds the same.
-        set_move_up(Some(false));
-        let no_move_up = load_text(
-            "early_no_move_up",
-            tsconfig,
-            &files,
-            false,
-            Some(&bundled::lib_path()),
-        );
-        set_move_up(None);
-        assert_eq!(no_move_up, single);
     }
 
     /// A program with a project reference (`lib`) that it loads by the
@@ -3944,9 +3954,8 @@ export const a: T | Dep | number = x + (h as never);
     // threaded load finds.
     #[test]
     fn workers_resolve_with_the_reference_redirect_of_the_loader() {
-        let load = |label: &str, prep: bool, single_threaded: bool| {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && !single_threaded);
+        let load = |label: &str, single_threaded: bool| {
+            set_meta_wait(!single_threaded);
             let text = load_text(
                 label,
                 REFERENCE_TSCONFIG,
@@ -3954,12 +3963,10 @@ export const a: T | Dep | number = x + (h as never);
                 single_threaded,
                 None,
             );
-            set_load_prep(None);
             set_meta_wait(false);
             text
         };
-        let single = load("refs_st", false, true);
-        assert_eq!(load("refs_prep_off", false, false), single);
+        let single = load("refs_st", true);
         for name in [
             "lib/out/index.d.ts",
             "lib/out/helper.d.ts",
@@ -3985,7 +3992,7 @@ export const a: T | Dep | number = x + (h as never);
         let mut fitted = [false; 3];
         for run in 0..20 {
             PREP_FITS.with(|fits| fits.borrow_mut().clear());
-            assert_eq!(load(&format!("refs_prep_on_{run}"), true, false), single);
+            assert_eq!(load(&format!("refs_prep_on_{run}"), false), single);
             let fits = PREP_FITS.with(|fits| std::mem::take(&mut *fits.borrow_mut()));
             assert!(fits.iter().all(|(_, fit)| *fit), "unfit preps: {fits:?}");
             for (index, name) in redirected.iter().enumerate() {
@@ -4021,24 +4028,22 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
             ("lib/out/amb.d.ts", AMBIENT),
             ("src/z.ts", "import \"../lib/src/amb\";\nexport {};\n"),
         ]);
-        let load = |label: &str, prep: bool, single_threaded: bool| {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && !single_threaded);
-            set_prep_wait(prep && !single_threaded);
+        let load = |label: &str, single_threaded: bool| {
+            set_meta_wait(!single_threaded);
+            set_prep_wait(!single_threaded);
             let text = load_text(label, REFERENCE_TSCONFIG, &files, single_threaded, None);
-            set_load_prep(None);
             set_meta_wait(false);
             set_prep_wait(false);
             text
         };
-        let single = load("ambient_trace_st", false, true);
+        let single = load("ambient_trace_st", true);
         let trace = format!(
             "trace TS{} [\"amb\", \"<dir>/lib/out/amb.d.ts\"]",
             diag::Module_0_was_resolved_as_locally_declared_ambient_module_in_file_1.code()
         );
         assert!(single.contains(&trace), "{single}");
         PREPS_COMMITTED.with(|files| files.borrow_mut().clear());
-        assert_eq!(load("ambient_trace_prep_on", true, false), single);
+        assert_eq!(load("ambient_trace_prep_on", false), single);
         let committed = PREPS_COMMITTED.with(|files| std::mem::take(&mut *files.borrow_mut()));
         assert!(
             !committed
@@ -4237,48 +4242,39 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         // With no parse workers (one CPU, or `GOPORT_PARSE_THREADS=0`) the
         // loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        for prep in [true, false] {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && workers);
-            let before = crate::frontend::module::cache::adopted_package_jsons();
-            let (processed, dir, cwd) =
-                load_with_workers(&format!("keeps_package_jsons_{prep}"), tsconfig, &files);
-            for path in ["package.json", "node_modules/lib/package.json"] {
-                std::fs::write(dir.join(path), r#"{ "name": "changed" }"#).unwrap();
-            }
-            let resolver = processed
-                .resolver
-                .as_ref()
-                .and_then(|resolver| resolver.as_default_resolver())
-                .expect("the default resolver");
-            // The name in the package.json of the package scope of `path`.
-            let name = |path: &str| {
-                resolver
-                    .get_package_scope_for_path(path)
-                    .and_then(|entry| entry.contents.clone())
-                    .map(|contents| contents.fields.header_fields.name.get_value().0)
-            };
-            // The resolver gives a node_modules file by its real path (Go
-            // `resolutionState.realPath`, module/resolver.go:1859), so the
-            // scope of `lib/index.d.ts` is under the real path of the dir.
-            // On macOS the temp dir is under /var, a symlink to /private/var.
-            let real = osvfs_fs().realpath(&cwd);
-            let names = (
-                name(&format!("{cwd}/src")),
-                name(&format!("{real}/node_modules/lib")),
-            );
-            let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
-            let _ = std::fs::remove_dir_all(&dir);
-            assert_eq!(
-                names,
-                (Some("app".to_string()), Some("lib".to_string())),
-                "prep {prep}"
-            );
-            if prep && workers {
-                assert!(adopted > 0, "no worker package.json taken");
-            }
+        set_meta_wait(workers);
+        let before = crate::frontend::module::cache::adopted_package_jsons();
+        let (processed, dir, cwd) = load_with_workers("keeps_package_jsons", tsconfig, &files);
+        for path in ["package.json", "node_modules/lib/package.json"] {
+            std::fs::write(dir.join(path), r#"{ "name": "changed" }"#).unwrap();
         }
-        set_load_prep(None);
+        let resolver = processed
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.as_default_resolver())
+            .expect("the default resolver");
+        // The name in the package.json of the package scope of `path`.
+        let name = |path: &str| {
+            resolver
+                .get_package_scope_for_path(path)
+                .and_then(|entry| entry.contents.clone())
+                .map(|contents| contents.fields.header_fields.name.get_value().0)
+        };
+        // The resolver gives a node_modules file by its real path (Go
+        // `resolutionState.realPath`, module/resolver.go:1859), so the
+        // scope of `lib/index.d.ts` is under the real path of the dir.
+        // On macOS the temp dir is under /var, a symlink to /private/var.
+        let real = osvfs_fs().realpath(&cwd);
+        let names = (
+            name(&format!("{cwd}/src")),
+            name(&format!("{real}/node_modules/lib")),
+        );
+        let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(names, (Some("app".to_string()), Some("lib".to_string())));
+        if workers {
+            assert!(adopted > 0, "no worker package.json taken");
+        }
         set_meta_wait(false);
     }
 
@@ -4330,13 +4326,11 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
                 ..Default::default()
             },
         );
-        set_load_prep(Some(true));
         set_meta_wait(true);
         let before = crate::frontend::module::cache::adopted_package_jsons();
         let (processed, dir, cwd) =
             load_with_workers_on("no_package_json_reads", tsconfig, &files, fs);
         let adopted = crate::frontend::module::cache::adopted_package_jsons() - before;
-        set_load_prep(None);
         set_meta_wait(false);
         let _ = std::fs::remove_dir_all(&dir);
         let resolver = processed
@@ -4376,7 +4370,6 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         *PANIC_IN_JOB.lock().unwrap() = Some(a.clone());
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            set_load_prep(Some(true));
             set_meta_wait(true);
             let tsconfig = r#"{ "compilerOptions": { "module": "nodenext", "types": [],
                  "noEmit": true }, "include": ["src"] }"#;
@@ -4429,7 +4422,6 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         *PANIC_IN_JOB.lock().unwrap() = Some(output.clone());
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            set_load_prep(Some(true));
             set_meta_wait(true);
             let (processed, dir, _) =
                 load_with_workers(label, REFERENCE_TSCONFIG, &REFERENCE_FILES);
@@ -4490,40 +4482,33 @@ declare module "user" { import { x } from "amb"; export const y: typeof x; }
         ];
         // With no parse workers the loader reads every file itself.
         let workers = super::super::files_parser::parse_workers_enabled();
-        for prep in [true, false] {
-            set_load_prep(Some(prep));
-            set_meta_wait(prep && workers);
-            set_answer_wait(prep && workers);
-            let (processed, dir, cwd) = load_with_workers(
-                &format!("keeps_answer_package_jsons_{prep}"),
-                tsconfig,
-                &files,
-            );
-            std::fs::write(
-                dir.join("node_modules/lib/package.json"),
-                r#"{ "name": "changed" }"#,
-            )
-            .unwrap();
-            let resolver = processed
-                .resolver
-                .as_ref()
-                .and_then(|resolver| resolver.as_default_resolver())
-                .expect("the default resolver");
-            let cache = &resolver.package_json_info_cache;
-            let package_json = format!("{cwd}/node_modules/lib/package.json");
-            // The loader took the answer for "lib" and did not read the file.
-            let loader_read = cache.contains_key(&cache.key(&package_json));
-            let name = resolver
-                .get_package_scope_for_path(&format!("{cwd}/node_modules/lib"))
-                .and_then(|entry| entry.contents.clone())
-                .map(|contents| contents.fields.header_fields.name.get_value().0);
-            let _ = std::fs::remove_dir_all(&dir);
-            assert_eq!(name, Some("lib".to_string()), "prep {prep}");
-            if prep && workers {
-                assert!(!loader_read, "the loader read the package.json of lib");
-            }
+        set_meta_wait(workers);
+        set_answer_wait(workers);
+        let (processed, dir, cwd) =
+            load_with_workers("keeps_answer_package_jsons", tsconfig, &files);
+        std::fs::write(
+            dir.join("node_modules/lib/package.json"),
+            r#"{ "name": "changed" }"#,
+        )
+        .unwrap();
+        let resolver = processed
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.as_default_resolver())
+            .expect("the default resolver");
+        let cache = &resolver.package_json_info_cache;
+        let package_json = format!("{cwd}/node_modules/lib/package.json");
+        // The loader took the answer for "lib" and did not read the file.
+        let loader_read = cache.contains_key(&cache.key(&package_json));
+        let name = resolver
+            .get_package_scope_for_path(&format!("{cwd}/node_modules/lib"))
+            .and_then(|entry| entry.contents.clone())
+            .map(|contents| contents.fields.header_fields.name.get_value().0);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(name, Some("lib".to_string()));
+        if workers {
+            assert!(!loader_read, "the loader read the package.json of lib");
         }
-        set_load_prep(None);
         set_meta_wait(false);
         set_answer_wait(false);
     }

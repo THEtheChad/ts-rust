@@ -66,7 +66,7 @@ New env names on the branch, by merge:
 | E0 | `TSC_RS_EFFECT` (opt-in, Chad's decision) | | | |
 | A1 | `GOPORT_REUSE_SYNTHETIC` (`=0` falls back to Go's rebuild) | `REUSE_STATS`, `VERIFY_REUSE_LOG` | `VERIFY_REUSE`, `VERIFY_REUSE_DIR` | `VERIFY_REUSE_CHILD`, `_CHILD_ARGS`, `_CHILD_OUT` |
 | B1 | `GOPORT_PLAIN_EARLY_EMIT` (`=0` emits after the check, as Go does) | `CHECKER_CALL_LOG`, `EMIT_PHASE_TIMES` | | `TEST_CHECK_PANIC`, `_STALL`, `_SLEEP`, `TEST_WRITE_PANIC` (feature `test-hooks`) |
-| S1a | `GOPORT_FIRST_LOAD_AHEAD` (`=0` turns the S1a path off) | `LOAD_DUMP`, `LOAD_TIMES` | | |
+| S1a | `GOPORT_FIRST_LOAD_AHEAD` (`=0` turns the S1a path off; removed in C2) | `LOAD_DUMP`, `LOAD_TIMES` (feature `diagnostics` since C2) | | |
 
 The `--hatches` flag prints the full inventory: each name with its class,
 reads, gates (branch uses / all uses) and files. The JSON has every site.

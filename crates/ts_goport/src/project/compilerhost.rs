@@ -316,6 +316,7 @@ impl compiler::CompilerHost for CompilerHost {
         self.ensure_alive();
         if let Some(fh) = self.source_fs.get_file_by_path(&opts.file_name, &opts.path) {
             let key = new_parse_cache_key(opts, fh.hash(), fh.kind());
+            #[cfg(feature = "diagnostics")]
             compiler::load_dump::note(|out| out.push_str(&format!("acquire {key:?}")));
             let builder = self
                 .builder

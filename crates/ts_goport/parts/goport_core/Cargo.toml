@@ -79,10 +79,13 @@ test-hooks = []
 # `GOPORT_EMIT_PHASE_TIMES`, `GOPORT_DTS_TWIN_CHECK`,
 # `GOPORT_FLOWSKIP=verify` and `GOPORT_LIB_SNAPSHOT=trace` /
 # `GOPORT_LIB_PARSE_SNAPSHOT=trace`, and the loader's: `GOPORT_LOAD_TIMES`
-# (frontend/compiler/load_times.rs) and the load view's scope diagnostics
-# (frontend/compiler/load_view_scope/diag.rs, with goport_util's) and the
-# resolve-ahead workers' test hold (`hold_in_job`). Without it none of these is read. Off in every
-# shipped build; ts_goport's `diagnostics` turns it on.
+# (frontend/compiler/load_times.rs), `GOPORT_LOAD_DUMP`
+# (frontend/compiler/load_dump.rs), the load view's scope diagnostics
+# (frontend/compiler/load_view_scope/diag.rs, with goport_util's), and
+# resolve ahead's `GOPORT_RESOLVE_AHEAD_STATS` log, load counts
+# (`last_stats`) and test modes and hooks (`set_mode`, `set_first_load`,
+# `hold_workers`, `hold_in_job`, ...). Without it none of these is read or
+# compiled. Off in every shipped build; ts_goport's `diagnostics` turns it on.
 diagnostics = ["goport_util/diagnostics"]
 # The binaries' global allocator is jemalloc: thread arenas
 # (`tikv-jemalloc-ctl`), `jemalloc_layout`, and the jemalloc thread budget

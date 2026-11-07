@@ -10,6 +10,8 @@
 # S1a-off runs is inconclusive and listed (<out>/<case>.dump-verdict, .stream-verdict).
 # A case is "name scenario root [root2] [FILE=rel] [FILE2=rel]". S1A_ONLY=<regex> runs the
 # cases whose name matches.
+# Both bins must be `diagnostics` builds: the load dump, the load times and the serial loader
+# (GOPORT_RESOLVE_AHEAD=0) are compiled only with that cargo feature.
 # usage: l1-dumps.sh <tsgo bin> <base tsgo bin> <out dir>  (S1A_ONLY=<regex> picks cases; L1_REPS (2), L1_REPS_VARY (3): runs per side)
 set -u
 bin=$(realpath "$1"); base=$(realpath "$2"); mkdir -p "$3"; out=$(realpath "$3")
