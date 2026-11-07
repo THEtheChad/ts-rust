@@ -992,3 +992,13 @@ once a **reconciliation step** is built and tested.
   - **WIN:** Windows build, the `cfg(windows)` tests and the layout repros on
     NTFS.
   - **W2:** keeps running.
+- **2026-11-06, C3 merged** (`t3/delete-fast-checker-mode`, head
+  `bf0993ed3`).
+  - **Removed:** fast mode, lazy members, the never order, work stealing,
+    manual arenas, the 7 `GOPORT_FAST*`/`LAZY_MEMBERS` switches and `--fast`.
+  - **Size and counts:** −2,442 lines; shipped escape hatches 40 → 33;
+    duplication 3.64% → 3.60%; single-threaded icount −0.04 to −0.06%.
+  - **Review:** Astra accepted with one fix. Two default-path tests moved into
+    `checker_p24`.
+  - **Parity:** OK against the base minus the 10 deleted tests, with the
+    renames recorded.
