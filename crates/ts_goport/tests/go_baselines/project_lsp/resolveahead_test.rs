@@ -1012,6 +1012,26 @@ os_child_test! {
     }
 }
 
+/// A directory symlink `link` to `target`. Windows makes directory links
+/// apart from file links; that needs Developer Mode or an elevated
+/// process, as CI's Windows runner has.
+fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(target, link);
+    made.unwrap_or_else(|error| panic!("symlink {}: {error}", link.display()));
+}
+
+/// Removes the directory symlink `link` (Windows removes it as a directory).
+fn remove_symlink_dir(link: &std::path::Path) {
+    #[cfg(unix)]
+    let removed = std::fs::remove_file(link);
+    #[cfg(windows)]
+    let removed = std::fs::remove_dir(link);
+    removed.unwrap_or_else(|error| panic!("remove {}: {error}", link.display()));
+}
+
 os_child_test! {
     /// S1a: a node_modules package that is a symlink is pointed at another
     /// directory after the workers resolved through it.
@@ -1025,12 +1045,12 @@ os_child_test! {
                 r#"{ "name": "@scope/lib", "version": "2.1.0", "exports": { ".": { "types": "./dist/other.d.ts" } } }"#,
             );
             write(root, "store-b/dist/other.d.ts", "export declare const m: boolean;");
-            std::os::unix::fs::symlink(std::path::Path::new(root).join("store-a"), &lib).unwrap();
+            symlink_dir(&std::path::Path::new(root).join("store-a"), &lib);
         };
         let stats = first_load_with_a_change("firstlink", &prepare, &|root| {
             let lib = std::path::Path::new(root).join("node_modules/@scope/lib");
-            std::fs::remove_file(&lib).unwrap();
-            std::os::unix::fs::symlink(std::path::Path::new(root).join("store-b"), &lib).unwrap();
+            remove_symlink_dir(&lib);
+            symlink_dir(&std::path::Path::new(root).join("store-b"), &lib);
         });
         assert!(stats.loader.rejected > 0, "{stats:?}");
     }
