@@ -1002,3 +1002,18 @@ once a **reconciliation step** is built and tested.
     `checker_p24`.
   - **Parity:** OK against the base minus the 10 deleted tests, with the
     renames recorded.
+- **2026-11-06, WIN merged** (`fix/windows-layout`).
+  - **Build and tests on Windows:** tsgo.exe builds in 1m49s (msvc). The
+    tests pass after fixes to 3 test files that didn't build on Windows,
+    including `go_baselines` (1,735 passed).
+  - **Real Windows bug fixed:** with 8.3 short names (`AB00CD~1.js` next to
+    `ab00cdefgh.js`), one run in 30 under load gave a second result. A
+    `~<digit>` name beside another output now makes the layout non-ordinary.
+  - **Layout repros:** 20 runs per case on Windows and Linux. tsc-rs gives
+    one result everywhere; Go varies (up to 20 results in 20 runs).
+  - **Go comparison:** `win-go-compare.sh` against Go's tsc.exe cross-built
+    from the pin gives the same as Go on all 80 files.
+  - **Known cost:** any reparse point (OneDrive placeholders included) makes
+    the layout serial. That costs speed only.
+  - **Parity:** quick OK. A full run follows once C2 merges, then the base
+    gets refreshed.
