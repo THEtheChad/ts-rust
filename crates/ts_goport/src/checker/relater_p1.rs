@@ -1811,7 +1811,7 @@ impl Checker {
         let ty = self.ty(t);
         if ty.flags.intersects(TypeFlags::OBJECT) {
             // PERF: a resolved type reads its members here; the rest is out
-            // of line (with the switch on, the Go body of #64475).
+            // of line.
             let object_flags = ty.object_flags;
             if !object_flags.intersects(ObjectFlags::MEMBERS_RESOLVED) {
                 return self.is_weak_unresolved_object_type(t);
@@ -1848,12 +1848,6 @@ impl Checker {
     /// `is_weak_type` of an object type whose members are not resolved.
     #[inline(never)]
     fn is_weak_unresolved_object_type(&mut self, t: TypeId) -> bool {
-        if self.lazy_members {
-            let lazy = crate::checker::lazy_members::opaque(
-                Self::is_weak_object_type_lazy as fn(&mut Self, TypeId) -> bool,
-            );
-            return lazy(self, t);
-        }
         self.resolve_structured_type_members(t);
         self.is_weak_resolved_object_type(t)
     }

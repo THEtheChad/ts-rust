@@ -1017,12 +1017,6 @@ pub struct Checker {
         Option<Box<crate::checker::symbol_accessibility::ExternalModuleContainerIndex>>,
     pub source_file_links: SparseLinkStore<Node, Box<SourceFileLinks>>,
     pub pattern_for_type: FxHashMap<TypeId, Node>,
-    /// Go `lazyMemberTables` (microsoft/TypeScript#64475, not in the pin;
-    /// lazy_members.rs). Empty unless `lazy_members` is on.
-    pub(crate) lazy_member_tables: crate::checker::lazy_members::LazyMemberTables,
-    /// lazymem1: `GOPORT_LAZY_MEMBERS=1` or fast mode (lazy_members.rs). Not in Go. Set
-    /// once at creation; off, no lazy member table is made.
-    pub lazy_members: bool,
     pub context_free_types: FxHashMap<Node, TypeId>,
     pub any_type: TypeId,
     pub auto_type: TypeId,
@@ -1274,10 +1268,6 @@ pub struct Checker {
     pub(crate) weak_bits_off: bool,
     /// PERF: not in Go. See `is_type_subset_of_union`.
     pub(crate) union_subset_answers: FxHashMap<(TypeId, TypeId), bool>,
-    /// nevfast1: `GOPORT_FAST_NEVER_ORDER=1` (`fast_never_order_from_env`).
-    /// Not in Go. Set once at creation; on, `some_property_reduces_to_never`
-    /// tests the names in the port's faster order.
-    pub(crate) fast_never_order: bool,
     /// Go `freePropertyCounts` (checker.go:694): the empty count maps that
     /// `some_property_reduces_to_never` reuses
     /// (`get_temporary_property_counts`).
@@ -1574,8 +1564,6 @@ impl Checker {
             external_module_containers: None,
             source_file_links: LinkStore::default(),
             pattern_for_type: FxHashMap::default(),
-            lazy_member_tables: Default::default(),
-            lazy_members: crate::checker::lazy_members::lazy_members_from_env(),
             context_free_types: FxHashMap::default(),
             any_type: TypeId::NIL,
             auto_type: TypeId::NIL,
@@ -1789,7 +1777,6 @@ impl Checker {
             merge_version: 0,
             weak_bits_off: false,
             union_subset_answers: FxHashMap::default(),
-            fast_never_order: crate::checker::checker_p24::fast_never_order_from_env(),
             free_property_counts: Vec::new(),
             symbols,
             types: ChunkedArena::with_nil(Type::default()),

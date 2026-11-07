@@ -549,23 +549,7 @@ impl Checker {
         let t = self.get_reduced_apparent_type(t);
         let flags = self.ty(t).flags;
         if flags.intersects(TypeFlags::OBJECT) {
-            // Go (#64475) reads the member with getMemberOfStructuredType and
-            // the signatures with getSignaturesOfStructuredType. A type with a
-            // ready lazy member table takes that path out of line
-            // (lazy_members.rs); any other type is resolved here, as before.
-            let Some(resolved) = self.resolve_structured_type_members_unless_lazy(t) else {
-                let lazy = crate::checker::lazy_members::opaque(
-                    Self::get_property_of_unresolved_object_type_lazy
-                        as fn(&mut Self, TypeId, TableKey<'a>, bool, bool) -> SymbolId,
-                );
-                return lazy(
-                    self,
-                    t,
-                    name,
-                    skip_object_function_property_augment,
-                    include_type_only_members,
-                );
-            };
+            let resolved = self.resolve_structured_type_members(t);
             let members = resolved.members;
             let mut symbol = self.symbols.get(members, name);
             if symbol.is_some() {
@@ -840,9 +824,8 @@ impl Checker {
         if !ty.flags.intersects(TypeFlags::STRUCTURED_TYPE) {
             return SharedList::default();
         }
-        // PERF: Go reads a ready lazy member table first (#64475). A type
-        // with one is not resolved, so a resolved type reads its members
-        // here and the rest is out of line.
+        // PERF: a resolved type reads its members here; the rest is out of
+        // line.
         if !ty.object_flags.intersects(ObjectFlags::MEMBERS_RESOLVED) {
             return self.get_signatures_of_unresolved_structured_type(t, kind);
         }
@@ -850,22 +833,13 @@ impl Checker {
     }
 
     /// `get_signatures_of_structured_type` of a type whose members are not
-    /// resolved: its lazy member table, else its resolved members.
+    /// resolved.
     #[inline(never)]
     fn get_signatures_of_unresolved_structured_type(
         &mut self,
         t: TypeId,
         kind: SignatureKind,
     ) -> SharedList<SignatureId> {
-        if self.lazy_members {
-            let lazy = crate::checker::lazy_members::opaque(
-                Self::lazy_signatures_of_structured_type
-                    as fn(&mut Self, TypeId, SignatureKind) -> Option<SharedList<SignatureId>>,
-            );
-            if let Some(signatures) = lazy(self, t, kind) {
-                return signatures;
-            }
-        }
         let resolved = self.resolve_structured_type_members(t);
         Self::signatures_of_resolved(resolved, kind)
     }
@@ -934,21 +908,12 @@ impl Checker {
     }
 
     /// `get_index_infos_of_structured_type` of a type whose members are not
-    /// resolved: its lazy member table, else its resolved members.
+    /// resolved.
     #[inline(never)]
     fn get_index_infos_of_unresolved_structured_type(
         &mut self,
         t: TypeId,
     ) -> SharedList<IndexInfoId> {
-        if self.lazy_members {
-            let lazy = crate::checker::lazy_members::opaque(
-                Self::lazy_index_infos_of_structured_type
-                    as fn(&mut Self, TypeId) -> Option<SharedList<IndexInfoId>>,
-            );
-            if let Some(index_infos) = lazy(self, t) {
-                return index_infos;
-            }
-        }
         self.resolve_structured_type_members(t).index_infos_list()
     }
 
@@ -1092,42 +1057,6 @@ impl Checker {
         self.resolve_structured_type_members_slow(t)
     }
 
-    /// `resolve_structured_type_members`, or `None` when `t` has a ready lazy
-    /// member table (lazy_members.rs). Same shape as the former, so the
-    /// resolved case costs the same.
-    #[inline]
-    pub(crate) fn resolve_structured_type_members_unless_lazy(
-        &mut self,
-        t: TypeId,
-    ) -> Option<&StructuredType> {
-        if self
-            .ty(t)
-            .object_flags
-            .intersects(ObjectFlags::MEMBERS_RESOLVED)
-        {
-            return Some(self.ty(t).as_structured_type());
-        }
-        self.resolve_structured_type_members_unless_lazy_slow(t)
-    }
-
-    #[inline(never)]
-    fn resolve_structured_type_members_unless_lazy_slow(
-        &mut self,
-        t: TypeId,
-    ) -> Option<&StructuredType> {
-        if self.lazy_members
-            && crate::checker::lazy_members::opaque(
-                Self::has_ready_lazy_member_table as fn(&mut Self, TypeId) -> bool,
-            )(self, t)
-        {
-            return None;
-        }
-        // The first read can prepare the table, and the prepare step can
-        // resolve `t`: then this reads those members (Go
-        // getMemberOfUnresolvedStructuredType calls resolveStructuredTypeMembers).
-        Some(self.resolve_structured_type_members(t))
-    }
-
     /// The member resolution dispatch of `resolve_structured_type_members`.
     #[inline(never)]
     fn resolve_structured_type_members_slow(&mut self, t: TypeId) -> &StructuredType {
@@ -1175,14 +1104,6 @@ impl Checker {
 
     // Go: checker/checker.go:19534 resolveTypeReferenceMembers
     pub fn resolve_type_reference_members(&mut self, t: TypeId) {
-        // Go (#64475): a ready lazy member table gives the full table.
-        if self.lazy_members
-            && crate::checker::lazy_members::opaque(
-                Self::resolve_type_reference_members_lazy as fn(&mut Self, TypeId) -> bool,
-            )(self, t)
-        {
-            return;
-        }
         let source = self.ty(t).target();
         let type_parameters = self
             .ty(source)
@@ -1785,7 +1706,7 @@ impl Checker {
         let ty = self.ty(t);
         if ty.flags.intersects(TypeFlags::OBJECT) {
             // PERF: a resolved type reads its members here; the rest is out
-            // of line (with the switch on, the Go body of #64475).
+            // of line.
             if !ty.object_flags.intersects(ObjectFlags::MEMBERS_RESOLVED) {
                 return self.get_single_signature_of_unresolved(t, kind, allow_members);
             }
@@ -1807,13 +1728,6 @@ impl Checker {
         kind: SignatureKind,
         allow_members: bool,
     ) -> SignatureId {
-        if self.lazy_members {
-            let lazy = crate::checker::lazy_members::opaque(
-                Self::get_single_signature_lazy
-                    as fn(&mut Self, TypeId, SignatureKind, bool) -> SignatureId,
-            );
-            return lazy(self, t, kind, allow_members);
-        }
         let resolved = self.resolve_structured_type_members(t);
         Self::single_signature_of_resolved(resolved, kind, allow_members)
     }

@@ -543,7 +543,7 @@ impl Checker {
             return false;
         }
         // PERF: a resolved type reads its members below; the rest is out of
-        // line (with the switch on, the Go body of #64475).
+        // line.
         if !self
             .ty(t)
             .object_flags
@@ -557,12 +557,6 @@ impl Checker {
     /// `is_function_object_type` of a type whose members are not resolved.
     #[inline(never)]
     fn is_function_object_type_of_unresolved(&mut self, t: TypeId) -> bool {
-        if self.lazy_members {
-            let lazy = crate::checker::lazy_members::opaque(
-                Self::is_function_object_type_lazy as fn(&mut Self, TypeId) -> bool,
-            );
-            return lazy(self, t);
-        }
         self.resolve_structured_type_members(t);
         self.is_function_object_type_of_resolved(t)
     }

@@ -928,7 +928,9 @@ mod tests {
         ] {
             assert!(is_build_flag(arg), "{arg}");
         }
-        for arg in ["", "b", "build", "---b", "-bu", "--fast", "-b ", "--builds"] {
+        for arg in [
+            "", "b", "build", "---b", "-bu", "--effect", "-b ", "--builds",
+        ] {
             assert!(!is_build_flag(arg), "{arg}");
         }
     }

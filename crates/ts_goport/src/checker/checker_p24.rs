@@ -5,28 +5,6 @@
 use crate::checker::utilities_p1::{NO_SORT_ORDER, SymbolSortKey};
 use crate::prelude::*;
 use smallvec::SmallVec;
-use std::sync::OnceLock;
-
-/// `GOPORT_FAST_NEVER_ORDER`, read once per process. `1` turns on the
-/// faster name order of `some_property_reduces_to_never`
-/// (`some_property_reduces_to_never_fast`), `0` turns it off; else it
-/// follows fast mode (`crate::fast_mode`). `Checker::new` stores it in
-/// `Checker::fast_never_order`. Off by default, so the output, counts
-/// included, equals Go.
-// PORT: not in Go. An environment variable, not a tsconfig option: the
-// tsconfig is shared with Go, which reports an unknown option (TS5023), and
-// the option table is output too (`--showConfig`, `--help --all`, the build
-// info options, the API `parseCommandLine` result). The switch changes how
-// much work the checker does, for every checker of the process (tsc, the LSP
-// and the API server), as `GOPORT_FLOWSKIP` does. That can also change the
-// output near the TS2589 limit (5,000,000 instantiations in one statement or
-// expression, `instantiate_type_with_alias`): with fewer instantiations, a
-// TS2589 that Go reports can go away, and the types after it can change
-// (nevfast1 skeptic repro r02-ts2589-count).
-pub fn fast_never_order_from_env() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::fast_mode::part("GOPORT_FAST_NEVER_ORDER"))
-}
 
 /// Go `temporaryPropertyCounts` (utilities.go:936): the declaration count of
 /// each property name of an intersection in first-seen order, keyed by the
@@ -1004,8 +982,6 @@ impl Checker {
     // property (a Symbol, and Types and Instantiations when a constituent
     // property type is new), and `--extendedDiagnostics` prints those
     // counts. So the port tests the names in Go's order too.
-    // With `GOPORT_FAST_NEVER_ORDER=1` the port uses its own faster order
-    // (`some_property_reduces_to_never_fast`).
     // PERF: the counts are keyed by the name id with FxHash, and each lookup
     // passes the `Name`, so no name text is hashed, compared or copied (Go
     // hashes the text).
@@ -1013,9 +989,6 @@ impl Checker {
     // (`get_temporary_property_counts`) and goes back to it at the end, as
     // in Go.
     pub fn some_property_reduces_to_never(&mut self, t: TypeId) -> bool {
-        if self.fast_never_order {
-            return self.some_property_reduces_to_never_fast(t);
-        }
         // PORT: Go `defer c.releaseTemporaryPropertyCounts(counts)`. The two
         // loops are in `some_counted_property_reduces_to_never`, so the map
         // is released in one place after its early return.
@@ -1087,111 +1060,6 @@ impl Checker {
             return;
         }
         self.free_property_counts.push(counts);
-    }
-
-    /// `some_property_reduces_to_never` in a faster order, used when
-    /// `GOPORT_FAST_NEVER_ORDER=1` (`Checker::fast_never_order`). The answer
-    /// is the same. It makes fewer synthetic properties, so the
-    /// `--extendedDiagnostics` Symbols, Types and Instantiations (and the
-    /// `--generateTrace` type ids) can be lower than Go's. Diagnostics and
-    /// emit equal Go, except near the TS2589 limit of 5,000,000
-    /// instantiations: there the lower count can remove a TS2589 that Go
-    /// reports, and change the types after it.
-    // PORT: not in Go. This is the port's order before ts#64521 was ported
-    // (int3 b78f6653b): first the names that are not a public method in
-    // some constituent, then the names that are a public method in every
-    // constituent, each group in the order in which the names are first
-    // seen (constituent order, then property order), and stop at the first
-    // name that reduces to never. A method's type is a function type, never
-    // a literal type, so a method is no discriminant. A method reduces to
-    // never only as a conflicting private member, so a method that can be
-    // private (the `getDeclarationModifierFlagsFromSymbol` test that sets
-    // `CheckFlagsContainsPrivate`) stays in the first group, and a
-    // conflicting private method is found as early as in first-seen order.
-    // A `#private` name sets no such flag and is unique to its class, so it
-    // is no conflicting private member. In first-seen order, the `length`
-    // of a tuple intersection (`[] & [a: A] & ...`) comes after the array
-    // methods: the mongodb test check makes 6.9 times the symbols and takes
-    // 5.7 times as long (Go N' makes as many symbols as first-seen order).
-    fn some_property_reduces_to_never_fast(&mut self, t: TypeId) -> bool {
-        // PORT: with each count, whether every declaration of the name is a
-        // public method (`is_public_method`), and the value declaration of
-        // the first property of the name.
-        // PERF: a name seen again with that value declaration is not tested
-        // again. That is almost always the same member (an instantiation of
-        // it). It can be another symbol: a union or intersection property of
-        // two or more properties is a property, not a method, with their
-        // value declaration when they have one and the same (Go
-        // `createUnionOrIntersectionProperty`, checker.go:21888 and :22055).
-        // So in `A<string> & T`, where `T extends A<string> | A<number>` and
-        // `A.m` is a public method, the `m` of `T` (a property of its
-        // apparent type `A<string> | A<number>`, checker.go:19254) is
-        // skipped, and `m` stays with the public methods
-        // (`tests::fast_never_order_can_skip_a_union_property`). An
-        // intersection has no union constituent: Go distributes
-        // `A & (A | B)` over the union (checker.go:26577), so that type is
-        // the union `A | (A & B)`. That changes only the order of the tests
-        // below, not the answer: both groups are tested. The tuples of an
-        // intersection share the lib declarations of their array methods,
-        // so this saves a test for each method of each tuple (mongodb test
-        // check: the test cost 6.5% more instructions, 1.6% with the parent
-        // of the first declaration as the key). The key is not the parent:
-        // an instance and a static member of one class have the same
-        // parent, so in `A & typeof A` a `private static m()` after a public
-        // `m()` went last, after every property of the class.
-        let mut counts: FxIndexMap<u32, (i32, bool, Node)> = FxIndexMap::default();
-        for i in 0..self.ty(t).types().len() {
-            let u = self.type_at(t, i);
-            let props = self.get_properties_of_type(u);
-            for &prop in props.iter() {
-                let symbol = self.sym(prop);
-                match counts.entry(symbol.name.id()) {
-                    indexmap::map::Entry::Occupied(entry) => {
-                        let entry = entry.into_mut();
-                        entry.0 += 1;
-                        if entry.1 && symbol.value_declaration != entry.2 {
-                            entry.1 = self.is_public_method(prop);
-                        }
-                    }
-                    indexmap::map::Entry::Vacant(entry) => {
-                        entry.insert((1, self.is_public_method(prop), symbol.value_declaration));
-                    }
-                }
-            }
-        }
-        for public_methods in [false, true] {
-            for (&id, &(count, all_public_methods, _)) in &counts {
-                if count > 1 && all_public_methods == public_methods {
-                    let prop_name = Name::from_id(id);
-                    let prop = self.get_property_of_union_or_intersection_type_key(
-                        t,
-                        TableKey::Name(&prop_name),
-                        true, /*skipObjectFunctionPropertyAugment*/
-                    );
-                    if prop.is_some() && self.is_never_reduced_property(prop) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Whether `prop` is a method that cannot be private, for the name order
-    /// of `some_property_reduces_to_never_fast`.
-    // PORT: no Go counterpart. A method is never synthetic, and Go
-    // `getDeclarationModifierFlagsFromSymbol` drops the accessibility
-    // modifiers of a member whose parent is no class, so only a class method
-    // needs the modifier test. A method that is also a property takes the
-    // property's type, so it does not count as a method.
-    fn is_public_method(&self, prop: SymbolId) -> bool {
-        let symbol = self.sym(prop);
-        symbol.flags & (SymbolFlags::METHOD | SymbolFlags::PROPERTY) == SymbolFlags::METHOD
-            && !(symbol.parent.is_some()
-                && self.sym(symbol.parent).flags.intersects(SymbolFlags::CLASS)
-                && self
-                    .get_declaration_modifier_flags_from_symbol(prop)
-                    .intersects(ModifierFlags::PRIVATE))
     }
 
     // Go: checker/checker.go:22341 getReducedUnionType
@@ -2711,9 +2579,7 @@ type I<T, U> = T & U;
     /// `kind` (`"a" & "b"` is never, a discriminant, Go
     /// `isDiscriminantWithNeverType`, checker.go:22341) ends the test. In
     /// `C & D` `kind` is seen first, so the test ends before `m` is tested,
-    /// and the property cache of the intersection has no `m`. The test
-    /// turns `fast_never_order` off itself, so it holds when the test run
-    /// sets `GOPORT_FAST_NEVER_ORDER=1`.
+    /// and the property cache of the intersection has no `m`.
     #[test]
     fn never_reduction_tests_names_in_first_seen_order() {
         const SOURCE: &str = r#"
@@ -2725,7 +2591,6 @@ type MK = A & B;
 type KM = C & D;
 "#;
         let got = with_alias_types(SOURCE, |c, types| {
-            c.fast_never_order = false;
             types[..2]
                 .iter()
                 .map(|&i| {
@@ -2742,97 +2607,6 @@ type KM = C & D;
                 .collect::<Vec<_>>()
         });
         assert_eq!(got, vec![(true, [true, true]), (true, [true, false])]);
-    }
-
-    /// With `GOPORT_FAST_NEVER_ORDER=1`, `some_property_reduces_to_never`
-    /// tests the public methods last: in `A & B` and in `C & D` `kind` ends
-    /// the test before `m` is tested, so neither property cache has `m`.
-    #[test]
-    fn fast_never_order_tests_public_methods_last() {
-        const SOURCE: &str = r#"
-interface A { m(): string; kind: "a" }
-interface B { m(): number; kind: "b" }
-interface C { kind: "c"; m(): string }
-interface D { kind: "d"; m(): number }
-type MK = A & B;
-type KM = C & D;
-"#;
-        let got = with_alias_types(SOURCE, |c, types| {
-            c.fast_never_order = true;
-            types[..2]
-                .iter()
-                .map(|&i| {
-                    let reduces = c.some_property_reduces_to_never(i);
-                    let cache = c
-                        .ty(i)
-                        .as_union_or_intersection_type()
-                        .property_cache_without_function_property_augment;
-                    (
-                        reduces,
-                        ["kind", "m"].map(|name| c.symbols.get(cache, name).is_some()),
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
-        assert_eq!(got, vec![(true, [true, false]), (true, [true, false])]);
-    }
-
-    /// With `GOPORT_FAST_NEVER_ORDER=1`: in `A<string> & T & { kind: "b" }`,
-    /// where `T extends A<string> | A<number>`, the first `m` is the public
-    /// method of `A<string>`. The `m` of `T` comes next: the union property
-    /// of `A<string> | A<number>`, a property with the same value
-    /// declaration (Go `createUnionOrIntersectionProperty`, checker.go:21888
-    /// and :22055). So it is skipped, and `m` stays with the public methods:
-    /// `kind` (`"a" & "a" & "b"` is never) is tested first, though `m` is
-    /// seen first, and the test returns there. The property cache of the
-    /// intersection then has no `m`. Go keeps the order of an intersection
-    /// (`addTypeToIntersection`, checker.go:26792), and distributes an
-    /// intersection over a union (checker.go:26577), so
-    /// `A<string> & (A<string> | B)` is a union.
-    #[test]
-    fn fast_never_order_can_skip_a_union_property() {
-        const SOURCE: &str = r#"
-interface A<X> { m(): X; kind: "a" }
-interface B { m: number }
-type D = A<string> & (A<string> | B);
-type I<T extends A<string> | A<number>> = A<string> & T & { kind: "b" };
-"#;
-        let got = with_alias_types(SOURCE, |c, types| {
-            c.fast_never_order = true;
-            let (d, i) = (types[0], types[1]);
-            let constituents = c.ty(i).types().to_vec();
-            let props: Vec<SymbolId> = constituents[..2]
-                .iter()
-                .map(|&u| {
-                    let props = c.get_properties_of_type(u);
-                    props
-                        .iter()
-                        .copied()
-                        .find(|&p| c.sym(p).name == "m")
-                        .expect("A<string> and T have m")
-                })
-                .collect();
-            let public_methods: Vec<bool> = props.iter().map(|&p| c.is_public_method(p)).collect();
-            let reduces = c.some_property_reduces_to_never(i);
-            let cache = c
-                .ty(i)
-                .as_union_or_intersection_type()
-                .property_cache_without_function_property_augment;
-            (
-                c.ty(d).flags.intersects(TypeFlags::UNION),
-                c.ty(i).flags.intersects(TypeFlags::INTERSECTION),
-                constituents.len(),
-                c.sym(props[0]).value_declaration.is_some()
-                    && c.sym(props[0]).value_declaration == c.sym(props[1]).value_declaration,
-                public_methods,
-                reduces,
-                ["kind", "m"].map(|name| c.symbols.get(cache, name).is_some()),
-            )
-        });
-        assert_eq!(
-            got,
-            (true, true, 3, true, vec![true, false], true, [true, false])
-        );
     }
 
     /// The free list of the property count maps, as Go
@@ -2918,7 +2692,6 @@ type I<T extends A<string> | A<number>> = A<string> & T & { kind: "b" };
     #[test]
     fn intersection_reduction_reentrancy() {
         let got = with_alias_types("type T = {};", |c, _| {
-            c.fast_never_order = false;
             c.free_property_counts.clear();
             let property = c.new_symbol(SymbolFlags::PROPERTY, "value");
             let members = c.create_symbol_table(&[property]);
@@ -3126,5 +2899,137 @@ type I = A & M;
                 assert_eq!(used, listed, "nil at {nil_at}, len_hint {len_hint}");
             }
         }
+    }
+
+    /// A member lookup and shape query case: `instantiatedReferenceLazyMembers.ts`
+    /// of microsoft/TypeScript#64475 (head 2aefafb51b54) and its `.errors.txt`
+    /// baseline, which the PR made on unmodified main. It covers generic
+    /// inheritance, private members, weak types, callable types and index
+    /// signatures on instantiated class and interface references. Base,
+    /// head and Go at the pin give the same 10 diagnostics.
+    const MEMBER_CASE_NAME: &str = "instantiatedReferenceLazyMembers.ts";
+    const MEMBER_CASE: &str =
+        include_str!("../../tests/fixtures/lazy_members/instantiatedReferenceLazyMembers.ts");
+    const MEMBER_ERRORS: &str = include_str!(
+        "../../tests/fixtures/lazy_members/instantiatedReferenceLazyMembers.errors.txt"
+    );
+
+    /// Loads `name` with `text` (strict, target esnext, noEmit), checks the
+    /// file, and calls `f` with the checker, the diagnostics in the
+    /// `.errors.txt` header format and the types of the file's type aliases
+    /// in source order. Each call writes its file in a temp dir of its own.
+    fn with_checked<R: Send + 'static>(
+        name: &'static str,
+        text: &str,
+        f: impl FnOnce(&mut Checker, String, Vec<TypeId>) -> R + Send + 'static,
+    ) -> R {
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("ts_goport_members_{}_{call}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+        std::fs::write(
+            dir.join("tsconfig.json"),
+            format!(
+                r#"{{ "compilerOptions": {{ "strict": true, "target": "esnext", "noEmit": true }}, "files": [{name:?}] }}"#
+            ),
+        )
+        .unwrap();
+        let config = dir.join("tsconfig.json");
+        let program = crate::program::try_load_version(&config.to_string_lossy(), |_| {})
+            .unwrap_or_else(|e| panic!("cannot load {}: {e}", config.display()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let scope = crate::core::enter_program(Some(program));
+        let file = program
+            .source_files()
+            .find(|file| file.info.file_name.ends_with(&format!("/{name}")))
+            .expect("the test file is not in the program")
+            .root;
+        let result = crate::program::with_type_checker_for_file(file, move |checker| {
+            let ctx = crate::gostd::context::background();
+            let mut errors = String::new();
+            for diagnostic in checker.get_diagnostics_exported(&ctx, file) {
+                let text = crate::program::format_diagnostic(&diagnostic);
+                // Keep the path from the file name on, as the baseline has it.
+                for line in text.lines() {
+                    errors.push_str(line.find(name).map_or(line, |i| &line[i..]));
+                    errors.push('\n');
+                }
+            }
+            let types = file
+                .statements()
+                .iter()
+                .filter(|s| s.kind() == SyntaxKind::TypeAliasDeclaration)
+                .map(|alias| checker.get_type_from_type_node(alias.type_()))
+                .collect();
+            f(checker, errors, types)
+        });
+        drop(scope);
+        crate::program::release_program(program);
+        result
+    }
+
+    /// The case as the compiler runner compiles it: the `// @` option lines
+    /// and the blank line after them are not in the unit, so the baseline
+    /// lines count from the first comment line.
+    fn member_case_unit() -> String {
+        MEMBER_CASE
+            .lines()
+            .skip_while(|line| line.starts_with("// @") || line.trim().is_empty())
+            .map(|line| format!("{line}\n"))
+            .collect()
+    }
+
+    /// The diagnostic lines at the top of a `.errors.txt` baseline.
+    fn baseline_header(baseline: &str) -> String {
+        let mut header = String::new();
+        for line in baseline.lines().map(|line| line.trim_end_matches('\r')) {
+            if line.is_empty() {
+                break;
+            }
+            header.push_str(line);
+            header.push('\n');
+        }
+        header
+    }
+
+    fn members_resolved(c: &Checker, t: TypeId) -> bool {
+        c.ty(t)
+            .object_flags
+            .intersects(ObjectFlags::MEMBERS_RESOLVED)
+    }
+
+    /// The member case gives Go's 10 diagnostics (13 header lines: two
+    /// diagnostics have related lines).
+    #[test]
+    fn member_case_diagnostics_match_go() {
+        let expected = baseline_header(MEMBER_ERRORS);
+        assert_eq!(expected.lines().count(), 13, "baseline header");
+        let diagnostics = expected
+            .lines()
+            .filter(|line| line.starts_with(MEMBER_CASE_NAME))
+            .count();
+        assert_eq!(diagnostics, 10, "baseline diagnostics");
+        let errors = with_checked(MEMBER_CASE_NAME, &member_case_unit(), |_, errors, _| errors);
+        assert_eq!(errors, expected);
+    }
+
+    /// A member lookup on an instantiated reference resolves its full member
+    /// table: an own member is found and the type's members are resolved.
+    #[test]
+    fn member_lookup_resolves_full_table() {
+        const LOOKUPS: &str = r#"
+interface Base<T> { value: T; shared: string; }
+interface Derived<T> extends Base<T[]> { own: T; shared: "derived"; }
+type T0 = Derived<number>;
+"#;
+        with_checked("a.ts", LOOKUPS, |c, _, types| {
+            let t = types[0];
+            assert!(!members_resolved(c, t));
+            let own = c.get_property_of_type(t, "own");
+            assert!(own.is_some());
+            assert!(members_resolved(c, t), "the lookup resolved the full table");
+        });
     }
 }

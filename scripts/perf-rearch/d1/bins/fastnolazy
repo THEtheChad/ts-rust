@@ -1,3 +1,0 @@
-#!/bin/sh
-# D1 gain bench setting fastnolazy (docs/perf-rearch/design/d1.md section 1). TSGO overrides the tsc-rs bin.
-GOPORT_LAZY_MEMBERS=0 GOPORT_FAST_NEVER_ORDER=0 exec "${TSGO:-$HOME/.cache/perf-rearch/bins/tsgo-head-b2febcd86-goport-w1}" --fast "$@"
