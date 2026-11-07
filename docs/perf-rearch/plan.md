@@ -1017,3 +1017,16 @@ once a **reconciliation step** is built and tested.
     the layout serial. That costs speed only.
   - **Parity:** quick OK. A full run follows once C2 merges, then the base
     gets refreshed.
+- **2026-11-07, C2 merged** (`0bf6ff2a7`). The VM was off overnight (20:48 to
+  07:46); the W2 thread was cancelled again, and its service resumed.
+  - **Removed:** all 9 loader switches; each kept its default path, which was
+    also the faster one. The loader diagnostics (dump, times, stats, test
+    hooks) are behind the `diagnostics` feature.
+  - **Split:** `process_all_program_files` complexity went 45 → 1 and
+    `create_program` 32 → 6.
+  - **Counts:** shipped env names 40 → 29. icount is flat, and `nm` shows 0
+    diagnostics symbols.
+  - **Parity:** the lane's full run lost 0, apart from one renamed test.
+  - **ttfd:** not measured; there was no idle window.
+  - **Next:** a full parity run on the combined head (C2 + C3 + WIN) to make
+    the new base, ttfd on umami, and Astra's C2 review (running).
