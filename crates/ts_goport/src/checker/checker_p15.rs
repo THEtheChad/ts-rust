@@ -850,43 +850,29 @@ impl Checker {
             return t;
         }
         let types = self.ty(t).types_list();
-        let mut every = true;
-        for &u in &types {
-            if !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                every = false;
-                break;
-            }
-        }
-        if every {
-            let mut empty = TypeId::NIL;
-            for &u in &types {
-                if self.is_empty_object_type(u) {
-                    empty = u;
-                    break;
-                }
-            }
-            if empty.is_some() {
+        if types
+            .iter()
+            .all(|&u| self.is_empty_object_type_or_spreads_into_empty_object(u))
+        {
+            let empty = types
+                .iter()
+                .copied()
+                .find(|&u| self.is_empty_object_type(u));
+            if let Some(empty) = empty {
                 return empty;
             }
             return self.empty_object_type;
         }
-        let mut first_type = TypeId::NIL;
-        for &u in &types {
-            if !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                first_type = u;
-                break;
-            }
-        }
-        if first_type.is_nil() {
+        let first_type = types
+            .iter()
+            .copied()
+            .find(|&u| !self.is_empty_object_type_or_spreads_into_empty_object(u));
+        let Some(first_type) = first_type else {
             return t;
-        }
-        let mut second_type = TypeId::NIL;
-        for &u in &types {
-            if u != first_type && !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                second_type = u;
-                break;
-            }
-        }
+        };
+        let second_type = types.iter().copied().find(|&u| {
+            u != first_type && !self.is_empty_object_type_or_spreads_into_empty_object(u)
+        });
         if second_type.is_some() {
             return t;
         }
@@ -907,11 +893,7 @@ impl Checker {
                     && !prop_flags.intersects(SymbolFlags::GET_ACCESSOR);
                 let flags = SymbolFlags::PROPERTY | SymbolFlags::OPTIONAL;
                 let check_flags = (prop_check_flags & CheckFlags::LATE)
-                    | if readonly {
-                        CheckFlags::READONLY
-                    } else {
-                        CheckFlags::NONE
-                    };
+                    | if_else(readonly, CheckFlags::READONLY, CheckFlags::NONE);
                 let result = self.new_symbol_ex(flags, &prop_name, check_flags);
                 // Go `links := c.valueSymbolLinks.Get(result)` gives the id here.
                 self.value_symbol_links.get_by_id(&self.symbols, result);
