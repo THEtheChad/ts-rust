@@ -1937,7 +1937,17 @@ The scratch worktree and its branch were deleted.
 
 ### Gate run
 
-GATE_PLACEHOLDER
+`parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-e81a14807-rel --base
+~/.cache/perf-rearch/parity/base-current --accepted-ref a19827982` (this lane's grandfather file;
+root accepts it by merging), run `runs/h6-head-e81a14807-full`, about 32 minutes at load 3 to 9:
+**PARITY OK**. 187,194 items compared (185,463 base items a full run must have): 0 lost, 0 not run,
+0 known-bad not as pinned, 0 new not good, 0 crashes on good items, 36 grandfathered (the nine crash
+copies among them), 0 stale entries, 0 recovered, 0 newly good by a referee. Tiers: cli 170 MATCH;
+tests 139,908 PASS, 1,731 IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF,
+8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH (the referee statuses are the base's).
+
+The harness and the file go together: this checkout's compare finds a version 2 file at an older
+accepted ref INVALID, and an older harness finds the version 3 file INVALID.
 
 ## Files
 
