@@ -28,7 +28,7 @@ from array import array
 from collections import Counter, defaultdict
 from pathlib import Path
 
-VERSION = 13  # bump when snapshot content changes (invalidates the cache)
+VERSION = 14  # bump when snapshot content changes (invalidates the cache)
 CACHE = Path(os.environ.get("PERF_QUALITY_CACHE", Path.home() / ".cache/perf-rearch/quality"))
 RCA = Path(os.environ.get("PERF_QUALITY_RCA", Path.home() / ".cache/perf-rearch/tools/rca/bin/rust-code-analysis-cli"))
 REPO = Path(__file__).resolve().parents[2]
@@ -296,6 +296,52 @@ def feature_spans(texts: list[str], lines: list[int]):
     return out
 
 
+def feature_mods(texts: list[str]) -> list[tuple[str, str | None, str]]:
+    """(name, #[path], feature) of each `#[cfg(feature = "x")] mod y;` (also inside all(...)): file y and its
+    child modules are compiled only with feature x."""
+    out = []
+    n = len(texts)
+    i = 0
+    while i < n:
+        if texts[i] == "#" and i + 1 < n and texts[i + 1] == "[":
+            body, after = attr_body(texts, i)
+            if body[:1] == ["cfg"] and "feature" in body and "not" not in body and "any" not in body:
+                k = body.index("feature") + 2
+                feat = body[k].strip('"') if k < len(body) else "?"
+                j = after
+                path_attr = None
+                while j < n and texts[j] == "#":
+                    b2, j = attr_body(texts, j)
+                    if b2[:1] == ["path"] and len(b2) >= 3:
+                        path_attr = b2[2].strip('"')
+                if j >= n:
+                    break
+                end = item_end(texts, j)
+                if texts[end] == ";" and end >= 2 and texts[end - 2] == "mod":
+                    out.append((texts[end - 1], path_attr, feat))
+            i = after
+            continue
+        i += 1
+    return out
+
+
+def propagate_feature_mods(an: dict, files: list[str]) -> None:
+    """Sets `file_feature` on each file that a `#[cfg(feature = "x")] mod y;` declares, and on the files of
+    its child module directory, so their reads count as feature-only (a file keeps the first feature found)."""
+    fileset = set(files)
+    changed = True
+    while changed:
+        changed = False
+        for path, a in list(an.items()):
+            for name, pattr, feat in a.get("fmods", []):
+                for c in resolve_mod(path, name, pattr, fileset):
+                    sub = c[:-3] + "/" if not c.endswith("/mod.rs") else c[: -len("mod.rs")]
+                    for t in [c] + [o for o in files if o.startswith(sub)]:
+                        if an[t].get("file_feature") is None:
+                            an[t]["file_feature"] = feat
+                            changed = True
+
+
 def resolve_mod(parent: str, name: str, path_attr: str | None, files: set[str]) -> list[str]:
     d = os.path.dirname(parent)
     if path_attr:
@@ -484,7 +530,7 @@ def analyze_file(path: str, src: str, kind: str, spans_hint=None):
         "nlines": nlines, "code_prod": len(code_lines["prod"]), "code_test": len(code_lines["test"]),
         "comment_lines": len(comment_lines), "hyg": hyg, "allow_lints": allow_lints,
         "env_sites": env_sites, "const_defs": const_defs, "features": features, "fspans": fspans,
-        "test_line_set": None,
+        "fmods": feature_mods(texts), "test_line_set": None,
     }
 
 
@@ -813,6 +859,7 @@ def measure_tree(sha: str, tree: str) -> dict:
                                 b["fkind"] = "test"
                                 an[other] = b
                                 changed = True
+        propagate_feature_mods(an, files)
         for path, a in an.items():
             a["funcs"] = rca_functions(rca_out, src_root, path)
 
@@ -896,8 +943,12 @@ def summarize(sha: str, tree: str, an: dict, default_features: set[str]) -> dict
     for path, a in an.items():
         if a["fkind"] != "prod":
             continue
+        file_feature = a.get("file_feature")
         for s in a["env_sites"]:
-            sites.append({**s, "file": path})
+            site = {**s, "file": path}
+            if file_feature and not site.get("feature"):
+                site["feature"] = file_feature
+            sites.append(site)
         # const uses
         if const_defs:
             texts, kinds, lines = a["texts"], a["kinds"], a["lines"]
@@ -911,6 +962,8 @@ def summarize(sha: str, tree: str, an: dict, default_features: set[str]) -> dict
                     for fa, fb, ft in a["fspans"]:
                         if fa <= lines[i] <= fb:
                             site["feature"] = ft
+                    if file_feature and not site.get("feature"):
+                        site["feature"] = file_feature
                     sites.append(site)
     gates: dict[str, dict] = {}
     for s in sites:

@@ -156,5 +156,23 @@ for name, src in CASES.items():
     if bad:
         fails.append(name)
 
+# `#[cfg(feature = "diagnostics")] mod verify;`: the reads of verify.rs and of its child module are
+# feature-only, those of the shipped sibling are not.
+files = ["crates/x/src/lib.rs", "crates/x/src/verify.rs", "crates/x/src/verify/child.rs", "crates/x/src/plain.rs"]
+srcs = {
+    files[0]: '#[cfg(feature = "diagnostics")]\n#[allow(dead_code)]\npub mod verify;\npub mod plain;\n',
+    files[1]: 'mod child;\nfn f() { let _ = std::env::var_os("GOPORT_FEAT_M"); }\n',
+    files[2]: 'fn g() { let _ = std::env::var_os("GOPORT_FEAT_N"); }\n',
+    files[3]: 'fn h() { let _ = std::env::var_os("GOPORT_SHIP_M"); }\n',
+}
+an = {f: quality.analyze_file(f, s, "prod") for f, s in srcs.items()}
+quality.propagate_feature_mods(an, files)
+got = {f: an[f].get("file_feature") for f in files}
+want = {files[0]: None, files[1]: "diagnostics", files[2]: "diagnostics", files[3]: None}
+ok = got == want
+print(f"{'ok  ' if ok else 'FAIL'} feature-mod" + ("" if ok else f": {got}"))
+if not ok:
+    fails.append("feature-mod")
+
 print("SELFTEST OK" if not fails else "SELFTEST FAIL")
 sys.exit(1 if fails else 0)
