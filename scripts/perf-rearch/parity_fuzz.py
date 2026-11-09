@@ -22,9 +22,11 @@ nondeterminism).
 
 Every tsc-rs attempt counts (the row's `attempts`, one per tsc-rs process, on every row that is not
 MATCH: label, seconds, outcome, exit code, sha256 of stdout, stderr and the written files, and
-whether its inputs stayed intact). A timeout, crash or input change in any attempt makes the case a
-DIFF with `rsFailure` (parity_compare.py fails on it whatever the base says, unless the accepted
-parity-grandfathered.json pins exactly that failure). The retry policy is for diagnosis only: after
+whether its inputs stayed intact; `stderrSite`, the sha256 of stderr with the line number of
+tsc-rs's port-site line replaced, is what a grandfather entry pins: parity_grandfather.stderr_site).
+A timeout, crash or input change in any attempt makes the case a DIFF with `rsFailure`
+(parity_compare.py fails on it whatever the base says, unless the accepted parity-grandfathered.json
+pins exactly that failure). The retry policy is for diagnosis only: after
 a timeout (not where Go timed out too) tsc-rs runs once more with twice the time, so the row says
 whether it was load (the retry answered) or a hang; the case stays a DIFF either way. A row that is
 not MATCH also records the case identity (`input`, case_key) and Go's default result (`go`).
@@ -78,6 +80,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / 'vendor/difffuzz'))
 sys.path.insert(0, str(HERE))  # python3 -I does not put the script's dir on the path
 import oracle  # noqa: E402
+import parity_grandfather as grandfather  # noqa: E402
 import parity_inputs as inputs  # noqa: E402
 import parity_referees as referees  # noqa: E402
 import seeds  # noqa: E402
@@ -185,7 +188,7 @@ class Case:
         else:
             inputs = 'changed: ' + '; '.join(r.input_changes[:5])
         self.attempts.append({'why': why, 'secs': round(r.secs, 2), 'timeout': timeout, 'outcome': outcome,
-                              **r.fingerprint(), 'inputs': inputs,
+                              **r.fingerprint(), 'stderrSite': grandfather.stderr_site_hash(r.stderr), 'inputs': inputs,
                               })
         self.results.append(r)
         return r

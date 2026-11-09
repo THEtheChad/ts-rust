@@ -29,10 +29,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / 'vendor/difffuzz'))
 import parity_compare as C  # noqa: E402
+import parity_grandfather as G  # noqa: E402
 import parity_modes as M  # noqa: E402
 
 FAILS = []
 NEW = hasattr(C, 'Accepted')  # the lane H4 compare (accepted artifacts)
+GF_VERSION = getattr(G, 'VERSION', 2)
+STDERR = 'stderrSite' if 'stderrSite' in getattr(G, 'ATTEMPT', {}) else 'stderr'  # the pinned stderr field (lane H6: site form)
 
 
 def check(name, ok, got=''):
@@ -53,7 +56,7 @@ ROW_795 = {'status': 'DIFF', 'rsFailure': 'crash', 'sig': 'oracle:crash',
            'detail': 'go-broken (GO-FAIL: Go crash: panic: runtime error: invalid memory address or nil pointer dereference), '
                      'tsc-rs crash: panic: runtime error: invalid memory address or nil pointer dereference; attempts: run1 crash '
                      '(0.01 s of 60), run2 crash (0.01 s of 60)'}
-PRINT = {'outcome': 'crash', 'code': 2, 'stdout': '0' * 16, 'stderr': '1' * 16, 'written': '2' * 16, 'inputs': 'intact'}
+PRINT = {'outcome': 'crash', 'code': 2, 'stdout': '0' * 16, STDERR: '1' * 16, 'written': '2' * 16, 'inputs': 'intact'}
 GO_795 = {'status': 'GO-FAIL', 'outcome': 'crash', 'panic': 'panic: runtime error: invalid memory address or nil pointer dereference',
           'stdout': '4' * 16, 'written': '5' * 16}
 ENTRY_795 = {'status': 'DIFF', 'rsFailure': 'crash', 'reason': 'tsc-rs reproduces Go\'s crash on purpose', 'input': 'a' * 16,
@@ -83,7 +86,7 @@ def run_compare(root, name, base, cur, mode='full', grand=None, old_grand=None, 
             acc.mkdir()
             m = manifest or json.loads((HERE / 'parity-quick-manifest.json').read_text())
             (acc / 'parity-quick-manifest.json').write_text(json.dumps(m))
-            g = raw_grand if raw_grand is not None else {'about': 'selftest', 'version': 2, 'items': grand or {}}
+            g = raw_grand if raw_grand is not None else {'about': 'selftest', 'version': GF_VERSION, 'items': grand or {}}
             (acc / 'parity-grandfathered.json').write_text(json.dumps(g))
             rc = C.compare(d / 'base', d / 'cur', C.Accepted(directory=acc))
         else:
@@ -122,7 +125,7 @@ def compare_checks(root):
     ok_row = full_row(ROW_795, [PRINT, PRINT])
     rc, out = run_compare(root, 'pinned', base, {k: ok_row}, grand={k: ENTRY_795}, old_grand={'items': {k: OLD_795}})
     check('finding 4: control: the exact pinned failure is excused', rc == 0 and 'GRANDFATHERED fuzz/1:795' in out, out)
-    extra = {**full_row(ROW_795, [PRINT, {**PRINT, 'code': -11, 'stderr': '3' * 16}]),
+    extra = {**full_row(ROW_795, [PRINT, {**PRINT, 'code': -11, STDERR: '3' * 16}]),
              'detail': ROW_795['detail'] + '; NEW FAILURE: crash:signal-11'}
     rc, out = run_compare(root, 'additional-crash', base, {k: extra}, grand={k: ENTRY_795}, old_grand={'items': {k: OLD_795}})
     check('finding 4: a different crash with the same panic text fails (probe grandfather-additional-crash)', rc == 1, out)
@@ -137,11 +140,11 @@ def compare_checks(root):
     check('finding 4: the same failure on another input (a changed case) fails', rc == 1, out)
 
     k = 'fuzz/1:25496'
-    misplaced = {'about': 'x', 'version': 2, 'items': {}, k: entry}
+    misplaced = {'about': 'x', 'version': GF_VERSION, 'items': {}, k: entry}
     rc, out = run_compare(root, 'misplaced', {k: ROW_25496}, {k: ROW_25496}, raw_grand=misplaced,
                           old_grand={'items': {}, k: {'status': 'DIFF', 'rsFailure': 'timeout', 'reason': 'x'}})
     check('finding 12: an entry outside "items" fails loudly (the file is invalid)', rc == 1 and 'GRANDFATHER INVALID' in out, out)
-    typo = {'about': 'x', 'version': 2, 'items': {k: {**entry, 'detailContain': 'x'}}}
+    typo = {'about': 'x', 'version': GF_VERSION, 'items': {k: {**entry, 'detailContain': 'x'}}}
     rc, out = run_compare(root, 'typo', {k: ROW_25496}, {k: ROW_25496}, raw_grand=typo,
                           old_grand={'items': {k: {'status': 'DIFF', 'rsFailure': 'timeout', 'reason': 'x', 'detailContain': 'x'}}})
     check('finding 12: an unknown key in an entry fails loudly', rc == 1 and 'GRANDFATHER INVALID' in out, out)
