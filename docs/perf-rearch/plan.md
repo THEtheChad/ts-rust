@@ -1125,3 +1125,28 @@ once a **reconciliation step** is built and tested.
     streaming and a parallel BFS level of project loads (P2 notes, L1
     backlog).
   - Data: `~/.cache/perf-rearch/ttfd-5c13a7657{,-b}/`.
+- **2026-11-09, C2 follow-up merged** (`t3/c2-followup` at `9928b7b41`, merge
+  `e81a14807`). Astra's two P2s from the C2 review are fixed:
+  - the resolve-ahead and prefetch debug counts and the loader's wait clocks
+    are diagnostics-only (`nm`: 0 `PrefetchStats` symbols; `wait_or_take` reads
+    no clock);
+  - `quality.py` parses cfg'd item ends with nesting (`quality_test.py`).
+
+  icount on the LSP keyed load: equal medians. The lane's 1 lost item
+  (`watch-ts-pattern-f12/0018`) was the pre-H5 environment, and it is MATCH
+  under H5.
+  - **Gate** (`runs/head-e81a14807-full-combined`): **PARITY OK**, 0 lost,
+    0 not run, 0 new items not good, 36 grandfathered. It is now
+    `base-current`. Tiers: cli 170 MATCH, lsp 2,629 MATCH + 29 GO-BROKEN,
+    fuzz as grandfathered, corpus 12,727 MATCH, tests 139,908 PASS.
+  - **How the run was made:** the first build hit a nightly rustc ICE
+    (`verify_ich`, incremental hash of `tikv_jemalloc_ctl::keys::Access`), a
+    stale incremental cache after the hard reboot. The tests tier failed to
+    build the same way. I deleted `target/release/incremental` and reran
+    tests alone (`runs/head-e81a14807-tests`). Then I hard-linked the full
+    run's other tiers into `-combined` and merged it. The ICE files are in
+    `~/.cache/perf-rearch/ice/`.
+  - Merged without another Astra round: the round fixes Astra's own findings,
+    and the evidence above checks each one.
+  - **The perf phase is complete:** every window-2 cell is ≤ Go and ttfd ties
+    with Go.
