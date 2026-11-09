@@ -1263,3 +1263,23 @@ once a **reconciliation step** is built and tested.
   - **Check:** only `stderrSite` and `evidence` changed in the 36 entries,
     and the shifted-line probe binary matches all 36.
   - Review: `reviews/2026-11-09-astra-h6.md`.
+- **Q4 merged** (`t3/mechanical-clippy-cleanup` at `aaa626f7e`, merge
+  `9c5eb8439`; Astra ACCEPT on round 1).
+  - **Round 2:**
+    - one lint policy in `[workspace.lints.clippy]`, with the 26 lints that
+      still fire listed as allows (the wave-2 work list); every other
+      `clippy::all` lint is now enforced in the lib crates (probe-checked
+      61/61 per crate);
+    - the line-keeping commits reverted after H6;
+    - Q3's files cleaned;
+    - wasm `say!` cfg fixed.
+  - **Forced `clippy::all`:** 2,120 → 1,128. Duplication is unchanged at
+    3.55%.
+  - **Parity full** (`quality/q4/parity-fullB2`, hard-linked as
+    `runs/q4-head-aaa626f7e-full`): PARITY OK, 0 lost, and the 9 crash pins
+    match on their moved lines. It is now `base-current`.
+    - The first full run lost `fuzz/1:17661` to tsc-rs's 60 s timeout at
+      load 35–42. At load 2 the case takes about 6 s on both base and head,
+      with equal icount, so this was the load, not the change.
+  - **icount:** flat. umami emit-mt read +0.37% and then −0.30% on a recheck
+    with 5 runs; that cell's spread is 0.43%.
