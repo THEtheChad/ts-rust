@@ -66,16 +66,15 @@ impl Checker {
                 }
             } else {
                 // PORT: Go `findInMap(exports, ...)` over the symbol table values.
-                let mut exported_symbol = SymbolId::NIL;
-                for symbol in self.symbols.values(exports) {
-                    if self
-                        .get_symbol_if_same_reference(symbol, local_symbol)
-                        .is_some()
-                    {
-                        exported_symbol = symbol;
-                        break;
-                    }
-                }
+                let exported_symbol = self
+                    .symbols
+                    .values(exports)
+                    .into_iter()
+                    .find(|&symbol| {
+                        self.get_symbol_if_same_reference(symbol, local_symbol)
+                            .is_some()
+                    })
+                    .unwrap_or(SymbolId::NIL);
                 let mut diagnostic = if exported_symbol.is_some() {
                     let exported_name = self.symbol_to_string(exported_symbol);
                     new_diagnostic_for_node(
@@ -92,11 +91,7 @@ impl Checker {
                 };
                 let declarations = self.sym(local_symbol).declarations.clone();
                 for (i, decl) in declarations.iter().enumerate() {
-                    let message = if i == 0 {
-                        diag::X_0_is_declared_here
-                    } else {
-                        diag::X_and_here
-                    };
+                    let message = if_else(i == 0, diag::X_0_is_declared_here, diag::X_and_here);
                     diagnostic.add_related_info(Some(create_diagnostic_for_node(
                         *decl,
                         message,
