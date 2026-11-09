@@ -29,7 +29,7 @@ pub use goport_core::{
     diagnostics, diagnostics_loc, emitter, evaluator, execute, flags, frontend, fswatch, gostd,
     ipc, jsnum, jsonrpc, leak_arena, locale, modulespecifiers, options, options_json, pprof,
     prelude, printer, program, pseudochecker, scanner_util, sourcemap, spanmap, thp_guard, tracing,
-    transformers, transpile,
+    transformers, transpile, tuning,
 };
 // The jemalloc arena layout at start: Linux only (THP).
 #[cfg(all(feature = "jemalloc", target_os = "linux"))]

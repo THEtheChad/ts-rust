@@ -72,6 +72,7 @@ pub mod thp_guard;
 pub mod tracing;
 pub mod transformers;
 pub mod transpile;
+pub mod tuning;
 
 // Macros that goport_util exports. `crate::go_assert` and `crate::unported`
 // keep working.

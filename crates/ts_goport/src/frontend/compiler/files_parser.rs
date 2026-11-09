@@ -1902,7 +1902,7 @@ pub(crate) fn new_unknown_reference_processing_diagnostic(
 /// (`ThreadBudget::parse_threads`), less the loading thread.
 /// `GOPORT_PARSE_THREADS` sets it (0 turns prefetch off).
 pub(crate) fn prefetch_worker_count() -> usize {
-    if let Some(count) = parse_threads_from_env() {
+    if let Some(count) = crate::tuning::parse_threads() {
         return count;
     }
     ThreadBudget::current().parse_threads(false) - 1
@@ -1912,30 +1912,20 @@ pub(crate) fn prefetch_worker_count() -> usize {
 /// as many as the other parse workers. `GOPORT_MAPPED_THREADS` sets it.
 // PORT: not in Go (see `PrefetchJob::mapped`).
 fn mapped_worker_count() -> usize {
-    std::env::var("GOPORT_MAPPED_THREADS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(prefetch_worker_count)
+    crate::tuning::mapped_threads().unwrap_or_else(prefetch_worker_count)
 }
 
 /// The parse workers that `FilesParser::parse` adds for a large program
 /// (`note_program_load`), up to `ThreadBudget::parse_large` parse threads.
 /// None when `GOPORT_PARSE_THREADS` sets the count.
 fn extra_worker_count(large: bool) -> usize {
-    if parse_threads_from_env().is_some() {
+    if crate::tuning::parse_threads().is_some() {
         return 0;
     }
     let budget = ThreadBudget::current();
     budget
         .parse_threads(large)
         .saturating_sub(budget.parse_threads(false))
-}
-
-/// The parse thread count that `GOPORT_PARSE_THREADS` sets, if any.
-fn parse_threads_from_env() -> Option<usize> {
-    std::env::var("GOPORT_PARSE_THREADS")
-        .ok()
-        .and_then(|value| value.parse().ok())
 }
 
 /// True when a program load on this thread starts parse workers

@@ -246,11 +246,7 @@ fn launch(huge_pages: bool) -> Option<i32> {
     use std::io::Read;
     use std::os::fd::AsRawFd;
     use std::os::unix::process::{CommandExt, ExitStatusExt};
-    let wanted = match std::env::var_os("GOPORT_LAUNCH") {
-        Some(v) if v == "0" => false,
-        Some(v) if v == "1" => true,
-        _ => !huge_pages,
-    };
+    let wanted = ts_goport::tuning::launch().unwrap_or(!huge_pages);
     if !wanted || worker().is_some() || ts_goport::thp_guard::long_running() {
         return None;
     }
