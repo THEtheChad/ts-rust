@@ -1927,18 +1927,9 @@ pub(crate) mod tspath_p17 {
     // Go: tspath/extension.go:121 GetDeclarationFileExtension
     // PERF: returns a slice of `file_name` or a constant, not a copy.
     fn get_declaration_file_extension(file_name: &str) -> &str {
-        let base = get_base_file_name(file_name);
-        for ext in SUPPORTED_DECLARATION_EXTENSIONS {
-            if base.ends_with(ext) {
-                return ext;
-            }
-        }
-        if base.ends_with(EXTENSION_TS)
-            && let Some(index) = base.find(".d.")
-        {
-            return &base[index..];
-        }
-        ""
+        crate::checker::checker_p16::declaration_file_extension_of_base_file_name(
+            get_base_file_name(file_name),
+        )
     }
 
     // Go: tspath/relative_path.go:82 CaseSensitivity.RelativePathFromPath (ts#64159)
