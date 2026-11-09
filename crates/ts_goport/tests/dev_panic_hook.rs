@@ -1,4 +1,4 @@
-//! The panic hook of goport_typesyms (`DevPanicHook::GOPORT_TYPESYMS`):
+//! The panic hook of `goport_typesyms` (`DevPanicHook::GOPORT_TYPESYMS`):
 //! a plain Rust panic prints `goport_typesyms: panic at <file>:<line>:
 //! <message>` with `Location::file` as it is, as the bin's own hook did
 //! before the dev bins shared one. The unit test
