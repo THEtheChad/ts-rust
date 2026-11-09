@@ -468,8 +468,7 @@ mod tests {
         let mut protocol = new_message_pack_protocol(pipe.clone());
         let msg = protocol.read_message().expect("read the request");
         let err = crate::api::proto::unmarshal_payload(&msg.method, b"null")
-            .err()
-            .expect("an unknown method");
+            .expect_err("an unknown method");
         assert_eq!(err.error(), r#"unknown API method "a\ufdd0\ufdd0b\xff""#);
         protocol
             .write_error(
