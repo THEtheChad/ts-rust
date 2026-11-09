@@ -1158,10 +1158,10 @@ impl Declarations {
     // list changes a reference count that the checker threads share
     // (`instantiate_symbol`, `clone_symbol`, member code).
     fn make_static(&mut self) {
-        if matches!(self.0, DeclarationList::Many(_)) {
-            if let DeclarationList::Many(list) = std::mem::take(&mut self.0) {
-                self.0 = DeclarationList::Static(Box::leak(Box::new(Arc::unwrap_or_clone(list))));
-            }
+        if matches!(self.0, DeclarationList::Many(_))
+            && let DeclarationList::Many(list) = std::mem::take(&mut self.0)
+        {
+            self.0 = DeclarationList::Static(Box::leak(Box::new(Arc::unwrap_or_clone(list))));
         }
     }
 }
@@ -2972,10 +2972,10 @@ impl SymbolArena {
                 place: symbol.0,
             };
         }
-        if self.ids.shadows.is_some() {
-            if let Some(origin) = self.shadow_origin(symbol) {
-                return origin;
-            }
+        if self.ids.shadows.is_some()
+            && let Some(origin) = self.shadow_origin(symbol)
+        {
+            return origin;
         }
         IdSlot {
             key: self.ids.key,
@@ -3459,10 +3459,11 @@ impl SymbolArena {
                 .find_id(hash, name.0)
                 .map(|position| (position, current.entries[position].symbol))
         };
-        if let Some((_, old)) = found {
-            if old.is_some() && !replace(self.sym(old)) {
-                return false;
-            }
+        if let Some((_, old)) = found
+            && old.is_some()
+            && !replace(self.sym(old))
+        {
+            return false;
         }
         // Only a write takes a shared table chunk back, like `set`.
         let current = self.tables.get_mut(table.index());

@@ -5346,15 +5346,16 @@ fn get_additional_js_syntactic_diagnostics(
         {
             return false;
         }
-        if node.kind() == SyntaxKind::Parameter && has_decorators(node) {
-            if let Some(decorator) = node.modifier_nodes().into_iter().find(|n| is_decorator(*n)) {
-                diags.push(new_diagnostic(
-                    file,
-                    decorator.loc(),
-                    diag::Decorators_are_not_valid_here,
-                    Vec::new(),
-                ));
-            }
+        if node.kind() == SyntaxKind::Parameter
+            && has_decorators(node)
+            && let Some(decorator) = node.modifier_nodes().into_iter().find(|n| is_decorator(*n))
+        {
+            diags.push(new_diagnostic(
+                file,
+                decorator.loc(),
+                diag::Decorators_are_not_valid_here,
+                Vec::new(),
+            ));
         }
         node.for_each_child(|child| walk(child, file, diags));
         false
@@ -6432,12 +6433,10 @@ pub fn get_diagnostics_of_any_program(
     }
     // Effect-TS/tsgo patch 009: Effect diagnostics ignored for the exit code
     // do not block emit under noEmitOnError.
-    if skip_no_emit_check_for_dts_diagnostics {
-        if let Some(effect) = options.effect.as_deref() {
-            all_diagnostics =
-                crate::effect::filter_diagnostics_for_exit_code(Some(effect), &all_diagnostics)
-                    .into_owned();
-        }
+    if skip_no_emit_check_for_dts_diagnostics && let Some(effect) = options.effect.as_deref() {
+        all_diagnostics =
+            crate::effect::filter_diagnostics_for_exit_code(Some(effect), &all_diagnostics)
+                .into_owned();
     }
     all_diagnostics
 }
