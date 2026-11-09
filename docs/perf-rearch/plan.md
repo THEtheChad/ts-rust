@@ -1232,3 +1232,14 @@ once a **reconciliation step** is built and tested.
     `quality.sh` on 1.99.1; Q5 aligns them.
   - **Merge order:** H6, then Q4 round 2, then Q3 (rebased on Q4; it
     removes Q4's allows on Q3's files), then Q5, then wave 2.
+- **Q3 merged** (`t3/env-quality-cleanup` at `59a3d6218`, merge below).
+  - Round 2 fixed Astra's findings 1 and 2: each dev bin's panic output is
+    byte-identical again, pinned by tests, and the version-table checks are
+    compiled only in debug and diagnostics builds (`nm`: 0 symbols).
+  - Finding 3 (`quality.py` module gating) was reverted, so the report fails
+    safe; Q5 replaces the parser.
+  - Parity full `20261109-124325-full-42e3f94d` (release `11a8642a0`):
+    PARITY OK, 0 lost, 0 not run.
+  - The shipped binary reads 10 names, all documented in `quality.md` §8.
+  - Merged without a third Astra round: the fixes are narrow, and each one
+    is checked by a test and by `nm`.
