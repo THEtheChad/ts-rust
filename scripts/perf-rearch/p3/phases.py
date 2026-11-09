@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Lane P3: when each process image of one tsgo run reaches thp_guard (GOPORT_THP_GUARD_DEBUG=1 prints one stderr
 line there), relative to the spawn, and when the caller sees EOF and the exit. Min and median over N runs.
+<bin> must be a diagnostics build (--features diagnostics): a shipped build prints no thp_guard line.
 usage: phases.py <cwd> <runs> <bin> [ENV=V ...] -- <args...>"""
 import os, sys, time, statistics, subprocess, selectors
 cwd, runs, b = sys.argv[1], int(sys.argv[2]), sys.argv[3]
