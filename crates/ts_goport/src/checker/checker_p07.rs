@@ -1527,11 +1527,11 @@ impl Checker {
         }
         if method_signatures.is_empty() {
             if error_node.is_some() {
-                let diagnostic = if method_name == "next" {
-                    resolver.must_have_a_next_method_diagnostic
-                } else {
-                    resolver.must_be_a_method_diagnostic
-                };
+                let diagnostic = if_else(
+                    method_name == "next",
+                    resolver.must_have_a_next_method_diagnostic,
+                    resolver.must_be_a_method_diagnostic,
+                );
                 self.report_diagnostic(
                     new_diagnostic_for_node(error_node, diagnostic, args![method_name]),
                     diagnostic_output,
@@ -1564,11 +1564,11 @@ impl Checker {
                     .get(self.sym(global_iterator_symbol).members, method_name)
                     == method_type_symbol;
             if is_generator_method || is_iterator_method {
-                let global_type = if is_generator_method {
-                    global_generator_type
-                } else {
-                    global_iterator_type
-                };
+                let global_type = if_else(
+                    is_generator_method,
+                    global_generator_type,
+                    global_iterator_type,
+                );
                 let type_parameters = self
                     .ty(global_type)
                     .as_interface_type()
@@ -1618,11 +1618,7 @@ impl Checker {
                 // The value of `return(value)` *is* awaited by async generators
                 let resolved =
                     (resolver.resolve_iteration_type)(self, method_parameter_type, error_node);
-                let resolved_method_parameter_type = if resolved.is_some() {
-                    resolved
-                } else {
-                    self.any_type
-                };
+                let resolved_method_parameter_type = or_else_type(resolved, self.any_type);
                 return_types.push(resolved_method_parameter_type);
             }
         }
@@ -1636,11 +1632,7 @@ impl Checker {
             self.never_type
         };
         let resolved = (resolver.resolve_iteration_type)(self, method_return_type, error_node);
-        let resolved_method_return_type = if resolved.is_some() {
-            resolved
-        } else {
-            self.any_type
-        };
+        let resolved_method_return_type = or_else_type(resolved, self.any_type);
         let iteration_types =
             self.get_iteration_types_of_iterator_result(resolved_method_return_type);
         if !iteration_types.has_types() {
