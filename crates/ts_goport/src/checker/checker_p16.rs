@@ -147,34 +147,21 @@ impl Checker {
                 .flags
                 .intersects(SymbolFlags::INTERFACE)
             {
-                for &d in &declarations {
-                    if self.is_deprecated_declaration(d) {
-                        return true;
-                    }
-                }
-                return false;
+                return declarations
+                    .iter()
+                    .any(|&d| self.is_deprecated_declaration(d));
             } else {
-                for &d in &declarations {
-                    if !self.is_deprecated_declaration(d) {
-                        return false;
-                    }
-                }
-                return true;
+                return declarations
+                    .iter()
+                    .all(|&d| self.is_deprecated_declaration(d));
             }
         }
         let value_declaration = self.sym(symbol).value_declaration;
-        if value_declaration.is_some() && self.is_deprecated_declaration(value_declaration) {
-            return true;
-        }
-        if declarations.is_empty() {
-            return false;
-        }
-        for &d in &declarations {
-            if !self.is_deprecated_declaration(d) {
-                return false;
-            }
-        }
-        true
+        value_declaration.is_some() && self.is_deprecated_declaration(value_declaration)
+            || !declarations.is_empty()
+                && declarations
+                    .iter()
+                    .all(|&d| self.is_deprecated_declaration(d))
     }
 
     // Go: checker/checker.go:14334 hasParseDiagnostics
