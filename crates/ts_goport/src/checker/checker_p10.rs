@@ -470,21 +470,14 @@ impl Checker {
     ) -> bool {
         for &sig in signatures {
             let composite = self.sig(sig).composite.clone();
-            match composite {
+            let found = match composite {
                 Some(composite) => {
-                    if composite.is_union {
-                        for &s in &composite.signatures {
-                            if f(self, s) {
-                                return true;
-                            }
-                        }
-                    }
+                    composite.is_union && composite.signatures.iter().any(|&s| f(self, s))
                 }
-                None => {
-                    if f(self, sig) {
-                        return true;
-                    }
-                }
+                None => f(self, sig),
+            };
+            if found {
+                return true;
             }
         }
         false
