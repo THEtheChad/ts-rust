@@ -240,6 +240,9 @@ def mapper_cases() -> None:
         gofn("internal/ls", "symbols.go", 100, "", "getDocumentSymbols", 9,
              closures=[{"name": "visit", "line": 147, "end": 190, "cog": 12, "cyc": 9, "lines": 44, "cog_inplace": 15}]),
         gofn("internal/scanner", "scanner.go", 50, "", "NewScanner", 1),
+        gofn("internal/checker", "printer.go", 55, "Checker", "TypeToStringEx", 0, lines=3),
+        gofn("internal/checker", "printer.go", 59, "Checker", "typeToStringEx", 17),
+        gofn("internal/ls/lsutil", "userpreferences_generated.go", 193, "", "parsePreferenceIndentStyle", 4),
     ]
     gi = gorel.GoIndex(go)
     files = {
@@ -301,6 +304,17 @@ def mapper_cases() -> None:
             "    pub fn new() -> Self {}",
             "}",
         ],
+        C + "printer_impl.rs": [
+            "impl Checker {",
+            "    // Go: checker/printer.go:55 TypeToStringEx and checker/printer.go:59 typeToStringEx",
+            "    pub fn type_to_string_ex(&mut self) {}",
+            "}",
+        ],
+        "crates/ts_goport/src/ls/lsutil/formatcodeoptions.rs": [
+            "// Go: ls/lsutil/formatcodeoptions.go:19 parseIndentStyle (at 673a5f17d713; ts#64554 generates it:",
+            "// ls/lsutil/userpreferences_generated.go:193 parsePreferenceIndentStyle)",
+            "fn parse_indent_style() {}",
+        ],
         "crates/ts_goport/src/locale.rs": [
             "// Go: language/parse.go:1 parseTag",
             "fn parse_tag() {}",
@@ -330,6 +344,8 @@ def mapper_cases() -> None:
         rust(L + "symbols.rs", "DocumentSymbolsVisitor::visit", 3, 3, 14),
         rust(L + "semantictokens.rs", "SemanticTokenCollector::visit", 2, 2, 88),
         rust("crates/ts_goport/src/frontend/scanner/scanner_p1.rs", "Scanner::new", 2, 2, 0),
+        rust(C + "printer_impl.rs", "Checker::type_to_string_ex", 3, 3, 17),
+        rust("crates/ts_goport/src/ls/lsutil/formatcodeoptions.rs", "parse_indent_style", 3, 3, 4),
         rust("crates/ts_goport/src/locale.rs", "parse_tag", 2, 2, 5),
         rust("crates/ts_goport/src/locale.rs", "parse_extension", 4, 4, 5),
         rust("crates/ts_goport/src/locale.rs", "add_tags", 6, 6, 5),
@@ -356,6 +372,9 @@ def mapper_cases() -> None:
           ("internal/ast/ast_generated.go:*ForEachChild", 6))
     check("lifted closure by name", (placed("Checker::add_item"), by["Checker::add_item"]["part_of"]),
           (("lifted", "Checker.getCompletionThing"), C + "checker_p14.rs::Checker::get_completion_thing"))
+    check("compound marker: two Go functions joined by `and`", (by["Checker::type_to_string_ex"]["go"]["name"], by["Checker::type_to_string_ex"]["go"]["cog"]),
+          ("TypeToStringEx + typeToStringEx", 17))
+    check("marker paragraph: a later reference after a rename", placed("parse_indent_style"), ("marker", ".parsePreferenceIndentStyle"))
     check("nested fn with a marker has its own row", placed("Checker::check_thing::lookup"), ("marker", "Scope.Lookup"))
     check("nested fn without one stays in its parent", placed("Checker::check_thing::walk"), ("none", None))
     check("marker outside the pin: own code", placed("Checker::helper"), ("none", None))

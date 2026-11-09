@@ -41,7 +41,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 1  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 2  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -215,6 +215,11 @@ SYM_RE = re.compile(r"^(?:\((?:\w+\s+)?\*?(?P<recv1>\w+)(?:\[[^\]]*\])?\)\s*\.?\
 PROSE_PART_RE = re.compile(r"\b(?:body|part|rest|half|tail|remainder) of Go(?:'s)? `?(?P<a>\w+)`?|\bsplit out of (?:Go(?:'s)? )?`?(?P<b>\w+)`?")
 PROSE_NAME_RE = re.compile(r"\bGo(?:'s)? (?:`(?P<a>\w+)`|(?P<b>[a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*))")
 PROSE_RANGE_RE = re.compile(r"\b(?:internal/)?(?P<path>[\w/]+\.go):(?P<a>\d+)(?:-(?:\w+\.go:)?(?P<b>\d+))?")
+# a Go reference inside a `// Go:` paragraph, and the joiner that makes two references one compound
+REF_RE = re.compile(r"(?:internal/)?(?P<path>[\w./-]+\.go)(?::(?P<line>\d+))?\s+(?P<sym>\((?:\w+\s+)?\*?\w+(?:\[[^\]]*\])?\)\.?\s*\w+|\w+(?:\.\w+)?)")
+JOIN_RE = re.compile(r"^[^.;:]{0,40}$")
+JOIN_WORD_RE = re.compile(r"\b(?:and|with|plus)\b|,|\+")
+PARA_STOP_RE = re.compile(r"^\s*(?://+\s*(?:Go:|PORT|PERF|TODO|NOTE|SAFETY)|///|//!)")
 BLOCK_LINE_RE = re.compile(r"^\s*(//|#!?\[|$|\]|\))")
 
 
@@ -250,20 +255,51 @@ def parse_marker(text: str) -> dict | None:
             "name": s.group("name"), "text": m.group("rest").strip()}
 
 
+def paragraph_refs(mk: dict, para: str) -> None:
+    """Fill `also` (references joined to the first one by "and", "with" or a comma, outside parentheses:
+    one Rust function porting several Go functions) and `alt` (the other references, tried in order
+    when the first one names nothing at the pin, as after a rename) of a `// Go:` marker."""
+    refs = list(REF_RE.finditer(para))
+    mk["also"], mk["alt"] = [], []
+    prev_end = refs[0].end() if refs else 0
+    for r in refs[1:]:
+        sym = SYM_RE.match(r.group("sym") + " ")
+        if not sym:
+            continue
+        ref = {"kind": "go", "path": r.group("path"), "line": int(r.group("line")) if r.group("line") else None,
+               "recv": sym.group("recv1") or sym.group("recv2"), "name": sym.group("name"), "text": r.group(0)}
+        between = para[prev_end:r.start()]
+        depth = para[:r.start()].count("(") - para[:r.start()].count(")")
+        if depth <= 0 and JOIN_RE.match(between) and JOIN_WORD_RE.search(between):
+            mk["also"].append(ref)
+            prev_end = r.end()
+        else:
+            mk["alt"].append(ref)
+
+
 def markers_above(lines: list[str], start: int) -> list[dict]:
     """Markers in the comment and attribute block right above line `start` (1-based): the `// Go:`
     lines nearest first, then prose from the block's comment text read as one paragraph ("body of
     Go `X`" and "split out of `X`"; a Go line range `file.go:a-b`; "Go `X`" or "Go fooBar")."""
-    go, text = [], []
     i = start - 2
     while i >= 0 and start - 2 - i < 60 and BLOCK_LINE_RE.match(lines[i]):
-        mk = parse_marker(lines[i])
-        if mk:
-            go.append(mk)
-        elif lines[i].lstrip().startswith("//"):
-            text.append(lines[i].lstrip().lstrip("/!").strip())
         i -= 1
-    para = " ".join(reversed(text))
+    block = lines[i + 1: start - 1]
+    go, text = [], []
+    for k, ln in enumerate(block):
+        mk = parse_marker(ln)
+        if mk:
+            para = [GO_MARKER_RE.match(ln).group("rest")]
+            for nxt in block[k + 1:]:
+                if not nxt.lstrip().startswith("//") or PARA_STOP_RE.match(nxt):
+                    break
+                para.append(nxt.lstrip().lstrip("/").strip())
+            paragraph_refs(mk, " ".join(para))
+            go.append(mk)
+        elif ln.lstrip().startswith("//"):
+            text.append(ln.lstrip().lstrip("/!").strip())
+    go.reverse()  # nearest first
+    para = " ".join(text)
     prose = []
     for pm in PROSE_PART_RE.finditer(para):
         prose.append({"kind": "prose", "how": "part", "name": pm.group("a") or pm.group("b")})
@@ -438,6 +474,35 @@ def resolve_marker(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) -> tuple[dic
     return None
 
 
+def compound(fs: list[dict]) -> dict:
+    """One Go "function" standing for several that one Rust function ports (`// Go: a.go:1 A and a.go:9 B`)."""
+    g0 = fs[0]
+    return {"pkg": g0["pkg"], "file": g0["file"], "line": g0["line"], "end": g0["end"], "recv": g0["recv"],
+            "name": " + ".join(g["name"] for g in fs), "cog": sum(g["cog"] for g in fs), "cyc": sum(g["cyc"] for g in fs),
+            "lines": sum(g["lines"] for g in fs), "id": "+".join(g["id"] for g in fs), "closures": []}
+
+
+def resolve_marker_paragraph(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) -> tuple[dict, dict | None] | None:
+    """resolve_marker, plus a `// Go:` paragraph's joined references (a compound) and, when the first
+    reference names nothing at the pin, its other references in order."""
+    hit = resolve_marker(mk, rf, gi, pkgs)
+    if hit is None:
+        for ref in mk.get("alt", []) + mk.get("also", []):
+            hit = resolve_marker(ref, rf, gi, pkgs)
+            if hit:
+                return hit
+        return None
+    if hit[1] is None and mk.get("also"):
+        fs = [hit[0]]
+        for ref in mk["also"]:
+            h = resolve_marker(ref, rf, gi, pkgs)
+            if h and h[1] is None and h[0]["id"] not in {g["id"] for g in fs}:
+                fs.append(h[0])
+        if len(fs) > 1:
+            return compound(fs), None
+    return hit
+
+
 def order_markers(mks: list[dict], rf: dict) -> list[dict]:
     """A `// Go:` marker naming the Rust function first, then the others nearest first, then prose."""
     keys = {k for k, _ in name_keys(rf["fn"], rf["recv"])}
@@ -555,7 +620,7 @@ def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex
         rf["via"] = None
         hit = None
         for mk in mks:
-            hit = resolve_marker(mk, rf, gi, pkgs)
+            hit = resolve_marker_paragraph(mk, rf, gi, pkgs)
             if hit:
                 rf["via"] = mk["kind"]
                 break
@@ -720,7 +785,7 @@ def summarize_rows(rfs, ports, own) -> dict:
         "own_excess_sum": sum(max(0, r["cog"] - OWN_LIMIT) for r in own),
     }
     # the name matcher against the markers: where both place a function, how often they agree
-    mk = [rf for rf in rfs if rf["conf"].startswith("marker") and rf["closure"] is None and not rf["go"]["id"].count(":*")]
+    mk = [rf for rf in rfs if rf["conf"].startswith("marker") and rf["closure"] is None and ":*" not in rf["go"]["id"] and "+" not in rf["go"]["id"]]
     both = [rf for rf in mk if rf["name_match"]]
     s["name_vs_marker"] = {
         "marker_resolved": len(mk),
