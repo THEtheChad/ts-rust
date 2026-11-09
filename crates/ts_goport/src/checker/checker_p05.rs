@@ -833,15 +833,10 @@ impl Checker {
                         &base_type_node.type_arguments().to_vec(),
                         base_type_node,
                     );
-                    let mut all_same = true;
-                    for sig in constructors {
+                    if !constructors.iter().all(|&sig| {
                         let return_type = self.get_return_type_of_signature(sig);
-                        if !self.is_type_identical_to(return_type, base_type) {
-                            all_same = false;
-                            break;
-                        }
-                    }
-                    if !all_same {
+                        self.is_type_identical_to(return_type, base_type)
+                    }) {
                         self.error(
                             base_type_node.expression(),
                             diag::Base_constructors_must_all_have_the_same_return_type,
@@ -871,13 +866,12 @@ impl Checker {
             if !self.is_error_type(t) {
                 if self.is_valid_base_type(t) {
                     let t_symbol = self.ty(t).symbol;
-                    let generic_diag = if t_symbol.is_some()
-                        && self.sym(t_symbol).flags.intersects(SymbolFlags::CLASS)
-                    {
-                        diag::Class_0_incorrectly_implements_class_1_Did_you_mean_to_extend_1_and_inherit_its_members_as_a_subclass
-                    } else {
-                        diag::Class_0_incorrectly_implements_interface_1
-                    };
+                    let generic_diag = if_else(
+                        t_symbol.is_some()
+                            && self.sym(t_symbol).flags.intersects(SymbolFlags::CLASS),
+                        diag::Class_0_incorrectly_implements_class_1_Did_you_mean_to_extend_1_and_inherit_its_members_as_a_subclass,
+                        diag::Class_0_incorrectly_implements_interface_1,
+                    );
                     let class_this_type = self.ty(class_type).as_interface_type().this_type;
                     let base_with_this =
                         self.get_type_with_this_argument(t, class_this_type, false);
