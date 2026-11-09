@@ -974,15 +974,8 @@ impl Checker {
             self.get_string_literal_value_ref(source),
             source_plain,
         )];
-        let matched = if target.go_plain {
-            match_literal_parts_to_template_literal(&source_bytes, &target.texts, &mut spans)
-        } else {
-            match_literal_parts_to_template_literal(
-                &source_bytes,
-                &go_string_bytes_list(&target.texts),
-                &mut spans,
-            )
-        };
+        let matched =
+            match_literal_parts_to_template_literal_target(&source_bytes, target, &mut spans);
         let mut result = TemplateLiteralInferences::with_capacity(spans.len());
         for m in &spans {
             // A string literal is one text part, so every match is inside it.
@@ -1093,15 +1086,8 @@ impl Checker {
             go_string_bytes_list(source_texts)
         };
         let mut spans = LiteralPartMatches::new();
-        let matched = if target.go_plain {
-            match_literal_parts_to_template_literal(&source_bytes, &target.texts, &mut spans)
-        } else {
-            match_literal_parts_to_template_literal(
-                &source_bytes,
-                &go_string_bytes_list(&target.texts),
-                &mut spans,
-            )
-        };
+        let matched =
+            match_literal_parts_to_template_literal_target(&source_bytes, target, &mut spans);
         let mut result = TemplateLiteralInferences::with_capacity(spans.len());
         for m in &spans {
             // Go reads `getSourceText(s)`. That text is a prefix of
@@ -2097,6 +2083,23 @@ fn literal_part_ends_match(
         && source_start_text.len() < target_start_text.len() + target_end_text.len())
         && source_start_text.starts_with(target_start_text)
         && source_end_text.ends_with(target_end_text)
+}
+
+/// `match_literal_parts_to_template_literal` against the texts of `target`, read on their Go
+/// bytes: in place when they have no marker (`go_plain`), else converted.
+fn match_literal_parts_to_template_literal_target<S: AsRef<[u8]>>(
+    source_texts: &[S],
+    target: &TemplateLiteralType,
+    matches: &mut LiteralPartMatches,
+) -> bool {
+    if target.go_plain {
+        return match_literal_parts_to_template_literal(source_texts, &target.texts, matches);
+    }
+    match_literal_parts_to_template_literal(
+        source_texts,
+        &go_string_bytes_list(&target.texts),
+        matches,
+    )
 }
 
 // PORT: perf. The text matching of Go `inferFromLiteralPartsToTemplateLiteral`
