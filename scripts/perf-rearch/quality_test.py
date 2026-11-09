@@ -156,23 +156,64 @@ for name, src in CASES.items():
     if bad:
         fails.append(name)
 
-# `#[cfg(feature = "diagnostics")] mod verify;`: the reads of verify.rs and of its child module are
-# feature-only, those of the shipped sibling are not.
-files = ["crates/x/src/lib.rs", "crates/x/src/verify.rs", "crates/x/src/verify/child.rs", "crates/x/src/plain.rs"]
-srcs = {
-    files[0]: '#[cfg(feature = "diagnostics")]\n#[allow(dead_code)]\npub mod verify;\npub mod plain;\n',
-    files[1]: 'mod child;\nfn f() { let _ = std::env::var_os("GOPORT_FEAT_M"); }\n',
-    files[2]: 'fn g() { let _ = std::env::var_os("GOPORT_FEAT_N"); }\n',
-    files[3]: 'fn h() { let _ = std::env::var_os("GOPORT_SHIP_M"); }\n',
+# Module gating (`propagate_feature_mods`): a file is feature-only only when every declaration that
+# reaches it is gated, or sits in a feature-only file. Each case: {file: source}, and the files expected
+# feature-only (all others shipped). Paths are under crates/x/src/.
+MOD_CASES = {
+    # A gated module and its child are feature-only; a shipped sibling is not.
+    "gated-mod": ({
+        "lib.rs": '/// Doc.\n#[cfg(feature = "diagnostics")]\n#[allow(dead_code)]\npub mod verify;\npub mod plain;\n',
+        "verify.rs": "mod child;\n",
+        "verify/child.rs": "",
+        "plain.rs": "",
+    }, {"verify.rs", "verify/child.rs"}),
+    # Astra's repro: a gated and an ungated declaration of one #[path] file. It is shipped.
+    "shared-path": ({
+        "lib.rs": '#[cfg(feature = "diagnostics")]\n#[path = "shared.rs"]\nmod a;\n#[path = "shared.rs"]\nmod b;\n',
+        "shared.rs": "",
+    }, set()),
+    # #[path] before #[cfg], with a visibility.
+    "path-before-cfg": ({
+        "lib.rs": '#[path = "p.rs"]\n#[cfg(all(feature = "diagnostics", unix))]\npub(crate) mod gated;\n',
+        "p.rs": "",
+    }, {"p.rs"}),
+    # A child of a gated module outside its directory (verify/): #[path] is from verify.rs's directory.
+    "child-elsewhere": ({
+        "lib.rs": '#[cfg(feature = "diagnostics")]\nmod verify;\n',
+        "verify.rs": '#[path = "elsewhere/child.rs"]\nmod child;\n',
+        "elsewhere/child.rs": "",
+    }, {"verify.rs", "elsewhere/child.rs"}),
+    # The child of a gated module that a shipped file also declares stays shipped.
+    "also-shipped": ({
+        "lib.rs": '#[cfg(feature = "diagnostics")]\nmod verify;\nmod both;\n',
+        "verify.rs": '#[path = "both.rs"]\nmod again;\n',
+        "both.rs": "",
+    }, {"verify.rs"}),
+    # A declaration inside a gated inline module, and a not(feature) one.
+    "inline-and-not": ({
+        "lib.rs": '#[cfg(feature = "diagnostics")]\nmod inl {\n    mod deep;\n}\n#[cfg(not(feature = "diagnostics"))]\nmod off;\n',
+        "inl/deep.rs": "",
+        "off.rs": "",
+    }, {"inl/deep.rs"}),
+    # A file that no declaration reaches counts as shipped.
+    "unreached": ({
+        "lib.rs": '#[cfg(feature = "diagnostics")]\nmod verify;\n',
+        "verify.rs": "",
+        "loose.rs": "",
+    }, {"verify.rs"}),
 }
-an = {f: quality.analyze_file(f, s, "prod") for f, s in srcs.items()}
-quality.propagate_feature_mods(an, files)
-got = {f: an[f].get("file_feature") for f in files}
-want = {files[0]: None, files[1]: "diagnostics", files[2]: "diagnostics", files[3]: None}
-ok = got == want
-print(f"{'ok  ' if ok else 'FAIL'} feature-mod" + ("" if ok else f": {got}"))
-if not ok:
-    fails.append("feature-mod")
+for case, (srcs, want) in MOD_CASES.items():
+    files = [f"crates/x/src/{f}" for f in srcs]
+    an = {f: quality.analyze_file(f, s, "prod") for f, s in zip(files, srcs.values())}
+    for a in an.values():
+        a["fkind"] = "prod"
+    quality.propagate_feature_mods(an, files)
+    got = {f.removeprefix("crates/x/src/") for f in files if an[f].get("file_feature")}
+    bad_feat = [f for f in files if an[f].get("file_feature") not in (None, "diagnostics")]
+    ok = got == want and not bad_feat
+    print(f"{'ok  ' if ok else 'FAIL'} mod-{case}" + ("" if ok else f": feature-only {sorted(got)}, want {sorted(want)}"))
+    if not ok:
+        fails.append(f"mod-{case}")
 
 print("SELFTEST OK" if not fails else "SELFTEST FAIL")
 sys.exit(1 if fails else 0)

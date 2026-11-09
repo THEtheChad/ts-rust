@@ -28,7 +28,7 @@ from array import array
 from collections import Counter, defaultdict
 from pathlib import Path
 
-VERSION = 14  # bump when snapshot content changes (invalidates the cache)
+VERSION = 15  # bump when snapshot content changes (invalidates the cache)
 CACHE = Path(os.environ.get("PERF_QUALITY_CACHE", Path.home() / ".cache/perf-rearch/quality"))
 RCA = Path(os.environ.get("PERF_QUALITY_RCA", Path.home() / ".cache/perf-rearch/tools/rca/bin/rust-code-analysis-cli"))
 REPO = Path(__file__).resolve().parents[2]
@@ -296,50 +296,121 @@ def feature_spans(texts: list[str], lines: list[int]):
     return out
 
 
-def feature_mods(texts: list[str]) -> list[tuple[str, str | None, str]]:
-    """(name, #[path], feature) of each `#[cfg(feature = "x")] mod y;` (also inside all(...)): file y and its
-    child modules are compiled only with feature x."""
+def cfg_feature(body: list[str]) -> str | None:
+    """The feature of a positive `cfg(feature = "x")` attribute body (also inside all(...)), else None."""
+    if body[:1] == ["cfg"] and "feature" in body and "not" not in body and "any" not in body:
+        k = body.index("feature") + 2
+        return body[k].strip('"') if k < len(body) else "?"
+    return None
+
+
+def mod_decls(texts: list[str], kinds: list[int]) -> list[tuple[str, str | None, str | None, list[str], int]]:
+    """Each out-of-line `mod name;` of a file: (name, its #[path] or None, the feature of a positive
+    `#[cfg(feature = ...)]` among its attributes (in any order) or None, the names of the inline modules
+    around it, its token index). The caller adds the features of gated items around it (`fspans`)."""
     out = []
     n = len(texts)
+    attrs: list[list[str]] = []
+    inline: list[tuple[str, int]] = []  # (name, index of its closing brace)
     i = 0
     while i < n:
-        if texts[i] == "#" and i + 1 < n and texts[i + 1] == "[":
+        while inline and i > inline[-1][1]:
+            inline.pop()
+        t = texts[i]
+        if t == "#" and i + 1 < n and texts[i + 1] in ("[", "!"):
             body, after = attr_body(texts, i)
-            if body[:1] == ["cfg"] and "feature" in body and "not" not in body and "any" not in body:
-                k = body.index("feature") + 2
-                feat = body[k].strip('"') if k < len(body) else "?"
-                j = after
-                path_attr = None
-                while j < n and texts[j] == "#":
-                    b2, j = attr_body(texts, j)
-                    if b2[:1] == ["path"] and len(b2) >= 3:
-                        path_attr = b2[2].strip('"')
-                if j >= n:
-                    break
-                end = item_end(texts, j)
-                if texts[end] == ";" and end >= 2 and texts[end - 2] == "mod":
-                    out.append((texts[end - 1], path_attr, feat))
+            if texts[i + 1] == "[":
+                attrs.append(body)
             i = after
             continue
+        if t == "pub" and kinds[i] == K_ID:  # visibility keeps the attributes
+            i = match_close(texts, i + 1, "(", ")") + 1 if i + 1 < n and texts[i + 1] == "(" else i + 1
+            continue
+        if t == "mod" and kinds[i] == K_ID and i + 2 < n and kinds[i + 1] == K_ID:
+            if texts[i + 2] == ";":
+                path_attr = next((b[2].strip('"') for b in attrs if b[:1] == ["path"] and len(b) >= 3), None)
+                feat = next((f for f in map(cfg_feature, attrs) if f), None)
+                out.append((texts[i + 1], path_attr, feat, [name for name, _ in inline], i))
+            elif texts[i + 2] == "{":
+                inline.append((texts[i + 1], match_close(texts, i + 2, "{", "}")))
+            attrs = []
+            i += 3
+            continue
+        attrs = []
         i += 1
     return out
 
 
+def resolve_decl(parent: str, name: str, path_attr: str | None, inline: list[str], files: set[str]) -> list[str]:
+    """The file of a `mod name;` in `parent` inside the inline modules `inline` (Rust's lookup: next to a
+    mod-rs file, else in the directory named after the file; `#[path]` from the file's directory, or from
+    the inline modules' directory). Also the other lookup when the first finds nothing."""
+    d = os.path.dirname(parent)
+    base = os.path.basename(parent)
+    mod_rs = base in ("mod.rs", "lib.rs", "main.rs") or base.endswith("_root.rs")
+    first = d if mod_rs else os.path.join(d, base[:-3])
+    if path_attr:
+        p = os.path.normpath(os.path.join(os.path.join(first, *inline) if inline else d, path_attr))
+        return [p] if p in files else []
+    for r in (first, d) if not mod_rs else (first,):
+        r = os.path.join(r, *inline)
+        for c in (f"{r}/{name}.rs", f"{r}/{name}/mod.rs"):
+            if c in files:
+                return [c]
+    return []
+
+
+def module_features(edges: list[tuple[str, str, str | None]], files: list[str]) -> dict[str, str]:
+    """The files compiled only with a cargo feature, and that feature, from the module declarations
+    `edges` (parent, child, feature of the declaration or None). Conservative: a file is shipped when a
+    declaration without a feature in a shipped file reaches it, and when nothing reaches it (crate roots,
+    and declarations this tool cannot resolve); it is feature-only only when every declaration that
+    reaches it is gated or in a feature-only file."""
+    incoming: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
+    for parent, child, feat in edges:
+        if parent != child:
+            incoming[child].append((parent, feat))
+    shipped = {f for f in files if not incoming.get(f)}
+    while True:
+        changed = True
+        while changed:
+            changed = False
+            for child, ins in incoming.items():
+                if child not in shipped and any(f is None and p in shipped for p, f in ins):
+                    shipped.add(child)
+                    changed = True
+        gated: dict[str, str] = {}
+        changed = True
+        while changed:
+            changed = False
+            for child, ins in incoming.items():
+                if child in shipped or child in gated:
+                    continue
+                for p, f in ins:
+                    if (p in shipped and f) or p in gated:
+                        gated[child] = f or gated[p]
+                        changed = True
+                        break
+        # A file that no root reaches (a cycle of #[path] declarations) counts as shipped.
+        stray = [f for f in incoming if f not in shipped and f not in gated]
+        if not stray:
+            return gated
+        shipped.update(stray)
+
+
 def propagate_feature_mods(an: dict, files: list[str]) -> None:
-    """Sets `file_feature` on each file that a `#[cfg(feature = "x")] mod y;` declares, and on the files of
-    its child module directory, so their reads count as feature-only (a file keeps the first feature found)."""
+    """Sets `file_feature` on each file that only feature-gated module declarations reach
+    (`module_features`), so its reads count as feature-only."""
     fileset = set(files)
-    changed = True
-    while changed:
-        changed = False
-        for path, a in list(an.items()):
-            for name, pattr, feat in a.get("fmods", []):
-                for c in resolve_mod(path, name, pattr, fileset):
-                    sub = c[:-3] + "/" if not c.endswith("/mod.rs") else c[: -len("mod.rs")]
-                    for t in [c] + [o for o in files if o.startswith(sub)]:
-                        if an[t].get("file_feature") is None:
-                            an[t]["file_feature"] = feat
-                            changed = True
+    edges = []
+    for path, a in an.items():
+        if a.get("fkind") == "test":
+            continue
+        for name, pattr, feat, inline in a.get("mdecls", []):
+            for c in resolve_decl(path, name, pattr, inline, fileset):
+                edges.append((path, c, feat))
+    for path, feat in module_features(edges, files).items():
+        an[path]["file_feature"] = feat
 
 
 def resolve_mod(parent: str, name: str, path_attr: str | None, files: set[str]) -> list[str]:
@@ -525,12 +596,20 @@ def analyze_file(path: str, src: str, kind: str, spans_hint=None):
         for m in MARKER_RE.finditer(text):
             hyg[s][m.group(1)] += 1
     comment_lines = {ln for ln, _ in comments}
+    # Out-of-line module declarations outside test spans, with the feature of their own cfg or of a gated
+    # item around them.
+    mdecls = []
+    for name, pattr, feat, inline, tok in mod_decls(texts, kinds):
+        if is_test(lines[tok]):
+            continue
+        feat = feat or next((ft for fa, fb, ft in fspans if fa <= lines[tok] <= fb), None)
+        mdecls.append((name, pattr, feat, inline))
     return {
         "kinds": kinds, "texts": texts, "lines": lines, "spans": spans, "mods": mods,
         "nlines": nlines, "code_prod": len(code_lines["prod"]), "code_test": len(code_lines["test"]),
         "comment_lines": len(comment_lines), "hyg": hyg, "allow_lints": allow_lints,
         "env_sites": env_sites, "const_defs": const_defs, "features": features, "fspans": fspans,
-        "fmods": feature_mods(texts), "test_line_set": None,
+        "mdecls": mdecls, "test_line_set": None,
     }
 
 
