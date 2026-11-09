@@ -1292,9 +1292,7 @@ impl BuildInfoEmitSignature {
             list.push(info.signature.clone());
             signature_with_different_options = Some(list);
         } else if self.differs_in_options {
-            let mut list = Vec::with_capacity(1);
-            list.push(self.signature.clone());
-            signature_with_different_options = Some(list);
+            signature_with_different_options = Some(vec![self.signature.clone()]);
         } else {
             signature = self.signature.clone();
         }
