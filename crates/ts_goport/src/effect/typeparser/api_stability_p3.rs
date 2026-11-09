@@ -3134,6 +3134,11 @@ impl ApiStabilityAnalysis {
         node: Node,
         visiting: &mut FxHashMap<Node, bool>,
     ) -> bool {
+        if let Some(hit) = any_structural_type_node_child(node, |child| {
+            self.type_node_mentions_type_parameter(tp, child, visiting)
+        }) {
+            return hit;
+        }
         match node.kind() {
             SyntaxKind::InferType => true,
             SyntaxKind::TypeReference => {
@@ -3147,59 +3152,9 @@ impl ApiStabilityAnalysis {
                 {
                     return true;
                 }
-                for argument in node.type_arguments() {
-                    if self.type_node_mentions_type_parameter(tp, argument, visiting) {
-                        return true;
-                    }
-                }
-                false
-            }
-            SyntaxKind::ArrayType => {
-                self.type_node_mentions_type_parameter(tp, node.element_type(), visiting)
-            }
-            SyntaxKind::TupleType => {
-                for element in node.elements() {
-                    if self.type_node_mentions_type_parameter(tp, element, visiting) {
-                        return true;
-                    }
-                }
-                false
-            }
-            SyntaxKind::NamedTupleMember
-            | SyntaxKind::OptionalType
-            | SyntaxKind::RestType
-            | SyntaxKind::ParenthesizedType
-            | SyntaxKind::TypeOperator => {
-                self.type_node_mentions_type_parameter(tp, node.type_(), visiting)
-            }
-            SyntaxKind::IndexedAccessType => {
-                self.type_node_mentions_type_parameter(tp, node.object_type(), visiting)
-                    || self.type_node_mentions_type_parameter(tp, node.index_type(), visiting)
-            }
-            SyntaxKind::UnionType | SyntaxKind::IntersectionType => {
-                let list = node.types();
-                if list.is_some() {
-                    for member in list.nodes() {
-                        if self.type_node_mentions_type_parameter(tp, member, visiting) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            SyntaxKind::TemplateLiteralType => {
-                let spans = node.template_spans();
-                if spans.is_some() {
-                    for span in spans.nodes() {
-                        if span.is_nil() || span.kind() != SyntaxKind::TemplateLiteralTypeSpan {
-                            continue;
-                        }
-                        if self.type_node_mentions_type_parameter(tp, span.type_(), visiting) {
-                            return true;
-                        }
-                    }
-                }
-                false
+                node.type_arguments()
+                    .into_iter()
+                    .any(|argument| self.type_node_mentions_type_parameter(tp, argument, visiting))
             }
             SyntaxKind::ConditionalType => {
                 self.type_node_mentions_type_parameter(tp, node.check_type(), visiting)
