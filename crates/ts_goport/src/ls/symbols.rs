@@ -908,11 +908,13 @@ pub fn provide_workspace_symbols(
             // The name has no counterpart in the original text, so there is nothing to navigate to.
             continue;
         }
-        let mut symbol = lsproto::SymbolInformation::default();
-        symbol.name = info.name.clone();
-        symbol.kind = get_symbol_kind_from_node(info.declaration);
-        symbol.location = location;
-        symbol.container_name = container_name;
+        let symbol = lsproto::SymbolInformation {
+            name: info.name.clone(),
+            kind: get_symbol_kind_from_node(info.declaration),
+            location,
+            container_name,
+            ..Default::default()
+        };
         symbols.push(symbol);
     }
 

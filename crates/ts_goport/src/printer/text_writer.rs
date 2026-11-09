@@ -307,9 +307,11 @@ pub fn get_indent_string(indent: i32, indent_size: i32) -> String {
 #[must_use]
 pub fn new_text_writer(new_line: &str, indent_size: i32) -> TextWriter {
     let indent_size = if indent_size <= 0 { 4 } else { indent_size };
-    let mut w = TextWriter::default();
-    w.new_line = new_line.to_string();
-    w.indent_size = indent_size;
+    let mut w = TextWriter {
+        new_line: new_line.to_string(),
+        indent_size,
+        ..Default::default()
+    };
     w.clear();
     w
 }

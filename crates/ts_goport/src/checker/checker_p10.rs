@@ -733,8 +733,10 @@ impl Checker {
         let is_instanceof = kind == SyntaxKind::BinaryExpression;
         let has_candidates_out_array = candidates_out_array.is_some();
         let report_errors = !self.is_inference_partially_blocked && !has_candidates_out_array;
-        let mut s = CallState::default();
-        s.node = node;
+        let mut s = CallState {
+            node,
+            ..Default::default()
+        };
         // PORT: Go calls the checker package's `isSuperCall`, which has the same
         // body as `ast.IsSuperCall` (utilities.go:2138): here it is inlined on
         // the kind read above.

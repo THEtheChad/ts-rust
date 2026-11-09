@@ -86,8 +86,10 @@ impl ResolutionState<'_> {
         resolved: Option<Resolved>,
         is_external_library_import: bool,
     ) -> ResolvedModule {
-        let mut resolved_module = ResolvedModule::default();
-        resolved_module.resolution_diagnostics = self.diagnostics.clone();
+        let mut resolved_module = ResolvedModule {
+            resolution_diagnostics: self.diagnostics.clone(),
+            ..Default::default()
+        };
 
         if let Some(resolved) = resolved {
             // ts#64159 (resolver.go:1377): the path of a resolved file.
@@ -112,8 +114,10 @@ impl ResolutionState<'_> {
         resolved: Option<Resolved>,
         primary: bool,
     ) -> ResolvedTypeReferenceDirective {
-        let mut resolved_type_reference_directive = ResolvedTypeReferenceDirective::default();
-        resolved_type_reference_directive.resolution_diagnostics = self.diagnostics.clone();
+        let mut resolved_type_reference_directive = ResolvedTypeReferenceDirective {
+            resolution_diagnostics: self.diagnostics.clone(),
+            ..Default::default()
+        };
 
         if is_resolved(&resolved) {
             let resolved = resolved.unwrap();
