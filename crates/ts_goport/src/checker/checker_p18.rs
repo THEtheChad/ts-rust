@@ -381,16 +381,17 @@ impl Checker {
                         name = declaration_name_to_string(decl_name);
                     }
                     for d in declarations {
-                        let name_of_declaration = get_name_of_declaration(d);
-                        let location = if name_of_declaration.is_some() {
-                            name_of_declaration
-                        } else {
-                            d
-                        };
-                        self.error(location, diag::Duplicate_identifier_0, args![name]);
+                        self.error(
+                            or_else_node(get_name_of_declaration(d), d),
+                            diag::Duplicate_identifier_0,
+                            args![name],
+                        );
                     }
-                    let location = if decl_name.is_some() { decl_name } else { decl };
-                    self.error(location, diag::Duplicate_identifier_0, args![name]);
+                    self.error(
+                        or_else_node(decl_name, decl),
+                        diag::Duplicate_identifier_0,
+                        args![name],
+                    );
                     let late_flags = self.sym(late_symbol).flags;
                     if late_flags.intersects(SymbolFlags::ACCESSOR)
                         && (late_flags & SymbolFlags::ACCESSOR)
