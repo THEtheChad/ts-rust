@@ -613,3 +613,44 @@ plugin. Their markers name that code; the own-code table shows the marker.
   Go `X`", "part of Go `X`") and it is summed back into X's row.
 - **Keep `// Go:` markers on ported functions.** They are what makes this
   ranking reliable: 99% of placements.
+
+## 8. Environment variables of the shipped binaries
+
+Lane Q3 (2026-11-09). A build without the `diagnostics` and `test-hooks`
+cargo features (`--profile goport`, release.yml) reads these environment
+variables and no other `GOPORT_*` or `TSC_RS_*` name. Go's own variables
+(`GOMAXPROCS`, `GODEBUG`, `TZ`, `PATH`, ...) behave as in Go.
+
+**Product options.** They change the output, on purpose (Chad's choices):
+
+| Variable | Default | Effect | Read in |
+|---|---|---|---|
+| `TSC_RS_EFFECT=1` | off | The Effect diagnostics, in the CLI, `--lsp` and `--api` (also `tsc --effect`). Off, the output is Go's. | `effect/mod.rs` `switch_on` |
+| `TSGO_EFFECT_API=1` | off | The Effect rules in a standalone `--api` process too (with the extension on). | `effect/rulerunner.rs` `set_api_process` |
+
+**Tuning knobs.** They change how a run uses the machine, never its output.
+All are read in `src/tuning.rs`, the thread counts once per process; a value
+that does not parse counts as unset.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GOPORT_PARSE_THREADS` | the thread budget (`ThreadBudget::parse_threads`), more for a large program | Parse workers next to the loading thread; `0` parses on the loading thread only. |
+| `GOPORT_RESOLVE_AHEAD_THREADS` | the parse threads of a program that is not large, less 1 | Resolve-ahead workers. |
+| `GOPORT_MAPPED_THREADS` | as many as the parse workers | Workers of content-mapped parse jobs. |
+| `GOPORT_BIND_THREADS` | the thread budget (`ThreadBudget::bind_threads`) | Bind threads; below 2 binds serially. |
+| `GOPORT_EMIT_THREADS` | the cores the checkers leave (physical cores on wide machines), at most `MAX_EMIT_THREADS` | Emit pool threads; `0` emits on the checker threads. |
+| `GOPORT_LAUNCH` | a worker process when the run gets 4 KiB pages | `0`: never a worker (measure CPU and RSS through `wait4`; qemu user mode). `1`: always one. |
+| `GOPORT_THP_GUARD=0` | the guard runs | The THP guard does nothing: transparent huge pages stay on. Other values are the default. |
+| `GOPORT_THP_GUARD_MIB` | 64 | The THP guard's limit in MiB free in 2 MiB blocks. |
+
+**Build time.** `GOPORT_BUILD_VERSION` (`option_env!` in `core.rs`) sets
+`tsc --version` when the binary is built (Go's `-ldflags -X`;
+build-release.sh `RELEASE_VERSION`). It is not read at run time.
+
+**Diagnostics builds only.** `--features diagnostics` adds the verifiers and
+logs (`GOPORT_VERIFY_REUSE*`, `GOPORT_REUSE_STATS`, `GOPORT_FLOWSKIP=verify`,
+`GOPORT_FLOWSKIP_STATS`, `GOPORT_CHECK_VERSION_TABLES`, `GOPORT_TRACE`,
+`GOPORT_THP_GUARD_DEBUG`, the loader's `GOPORT_LOAD_*` and
+`GOPORT_RESOLVE_AHEAD*`, `GOPORT_EMIT_PHASE_TIMES`, ...); `--features
+test-hooks` the `GOPORT_TEST_*` hooks. `quality.sh report --hatches` lists
+them as feature-only.
