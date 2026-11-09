@@ -57,3 +57,46 @@ Not done on purpose: an `if_else(c, a, b)` helper for Go's `core.IfElse` or `mat
 
 | Target | File | Before | After | What | Commit |
 |---|---|---|---|---|---|
+| is_matching_reference_kinds | flow_p2 | 61 | 13 | Not own code: the body of Go `isMatchingReference` (flow.go:1597, 41; the marker sits on the one-line wrapper). Both Go switches stay; the long arms are helpers: `is_matching_identifier_reference` 8 (memo, `#[inline]`), `is_matching_declaration_reference` 4 (chkA, `#[inline]`), `is_matching_property_access_pair` 2 (flowcost1, `#[inline]`), `is_matching_synthetic_property_access` 1 (synthref1), `is_matching_access_reference` 15 (Go's access case). Summed 43 against Go's 41. | 943d84e34 |
+| FileIndex::build | flow_skip | 51 | 0 | Its stages: `Forest::new` 6 (next pointers, nest steps, candidate slots), `Forest::children` 7, `Forest::tour` 14 (Euler tour), `scan_candidates` 6, `Scan::candidate` 4, `Pools::add` 6, `mention_ranges` 4. | c32855f77 |
+| flow_skip_check | flow_skip | 48 | 3 | `FileIndex::refuse_unreached_or_short` 6, `flow_skip_segments` 5, `FileIndex::mentions_any_on_path` 0, `flow_skip_chain_sites_resolved` 11, `FileIndex::segment_after` 8, `flow_skip_candidates_on_segment` 4, `flow_skip_settle_candidate` 4; all `#[inline]` (every tested walk). | 213162066 |
+| Scan::binary | flow_skip | 37 | 10 | `Scan::equality` 5, `Scan::constructor_reference` 6, `Scan::boolean_comparison` 6; event order unchanged. | 47e8538d1 |
+| flow_skip_ref_keys | flow_skip | 37 | 3 | `RefKeys::identifier` 1 and `RefKeys::access` 9 (two copies of the identifier key build were one), `flow_skip_known_identifier` 2 (two copies), `flow_skip_plain_chain` 3. | 280c2ac02 |
+| flow_skip_test_worker | flow_skip | 37 | 7 | `flow_skip_switch_hot_file` 8, `flow_skip_count_walk` 7 (both `#[inline]`), `flow_skip_build_index` 0 (`#[inline(never)]`, once per file). | fe03e4314 |
+| flow_skip_settle, next_of | flow_skip | 25, 22 | 21, 18 | Shared helpers: `static_flow_nodes` (3 copies), `local_flow` (2), `Class::bits` (2), `flow_skip_resolved_symbol` (4); `Scan::typeof_` is `self.t(_, true)`, the same events. | 845813aff |
+
+The flow_skip and flow_p2 splits were written by a helper agent in its own
+worktree from a measured plan (rca on prototypes), then cherry-picked.
+
+## Inlining (`--profile goport`, `nm` sizes, base f59c229c5 against head 552393584)
+
+The hot functions keep their bodies: `is_related_to_ex` 5161 → 5126,
+`structured_type_related_to_worker` 17505 → 16932, `is_simple_type_related_to_kind`
+2674 → 2589 (the primitive rules are inlined), `infer_from_types` unchanged,
+`get_inferred_type` 10448 → 9824, `compare_types` 5836 → 5880. Plain
+`is_deeply_nested_type` (365) is inlined into its callers. New out-of-line
+symbols: `is_matching_property_access_pair` (1246, out of `is_matching_reference_kinds`
+4853 → 3100), `is_type_matched_by_template_literal_target` (1990, template literal
+targets only), `indexed_access_parts` (143, generic mapped targets only),
+`flow_skip_build_index` (`#[inline(never)]` by design). icount shows no cost
+from them.
+
+## icount (`icount_ab.sh`, `--profile goport`, 3 runs per side, interleaved)
+
+Base `f59c229c5`, head `552393584` (all commits above).
+
+| Cell | Base | Head | Δ | Spread b/h |
+|---|---:|---:|---:|---|
+| query noemit-st | 692,234,856 | 692,074,086 | −0.023% | 0.064/0.006% |
+| query emit-st | 728,431,627 | 728,192,310 | −0.033% | 0.013/0.013% |
+| query emit-mt | 825,291,300 | 826,883,234 | +0.193% | 0.337/0.190% |
+| umami noemit-st | 16,550,998,699 | 16,544,019,750 | −0.042% | 0.047/0.004% |
+| umami emit-st | 19,077,100,581 | 19,070,155,680 | −0.036% | 0.001/0.007% |
+| umami emit-mt | 22,339,165,829 | 22,389,850,416 | +0.227% | 0.296/0.271% |
+| hono noemit-st | 2,166,661,714 | 2,166,816,310 | +0.007% | 0.032/0.008% |
+| hono emit-st | 2,877,299,093 | 2,877,582,504 | +0.010% | 0.011/0.013% |
+| hono emit-mt | 3,734,404,083 | 3,733,833,978 | −0.015% | 0.295/0.087% |
+
+No single-threaded cell moves more than 0.05%. The multi-threaded cells are
+within their run-to-run spread (they count waits).
+
