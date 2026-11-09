@@ -6,16 +6,6 @@
 use crate::diagnostics::Message;
 use crate::prelude::*;
 
-// PORT: Go `core.OrElse(node, fallback)` for node handles.
-fn or_else_node(node: Node, fallback: Node) -> Node {
-    if node.is_some() { node } else { fallback }
-}
-
-// PORT: Go `core.OrElse(t, fallback)` for type handles.
-fn or_else_type(t: TypeId, fallback: TypeId) -> TypeId {
-    if t.is_some() { t } else { fallback }
-}
-
 // PORT: the Go closure `visit` inside isSymbolUsedInBinaryExpressionChain.
 fn visit_binary_expression_chain_child(
     c: &mut Checker,
