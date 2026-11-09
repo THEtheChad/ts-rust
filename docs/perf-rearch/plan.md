@@ -1081,3 +1081,16 @@ once a **reconciliation step** is built and tested.
     snapshot, a stand-in npm, no network), key all external inputs, and fail
     closed on unkeyed access. Then run a fresh full gate, which becomes the
     new base.
+- **2026-11-09, P3 merged** (`8a776c935`, branch `t3/perf-rearch`).
+  - **Cause:** a no-op `tsgo -b` started 3 process images: the launcher
+    (THP is off on this VM), a worker, and a re-exec just to set
+    `_RJEM_MALLOC_CONF`. The shipped `build-release.sh` builds that setting
+    in; cargo builds didn't.
+  - **Fix:** `.cargo/config.toml` `[env]` builds the jemalloc config into
+    every build, the re-exec is gone, and a compile-time check guards it.
+  - **Result:** build-warm query is 6.77 ms against Go's 8.30 ms (0.82×).
+    Every other startup cell is ≤ Go.
+  - **Parity:** full run has 0 lost, apart from the 13 intentional not-run
+    names and the known 0018 environmental item.
+  - **Timing window 2 is now ≤ Go in every cell.**
+  - Merged without an Astra round: small, measured, and no output change.
