@@ -16,8 +16,9 @@ An entry excuses its item (parity_compare.py) only while the item fails exactly 
                       outcome (timeout, crash or exit N), panic line, and the sha256 of its stdout
                       and of its written files (not stderr: a Go crash trace holds addresses);
   attempt             the fingerprint every tsc-rs attempt must have: outcome, exit code (negative:
-                      a signal; "timeout"), sha256 of stdout, of stderr and of the written files, and
-                      whether the inputs stayed intact;
+                      a signal; "timeout"), sha256 of stdout, of stderr in its site form
+                      (`stderrSite`, below) and of the written files, and whether the inputs stayed
+                      intact;
   attempts            the attempts a run of each mode makes (by label: run1, run1 retry, run2,
                       confirm), "full" always and "quick" when the quick manifest has the item;
   reason, evidence    why it is known and which run recorded the evidence.
@@ -26,7 +27,21 @@ attempt that differs from the others (nondeterminism is never excused), and an i
 now (the entry is stale and must be removed). Entries exist for the fuzz and corpus tiers only, the
 tiers whose rows carry per-attempt evidence.
 
-The file is validated strictly: the top level is exactly {about, version: 2, items}, every entry has
+The site form of stderr (version 3, lane H6): where Go prints its goroutine trace after a panic that
+nothing recovers (or a fatal runtime error), tsc-rs prints one port-site line, `<TAB><file>:<line>`
+(crates/ts_goport/src/gopanic.rs: print_go_panic, go_fatal_newosproc), whose Rust line number moves
+with any edit above the call. stderr_site() replaces that line number, and nothing else, by `<line>`.
+It applies only when stderr ends with the Go panic block exactly as gopanic.rs prints it: a line that
+starts `panic: ` or `fatal error: `, any non-blank lines after it (more panic lines, the signal line),
+one blank line, then the site line `<TAB><path>.rs:<digits>` as the last line. Any other stderr is
+hashed as it is. The file path, the panic lines, the signal line, every other byte and the exit code
+stay pinned: a crash at another line of the same file matches its entry, a crash in another file or
+with another panic line does not. parity_fuzz.py records the form on every tsc-rs attempt
+(`stderrSite`, beside the raw `stderr` hash), and both regen (pinning) and match (comparing) read
+that field, so pins and runs use the same function. Version 2 pinned the raw stderr hash under
+`stderr`: a version 2 file is invalid, and a row without `stderrSite` is never pinned or matched.
+
+The file is validated strictly: the top level is exactly {about, version: 3, items}, every entry has
 exactly the keys above with the right types, and an item id must name a fuzz or corpus item. A key
 anywhere else (an entry beside `items`, a typo, a field the matcher does not know) is an error, and
 compare fails on an invalid file. parity_compare.py reads the file at the accepted ref
@@ -59,13 +74,16 @@ from parity_modes import ArtifactError, _exact_keys, working_manifest  # noqa: E
 
 GRANDFATHERED = HERE / 'parity-grandfathered.json'
 REPO_PATH = 'scripts/perf-rearch/parity-grandfathered.json'
-VERSION = 2
+VERSION = 3  # 3: attempt.stderrSite, the site form of stderr (lane H6); 2: the raw stderr hash
+SITE_LINE = b'<line>'
+# The Go panic block at the end of tsc-rs's stderr (see the top comment). Only group `line` is replaced.
+SITE = re.compile(rb'^(?:panic: |fatal error: )[^\n]*\n(?:[^\n]+\n)*\n\t[A-Za-z0-9_./-]+\.rs:(?P<line>[0-9]+)\n\Z', re.M)
 ITEM = re.compile(r'^(fuzz/\d+:\d+|corpus/[^\s]+)$')
 HEX16 = re.compile(r'^[0-9a-f]{16}$')
 ENTRY = {'status': str, 'rsFailure': (str, type(None)), 'reason': str, 'input': str, 'go': dict, 'attempt': dict, 'attempts': dict,
          'evidence': str}
 GO = {'status': str, 'outcome': str, 'panic': (str, type(None)), 'stdout': str, 'written': str}
-ATTEMPT = {'outcome': str, 'code': (int, str), 'stdout': str, 'stderr': str, 'written': str, 'inputs': str}
+ATTEMPT = {'outcome': str, 'code': (int, str), 'stdout': str, 'stderrSite': str, 'written': str, 'inputs': str}
 LABEL = re.compile(r'^(run\d+( retry)?|confirm)$')
 
 
@@ -100,7 +118,7 @@ def validate(data, origin):
         if not e['reason'].strip() or not HEX16.match(e['input']):
             raise ArtifactError(f'{where}: an empty reason or a malformed input identity')
         a = e['attempt']
-        if not all(HEX16.match(a[k]) for k in ('stdout', 'stderr', 'written')) or a['inputs'] != 'intact':
+        if not all(HEX16.match(a[k]) for k in ('stdout', 'stderrSite', 'written')) or a['inputs'] != 'intact':
             raise ArtifactError(f'{where}.attempt: malformed fingerprints, or inputs that did not stay intact')
         if not e['attempts'] or set(e['attempts']) - {'quick', 'full'} or 'full' not in e['attempts']:
             raise ArtifactError(f'{where}.attempts: must name the full mode, and only quick and full')
@@ -116,6 +134,18 @@ def load(text, origin):
     except ValueError as e:
         raise ArtifactError(f'{origin}: not JSON: {e}') from None
     return validate(data, origin)
+
+
+def stderr_site(stderr):
+    """tsc-rs's stderr (bytes) with the line number of its port-site line replaced by SITE_LINE, when it
+    ends with the Go panic block of gopanic.rs; else unchanged (see the top comment)."""
+    m = SITE.search(stderr)
+    return stderr if m is None else stderr[:m.start('line')] + SITE_LINE + stderr[m.end('line'):]
+
+
+def stderr_site_hash(stderr):
+    """An attempt's `stderrSite`: sha256 (16 hex digits) of stderr_site(stderr)."""
+    return hashlib.sha256(stderr_site(stderr)).hexdigest()[:16]
 
 
 def fingerprint(a):
@@ -164,6 +194,8 @@ def _entry(item, row, quick_row, reason, evidence):
     for k in ('input', 'go', 'attempts'):
         if k not in row:
             raise ArtifactError(f'{item}: the evidence row has no {k} (made by a harness before lane H4)')
+    if not all('stderrSite' in a for a in [*row['attempts'], *(quick_row or {}).get('attempts', [])]):
+        raise ArtifactError(f'{item}: an evidence attempt has no stderrSite (made by a harness before lane H6)')
     prints = [fingerprint(a) for a in row['attempts']] + [fingerprint(a) for a in (quick_row or {}).get('attempts', [])]
     if any(p != prints[0] for p in prints):
         raise ArtifactError(f'{item}: its attempts differ ({prints}): nondeterministic, not pinned')

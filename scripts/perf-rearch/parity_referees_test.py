@@ -23,6 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import parity_fuzz  # noqa: E402
+import parity_grandfather  # noqa: E402
 import parity_referees as R  # noqa: E402
 from oracle import Result  # noqa: E402
 
@@ -487,7 +488,7 @@ def accepted_dir(root, manifest=None, grand=None):
     m = json.loads((HERE / 'parity-quick-manifest.json').read_text())
     m.update({'cli': ['cli/query/core/noemit'], 'lsp': [], 'fuzz': {'seed': '1', 'count': 1500}}, **(manifest or {}))
     (d / 'parity-quick-manifest.json').write_text(json.dumps(m))
-    (d / 'parity-grandfathered.json').write_text(json.dumps({'about': 'selftest', 'version': 2, 'items': grand or {}}))
+    (d / 'parity-grandfathered.json').write_text(json.dumps({'about': 'selftest', 'version': parity_grandfather.VERSION, 'items': grand or {}}))
     return d
 
 
