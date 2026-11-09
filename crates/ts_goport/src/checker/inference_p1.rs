@@ -1991,6 +1991,41 @@ impl Checker {
         }
     }
 
+    /// The pair test of `infer_from_object_types`, with its answer kept for the rest of the inference.
+    ///
+    /// PORT: perf. Go N' (ts#64553) keys `invokeOnce` by the priority and
+    /// the variance too, so one inference can run this action again for a
+    /// pair it has seen. The first `types_definitely_unrelated` of a pair
+    /// runs here as in Go; a later one in the same inference can take the
+    /// kept answer. Go's later call gives the same answer and makes
+    /// nothing: the properties, the property types and the union and
+    /// intersection properties that it reads were made and cached by the
+    /// first call, and the type resolutions under way are the same at
+    /// every call of one inference (a nested inference has its own
+    /// state).
+    #[inline]
+    fn types_definitely_unrelated_in_inference(
+        &mut self,
+        n: &mut InferenceState,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let pair = (u64::from(source.0) << 32) | u64::from(target.0);
+        let generation = n.generation;
+        let cache = n.definitely_unrelated.get_or_insert_with(Default::default);
+        match cache.get(pair, generation) {
+            Some(unrelated) => unrelated,
+            None => {
+                let unrelated = self.types_definitely_unrelated(source, target);
+                n.definitely_unrelated
+                    .as_mut()
+                    .unwrap()
+                    .put(pair, generation, unrelated);
+                unrelated
+            }
+        }
+    }
+
     // Go: checker/inference.go:710 inferFromObjectTypes
     pub fn infer_from_object_types(
         &mut self,
@@ -2031,30 +2066,7 @@ impl Checker {
             }
         }
         // Infer from the members of source and target only if the two types are possibly related
-        // PORT: perf. Go N' (ts#64553) keys `invokeOnce` by the priority and
-        // the variance too, so one inference can run this action again for a
-        // pair it has seen. The first `types_definitely_unrelated` of a pair
-        // runs here as in Go; a later one in the same inference can take the
-        // kept answer. Go's later call gives the same answer and makes
-        // nothing: the properties, the property types and the union and
-        // intersection properties that it reads were made and cached by the
-        // first call, and the type resolutions under way are the same at
-        // every call of one inference (a nested inference has its own
-        // state).
-        let pair = (u64::from(source.0) << 32) | u64::from(target.0);
-        let generation = n.generation;
-        let cache = n.definitely_unrelated.get_or_insert_with(Default::default);
-        let unrelated = match cache.get(pair, generation) {
-            Some(unrelated) => unrelated,
-            None => {
-                let unrelated = self.types_definitely_unrelated(source, target);
-                n.definitely_unrelated
-                    .as_mut()
-                    .unwrap()
-                    .put(pair, generation, unrelated);
-                unrelated
-            }
-        };
+        let unrelated = self.types_definitely_unrelated_in_inference(n, source, target);
         if unrelated {
             return;
         }
@@ -2133,26 +2145,25 @@ impl Checker {
                             // Middle of target is [...T, ...U] and source is tuple type
                             let target_info =
                                 self.get_inference_info_for_type(n, element_types[sl]);
-                            if let Some(target_info) = target_info {
-                                let ctx = n.inferences;
-                                let implied_arity = self.inference_context(ctx).inferences
-                                    [target_info]
-                                    .implied_arity;
-                                if implied_arity >= 0 {
-                                    // Infer slices from source based on implied arity of T.
-                                    let slice = self.slice_tuple_type(
-                                        source,
-                                        start_length,
-                                        end_length + source_arity - implied_arity,
-                                    );
-                                    self.infer_from_types(n, slice, element_types[sl]);
-                                    let slice = self.slice_tuple_type(
-                                        source,
-                                        start_length + implied_arity,
-                                        end_length,
-                                    );
-                                    self.infer_from_types(n, slice, element_types[sl + 1]);
-                                }
+                            let implied_arity = target_info.map(|info| {
+                                self.inference_context(n.inferences).inferences[info].implied_arity
+                            });
+                            if let Some(implied_arity) = implied_arity
+                                && implied_arity >= 0
+                            {
+                                // Infer slices from source based on implied arity of T.
+                                let slice = self.slice_tuple_type(
+                                    source,
+                                    start_length,
+                                    end_length + source_arity - implied_arity,
+                                );
+                                self.infer_from_types(n, slice, element_types[sl]);
+                                let slice = self.slice_tuple_type(
+                                    source,
+                                    start_length + implied_arity,
+                                    end_length,
+                                );
+                                self.infer_from_types(n, slice, element_types[sl + 1]);
                             }
                         } else if target_element_flags(self, sl).intersects(ElementFlags::VARIADIC)
                             && target_element_flags(self, sl + 1).intersects(ElementFlags::REST)
