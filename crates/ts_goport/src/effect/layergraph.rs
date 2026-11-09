@@ -219,271 +219,309 @@ pub fn extract_layer_graph(
     sf: Node,
     opts: ExtractLayerGraphOptions,
 ) -> Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo> {
-    let mut g: Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo> = Graph::new();
-    let mut node_to_graph_index: FxHashMap<Node, NodeIndex> = FxHashMap::default();
-    let mut visited_nodes: FxHashMap<Node, bool> = FxHashMap::default();
-    let mut node_in_pipe_context: FxHashMap<Node, bool> = FxHashMap::default();
-    let mut depth_budget: FxHashMap<Node, i32> = FxHashMap::default();
-
     // Resolve the Layer module import name for ExplodeOnlyLayerCalls checks.
-    let mut layer_module_name = String::new();
-    if !opts.skip_explode {
-        layer_module_name = find_layer_module_name(sf);
-    }
-
+    let layer_module_name = if opts.skip_explode {
+        String::new()
+    } else {
+        find_layer_module_name(sf)
+    };
+    let mut ex = LayerGraphExtractor {
+        sf,
+        opts,
+        layer_module_name,
+        g: Graph::new(),
+        node_to_graph_index: FxHashMap::default(),
+        visited_nodes: FxHashMap::default(),
+        node_in_pipe_context: FxHashMap::default(),
+        depth_budget: FxHashMap::default(),
+        stack: Vec::new(),
+    };
     // Initialize the work stack with the root nodes.
-    let mut stack: Vec<WorkItem> = Vec::new();
-
-    fn append_node_to_visit(
-        depth_budget: &mut FxHashMap<Node, i32>,
-        stack: &mut Vec<WorkItem>,
-        n: Node,
-        depth: i32,
-    ) {
-        depth_budget.insert(n, depth);
-        stack.push(WorkItem { node: n, depth });
-    }
     for &node in nodes {
-        append_node_to_visit(
-            &mut depth_budget,
-            &mut stack,
-            node,
-            opts.follow_symbols_depth,
-        );
+        ex.append_node_to_visit(node, opts.follow_symbols_depth);
+    }
+    while let Some(item) = ex.stack.pop() {
+        // Pop from the stack (LIFO).
+        ex.visit(tp, item.node);
+    }
+    ex.g
+}
+
+/// The DFS state of [`extract_layer_graph`]: the graph being built and the
+/// work stack, with the per-node bookkeeping of Go's closure variables.
+struct LayerGraphExtractor {
+    sf: Node,
+    opts: ExtractLayerGraphOptions,
+    layer_module_name: String,
+    g: Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo>,
+    node_to_graph_index: FxHashMap<Node, NodeIndex>,
+    visited_nodes: FxHashMap<Node, bool>,
+    node_in_pipe_context: FxHashMap<Node, bool>,
+    depth_budget: FxHashMap<Node, i32>,
+    stack: Vec<WorkItem>,
+}
+
+impl LayerGraphExtractor {
+    /// Go `appendNodeToVisit`: records the depth budget of `n` and pushes it.
+    fn append_node_to_visit(&mut self, n: Node, depth: i32) {
+        self.depth_budget.insert(n, depth);
+        self.stack.push(WorkItem { node: n, depth });
     }
 
-    fn add_node(
-        g: &mut Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo>,
-        node_to_graph_index: &mut FxHashMap<Node, NodeIndex>,
-        n: Node,
-        info: LayerGraphNodeInfo,
-    ) -> NodeIndex {
-        let idx = g.add_node(info);
-        node_to_graph_index.insert(n, idx);
+    /// Go `addNode`: adds a graph node for `n`.
+    fn add_node(&mut self, n: Node, info: LayerGraphNodeInfo) -> NodeIndex {
+        let idx = self.g.add_node(info);
+        self.node_to_graph_index.insert(n, idx);
         idx
     }
 
-    while let Some(item) = stack.pop() {
-        // Pop from the stack (LIFO).
-        let current = item.node;
-        let current_depth = depth_budget.get(&current).copied().unwrap_or(0);
-        let in_pipe = |m: &FxHashMap<Node, bool>| m.get(&current).copied().unwrap_or(false);
-        let visited = visited_nodes.get(&current).copied().unwrap_or(false);
+    /// The node info of `current`, in its pipe context.
+    fn node_info(&self, tp: &mut TypeParser<'_>, current: Node) -> LayerGraphNodeInfo {
+        let in_pipe = self
+            .node_in_pipe_context
+            .get(&current)
+            .copied()
+            .unwrap_or(false);
+        extract_node_info(tp, current, self.sf, in_pipe)
+    }
 
-        // Case 1: Pipe detection
-        if !opts.skip_explode
-            && let Some(pipe_result) = tp.parse_pipe_call(current)
-        {
-            if !visited {
-                // First pass: push self back, then subject and args.
-                append_node_to_visit(&mut depth_budget, &mut stack, current, current_depth);
-                append_node_to_visit(
-                    &mut depth_budget,
-                    &mut stack,
-                    pipe_result.subject,
-                    current_depth,
-                );
-                for &arg in &pipe_result.args {
-                    append_node_to_visit(&mut depth_budget, &mut stack, arg, current_depth);
-                    node_in_pipe_context.insert(arg, true);
-                }
-                visited_nodes.insert(current, true);
-            } else {
-                // Second pass: collect child graph indices.
-                let mut all_children: Vec<Node> = Vec::with_capacity(1 + pipe_result.args.len());
-                all_children.push(pipe_result.subject);
-                all_children.extend(pipe_result.args.iter().copied());
-
-                let child_indices = collect_child_indices(&all_children, &node_to_graph_index, &g);
-
-                if child_indices.len() == all_children.len() {
-                    // All members are graph nodes — link them sequentially.
-                    let mut last_idx: NodeIndex = 0;
-                    for (i, &child_idx) in child_indices.iter().enumerate() {
-                        if i > 0 {
-                            g.add_edge(
-                                child_idx,
-                                last_idx,
-                                LayerGraphEdgeInfo {
-                                    relationship: EdgeRelationship::Pipe,
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                        last_idx = child_idx;
-                    }
-                    // Add a node for the pipe call itself, linking to the last child.
-                    let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                    let pipe_idx = add_node(&mut g, &mut node_to_graph_index, current, info);
-                    g.add_edge(
-                        pipe_idx,
-                        last_idx,
-                        LayerGraphEdgeInfo {
-                            relationship: EdgeRelationship::Pipe,
-                            ..Default::default()
-                        },
-                    );
-                } else {
-                    // Not all children are graph nodes — remove partial children and try as leaf.
-                    remove_partial_children(&all_children, &mut node_to_graph_index, &mut g);
-                    let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                    if info.layer_type.is_some() {
-                        add_node(&mut g, &mut node_to_graph_index, current, info);
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Case 2: Call expression
-        if !opts.skip_explode && current.kind() == SyntaxKind::CallExpression {
-            let call_expr = current;
-            let mut should_explode = !opts.explode_only_layer_calls;
-            if opts.explode_only_layer_calls && is_layer_module_call(call_expr, &layer_module_name)
-            {
-                should_explode = true;
-            }
-            if should_explode {
-                let args: Vec<Node> = call_expr.arguments().to_vec();
-                if !visited {
-                    // First pass: push self back, then all arguments.
-                    append_node_to_visit(&mut depth_budget, &mut stack, current, current_depth);
-                    for &arg in &args {
-                        append_node_to_visit(&mut depth_budget, &mut stack, arg, current_depth);
-                    }
-                    visited_nodes.insert(current, true);
-                } else {
-                    // Second pass: collect child graph indices.
-                    let child_indices = collect_child_indices(&args, &node_to_graph_index, &g);
-
-                    if child_indices.len() == args.len() {
-                        // All arguments are graph nodes.
-                        let info =
-                            extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                        let call_idx = add_node(&mut g, &mut node_to_graph_index, current, info);
-                        for (i, &child_idx) in child_indices.iter().enumerate() {
-                            g.add_edge(
-                                call_idx,
-                                child_idx,
-                                LayerGraphEdgeInfo {
-                                    relationship: EdgeRelationship::Call,
-                                    argument_index: i as i32,
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                    } else {
-                        // Not all arguments are graph nodes.
-                        remove_partial_children(&args, &mut node_to_graph_index, &mut g);
-                        let info =
-                            extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                        if info.layer_type.is_some() {
-                            add_node(&mut g, &mut node_to_graph_index, current, info);
-                        }
-                    }
-                }
-                continue;
-            }
-        }
-
-        // Case 3: Array literal (when ArrayLiteralAsMerge is enabled)
-        if !opts.skip_explode
-            && opts.array_literal_as_merge
-            && current.kind() == SyntaxKind::ArrayLiteralExpression
-        {
-            let array_expr = current;
-            let elements: Vec<Node> = array_expr.elements().to_vec();
-            if !visited {
-                // First pass: push self back, then all elements.
-                append_node_to_visit(&mut depth_budget, &mut stack, current, current_depth);
-                for &elem in &elements {
-                    append_node_to_visit(&mut depth_budget, &mut stack, elem, current_depth);
-                }
-                visited_nodes.insert(current, true);
-            } else {
-                // Second pass: collect child graph indices (doesn't require ALL).
-                let child_indices = collect_child_indices(&elements, &node_to_graph_index, &g);
-                if !child_indices.is_empty() {
-                    let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                    let array_idx = add_node(&mut g, &mut node_to_graph_index, current, info);
-                    for (i, &child_idx) in child_indices.iter().enumerate() {
-                        g.add_edge(
-                            array_idx,
-                            child_idx,
-                            LayerGraphEdgeInfo {
-                                relationship: EdgeRelationship::ArrayLiteral,
-                                index: i as i32,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Case 4: Symbol following
-        if current_depth > 0 && is_simple_identifier(current) {
-            let mut sym = tp.get_symbol_at_location(current);
-            if sym.is_some() {
-                if tp.checker.sym(sym).flags.intersects(SymbolFlags::ALIAS) {
-                    let resolved = tp.checker.skip_alias(sym);
-                    if resolved.is_some() {
-                        sym = resolved;
-                    }
-                }
-                if tp.checker.sym(sym).declarations.len() == 1 {
-                    let decl = tp.checker.sym(sym).declarations[0];
-                    let decl_node = get_adjusted_node(decl);
-                    if decl_node.is_some() {
-                        if !visited {
-                            // First pass: push self back, push declaration with decremented depth.
-                            append_node_to_visit(
-                                &mut depth_budget,
-                                &mut stack,
-                                current,
-                                current_depth,
-                            );
-                            append_node_to_visit(
-                                &mut depth_budget,
-                                &mut stack,
-                                decl_node,
-                                current_depth - 1,
-                            );
-                            visited_nodes.insert(current, true);
-                            continue;
-                        }
-                        // Second pass: link to declaration if it's in the graph.
-                        if let Some(&child_idx) = node_to_graph_index.get(&decl_node) {
-                            let info =
-                                extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                            let ident_idx =
-                                add_node(&mut g, &mut node_to_graph_index, current, info);
-                            g.add_edge(
-                                ident_idx,
-                                child_idx,
-                                LayerGraphEdgeInfo {
-                                    relationship: EdgeRelationship::Symbol,
-                                    ..Default::default()
-                                },
-                            );
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Case 5: Leaf node (base case)
-        if is_expression(current) {
-            let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-            if info.layer_type.is_some() {
-                add_node(&mut g, &mut node_to_graph_index, current, info);
-            }
+    /// Adds `current` as a leaf when it has a layer type.
+    fn add_leaf_if_layer(&mut self, tp: &mut TypeParser<'_>, current: Node) {
+        let info = self.node_info(tp, current);
+        if info.layer_type.is_some() {
+            self.add_node(current, info);
         }
     }
 
-    g
+    /// First pass of a composite node: push `current` back, then `children`
+    /// at the same depth, and mark it visited.
+    fn push_composite(&mut self, current: Node, depth: i32, children: &[Node]) {
+        self.append_node_to_visit(current, depth);
+        for &child in children {
+            self.append_node_to_visit(child, depth);
+        }
+        self.visited_nodes.insert(current, true);
+    }
+
+    /// One popped work item: the first case that applies, in Go's order.
+    fn visit(&mut self, tp: &mut TypeParser<'_>, current: Node) {
+        let depth = self.depth_budget.get(&current).copied().unwrap_or(0);
+        let visited = self.visited_nodes.get(&current).copied().unwrap_or(false);
+        if !self.opts.skip_explode {
+            // Case 1: Pipe detection
+            if let Some(pipe_result) = tp.parse_pipe_call(current) {
+                self.visit_pipe(tp, current, depth, visited, &pipe_result);
+                return;
+            }
+            // Case 2: Call expression
+            if current.kind() == SyntaxKind::CallExpression && self.should_explode_call(current) {
+                self.visit_call(tp, current, depth, visited);
+                return;
+            }
+            // Case 3: Array literal (when ArrayLiteralAsMerge is enabled)
+            if self.opts.array_literal_as_merge
+                && current.kind() == SyntaxKind::ArrayLiteralExpression
+            {
+                self.visit_array_literal(tp, current, depth, visited);
+                return;
+            }
+        }
+        // Case 4: Symbol following
+        if depth > 0
+            && is_simple_identifier(current)
+            && self.visit_symbol(tp, current, depth, visited)
+        {
+            return;
+        }
+        // Case 5: Leaf node (base case)
+        if is_expression(current) {
+            self.add_leaf_if_layer(tp, current);
+        }
+    }
+
+    /// Case 1: a pipe call. The second pass links the subject and the args
+    /// in sequence and adds the pipe call after the last one.
+    fn visit_pipe(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        current: Node,
+        depth: i32,
+        visited: bool,
+        pipe_result: &ParsedPipeCallResult,
+    ) {
+        if !visited {
+            // First pass: push self back, then subject and args.
+            self.append_node_to_visit(current, depth);
+            self.append_node_to_visit(pipe_result.subject, depth);
+            for &arg in &pipe_result.args {
+                self.append_node_to_visit(arg, depth);
+                self.node_in_pipe_context.insert(arg, true);
+            }
+            self.visited_nodes.insert(current, true);
+            return;
+        }
+        // Second pass: collect child graph indices.
+        let mut all_children: Vec<Node> = Vec::with_capacity(1 + pipe_result.args.len());
+        all_children.push(pipe_result.subject);
+        all_children.extend(pipe_result.args.iter().copied());
+        let child_indices =
+            collect_child_indices(&all_children, &self.node_to_graph_index, &self.g);
+        if child_indices.len() != all_children.len() {
+            // Not all children are graph nodes — remove partial children and try as leaf.
+            remove_partial_children(&all_children, &mut self.node_to_graph_index, &mut self.g);
+            self.add_leaf_if_layer(tp, current);
+            return;
+        }
+        // All members are graph nodes — link them sequentially.
+        let pipe_edge = || LayerGraphEdgeInfo {
+            relationship: EdgeRelationship::Pipe,
+            ..Default::default()
+        };
+        let mut last_idx: NodeIndex = 0;
+        for (i, &child_idx) in child_indices.iter().enumerate() {
+            if i > 0 {
+                self.g.add_edge(child_idx, last_idx, pipe_edge());
+            }
+            last_idx = child_idx;
+        }
+        // Add a node for the pipe call itself, linking to the last child.
+        let info = self.node_info(tp, current);
+        let pipe_idx = self.add_node(current, info);
+        self.g.add_edge(pipe_idx, last_idx, pipe_edge());
+    }
+
+    /// Whether case 2 explodes the call: always, unless only Layer module
+    /// calls explode.
+    fn should_explode_call(&self, call_expr: Node) -> bool {
+        !self.opts.explode_only_layer_calls
+            || is_layer_module_call(call_expr, &self.layer_module_name)
+    }
+
+    /// Case 2: a call expression. The second pass links the call to every
+    /// argument when all of them are graph nodes.
+    fn visit_call(&mut self, tp: &mut TypeParser<'_>, current: Node, depth: i32, visited: bool) {
+        let args: Vec<Node> = current.arguments().to_vec();
+        if !visited {
+            // First pass: push self back, then all arguments.
+            self.push_composite(current, depth, &args);
+            return;
+        }
+        // Second pass: collect child graph indices.
+        let child_indices = collect_child_indices(&args, &self.node_to_graph_index, &self.g);
+        if child_indices.len() != args.len() {
+            // Not all arguments are graph nodes.
+            remove_partial_children(&args, &mut self.node_to_graph_index, &mut self.g);
+            self.add_leaf_if_layer(tp, current);
+            return;
+        }
+        // All arguments are graph nodes.
+        let info = self.node_info(tp, current);
+        let call_idx = self.add_node(current, info);
+        for (i, &child_idx) in child_indices.iter().enumerate() {
+            self.g.add_edge(
+                call_idx,
+                child_idx,
+                LayerGraphEdgeInfo {
+                    relationship: EdgeRelationship::Call,
+                    argument_index: i as i32,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Case 3: an array literal as an implicit merge. The second pass links
+    /// the elements that are graph nodes (it doesn't require all).
+    fn visit_array_literal(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        current: Node,
+        depth: i32,
+        visited: bool,
+    ) {
+        let elements: Vec<Node> = current.elements().to_vec();
+        if !visited {
+            // First pass: push self back, then all elements.
+            self.push_composite(current, depth, &elements);
+            return;
+        }
+        // Second pass: collect child graph indices (doesn't require ALL).
+        let child_indices = collect_child_indices(&elements, &self.node_to_graph_index, &self.g);
+        if child_indices.is_empty() {
+            return;
+        }
+        let info = self.node_info(tp, current);
+        let array_idx = self.add_node(current, info);
+        for (i, &child_idx) in child_indices.iter().enumerate() {
+            self.g.add_edge(
+                array_idx,
+                child_idx,
+                LayerGraphEdgeInfo {
+                    relationship: EdgeRelationship::ArrayLiteral,
+                    index: i as i32,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Case 4: an identifier with depth budget left, followed to its single
+    /// declaration. Returns false when the case doesn't apply, so the node
+    /// falls through to the leaf case.
+    fn visit_symbol(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        current: Node,
+        depth: i32,
+        visited: bool,
+    ) -> bool {
+        let Some(decl_node) = single_declaration_of_identifier(tp, current) else {
+            return false;
+        };
+        if !visited {
+            // First pass: push self back, push declaration with decremented depth.
+            self.append_node_to_visit(current, depth);
+            self.append_node_to_visit(decl_node, depth - 1);
+            self.visited_nodes.insert(current, true);
+            return true;
+        }
+        // Second pass: link to declaration if it's in the graph.
+        let Some(&child_idx) = self.node_to_graph_index.get(&decl_node) else {
+            return false;
+        };
+        let info = self.node_info(tp, current);
+        let ident_idx = self.add_node(current, info);
+        self.g.add_edge(
+            ident_idx,
+            child_idx,
+            LayerGraphEdgeInfo {
+                relationship: EdgeRelationship::Symbol,
+                ..Default::default()
+            },
+        );
+        true
+    }
+}
+
+/// The adjusted declaration node of the symbol at `ident` (through an
+/// alias), when the symbol has exactly one declaration.
+fn single_declaration_of_identifier(tp: &mut TypeParser<'_>, ident: Node) -> Option<Node> {
+    let mut sym = tp.get_symbol_at_location(ident);
+    if !sym.is_some() {
+        return None;
+    }
+    if tp.checker.sym(sym).flags.intersects(SymbolFlags::ALIAS) {
+        let resolved = tp.checker.skip_alias(sym);
+        if resolved.is_some() {
+            sym = resolved;
+        }
+    }
+    let decls = &tp.checker.sym(sym).declarations;
+    if decls.len() != 1 {
+        return None;
+    }
+    let decl_node = get_adjusted_node(decls[0]);
+    decl_node.is_some().then_some(decl_node)
 }
 
 // Go: extractNodeInfo
