@@ -754,24 +754,8 @@ pub fn extract_outline_graph(
     // PORT: Go walks this map in random order before the sort below; the
     // port keeps insertion order, which is one of Go's orders.
     let mut providers: IndexMap<TypeId, Vec<NodeIndex>> = IndexMap::new();
-    // Track seen symbols for deduplication.
-    let mut known_symbols: FxHashSet<SymbolId> = FxHashSet::default();
-
     // Step 1: Get leaf nodes (nodes with no outgoing edges) and deduplicate by symbol.
-    let leaf_nodes: Vec<LayerGraphNodeInfo> = layer_graph
-        .externals(Direction::Outgoing)
-        .map(|(_, n)| n.clone())
-        .collect();
-    let mut deduped_leaf_nodes: Vec<LayerGraphNodeInfo> = Vec::new();
-    for leaf_node in leaf_nodes {
-        let sym = tp.get_symbol_at_location(leaf_node.node);
-        if sym.is_nil() {
-            deduped_leaf_nodes.push(leaf_node);
-        } else if !known_symbols.contains(&sym) {
-            deduped_leaf_nodes.push(leaf_node);
-            known_symbols.insert(sym);
-        }
-    }
+    let deduped_leaf_nodes = dedupe_leaf_nodes_by_symbol(tp, layer_graph);
 
     // Step 2: Create outline nodes and build the provider map.
     for leaf_node in &deduped_leaf_nodes {
@@ -800,31 +784,69 @@ pub fn extract_outline_graph(
     }
 
     // Step 3: Connect requires to providers based on type assignability.
+    connect_requirers_to_providers(tp, &mut g, &providers, &sorted_provider_types);
+
+    g
+}
+
+/// The leaf nodes (no outgoing edges) of `layer_graph`, keeping only the
+/// first leaf of each symbol (leaves without a symbol are all kept).
+fn dedupe_leaf_nodes_by_symbol(
+    tp: &mut TypeParser<'_>,
+    layer_graph: &Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo>,
+) -> Vec<LayerGraphNodeInfo> {
+    // Track seen symbols for deduplication.
+    let mut known_symbols: FxHashSet<SymbolId> = FxHashSet::default();
+    let leaf_nodes: Vec<LayerGraphNodeInfo> = layer_graph
+        .externals(Direction::Outgoing)
+        .map(|(_, n)| n.clone())
+        .collect();
+    let mut deduped_leaf_nodes: Vec<LayerGraphNodeInfo> = Vec::new();
+    for leaf_node in leaf_nodes {
+        let sym = tp.get_symbol_at_location(leaf_node.node);
+        if sym.is_nil() {
+            deduped_leaf_nodes.push(leaf_node);
+        } else if !known_symbols.contains(&sym) {
+            deduped_leaf_nodes.push(leaf_node);
+            known_symbols.insert(sym);
+        }
+    }
+    deduped_leaf_nodes
+}
+
+/// Adds an edge from each outline node to every provider of a type that one
+/// of its requirements equals or is assignable to, providers in
+/// `sorted_provider_types` order.
+fn connect_requirers_to_providers(
+    tp: &mut TypeParser<'_>,
+    g: &mut Graph<LayerOutlineGraphNodeInfo, ()>,
+    providers: &IndexMap<TypeId, Vec<NodeIndex>>,
+    sorted_provider_types: &[TypeId],
+) {
     let outline_nodes: Vec<(NodeIndex, Vec<TypeId>)> = g
         .nodes()
         .map(|(idx, info)| (idx, info.requires.clone()))
         .collect();
     for (node_index, requires) in outline_nodes {
         for &required_type in &requires {
-            for &provided_type in &sorted_provider_types {
+            for &provided_type in sorted_provider_types {
                 let provider_node_indices =
                     providers.get(&provided_type).cloned().unwrap_or_default();
-                if required_type == provided_type
-                    || tp
+                if required_type != provided_type
+                    && !tp
                         .checker
                         .is_type_assignable_to(required_type, provided_type)
                 {
-                    for provider_node_index in provider_node_indices {
-                        if !g.has_edge(node_index, provider_node_index) {
-                            g.add_edge(node_index, provider_node_index, ());
-                        }
+                    continue;
+                }
+                for provider_node_index in provider_node_indices {
+                    if !g.has_edge(node_index, provider_node_index) {
+                        g.add_edge(node_index, provider_node_index, ());
                     }
                 }
             }
         }
     }
-
-    g
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,64 +1056,101 @@ pub fn format_nested_layer_graph(
 
     // Create subgraph boxes for each node.
     for (idx, node_info) in layer_graph.nodes() {
-        let mut subgraph_defs: Vec<String> = Vec::new();
-
-        for kind in NESTED_KINDS {
-            let types = nested_kind_types(node_info, kind);
-
-            let type_nodes: Vec<String> = types
-                .iter()
-                .enumerate()
-                .map(|(i, &t)| {
-                    let type_name = get_type_display_name(c, t);
-                    format!("{idx}_{kind}_{i}[\"{}\"]", mermaid_safe(&type_name))
-                })
-                .collect();
-
-            if !type_nodes.is_empty() {
-                let kind_label = if kind == "provides" {
-                    "Provides"
-                } else {
-                    "Requires"
-                };
-                subgraph_defs.push(format!("subgraph {idx}_{kind} [{kind_label}]"));
-                for tn in &type_nodes {
-                    subgraph_defs.push(format!("  {tn}"));
-                }
-                subgraph_defs.push("end".to_string());
-                subgraph_defs.push(format!("style {idx}_{kind} stroke:none"));
-            }
-        }
-
-        // Wrap in inner wrap subgraph.
-        let mut wrapped: Vec<String> = vec![format!("subgraph {idx}_wrap[\" \"]")];
-        for line in &subgraph_defs {
-            wrapped.push(format!("  {line}"));
-        }
-        wrapped.push("end".to_string());
-        wrapped.push(format!("style {idx}_wrap fill:transparent"));
-        wrapped.push(format!("style {idx}_wrap stroke:none"));
-
-        // Get display node text and location.
-        let display_node = node_info.display_node;
-        let display_source_file = get_node_source_file(display_node);
-        let node_text = get_node_text(display_node, display_source_file);
-        let location = format_location(display_node, sf);
-
-        // Outer subgraph.
-        result.push(format!(
-            "subgraph {idx} [\"`{}<br/><small>_{}_</small>`\"]",
-            mermaid_safe(&node_text),
-            mermaid_safe(&location)
-        ));
-        for line in &wrapped {
-            result.push(format!("  {line}"));
-        }
-        result.push("end".to_string());
-        result.push(format!("style {idx} fill:transparent"));
+        push_nested_node_subgraph(c, idx, node_info, sf, &mut result);
     }
 
     // Create edges between matching type nodes.
+    push_nested_edges(layer_graph, &mut result);
+
+    if result.is_empty() {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = vec!["flowchart TB".to_string()];
+    for line in &result {
+        lines.push(format!("  {line}"));
+    }
+    lines.join("\n")
+}
+
+/// The "Provides" and "Requires" subgraphs of the node `idx` of the nested
+/// layer graph, one type node per type (a kind without types has none).
+fn nested_kind_subgraph_defs(
+    c: &mut Checker,
+    idx: NodeIndex,
+    node_info: &LayerGraphNodeInfo,
+) -> Vec<String> {
+    let mut subgraph_defs: Vec<String> = Vec::new();
+    for kind in NESTED_KINDS {
+        let types = nested_kind_types(node_info, kind);
+        if types.is_empty() {
+            continue;
+        }
+        let kind_label = if kind == "provides" {
+            "Provides"
+        } else {
+            "Requires"
+        };
+        subgraph_defs.push(format!("subgraph {idx}_{kind} [{kind_label}]"));
+        for (i, &t) in types.iter().enumerate() {
+            let type_name = get_type_display_name(c, t);
+            subgraph_defs.push(format!(
+                "  {idx}_{kind}_{i}[\"{}\"]",
+                mermaid_safe(&type_name)
+            ));
+        }
+        subgraph_defs.push("end".to_string());
+        subgraph_defs.push(format!("style {idx}_{kind} stroke:none"));
+    }
+    subgraph_defs
+}
+
+/// Pushes the outer subgraph of the node `idx` of the nested layer graph:
+/// its text and location, around a transparent wrap of its kind subgraphs.
+fn push_nested_node_subgraph(
+    c: &mut Checker,
+    idx: NodeIndex,
+    node_info: &LayerGraphNodeInfo,
+    sf: Node,
+    result: &mut Vec<String>,
+) {
+    let subgraph_defs = nested_kind_subgraph_defs(c, idx, node_info);
+
+    // Wrap in inner wrap subgraph.
+    let mut wrapped: Vec<String> = vec![format!("subgraph {idx}_wrap[\" \"]")];
+    for line in &subgraph_defs {
+        wrapped.push(format!("  {line}"));
+    }
+    wrapped.push("end".to_string());
+    wrapped.push(format!("style {idx}_wrap fill:transparent"));
+    wrapped.push(format!("style {idx}_wrap stroke:none"));
+
+    // Get display node text and location.
+    let display_node = node_info.display_node;
+    let display_source_file = get_node_source_file(display_node);
+    let node_text = get_node_text(display_node, display_source_file);
+    let location = format_location(display_node, sf);
+
+    // Outer subgraph.
+    result.push(format!(
+        "subgraph {idx} [\"`{}<br/><small>_{}_</small>`\"]",
+        mermaid_safe(&node_text),
+        mermaid_safe(&location)
+    ));
+    for line in &wrapped {
+        result.push(format!("  {line}"));
+    }
+    result.push("end".to_string());
+    result.push(format!("style {idx} fill:transparent"));
+}
+
+/// Pushes the edges of the nested layer graph: one dotted edge per type
+/// that both ends list under the same kind, or a crossed edge between the
+/// two nodes when they share none.
+fn push_nested_edges(
+    layer_graph: &Graph<LayerGraphNodeInfo, LayerGraphEdgeInfo>,
+    result: &mut Vec<String>,
+) {
     // PORT: Go `GetNode` gives the zero value for a missing node; an edge's
     // nodes always exist.
     let empty = LayerGraphNodeInfo::default();
@@ -1119,16 +1178,6 @@ pub fn format_nested_layer_graph(
             result.push(format!("{} -.-x {}", edge.source, edge.target));
         }
     }
-
-    if result.is_empty() {
-        return String::new();
-    }
-
-    let mut lines: Vec<String> = vec!["flowchart TB".to_string()];
-    for line in &result {
-        lines.push(format!("  {line}"));
-    }
-    lines.join("\n")
 }
 
 // Go: format.go:284 FormatOutlineGraph
