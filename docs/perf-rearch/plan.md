@@ -1191,3 +1191,24 @@ once a **reconciliation step** is built and tested.
     - Effect.
 
     "Other" joins the lane that owns the nearest code.
+- **Loop check (Chad asked, 2026-11-09).** Across 21 saved Astra reviews,
+  no finding reopened because a later change undid an earlier fix. Two
+  classes do recur:
+  1. **`quality.py`'s cfg parsing.** Four fixes so far: C2's struct field,
+     the C2 follow-up's item end, Q3's mod declaration, and Q3 review
+     finding 3. Each closed one case and the next review found another.
+     This is a heuristic with no end, and it fails open (it hides shipped
+     reads). Decision:
+     - Q3 reverts its mod-gating change, so the report fails safe.
+     - A tooling lane (Q5, after Q3 merges) replaces the parser with
+       rustc's own cfg-expanded source of the shipped build.
+  2. **"Diagnostics not gated whole."** Five times: L1 r1, C1 r2, C2, Q3,
+     and the C2 follow-up's motivation. Each time it is different code, and
+     the fixes held, but every new lane makes the same mistake and only
+     review catches it. Q5 adds a mechanical check on the same expanded
+     source.
+
+  D1-I3 (alias detection, three rounds of new cases) and H1–H4 (four rounds
+  of false-good paths) were the same pattern earlier. Each ended with a
+  redesign: the ordinary-layout rule (go serial when anything is unusual)
+  and the H4 gate.
