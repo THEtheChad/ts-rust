@@ -47,6 +47,17 @@ pub(crate) fn or_else_type(t: TypeId, fallback: TypeId) -> TypeId {
     if t.is_some() { t } else { fallback }
 }
 
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(signature, fallback)` for signature handles.
+#[inline(always)]
+pub(crate) fn or_else_signature(signature: SignatureId, fallback: SignatureId) -> SignatureId {
+    if signature.is_some() {
+        signature
+    } else {
+        fallback
+    }
+}
+
 // Go: checker/checker.go:53 TypeSystemEntity
 // PORT: Go `TypeSystemEntity any`. The Go callers of `pushTypeResolution`
 // pass a declaration node, a symbol, a type or a signature, so the Rust type
