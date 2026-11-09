@@ -359,11 +359,10 @@ fn init_local() -> jiff::tz::TimeZone {
                 if let Some(z) = load_location(tz, &[""]) {
                     return z;
                 }
-            } else if !tz.is_empty()
-                && tz != b"UTC"
-                && let Some(z) = load_location(tz, PLATFORM_ZONE_SOURCES)
-            {
-                return z;
+            } else if !tz.is_empty() && tz != b"UTC" {
+                if let Some(z) = load_location(tz, PLATFORM_ZONE_SOURCES) {
+                    return z;
+                }
             }
         }
         Some(_) => {}
