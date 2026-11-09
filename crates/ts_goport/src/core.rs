@@ -202,7 +202,7 @@ impl Node {
 /// so `==` compares ids. It orders, hashes and prints like the `str` it
 /// holds. The low bit of the id is set when the text starts with
 /// `INTERNAL_SYMBOL_NAME_PREFIX` (`Name::is_internal`).
-#[derive(PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct Name(u32);
 
 impl Name {
@@ -288,12 +288,6 @@ impl Clone for Name {
     #[inline]
     fn clone(&self) -> Self {
         Name(self.0)
-    }
-}
-
-impl Default for Name {
-    fn default() -> Self {
-        Name(0)
     }
 }
 
