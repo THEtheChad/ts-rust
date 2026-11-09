@@ -1229,22 +1229,22 @@ impl Checker {
             if is_for_in_statement(declaration_list.parent()) {
                 return self.grammar_error_on_node(
                     declaration_list,
-                    if block_scope_flags == NodeFlags::USING {
-                        diag::The_left_hand_side_of_a_for_in_statement_cannot_be_a_using_declaration
-                    } else {
-                        diag::The_left_hand_side_of_a_for_in_statement_cannot_be_an_await_using_declaration
-                    },
+                    if_else(
+                        block_scope_flags == NodeFlags::USING,
+                        diag::The_left_hand_side_of_a_for_in_statement_cannot_be_a_using_declaration,
+                        diag::The_left_hand_side_of_a_for_in_statement_cannot_be_an_await_using_declaration,
+                    ),
                     args![],
                 );
             }
             if declaration_list.flags().intersects(NodeFlags::AMBIENT) {
                 return self.grammar_error_on_node(
                     declaration_list,
-                    if block_scope_flags == NodeFlags::USING {
-                        diag::X_using_declarations_are_not_allowed_in_ambient_contexts
-                    } else {
-                        diag::X_await_using_declarations_are_not_allowed_in_ambient_contexts
-                    },
+                    if_else(
+                        block_scope_flags == NodeFlags::USING,
+                        diag::X_using_declarations_are_not_allowed_in_ambient_contexts,
+                        diag::X_await_using_declarations_are_not_allowed_in_ambient_contexts,
+                    ),
                     args![],
                 );
             }
@@ -1254,11 +1254,11 @@ impl Checker {
             {
                 return self.grammar_error_on_node(
                     declaration_list,
-                    if block_scope_flags == NodeFlags::USING {
-                        diag::X_using_declarations_are_not_allowed_in_case_or_default_clauses_unless_contained_within_a_block
-                    } else {
-                        diag::X_await_using_declarations_are_not_allowed_in_case_or_default_clauses_unless_contained_within_a_block
-                    },
+                    if_else(
+                        block_scope_flags == NodeFlags::USING,
+                        diag::X_using_declarations_are_not_allowed_in_case_or_default_clauses_unless_contained_within_a_block,
+                        diag::X_await_using_declarations_are_not_allowed_in_case_or_default_clauses_unless_contained_within_a_block,
+                    ),
                     args![],
                 );
             }
