@@ -253,20 +253,12 @@ impl Checker {
                 SyntaxKind::ArrayBindingPattern => {
                     if has_dot_dot_dot_token(node) {
                         let elements = node.name().elements();
-                        let last_element = if elements.is_empty() {
-                            Node::NIL
-                        } else {
-                            elements.get(elements.len() - 1)
-                        };
+                        let last_element = elements.last().unwrap_or(Node::NIL);
                         let last_element_is_binding_element_rest = last_element.is_some()
                             && is_binding_element(last_element)
                             && has_dot_dot_dot_token(last_element);
-                        let element_count = elements.len() as i32
-                            - if last_element_is_binding_element_rest {
-                                1
-                            } else {
-                                0
-                            };
+                        let element_count =
+                            elements.len() as i32 - i32::from(last_element_is_binding_element_rest);
                         if index < element_count {
                             let element = elements.get(index as usize);
                             if is_binding_element(element) {
