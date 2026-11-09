@@ -876,17 +876,12 @@ impl Checker {
                     if source_is_string || target_is_string {
                         if let Some(reporter) = error_reporter.as_mut() {
                             // Go: core.OrElse(sourceValue, targetValue)
-                            let known_string_value = if source_value.is_some() {
-                                &source_value
-                            } else {
-                                &target_value
-                            };
+                            let known_string_value =
+                                source_value.as_ref().or(target_value.as_ref());
                             let target_symbol_string = self.symbol_to_string(target_symbol);
                             let target_property_string = self.symbol_to_string(target_property);
                             let known_string = value_to_string(
-                                known_string_value
-                                    .as_ref()
-                                    .expect("unhandled value type in valueToString"),
+                                known_string_value.expect("unhandled value type in valueToString"),
                             );
                             (**reporter)(
                                 self,
