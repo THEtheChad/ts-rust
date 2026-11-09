@@ -592,7 +592,7 @@ pub fn os_fs_realpath(path: &str) -> String {
     if is_network_path(&path) {
         return orig.to_string();
     }
-    normalize_slashes(&path).into()
+    normalize_slashes(&path)
 }
 
 impl OsFs {
@@ -642,8 +642,8 @@ impl OsFs {
         if self.write_file_with_flag(path, content, flag).is_ok() {
             return Ok(());
         }
-        let normalized: String = normalize_path(path).into();
-        let directory: String = get_directory_path(&normalized).into();
+        let normalized: String = normalize_path(path);
+        let directory: String = get_directory_path(&normalized);
         self.ensure_directory_exists(&directory)?;
         self.write_file_with_flag(path, content, flag)
     }

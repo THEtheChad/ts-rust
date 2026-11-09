@@ -989,7 +989,7 @@ impl Checker {
         }
         let result = self.get_iteration_types_of_iterable_worker(t, use_, error_node, no_cache);
         if !no_cache {
-            self.iteration_types_cache.insert(key, result.clone());
+            self.iteration_types_cache.insert(key, result);
         }
         result
     }
@@ -1259,7 +1259,7 @@ impl Checker {
     ) -> TypeId {
         let types: Vec<TypeId> = iteration_types
             .iter()
-            .map(|t| f(t))
+            .map(f)
             .filter(|t| t.is_some())
             .collect();
         if types.is_empty() {

@@ -500,7 +500,7 @@ fn serialize_compiler_options(
 fn show_config_value_as_int(value: &CompilerOptionsValue) -> Option<i64> {
     use CompilerOptionsValue as V;
     match value {
-        V::Int(i) => Some(i64::from(*i)),
+        V::Int(i) => Some(*i),
         V::ScriptTarget(k) => Some(i64::from(k.0)),
         V::ModuleKind(k) => Some(i64::from(k.0)),
         V::ModuleResolutionKind(k) => Some(i64::from(k.0)),

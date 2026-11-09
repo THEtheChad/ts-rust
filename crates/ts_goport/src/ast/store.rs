@@ -8361,7 +8361,7 @@ fn new_owned_pending(
 // PERF: astshrink1, as `new_store_node_list`.
 #[must_use]
 pub fn new_store_modifier_list(file: usize, nodes: &[Node], loc: TextRange) -> ModifierList {
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0);
     match new_store_list(file, nodes, ts_range(loc), false, Some(flags)) {
         StoreListRef::Static(list) => ModifierList::from_static(file, list),
         StoreListRef::Owned(list) => ModifierList::store(list),
@@ -8483,7 +8483,7 @@ fn other_store_modifiers_value(
         }
     }
     let nodes = modifiers.nodes().to_vec();
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0);
     let index = new_store_list(file, &nodes, ts_range(modifiers.loc()), false, Some(flags)).index();
     Some(crate::astdata::ModifierList {
         list: crate::astdata::NodeList::new(index),

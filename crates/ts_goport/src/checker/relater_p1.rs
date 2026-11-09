@@ -1721,7 +1721,7 @@ impl Checker {
         mut diagnostic_output: Option<&mut Vec<Diagnostic>>,
     ) -> bool {
         // Don't elaborate blocks or functions with annotated parameter types
-        if is_block(node.body()) || node.parameters().iter().any(|p| has_type(p)) {
+        if is_block(node.body()) || node.parameters().iter().any(has_type) {
             return false;
         }
         let source_sig = self.get_single_call_signature(source);

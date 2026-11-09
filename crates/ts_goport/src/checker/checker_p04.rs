@@ -163,7 +163,7 @@ impl Checker {
             let parameter_index = self.pred(type_predicate).parameter_index;
             if parameter_index >= 0 {
                 if self.signature_has_rest_parameter(signature)
-                    && parameter_index as i32 == self.sig(signature).parameters.len() as i32 - 1
+                    && parameter_index == self.sig(signature).parameters.len() as i32 - 1
                 {
                     self.error(
                         parameter_name,

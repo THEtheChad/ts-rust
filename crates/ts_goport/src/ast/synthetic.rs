@@ -3054,7 +3054,7 @@ pub fn new_synthetic_modifier_list(nodes: &[Node], loc: TextRange) -> ModifierLi
 /// `new_synthetic_modifier_list` (`print`: see `new_synthetic_node_list_in`).
 #[must_use]
 pub fn new_synthetic_modifier_list_in(print: bool, nodes: &[Node], loc: TextRange) -> ModifierList {
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0);
     let list = ts_list(nodes, loc, false, flags);
     ModifierList::synthetic(push_own_list_in(print, OwnList::List(list)))
 }
@@ -3205,7 +3205,7 @@ fn modifiers_copy(modifiers: ModifierList) -> Option<SyntheticListData> {
                 &nodes,
                 modifiers.loc(),
                 modifiers.node_list().stored_trailing_comma(),
-                crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0 as u32),
+                crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0),
             )
         }
     })

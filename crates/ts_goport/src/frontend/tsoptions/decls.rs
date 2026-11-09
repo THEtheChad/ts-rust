@@ -1608,7 +1608,7 @@ pub fn compiler_options_field_values(
         ),
         (
             "MaxNodeModuleJsDepth",
-            V::IntPtr(o.max_node_module_js_depth.clone()),
+            V::IntPtr(o.max_node_module_js_depth),
         ),
         (
             "AllowSyntheticDefaultImports",
@@ -1646,7 +1646,7 @@ pub fn compiler_options_field_values(
         ("PprofDir", V::String(o.pprof_dir.clone())),
         ("SingleThreaded", V::Tristate(o.single_threaded)),
         ("Quiet", V::Tristate(o.quiet)),
-        ("Checkers", V::IntPtr(o.checkers.clone())),
+        ("Checkers", V::IntPtr(o.checkers)),
     ]
 }
 

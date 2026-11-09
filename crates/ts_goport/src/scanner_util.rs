@@ -1001,7 +1001,7 @@ pub fn is_identifier_part_ex(ch: char, language_variant: LanguageVariant) -> boo
 pub fn token_to_string(token: SyntaxKind) -> &'static str {
     static TOKEN_TO_TEXT: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     let table = TOKEN_TO_TEXT.get_or_init(|| {
-        let mut result = vec![""; SyntaxKind::COUNT as usize];
+        let mut result = vec![""; SyntaxKind::COUNT];
         for &(text, kind) in TEXT_TO_PUNCTUATION.iter().chain(TEXT_TO_KEYWORD.iter()) {
             result[kind as u16 as usize] = text;
         }

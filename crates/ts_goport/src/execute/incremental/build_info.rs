@@ -309,7 +309,7 @@ pub fn marshal_any(enc: &mut String, v: &CompilerOptionsValue) -> Result<(), Jso
         CompilerOptionsValue::Nil | CompilerOptionsValue::IntPtr(None) => enc.push_str("null"),
         CompilerOptionsValue::Bool(b) => b.marshal_json_to(enc)?,
         CompilerOptionsValue::Int(i) | CompilerOptionsValue::IntPtr(Some(i)) => {
-            marshal_int(enc, i64::from(*i));
+            marshal_int(enc, *i);
         }
         CompilerOptionsValue::Number(f) => marshal_float(enc, *f)?,
         CompilerOptionsValue::String(s) => s.marshal_json_to(enc)?,

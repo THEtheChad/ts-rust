@@ -25,7 +25,7 @@ pub fn is_require_variable_statement(node: Node) -> bool {
         if !declarations.is_empty() {
             return declarations
                 .iter()
-                .all(|d| is_variable_declaration_initialized_to_require(d));
+                .all(is_variable_declaration_initialized_to_require);
         }
     }
     false

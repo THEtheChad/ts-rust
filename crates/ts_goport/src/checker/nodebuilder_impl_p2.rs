@@ -1893,7 +1893,7 @@ impl Checker {
             {
                 let declaration_symbol = self.get_symbol_of_declaration(declaration);
                 let restore = self.add_symbol_type_to_context(b, declaration_symbol, return_type);
-                let pc = b.borrow().pc.clone();
+                let pc = b.borrow().pc;
                 let mut pt = Some(pc.get_return_type_of_signature(&self.symbols, declaration));
                 let report_fallback = !b.borrow().ctx.borrow().suppress_report_inference_fallback;
                 let equivalent = match &pt {

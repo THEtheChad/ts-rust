@@ -14,7 +14,7 @@ pub type AnyOptionSelector<T> = fn(&lsutil::FormatCodeSettings) -> T;
 
 // Go: format/rulecontext.go:22 semicolonOption
 pub fn semicolon_option(options: &lsutil::FormatCodeSettings) -> lsutil::SemicolonPreference {
-    options.semicolons.clone()
+    options.semicolons
 }
 
 // Go: format/rulecontext.go:26 insertSpaceAfterCommaDelimiterOption

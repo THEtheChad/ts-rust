@@ -2124,5 +2124,5 @@ impl<'a> Parser<'a> {
 
 /// Go `core.FindIndex` over modifier nodes.
 fn find_index(nodes: NodeSlice, mut f: impl FnMut(Node) -> bool) -> i32 {
-    nodes.iter().position(|n| f(n)).map_or(-1, |i| i as i32)
+    nodes.iter().position(f).map_or(-1, |i| i as i32)
 }

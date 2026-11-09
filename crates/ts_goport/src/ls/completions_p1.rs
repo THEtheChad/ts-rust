@@ -609,7 +609,7 @@ impl CompletionList {
         Some(lsproto::CompletionList {
             is_incomplete: l.is_incomplete,
             item_defaults: l.item_defaults.clone(),
-            apply_kind: l.apply_kind.clone(),
+            apply_kind: l.apply_kind,
             items,
         })
     }

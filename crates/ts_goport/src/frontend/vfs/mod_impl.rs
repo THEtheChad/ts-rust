@@ -385,7 +385,7 @@ pub fn root_length(p: &str) -> i32 {
 
 // Go: internal.go:30 SplitPath
 pub fn split_path(p: &str) -> (String, String) {
-    let p: String = normalize_path(p).into();
+    let p: String = normalize_path(p);
     let l = root_length(&p) as usize;
     let root_name = p[..l].to_string();
     let rest: String = remove_trailing_directory_separator(&p[l..]).into();

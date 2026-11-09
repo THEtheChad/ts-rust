@@ -1086,7 +1086,7 @@ impl Checker {
 
         let mut i = 0usize;
         for &property_symbol in &properties {
-            if nb_ctx(b, |c| is_expanding(c))
+            if nb_ctx(b, is_expanding)
                 && self
                     .sym(property_symbol)
                     .flags

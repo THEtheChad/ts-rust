@@ -1960,7 +1960,7 @@ impl ProjectCollectionBuilder {
             // If we found a project that contains the file, but it is a source from
             // a project reference, record it as a fallback.
             fallback = Some(SearchResult {
-                project: project,
+                project,
                 retain: retain.clone(),
             });
         }
