@@ -140,7 +140,7 @@ fn make_implicit_ce(primary: i32) -> Elem {
 /// if the given combination of values is invalid.
 pub fn make_elem(primary: i32, secondary: i32, tertiary: i32, ccc: u8) -> Result<Elem, String> {
     let w = primary;
-    if w >= 1 << MAX_PRIMARY_BITS || w < 0 {
+    if !(0..1 << MAX_PRIMARY_BITS).contains(&w) {
         return Err(format!(
             "makeCE: primary weight out of bounds: {:x} >= {:x}",
             w,
@@ -148,7 +148,7 @@ pub fn make_elem(primary: i32, secondary: i32, tertiary: i32, ccc: u8) -> Result
         ));
     }
     let w = secondary;
-    if w >= 1 << MAX_SECONDARY_BITS || w < 0 {
+    if !(0..1 << MAX_SECONDARY_BITS).contains(&w) {
         return Err(format!(
             "makeCE: secondary weight out of bounds: {:x} >= {:x}",
             w,
@@ -156,7 +156,7 @@ pub fn make_elem(primary: i32, secondary: i32, tertiary: i32, ccc: u8) -> Result
         ));
     }
     let w = tertiary;
-    if w >= 1 << MAX_TERTIARY_BITS || w < 0 {
+    if !(0..1 << MAX_TERTIARY_BITS).contains(&w) {
         return Err(format!(
             "makeCE: tertiary weight out of bounds: {:x} >= {:x}",
             w,
@@ -195,7 +195,7 @@ pub fn make_elem(primary: i32, secondary: i32, tertiary: i32, ccc: u8) -> Result
             ce |= CE_TYPE1;
         } else {
             let d = secondary - DEFAULT_SECONDARY + MAX_SECONDARY_DIFF_BITS as i32;
-            if d >= 1 << MAX_SECONDARY_DIFF_BITS || d < 0 {
+            if !(0..1 << MAX_SECONDARY_DIFF_BITS).contains(&d) {
                 return Err(format!(
                     "makeCE: secondary weight diff out of bounds: {:x} < 0 || {:x} > {:x}",
                     d,
@@ -510,7 +510,7 @@ impl Trie {
             }
             let i = self.index0.get(usize::from(c0));
             let c1 = s[1];
-            if c1 < TX || T2 <= c1 {
+            if !(TX..T2).contains(&c1) {
                 return (Elem(0), 1);
             }
             return (self.lookup_value(i, c1), 2);
@@ -520,13 +520,13 @@ impl Trie {
             }
             let mut i = self.index0.get(usize::from(c0));
             let c1 = s[1];
-            if c1 < TX || T2 <= c1 {
+            if !(TX..T2).contains(&c1) {
                 return (Elem(0), 1);
             }
             let o = (usize::from(i) << 6) + usize::from(c1);
             i = self.index.get(o);
             let c2 = s[2];
-            if c2 < TX || T2 <= c2 {
+            if !(TX..T2).contains(&c2) {
                 return (Elem(0), 2);
             }
             return (self.lookup_value(i, c2), 3);
@@ -536,19 +536,19 @@ impl Trie {
             }
             let mut i = self.index0.get(usize::from(c0));
             let c1 = s[1];
-            if c1 < TX || T2 <= c1 {
+            if !(TX..T2).contains(&c1) {
                 return (Elem(0), 1);
             }
             let mut o = (usize::from(i) << 6) + usize::from(c1);
             i = self.index.get(o);
             let c2 = s[2];
-            if c2 < TX || T2 <= c2 {
+            if !(TX..T2).contains(&c2) {
                 return (Elem(0), 2);
             }
             o = (usize::from(i) << 6) + usize::from(c2);
             i = self.index.get(o);
             let c3 = s[3];
-            if c3 < TX || T2 <= c3 {
+            if !(TX..T2).contains(&c3) {
                 return (Elem(0), 3);
             }
             return (self.lookup_value(i, c3), 4);

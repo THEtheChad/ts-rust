@@ -1119,14 +1119,14 @@ mod tag {
                 if c >= b'a' {
                     c = c.wrapping_sub(b'z' - b'Z');
                 }
-                if c < b'A' || b'Z' < c {
+                if !c.is_ascii_uppercase() {
                     return false;
                 }
             } else {
                 if c <= b'Z' {
                     c = c.wrapping_add(b'z' - b'Z');
                 }
-                if c < b'a' || b'z' < c {
+                if !c.is_ascii_lowercase() {
                     return false;
                 }
             }
@@ -2743,7 +2743,7 @@ pub mod internal_language {
                         i
                     }
                 };
-                if i < 1 || i > 8 || !is_alpha_num(&self.buf[self.start..self.end]) {
+                if !(1..=8).contains(&i) || !is_alpha_num(&self.buf[self.start..self.end]) {
                     self.gobble(Some(Error::Syntax));
                     continue;
                 }

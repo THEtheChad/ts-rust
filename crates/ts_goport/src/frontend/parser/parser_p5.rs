@@ -1331,7 +1331,7 @@ impl<'a> Parser<'a> {
     // Go: parser/parser.go:6407 setContextFlags
     pub fn set_context_flags(&mut self, flags: NodeFlags, value: bool) {
         if value {
-            self.context_flags = self.context_flags | flags;
+            self.context_flags |= flags;
         } else {
             self.context_flags = self.context_flags.without(flags);
         }

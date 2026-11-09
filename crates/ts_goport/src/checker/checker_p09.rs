@@ -396,7 +396,7 @@ impl Checker {
         let mut base_name = base_name;
         while base_name.len() > 1 && {
             let last = base_name.as_bytes()[base_name.len() - 1];
-            last >= b'0' && last <= b'9'
+            last.is_ascii_digit()
         } {
             base_name = &base_name[..base_name.len() - 1];
         }

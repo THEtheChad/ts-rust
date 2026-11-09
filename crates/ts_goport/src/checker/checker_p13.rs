@@ -902,7 +902,7 @@ impl Checker {
             let feature_map = get_feature_map();
             if let Some(type_features) = feature_map.get(self.sym(container).name.as_str()) {
                 for entry in type_features.iter() {
-                    if entry.props.iter().any(|p| *p == missing_property) {
+                    if entry.props.contains(&missing_property) {
                         return entry.lib.to_string();
                     }
                 }

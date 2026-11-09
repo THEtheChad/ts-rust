@@ -1241,7 +1241,7 @@ impl ResolutionState<'_> {
                 diag::Resolution_of_non_relative_name_failed_trying_with_modern_Node_resolution_features_disabled_to_see_if_npm_library_needs_configuration_update
             );
             self.features = self.features.without(NodeResolutionFeatures::EXPORTS);
-            self.extensions = self.extensions & (Extensions::TYPE_SCRIPT | Extensions::DECLARATION);
+            self.extensions &= Extensions::TYPE_SCRIPT | Extensions::DECLARATION;
             let diagnostics_count = self.diagnostics.len();
             let diagnostic_result = self.resolve_node_like_worker();
             if diagnostic_result.is_resolved() && diagnostic_result.is_external_library_import {

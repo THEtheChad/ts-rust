@@ -309,7 +309,7 @@ impl Checker {
                         if is_union {
                             optional_flag |= prop_symbol_flags & SymbolFlags::OPTIONAL;
                         } else {
-                            optional_flag = optional_flag & prop_symbol_flags;
+                            optional_flag &= prop_symbol_flags;
                         }
                     }
                     if single_prop.is_nil() {

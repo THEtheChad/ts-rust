@@ -299,10 +299,8 @@ where
     let mut e = JoinError {
         errs: Vec::with_capacity(n),
     };
-    for err in errs {
-        if let Some(err) = err {
-            e.errs.push(err);
-        }
+    for err in errs.into_iter().flatten() {
+        e.errs.push(err);
     }
     Some(GoError::from_repr(ErrorRepr::JoinError(e)))
 }

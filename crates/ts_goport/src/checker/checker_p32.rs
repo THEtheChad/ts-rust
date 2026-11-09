@@ -39,21 +39,19 @@ impl Checker {
         let mut modifiers = MappedTypeModifiers::default();
         let readonly_token = declaration.readonly_token();
         if readonly_token.is_some() {
-            modifiers = modifiers
-                | if readonly_token.kind() == SyntaxKind::MinusToken {
-                    MappedTypeModifiers::EXCLUDE_READONLY
-                } else {
-                    MappedTypeModifiers::INCLUDE_READONLY
-                };
+            modifiers |= if readonly_token.kind() == SyntaxKind::MinusToken {
+                MappedTypeModifiers::EXCLUDE_READONLY
+            } else {
+                MappedTypeModifiers::INCLUDE_READONLY
+            };
         }
         let question_token = declaration.question_token();
         if question_token.is_some() {
-            modifiers = modifiers
-                | if question_token.kind() == SyntaxKind::MinusToken {
-                    MappedTypeModifiers::EXCLUDE_OPTIONAL
-                } else {
-                    MappedTypeModifiers::INCLUDE_OPTIONAL
-                };
+            modifiers |= if question_token.kind() == SyntaxKind::MinusToken {
+                MappedTypeModifiers::EXCLUDE_OPTIONAL
+            } else {
+                MappedTypeModifiers::INCLUDE_OPTIONAL
+            };
         }
         modifiers
     }

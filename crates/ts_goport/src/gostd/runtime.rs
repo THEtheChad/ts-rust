@@ -82,7 +82,7 @@ fn container_max_procs() -> bool {
             .split(',')
             .filter_map(|setting| setting.strip_prefix("containermaxprocs="))
             .filter_map(|value| value.parse::<i32>().ok())
-            .last()
+            .next_back()
             .is_none_or(|value| value > 0)
     })
 }

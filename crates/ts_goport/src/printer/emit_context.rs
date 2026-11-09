@@ -1045,7 +1045,7 @@ impl EmitContext {
     pub fn add_emit_flags(&self, node: Node, flags: EmitFlags) {
         let mut emit_nodes = self.emit_nodes.borrow_mut();
         let emit_node = emit_nodes.get(node);
-        emit_node.emit_flags = emit_node.emit_flags | flags;
+        emit_node.emit_flags |= flags;
     }
 
     // Go: printer/emitcontext.go:570 EmitContext.SnippetElement

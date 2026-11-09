@@ -323,7 +323,7 @@ impl Checker {
                 .get_declaration_modifier_flags_from_symbol(member_symbol)
                 .without(ModifierFlags::ASYNC);
             if is_static {
-                mod_flags = mod_flags | ModifierFlags::STATIC;
+                mod_flags |= ModifierFlags::STATIC;
             }
             if mod_flags != ModifierFlags::NONE && can_have_modifiers(m) {
                 let existing = m.modifier_flags();
@@ -553,9 +553,8 @@ impl Checker {
             for &sig in &signatures {
                 let declaration = self.sig(sig).declaration;
                 if declaration.is_some() {
-                    private_protected = private_protected
-                        | (declaration.modifier_flags()
-                            & (ModifierFlags::PRIVATE | ModifierFlags::PROTECTED));
+                    private_protected |= declaration.modifier_flags()
+                        & (ModifierFlags::PRIVATE | ModifierFlags::PROTECTED);
                 }
             }
             if private_protected != ModifierFlags::NONE {

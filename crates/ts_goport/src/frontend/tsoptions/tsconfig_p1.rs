@@ -1031,7 +1031,7 @@ pub fn get_extends_config_path(
         if !host.fs().file_exists(&extended_config_path)
             && !extended_config_path.ends_with(EXTENSION_JSON)
         {
-            extended_config_path = extended_config_path + EXTENSION_JSON;
+            extended_config_path += EXTENSION_JSON;
             if !host.fs().file_exists(&extended_config_path) {
                 errors.push(
                     create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(

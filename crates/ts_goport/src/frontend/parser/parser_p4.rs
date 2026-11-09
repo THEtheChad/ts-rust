@@ -1498,7 +1498,7 @@ impl<'a> Parser<'a> {
                 //      var foo3 = require("subfolder
                 //      import * as foo1 from "module-from-node
                 // We want this import to be a statement rather than import call expression
-                self.source_flags = self.source_flags | NodeFlags::POSSIBLY_CONTAINS_DYNAMIC_IMPORT;
+                self.source_flags |= NodeFlags::POSSIBLY_CONTAINS_DYNAMIC_IMPORT;
                 expression = self.parse_keyword_expression();
             } else if self.look_ahead(Parser::next_token_is_dot) {
                 // This is an 'import.*' metaproperty (i.e. 'import.meta')
@@ -1513,12 +1513,10 @@ impl<'a> Parser<'a> {
                     if self.token == SyntaxKind::OpenParenToken
                         || self.token == SyntaxKind::LessThanToken
                     {
-                        self.source_flags =
-                            self.source_flags | NodeFlags::POSSIBLY_CONTAINS_DYNAMIC_IMPORT;
+                        self.source_flags |= NodeFlags::POSSIBLY_CONTAINS_DYNAMIC_IMPORT;
                     }
                 } else {
-                    self.source_flags =
-                        self.source_flags | NodeFlags::POSSIBLY_CONTAINS_IMPORT_META;
+                    self.source_flags |= NodeFlags::POSSIBLY_CONTAINS_IMPORT_META;
                 }
             } else {
                 expression = self.parse_member_expression_or_higher();

@@ -2388,7 +2388,7 @@ pub mod syntax {
                             t = &t[1..];
                             break 'big_switch;
                         }
-                        if min < 0 || min > 1000 || max > 1000 || max >= 0 && min > max {
+                        if !(0..=1000).contains(&min) || max > 1000 || max >= 0 && min > max {
                             // Numbers were too big, or max is present and min > max.
                             return Err(Error::new(
                                 ERR_INVALID_REPEAT_SIZE,
@@ -2963,7 +2963,7 @@ pub mod syntax {
         let mut next_lo: Rune = 0;
         for p in x.chunks_exact(2) {
             let (lo, hi) = (p[0], p[1]);
-            if next_lo <= lo - 1 {
+            if next_lo < lo {
                 append_range(r, next_lo, lo - 1);
             }
             next_lo = hi + 1;
@@ -3008,7 +3008,7 @@ pub mod syntax {
         let mut next_lo: Rune = 0; // lo end of next class to add
         for (lo, hi, stride) in table_ranges(x) {
             if stride == 1 {
-                if next_lo <= lo - 1 {
+                if next_lo < lo {
                     append_range(r, next_lo, lo - 1);
                 }
                 next_lo = hi + 1;
@@ -3016,7 +3016,7 @@ pub mod syntax {
             }
             let mut c = lo;
             while c <= hi {
-                if next_lo <= c - 1 {
+                if next_lo < c {
                     append_range(r, next_lo, c - 1);
                 }
                 next_lo = c + 1;
@@ -3038,7 +3038,7 @@ pub mod syntax {
         while i < r.len() {
             let (lo, hi) = (r[i], r[i + 1]);
             i += 2;
-            if next_lo <= lo - 1 {
+            if next_lo < lo {
                 r[w] = next_lo;
                 r[w + 1] = lo - 1;
                 w += 2;

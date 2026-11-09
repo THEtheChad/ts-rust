@@ -824,7 +824,7 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
                     normalized_up_to = index + 2;
                 }
             } else if !changed {
-                if normalized_up_to as isize - 1 >= 0 {
+                if normalized_up_to as isize > 0 {
                     // PORT: Go slices bytes; the byte before `normalizedUpTo`
                     // can be inside a char, so search the bytes.
                     let last = fb[..normalized_up_to - 1]

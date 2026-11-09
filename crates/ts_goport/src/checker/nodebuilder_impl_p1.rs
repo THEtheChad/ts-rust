@@ -419,7 +419,7 @@ impl Checker {
         let b = b.borrow();
         let c = b.ctx.borrow();
         let n = c.type_stack.len().saturating_sub(1);
-        c.type_stack[..n].iter().any(|&s| s == t)
+        c.type_stack[..n].contains(&t)
     }
 
     // Go: checker/nodebuilderimpl.go:213 shouldExpandType
@@ -714,7 +714,7 @@ impl Checker {
             {
                 let b = b.borrow();
                 let mut c = b.ctx.borrow_mut();
-                c.flags = c.flags | NodeBuilderFlags::USE_FULLY_QUALIFIED_TYPE;
+                c.flags |= NodeBuilderFlags::USE_FULLY_QUALIFIED_TYPE;
             }
             for types in seen_names.values() {
                 if !array_is_homogeneous(types, |a, b| self.types_are_same_reference(a.0, b.0)) {
@@ -1043,7 +1043,7 @@ impl Checker {
         if index == 0 {
             let b = b.borrow();
             let mut c = b.ctx.borrow_mut();
-            c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+            c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
         }
         let symbol_name = self.get_name_of_symbol_as_written(b, symbol);
         if index == 0 {
@@ -1265,7 +1265,7 @@ impl Checker {
             {
                 let b = b.borrow();
                 let mut c = b.ctx.borrow_mut();
-                c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+                c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
             }
             symbol_name = self.get_name_of_symbol_as_written(b, symbol);
             p1_add_length(b, go_len(&symbol_name) + 1);
@@ -1453,7 +1453,7 @@ impl Checker {
         if index == 0 {
             let b = b.borrow();
             let mut c = b.ctx.borrow_mut();
-            c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+            c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
         }
         let mut symbol_name = self.get_name_of_symbol_as_written(b, symbol);
         if index == 0 {

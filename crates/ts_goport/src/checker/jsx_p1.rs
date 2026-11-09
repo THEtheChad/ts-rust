@@ -1366,13 +1366,13 @@ impl Checker {
                                           attributes_symbol: SymbolId,
                                           attributes_table: SymbolTable|
          -> TypeId {
-            *object_flags = *object_flags | ObjectFlags::FRESH_LITERAL;
+            *object_flags |= ObjectFlags::FRESH_LITERAL;
             let result = c.new_anonymous_type(attributes_symbol, attributes_table, &[], &[], &[]);
             let flags = *object_flags
                 | ObjectFlags::OBJECT_LITERAL
                 | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             let r = c.ty_mut(result);
-            r.object_flags = r.object_flags | flags;
+            r.object_flags |= flags;
             result
         };
         let jsx_namespace = self.get_jsx_namespace_at(opening_like_element);
@@ -1390,8 +1390,8 @@ impl Checker {
                 let member = attribute_decl.symbol();
                 if is_jsx_attribute(attribute_decl) {
                     let expr_type = self.check_jsx_attribute(attribute_decl, check_mode);
-                    object_flags = object_flags
-                        | (self.ty(expr_type).object_flags & ObjectFlags::PROPAGATING_FLAGS);
+                    object_flags |=
+                        self.ty(expr_type).object_flags & ObjectFlags::PROPAGATING_FLAGS;
                     let member_flags = self.sym(member).flags;
                     let member_name = self.sym(member).name.clone();
                     let attribute_symbol =

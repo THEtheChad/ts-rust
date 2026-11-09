@@ -1707,7 +1707,7 @@ mod tests {
         for n in [0, 1, 2, 19, 20, 21, 50, 64, 100, 300, 1000, 5000] {
             let input = keys(n);
             let (mut want, mut got) = (input.clone(), input.clone());
-            want.sort_by(|a, b| (a.file, a.pos).cmp(&(b.file, b.pos)));
+            want.sort_by_key(|a| (a.file, a.pos));
             by_index::stable_sort_by(&mut got, |a, b| (a.file, a.pos).cmp(&(b.file, b.pos)));
             assert_eq!(ids(&got), ids(&want));
             let (mut want, mut got) = (input.clone(), input);

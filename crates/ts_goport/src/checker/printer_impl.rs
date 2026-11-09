@@ -185,7 +185,7 @@ impl Checker {
             || flags.intersects(TypeFormatFlags::NO_TRUNCATION);
         let mut combined_flags = to_node_builder_flags(flags) | NodeBuilderFlags::IGNORE_ERRORS;
         if no_truncation {
-            combined_flags = combined_flags | NodeBuilderFlags::NO_TRUNCATION;
+            combined_flags |= NodeBuilderFlags::NO_TRUNCATION;
         }
         // PORT: Go defers the release func from getNodeBuilder, which lets
         // the factory drop its arenas. Here `PrintScope` frees the nodes of
@@ -287,21 +287,19 @@ impl Checker {
         let mut node_flags = NodeBuilderFlags::IGNORE_ERRORS;
         let mut internal_node_flags = InternalNodeBuilderFlags::NONE;
         if flags.intersects(SymbolFormatFlags::USE_ONLY_EXTERNAL_ALIASING) {
-            node_flags = node_flags | NodeBuilderFlags::USE_ONLY_EXTERNAL_ALIASING;
+            node_flags |= NodeBuilderFlags::USE_ONLY_EXTERNAL_ALIASING;
         }
         if flags.intersects(SymbolFormatFlags::WRITE_TYPE_PARAMETERS_OR_ARGUMENTS) {
-            node_flags = node_flags | NodeBuilderFlags::WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
+            node_flags |= NodeBuilderFlags::WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
         }
         if flags.intersects(SymbolFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE) {
-            node_flags = node_flags | NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
+            node_flags |= NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
         }
         if flags.intersects(SymbolFormatFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN) {
-            internal_node_flags =
-                internal_node_flags | InternalNodeBuilderFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN;
+            internal_node_flags |= InternalNodeBuilderFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN;
         }
         if flags.intersects(SymbolFormatFlags::WRITE_COMPUTED_PROPS) {
-            internal_node_flags =
-                internal_node_flags | InternalNodeBuilderFlags::WRITE_COMPUTED_PROPS;
+            internal_node_flags |= InternalNodeBuilderFlags::WRITE_COMPUTED_PROPS;
         }
 
         // PORT: see type_to_string_ex about the release func.
@@ -467,7 +465,7 @@ impl Checker {
         while i < types.len() {
             let t = types[i];
             let t_flags = self.ty(t).flags;
-            flags = flags | t_flags;
+            flags |= t_flags;
             if !t_flags.intersects(TypeFlags::NULLABLE) {
                 if t_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
                     || (!expanding_enum && t_flags.intersects(TypeFlags::ENUM_LIKE))

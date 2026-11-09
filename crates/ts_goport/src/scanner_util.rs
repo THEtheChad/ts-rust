@@ -175,7 +175,7 @@ pub fn is_line_break(ch: char) -> bool {
 
 // Go: stringutil/util.go:71 IsDigit
 pub fn is_digit(ch: char) -> bool {
-    ('0'..='9').contains(&ch)
+    ch.is_ascii_digit()
 }
 
 // Go: stringutil/util.go:75 IsOctalDigit
@@ -185,12 +185,12 @@ pub fn is_octal_digit(ch: char) -> bool {
 
 // Go: stringutil/util.go:79 IsHexDigit
 pub fn is_hex_digit(ch: char) -> bool {
-    ('0'..='9').contains(&ch) || ('A'..='F').contains(&ch) || ('a'..='f').contains(&ch)
+    ch.is_ascii_digit() || ('A'..='F').contains(&ch) || ('a'..='f').contains(&ch)
 }
 
 // Go: stringutil/util.go:83 IsASCIILetter
 pub fn is_ascii_letter(ch: char) -> bool {
-    ('A'..='Z').contains(&ch) || ('a'..='z').contains(&ch)
+    ch.is_ascii_uppercase() || ch.is_ascii_lowercase()
 }
 
 // Go: stringutil/util.go:222 StripQuotes
@@ -385,7 +385,7 @@ fn to_lower_ascii(str: &str) -> Option<String> {
         if ch >= 0x80 {
             return None;
         }
-        needs_mapping = needs_mapping || (b'A' <= ch && ch <= b'Z');
+        needs_mapping = needs_mapping || ch.is_ascii_uppercase();
     }
     if !needs_mapping {
         return Some(str.to_string());
@@ -400,7 +400,7 @@ fn to_upper_ascii(str: &str) -> Option<String> {
         if ch >= 0x80 {
             return None;
         }
-        needs_mapping = needs_mapping || (b'a' <= ch && ch <= b'z');
+        needs_mapping = needs_mapping || ch.is_ascii_lowercase();
     }
     if !needs_mapping {
         return Some(str.to_string());

@@ -225,7 +225,7 @@ impl Checker {
                     .any(|&d| get_source_file_of_node(d) == enclosing_file))
         {
             nb_ctx_mut(b, |c| {
-                c.flags = c.flags | NodeBuilderFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
+                c.flags |= NodeBuilderFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
             });
         }
         let mut result = Node::NIL;
@@ -1264,9 +1264,7 @@ impl Checker {
         }
 
         let restore_flags = self.save_restore_flags(b);
-        nb_ctx_mut(b, |c| {
-            c.flags = c.flags | NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL
-        });
+        nb_ctx_mut(b, |c| c.flags |= NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL);
         let members = self.create_type_nodes_from_resolved_type(b, t);
         restore_flags();
         let type_literal_node = f.new_type_literal_node(members);
@@ -1936,8 +1934,7 @@ impl Checker {
                         );
                         let restore_flags = self.save_restore_flags(b);
                         nb_ctx_mut(b, |c| {
-                            c.flags =
-                                c.flags | NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
+                            c.flags |= NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
                         });
                         let ref_ = self.symbol_to_type_node(
                             b,
@@ -2017,7 +2014,7 @@ impl Checker {
             }
             let restore_flags = self.save_restore_flags(b);
             nb_ctx_mut(b, |c| {
-                c.flags = c.flags | NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
+                c.flags |= NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
             });
             let symbol = self.ty(t).symbol;
             let final_ref =

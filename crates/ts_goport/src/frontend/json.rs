@@ -687,7 +687,7 @@ impl<'a> JsonDecoder<'a> {
                     let start = i;
                     i += 1;
                     while let Some(&c) = b.get(i) {
-                        if c == b'"' || c == b'\\' || c < 0x20 || c >= 0x80 {
+                        if c == b'"' || c == b'\\' || !(0x20..0x80).contains(&c) {
                             break;
                         }
                         i += 1;

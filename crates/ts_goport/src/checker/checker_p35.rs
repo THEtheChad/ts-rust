@@ -107,13 +107,13 @@ impl Checker {
 
                 // In a class 'extends' clause we are also looking for a value.
                 if is_expression_with_type_arguments_in_class_extends_clause(name.parent()) {
-                    meaning = meaning | SymbolFlags::VALUE;
+                    meaning |= SymbolFlags::VALUE;
                 }
             } else {
                 meaning = SymbolFlags::NAMESPACE;
             }
 
-            meaning = meaning | SymbolFlags::ALIAS;
+            meaning |= SymbolFlags::ALIAS;
             let mut entity_name_symbol = SymbolId::NIL;
             if is_entity_name_expression(name) {
                 entity_name_symbol = self.resolve_entity_name(
@@ -483,7 +483,7 @@ impl Checker {
                     let type_symbol = self.ty(t).symbol;
                     {
                         let s = self.sym_mut(symbol);
-                        s.check_flags = s.check_flags | CheckFlags::INDEX_SYMBOL;
+                        s.check_flags |= CheckFlags::INDEX_SYMBOL;
                         s.value_declaration = declarations[0];
                         s.declarations = declarations.into();
                         s.parent = type_symbol;

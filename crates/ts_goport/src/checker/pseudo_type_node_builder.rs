@@ -310,9 +310,7 @@ impl Checker {
                 // corresponding flag to mirror createTypeNodeFromObjectType. This ensures
                 // inaccessible `this` references inside the members are reported (TS2527).
                 let restore_object_literal_flags = self.save_restore_flags(b);
-                nb_ctx_mut(b, |c| {
-                    c.flags = c.flags | NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL
-                });
+                nb_ctx_mut(b, |c| c.flags |= NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL);
 
                 for elem in elements {
                     let mut modifiers = ModifierList::NIL;

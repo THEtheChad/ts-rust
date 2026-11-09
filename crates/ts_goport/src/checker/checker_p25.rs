@@ -103,12 +103,9 @@ impl Checker {
                     if t_object_flags.intersects(
                         ObjectFlags::REFERENCE | ObjectFlags::INSTANTIATION_EXPRESSION_TYPE,
                     ) {
-                        type_parameters = type_parameters
-                            .into_iter()
-                            .filter(|&tp| {
-                                self.is_type_parameter_possibly_referenced(tp, declaration)
-                            })
-                            .collect();
+                        type_parameters.retain(|&tp| {
+                            self.is_type_parameter_possibly_referenced(tp, declaration)
+                        });
                     } else {
                         let target_symbol = self.ty(target).symbol;
                         if self
@@ -118,14 +115,11 @@ impl Checker {
                         {
                             let t_symbol = self.ty(t).symbol;
                             let declarations = self.sym(t_symbol).declarations.clone();
-                            type_parameters = type_parameters
-                                .into_iter()
-                                .filter(|&tp| {
-                                    declarations
-                                        .iter()
-                                        .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
-                                })
-                                .collect();
+                            type_parameters.retain(|&tp| {
+                                declarations
+                                    .iter()
+                                    .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
+                            });
                         }
                     }
                 }
