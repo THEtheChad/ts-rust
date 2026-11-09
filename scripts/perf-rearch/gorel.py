@@ -42,7 +42,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 7  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 8  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -214,7 +214,7 @@ GO_MARKER_RE = re.compile(r"^\s*//+\s*Go:\s+(?P<rest>.*)$")
 PATH_RE = re.compile(r"^(?:internal/)?(?P<path>[\w./-]+\.go)(?::(?P<line>\d+))?(?:-\d+)?\s+")
 SYM_RE = re.compile(r"^(?:\((?:\w+\s+)?\*?(?P<recv1>\w+)(?:\[[^\]]*\])?\)\s*\.?\s*|(?P<recv2>\w+)\.)?(?P<name>\w+)(?:\(\))?\.?(?:\s|$)")
 # prose in the comment block: "body of Go `X`", "split out of `X`"; "Go `X`" or "Go fooBar"; a Go line range
-PROSE_PART_RE = re.compile(r"\b(?:body|part|rest|half|tail|remainder) of Go(?:'s)? `?(?P<a>\w+)`?|\bsplit out of (?:Go(?:'s)? )?`?(?P<b>\w+)`?")
+PROSE_PART_RE = re.compile(r"\b(?:body|part|rest|half|tail|remainder|arms|cases|branches|steps) of Go(?:'s)? `?(?P<a>\w+)`?|\bsplit out of (?:Go(?:'s)? )?`?(?P<b>\w+)`?")
 PROSE_NAME_RE = re.compile(r"\bGo(?:'s)? (?:`(?P<a>\w+)`|(?P<b>[a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*))")
 PROSE_RANGE_RE = re.compile(r"\b(?:internal/)?(?P<path>[\w/]+\.go):(?P<a>\d+)(?:-(?:\w+\.go:)?(?P<b>\d+))?")
 # a Go reference inside a `// Go:` paragraph, and the joiner that makes two references one compound

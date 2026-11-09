@@ -412,7 +412,7 @@ on the Go AST.
   exit) and requires gocog = rca for both metrics. The ported tree confirms
   it. On the 12,516 rows placed by a `// Go:` marker:
   - Rust cog equals Go cog in 76%, and is within 2 in 90%;
-  - Σ Rust is 66,383 against Σ Go 65,356;
+  - Σ Rust is 66,451 against Σ Go 65,356;
   - the median difference is 0 at Go cog ≥ 10 and ≥ 25, and 1 at ≥ 50.
 
 ### Closures and the fairness rule
@@ -478,7 +478,7 @@ that succeeds:
      other references are tried (`(at 673a5f17d713; ts#64554 generates it:
      …_generated.go:193 parsePreferenceIndentStyle)`).
 2. **Prose** (`prose`), when no marker resolves:
-   - "body/part/rest of Go `X`" and "split out of `X`";
+   - "body/part/rest/arms/cases of Go `X`" and "split out of `X`";
    - a Go line range `checker.go:12579-12785` inside one function;
    - "Go `X`" or "Go fooBar".
 
@@ -522,8 +522,8 @@ plugin. Their markers name that code; the own-code table shows the marker.
 ### Accuracy (at `e658d4d29`)
 
 - **Coverage:** of 21,871 Rust prod functions, 12,737 are placed by marker,
-  97 by prose, 240 by name (225 high, 15 medium) and 7 as lifted closures by
-  name. 3 are low and 12 ambiguous; both are ranked as own code. 8,775 have
+  99 by prose, 240 by name (225 high, 15 medium) and 7 as lifted closures by
+  name. 3 are low and 12 ambiguous; both are ranked as own code. 8,773 have
   no counterpart.
 - **Name matcher against the markers:** where both place a function
   (11,560), they agree on 99.6%: high 10,711/10,750, medium 743/756, low
