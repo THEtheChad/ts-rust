@@ -33,7 +33,7 @@ fn is16(ranges: &[Range16], r: u16) -> bool {
                 return false;
             }
             if r <= hi {
-                return stride == 1 || (r - lo) % stride == 0;
+                return stride == 1 || (r - lo).is_multiple_of(stride);
             }
         }
         return false;
@@ -45,7 +45,7 @@ fn is16(ranges: &[Range16], r: u16) -> bool {
         let m = (lo + hi) / 2;
         let (range_lo, range_hi, stride) = ranges[m];
         if range_lo <= r && r <= range_hi {
-            return stride == 1 || (r - range_lo) % stride == 0;
+            return stride == 1 || (r - range_lo).is_multiple_of(stride);
         }
         if r < range_lo {
             hi = m;
@@ -65,7 +65,7 @@ fn is32(ranges: &[Range32], r: u32) -> bool {
                 return false;
             }
             if r <= hi {
-                return stride == 1 || (r - lo) % stride == 0;
+                return stride == 1 || (r - lo).is_multiple_of(stride);
             }
         }
         return false;
@@ -77,7 +77,7 @@ fn is32(ranges: &[Range32], r: u32) -> bool {
         let m = (lo + hi) / 2;
         let (range_lo, range_hi, stride) = ranges[m];
         if range_lo <= r && r <= range_hi {
-            return stride == 1 || (r - range_lo) % stride == 0;
+            return stride == 1 || (r - range_lo).is_multiple_of(stride);
         }
         if r < range_lo {
             hi = m;

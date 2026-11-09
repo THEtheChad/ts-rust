@@ -3731,7 +3731,7 @@ mod tests {
     #[test]
     fn chunk_table_compacts_past_freed_numbers() {
         let count = 4 * COMPACT_MIN_EMPTY;
-        let live = |c: usize| c % 512 == 0 || c >= count - 16;
+        let live = |c: usize| c.is_multiple_of(512) || c >= count - 16;
         // Never set: as a number of the other thread of a shared counter.
         let skipped = |c: usize| c % 512 == 1;
         let mut table = ChunkTable::new();

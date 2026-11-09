@@ -2602,10 +2602,10 @@ type U1 = (A | SvelteProgram) & (B | Box<string>) & ({ p: 1 } | SvelteShorthandA
                     state ^= state << 13;
                     state ^= state >> 7;
                     state ^= state << 17;
-                    if round % 2 == 0 || state % 16 != 0 {
+                    if round % 2 == 0 || !state.is_multiple_of(16) {
                         targets.push(t);
                     }
-                    if state % 3 == 0 {
+                    if state.is_multiple_of(3) {
                         sources.push(t);
                     }
                 }

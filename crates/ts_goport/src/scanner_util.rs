@@ -56,7 +56,7 @@ fn unicode_is(table: &[(u32, u32, u32)], ch: u32) -> bool {
         let middle = low + (high - low) / 2;
         let (lo, hi, stride) = table[middle];
         if lo <= ch && ch <= hi {
-            return stride == 1 || (ch - lo) % stride == 0;
+            return stride == 1 || (ch - lo).is_multiple_of(stride);
         }
         if ch < lo {
             high = middle;

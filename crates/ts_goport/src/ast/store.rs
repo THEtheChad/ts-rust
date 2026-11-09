@@ -1466,7 +1466,7 @@ const HIGH_CHUNK: usize = 1 << 13;
 
 // A real file id is never `LOCAL_STORE`, and the chunks end at the limit.
 const _: () = assert!(FILE_ID_LIMIT <= LOCAL_STORE);
-const _: () = assert!((FILE_ID_LIMIT - LOW_BLOCKS) % HIGH_CHUNK == 0);
+const _: () = assert!((FILE_ID_LIMIT - LOW_BLOCKS).is_multiple_of(HIGH_CHUNK));
 
 /// The end of the new file ids (`BuildStores::next_id`,
 /// `publish_file_stores`).

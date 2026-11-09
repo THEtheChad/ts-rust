@@ -412,7 +412,7 @@ impl Checker {
             let source_type = self.type_at(source, i);
             if stripped_is_union
                 && source_count >= stripped_count
-                && source_count % stripped_count == 0
+                && source_count.is_multiple_of(stripped_count)
             {
                 // many unions are mappings of one another; in such cases, simply comparing members at the same index can shortcut the comparison
                 // such unions will have identical lengths, and their corresponding elements will match up. Another common scenario is where a large

@@ -1730,13 +1730,13 @@ mod tests {
             let mut b = input.clone();
             sort_stable_func_hot(&mut b, |_, _| (rng.next() % 3) as i32 - 1);
             let mut c = input.clone();
-            sort_slice_direct(&mut c, |_, _| rng.next() % 2 == 0);
+            sort_slice_direct(&mut c, |_, _| rng.next().is_multiple_of(2));
             let mut d = input.clone();
             sort_func(&mut d, |_, _| (rng.next() % 3) as i32 - 1);
             let mut e = input.clone();
             sort_stable_func(&mut e, |_, _| (rng.next() % 3) as i32 - 1);
             let mut f = input.clone();
-            sort_slice(&mut f, |_, _| rng.next() % 2 == 0);
+            sort_slice(&mut f, |_, _| rng.next().is_multiple_of(2));
             for mut out in [a, b, c, d, e, f] {
                 out.sort_unstable();
                 assert_eq!(out, input);

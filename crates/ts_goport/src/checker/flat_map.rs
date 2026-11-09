@@ -283,7 +283,7 @@ mod tests {
 
     impl FlatKey for WrapKey {
         fn flat_hash(&self) -> u64 {
-            if self.0 % 2 == 0 {
+            if self.0.is_multiple_of(2) {
                 !(self.0 % 5)
             } else {
                 self.0 % 5
@@ -303,7 +303,7 @@ mod tests {
             rng ^= rng << 17;
             // Few keys (0 among them), so removes often hit.
             let k = WrapKey((rng >> 8) % 41);
-            if rng % 3 == 0 {
+            if rng.is_multiple_of(3) {
                 assert_eq!(flat.remove(&k), std_map.remove(&k));
             } else {
                 assert_eq!(flat.insert(k, n), std_map.insert(k, n));

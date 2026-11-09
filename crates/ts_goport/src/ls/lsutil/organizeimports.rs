@@ -315,7 +315,7 @@ fn unicode_is(range_tab: &RangeTable, r: u32) -> bool {
     {
         return r16.iter().any(|&(lo, hi, stride)| {
             let (lo, hi, stride) = (u32::from(lo), u32::from(hi), u32::from(stride));
-            lo <= r && r <= hi && (stride == 1 || (r - lo) % stride == 0)
+            lo <= r && r <= hi && (stride == 1 || (r - lo).is_multiple_of(stride))
         });
     }
     let r32 = range_tab.r32;
@@ -323,7 +323,7 @@ fn unicode_is(range_tab: &RangeTable, r: u32) -> bool {
         && r >= lo
     {
         return r32.iter().any(|&(lo, hi, stride)| {
-            lo <= r && r <= hi && (stride == 1 || (r - lo) % stride == 0)
+            lo <= r && r <= hi && (stride == 1 || (r - lo).is_multiple_of(stride))
         });
     }
     false
