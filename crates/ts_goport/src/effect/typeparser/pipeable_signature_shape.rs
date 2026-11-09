@@ -268,127 +268,214 @@ impl SignatureTypeMatcher {
         }
         self.active.insert(pair);
         // Go `defer delete(m.active, pair)`.
-        let result = 'body: {
-            let left_alias = c.ty(left).alias();
-            let right_alias = c.ty(right).alias();
-            if left_alias.is_some() || right_alias.is_some() {
-                break 'body match (left_alias, right_alias) {
-                    (Some(left_alias), Some(right_alias)) => {
-                        same_symbol_reference(c, left_alias.symbol(), right_alias.symbol())
-                            && self.compare_type_list(
-                                c,
-                                left_alias.type_arguments(),
-                                right_alias.type_arguments(),
-                                depth + 1,
-                            )
-                    }
-                    _ => false,
-                };
-            }
-
-            let left_flags = c.ty(left).flags();
-            let right_flags = c.ty(right).flags();
-            let left_is_binder = left_flags.intersects(TypeFlags::TYPE_PARAMETER);
-            let right_is_binder = right_flags.intersects(TypeFlags::TYPE_PARAMETER);
-            if left_is_binder || right_is_binder {
-                break 'body left_is_binder
-                    && right_is_binder
-                    && self.compare_type_parameter(c, left, right);
-            }
-            if left_flags != right_flags {
-                break 'body false;
-            }
-
-            if left_flags.intersects(TypeFlags::UNION) {
-                let left_types = c.ty(left).types().to_vec();
-                let right_types = c.ty(right).types().to_vec();
-                self.compare_union(c, &left_types, &right_types, depth + 1)
-            } else if left_flags.intersects(TypeFlags::INTERSECTION) {
-                // Preserve compiler order for intersections; unlike unions, their order
-                // can affect overloaded callable behavior.
-                let left_types = c.ty(left).types().to_vec();
-                let right_types = c.ty(right).types().to_vec();
-                self.compare_type_list(c, &left_types, &right_types, depth + 1)
-            } else if left_flags.intersects(TypeFlags::CONDITIONAL) {
-                let left_check = c.ty(left).as_conditional_type().check_type();
-                let right_check = c.ty(right).as_conditional_type().check_type();
-                if !self.compare_type(c, left_check, right_check, depth + 1) {
-                    break 'body false;
-                }
-                let left_extends = c.ty(left).as_conditional_type().extends_type();
-                let right_extends = c.ty(right).as_conditional_type().extends_type();
-                if !self.compare_type(c, left_extends, right_extends, depth + 1) {
-                    break 'body false;
-                }
-                let left_true = c.get_true_type_of_conditional_type(left);
-                let right_true = c.get_true_type_of_conditional_type(right);
-                if !self.compare_type(c, left_true, right_true, depth + 1) {
-                    break 'body false;
-                }
-                let left_false = c.get_false_type_of_conditional_type(left);
-                let right_false = c.get_false_type_of_conditional_type(right);
-                self.compare_type(c, left_false, right_false, depth + 1)
-            } else if left_flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let left_object = c.ty(left).as_indexed_access_type().object_type();
-                let right_object = c.ty(right).as_indexed_access_type().object_type();
-                if !self.compare_type(c, left_object, right_object, depth + 1) {
-                    break 'body false;
-                }
-                let left_index = c.ty(left).as_indexed_access_type().index_type();
-                let right_index = c.ty(right).as_indexed_access_type().index_type();
-                self.compare_type(c, left_index, right_index, depth + 1)
-            } else if left_flags.intersects(TypeFlags::INDEX) {
-                let left_target = c.ty(left).as_index_type().target();
-                let right_target = c.ty(right).as_index_type().target();
-                self.compare_type(c, left_target, right_target, depth + 1)
-            } else if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                if c.ty(left).as_template_literal_type().texts()
-                    != c.ty(right).as_template_literal_type().texts()
-                {
-                    break 'body false;
-                }
-                let left_types = c.ty(left).as_template_literal_type().types().to_vec();
-                let right_types = c.ty(right).as_template_literal_type().types().to_vec();
-                self.compare_type_list(c, &left_types, &right_types, depth + 1)
-            } else if left_flags.intersects(TypeFlags::STRING_MAPPING) {
-                let left_symbol = c.ty(left).symbol();
-                let right_symbol = c.ty(right).symbol();
-                if !same_symbol_reference(c, left_symbol, right_symbol) {
-                    break 'body false;
-                }
-                let left_target = c.ty(left).as_string_mapping_type().target();
-                let right_target = c.ty(right).as_string_mapping_type().target();
-                self.compare_type(c, left_target, right_target, depth + 1)
-            } else if left_flags.intersects(TypeFlags::SUBSTITUTION) {
-                let left_base = c.ty(left).as_substitution_type().base_type();
-                let right_base = c.ty(right).as_substitution_type().base_type();
-                if !self.compare_type(c, left_base, right_base, depth + 1) {
-                    break 'body false;
-                }
-                let left_constraint = c.ty(left).as_substitution_type().subst_constraint();
-                let right_constraint = c.ty(right).as_substitution_type().subst_constraint();
-                self.compare_type(c, left_constraint, right_constraint, depth + 1)
-            } else if left_flags.intersects(TypeFlags::OBJECT) {
-                self.compare_object(c, left, right, depth + 1)
-            } else if left_flags.intersects(TypeFlags::LITERAL) {
-                // Go `reflect.DeepEqual(left.Value(), right.Value())`.
-                let same_value =
-                    c.ty(left).as_literal_type().value() == c.ty(right).as_literal_type().value();
-                let left_symbol = c.ty(left).symbol();
-                let right_symbol = c.ty(right).symbol();
-                same_value && same_optional_symbol(c, left_symbol, right_symbol)
-            } else if left_flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL)
-                || left_flags.intersects(TypeFlags::ENUM)
-            {
-                let left_symbol = c.ty(left).symbol();
-                let right_symbol = c.ty(right).symbol();
-                same_symbol_reference(c, left_symbol, right_symbol)
-            } else {
-                left_flags.intersects(TypeFlags::SINGLETON)
-            }
-        };
+        let result = self.compare_type_body(c, left, right, depth);
         self.active.remove(&pair);
         result
+    }
+
+    /// PORT: the body of Go `compareType` after the `active` insert (Go
+    /// `defer delete(m.active, pair)`): aliases, then type parameters, then
+    /// types of the same flags.
+    fn compare_type_body(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        depth: i32,
+    ) -> bool {
+        let left_alias = c.ty(left).alias();
+        let right_alias = c.ty(right).alias();
+        if left_alias.is_some() || right_alias.is_some() {
+            return match (left_alias, right_alias) {
+                (Some(left_alias), Some(right_alias)) => {
+                    same_symbol_reference(c, left_alias.symbol(), right_alias.symbol())
+                        && self.compare_type_list(
+                            c,
+                            left_alias.type_arguments(),
+                            right_alias.type_arguments(),
+                            depth + 1,
+                        )
+                }
+                _ => false,
+            };
+        }
+
+        let left_flags = c.ty(left).flags();
+        let right_flags = c.ty(right).flags();
+        let left_is_binder = left_flags.intersects(TypeFlags::TYPE_PARAMETER);
+        let right_is_binder = right_flags.intersects(TypeFlags::TYPE_PARAMETER);
+        if left_is_binder || right_is_binder {
+            return left_is_binder
+                && right_is_binder
+                && self.compare_type_parameter(c, left, right);
+        }
+        if left_flags != right_flags {
+            return false;
+        }
+        if left_flags.intersects(
+            TypeFlags::UNION
+                | TypeFlags::INTERSECTION
+                | TypeFlags::CONDITIONAL
+                | TypeFlags::INDEXED_ACCESS
+                | TypeFlags::INDEX
+                | TypeFlags::TEMPLATE_LITERAL,
+        ) {
+            return self.compare_structured_operator_type(c, left, right, left_flags, depth);
+        }
+        self.compare_leaf_like_type(c, left, right, left_flags, depth)
+    }
+
+    /// `compareType` for two unions, intersections, conditionals, indexed
+    /// accesses, index types or template literals of the same flags:
+    /// operand by operand.
+    fn compare_structured_operator_type(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        flags: TypeFlags,
+        depth: i32,
+    ) -> bool {
+        if flags.intersects(TypeFlags::UNION) {
+            let left_types = c.ty(left).types().to_vec();
+            let right_types = c.ty(right).types().to_vec();
+            self.compare_union(c, &left_types, &right_types, depth + 1)
+        } else if flags.intersects(TypeFlags::INTERSECTION) {
+            // Preserve compiler order for intersections; unlike unions, their order
+            // can affect overloaded callable behavior.
+            let left_types = c.ty(left).types().to_vec();
+            let right_types = c.ty(right).types().to_vec();
+            self.compare_type_list(c, &left_types, &right_types, depth + 1)
+        } else if flags.intersects(TypeFlags::CONDITIONAL) {
+            self.compare_conditional_type(c, left, right, depth)
+        } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+            let (left_access, right_access) = (
+                c.ty(left).as_indexed_access_type(),
+                c.ty(right).as_indexed_access_type(),
+            );
+            let pairs = [
+                (left_access.object_type(), right_access.object_type()),
+                (left_access.index_type(), right_access.index_type()),
+            ];
+            self.compare_type_pairs(c, &pairs, depth + 1)
+        } else if flags.intersects(TypeFlags::INDEX) {
+            let left_target = c.ty(left).as_index_type().target();
+            let right_target = c.ty(right).as_index_type().target();
+            self.compare_type(c, left_target, right_target, depth + 1)
+        } else {
+            // A template literal.
+            if c.ty(left).as_template_literal_type().texts()
+                != c.ty(right).as_template_literal_type().texts()
+            {
+                return false;
+            }
+            let left_types = c.ty(left).as_template_literal_type().types().to_vec();
+            let right_types = c.ty(right).as_template_literal_type().types().to_vec();
+            self.compare_type_list(c, &left_types, &right_types, depth + 1)
+        }
+    }
+
+    /// `compareType` for two conditional types: check, extends, then the true
+    /// and false types (each resolved only when the earlier ones match).
+    fn compare_conditional_type(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        depth: i32,
+    ) -> bool {
+        let (left_conditional, right_conditional) = (
+            c.ty(left).as_conditional_type(),
+            c.ty(right).as_conditional_type(),
+        );
+        let pairs = [
+            (
+                left_conditional.check_type(),
+                right_conditional.check_type(),
+            ),
+            (
+                left_conditional.extends_type(),
+                right_conditional.extends_type(),
+            ),
+        ];
+        if !self.compare_type_pairs(c, &pairs, depth + 1) {
+            return false;
+        }
+        let left_true = c.get_true_type_of_conditional_type(left);
+        let right_true = c.get_true_type_of_conditional_type(right);
+        if !self.compare_type(c, left_true, right_true, depth + 1) {
+            return false;
+        }
+        let left_false = c.get_false_type_of_conditional_type(left);
+        let right_false = c.get_false_type_of_conditional_type(right);
+        self.compare_type(c, left_false, right_false, depth + 1)
+    }
+
+    /// `compareType` for two string mappings, substitutions, objects,
+    /// literals, unique symbols, enums or singletons of the same flags.
+    fn compare_leaf_like_type(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        flags: TypeFlags,
+        depth: i32,
+    ) -> bool {
+        if flags.intersects(TypeFlags::STRING_MAPPING) {
+            let left_symbol = c.ty(left).symbol();
+            let right_symbol = c.ty(right).symbol();
+            if !same_symbol_reference(c, left_symbol, right_symbol) {
+                return false;
+            }
+            let left_target = c.ty(left).as_string_mapping_type().target();
+            let right_target = c.ty(right).as_string_mapping_type().target();
+            self.compare_type(c, left_target, right_target, depth + 1)
+        } else if flags.intersects(TypeFlags::SUBSTITUTION) {
+            let (left_substitution, right_substitution) = (
+                c.ty(left).as_substitution_type(),
+                c.ty(right).as_substitution_type(),
+            );
+            let pairs = [
+                (
+                    left_substitution.base_type(),
+                    right_substitution.base_type(),
+                ),
+                (
+                    left_substitution.subst_constraint(),
+                    right_substitution.subst_constraint(),
+                ),
+            ];
+            self.compare_type_pairs(c, &pairs, depth + 1)
+        } else if flags.intersects(TypeFlags::OBJECT) {
+            self.compare_object(c, left, right, depth + 1)
+        } else if flags.intersects(TypeFlags::LITERAL) {
+            // Go `reflect.DeepEqual(left.Value(), right.Value())`.
+            let same_value =
+                c.ty(left).as_literal_type().value() == c.ty(right).as_literal_type().value();
+            let left_symbol = c.ty(left).symbol();
+            let right_symbol = c.ty(right).symbol();
+            same_value && same_optional_symbol(c, left_symbol, right_symbol)
+        } else if flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL) || flags.intersects(TypeFlags::ENUM)
+        {
+            let left_symbol = c.ty(left).symbol();
+            let right_symbol = c.ty(right).symbol();
+            same_symbol_reference(c, left_symbol, right_symbol)
+        } else {
+            flags.intersects(TypeFlags::SINGLETON)
+        }
+    }
+
+    /// Compares each pair of `pairs` in order, stopping at the first that
+    /// differs.
+    fn compare_type_pairs(
+        &mut self,
+        c: &mut Checker,
+        pairs: &[(TypeId, TypeId)],
+        depth: i32,
+    ) -> bool {
+        pairs
+            .iter()
+            .all(|&(left, right)| self.compare_type(c, left, right, depth))
     }
 
     // Go: typeparser/pipeable_signature_shape.go signatureTypeMatcher.compareTypeParameter
@@ -519,6 +606,46 @@ impl SignatureTypeMatcher {
         right: TypeId,
         depth: i32,
     ) -> bool {
+        if !self.compare_anonymous_properties(c, left, right, depth)
+            || !self.compare_anonymous_index_infos(c, left, right, depth)
+        {
+            return false;
+        }
+
+        if !c
+            .get_signatures_of_type_exported(left, SignatureKind::CONSTRUCT)
+            .is_empty()
+            || !c
+                .get_signatures_of_type_exported(right, SignatureKind::CONSTRUCT)
+                .is_empty()
+        {
+            return false;
+        }
+        let left_calls = c.get_signatures_of_type_exported(left, SignatureKind::CALL);
+        let right_calls = c.get_signatures_of_type_exported(right, SignatureKind::CALL);
+        if left_calls.len() != right_calls.len() {
+            return false;
+        }
+        for i in 0..left_calls.len() {
+            if c.sig(left_calls[i]).target().is_some()
+                || c.sig(right_calls[i]).target().is_some()
+                || !self.compare_signature(c, left_calls[i], right_calls[i], depth + 1)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The properties part of `compareAnonymousObject`: the same names, each
+    /// with the same optionality, readonliness and type.
+    fn compare_anonymous_properties(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        depth: i32,
+    ) -> bool {
         let left_properties = c.get_properties_of_type_exported(left);
         let right_properties = c.get_properties_of_type_exported(right);
         if left_properties.len() != right_properties.len() {
@@ -555,7 +682,18 @@ impl SignatureTypeMatcher {
                 return false;
             }
         }
+        true
+    }
 
+    /// The index signatures part of `compareAnonymousObject`: the same
+    /// count, each with the same readonliness, key and value type.
+    fn compare_anonymous_index_infos(
+        &mut self,
+        c: &mut Checker,
+        left: TypeId,
+        right: TypeId,
+        depth: i32,
+    ) -> bool {
         let left_indexes = c.get_index_infos_of_type_exported(left);
         let right_indexes = c.get_index_infos_of_type_exported(right);
         if left_indexes.len() != right_indexes.len() {
@@ -575,29 +713,6 @@ impl SignatureTypeMatcher {
             let left_value = c.index_info(left_indexes[i]).value_type();
             let right_value = c.index_info(right_indexes[i]).value_type();
             if !self.compare_type(c, left_value, right_value, depth + 1) {
-                return false;
-            }
-        }
-
-        if !c
-            .get_signatures_of_type_exported(left, SignatureKind::CONSTRUCT)
-            .is_empty()
-            || !c
-                .get_signatures_of_type_exported(right, SignatureKind::CONSTRUCT)
-                .is_empty()
-        {
-            return false;
-        }
-        let left_calls = c.get_signatures_of_type_exported(left, SignatureKind::CALL);
-        let right_calls = c.get_signatures_of_type_exported(right, SignatureKind::CALL);
-        if left_calls.len() != right_calls.len() {
-            return false;
-        }
-        for i in 0..left_calls.len() {
-            if c.sig(left_calls[i]).target().is_some()
-                || c.sig(right_calls[i]).target().is_some()
-                || !self.compare_signature(c, left_calls[i], right_calls[i], depth + 1)
-            {
                 return false;
             }
         }
