@@ -814,28 +814,19 @@ impl Checker {
         let mut result: Vec<IndexInfoId> = Vec::new();
         for info in source_infos {
             let index_type = self.index_info(info).key_type;
-            let mut every = true;
-            for &t in types {
-                if self.get_index_info_of_type(t, index_type).is_nil() {
-                    every = false;
-                    break;
-                }
-            }
-            if every {
-                let mut value_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for &t in types {
-                    let value_type = self.get_index_type_of_type(t, index_type);
-                    value_types.push(value_type);
-                }
+            if types
+                .iter()
+                .all(|&t| self.get_index_info_of_type(t, index_type).is_some())
+            {
+                let value_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&t| self.get_index_type_of_type(t, index_type))
+                    .collect();
                 let value_type = self.get_union_type(&value_types);
-                let mut is_readonly = false;
-                for &t in types {
+                let is_readonly = types.iter().any(|&t| {
                     let i = self.get_index_info_of_type(t, index_type);
-                    if self.index_info(i).is_readonly {
-                        is_readonly = true;
-                        break;
-                    }
-                }
+                    self.index_info(i).is_readonly
+                });
                 let new_info =
                     self.new_index_info(index_type, value_type, is_readonly, Node::NIL, &[]);
                 result.push(new_info);
