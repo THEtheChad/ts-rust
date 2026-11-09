@@ -1058,12 +1058,16 @@ impl Checker {
     /// `t.flags&TypeFlagsIndexedAccess != 0 && t.AsIndexedAccessType()...` tests read as one let-chain.
     #[inline]
     fn indexed_access_parts(&self, t: TypeId) -> Option<(TypeId, TypeId)> {
-        let t = self.ty(t);
-        if !t.flags.intersects(TypeFlags::INDEXED_ACCESS) {
-            return None;
-        }
-        let d = t.as_indexed_access_type();
-        Some((d.object_type, d.index_type))
+        (self.ty(t).flags)
+            .intersects(TypeFlags::INDEXED_ACCESS)
+            .then(|| self.indexed_access_pair(t))
+    }
+
+    /// The object and index types of the indexed access type `t`.
+    #[inline]
+    fn indexed_access_pair(&self, t: TypeId) -> (TypeId, TypeId) {
+        let d = self.ty(t).as_indexed_access_type();
+        (d.object_type, d.index_type)
     }
 
     /// Go's `r.c.isTypeMatchedByTemplateLiteralType(source, target, r.isRelatedToWorker)` for a
@@ -1129,14 +1133,8 @@ impl Checker {
                     false, /*reportErrors*/
                 );
             } else if source_flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let (s_obj, s_idx) = {
-                    let d = self.ty(source).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
-                let (t_obj, t_idx) = {
-                    let d = self.ty(target).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
+                let (s_obj, s_idx) = self.indexed_access_pair(source);
+                let (t_obj, t_idx) = self.indexed_access_pair(target);
                 result = self.is_related_to(
                     r,
                     s_obj,
@@ -1456,14 +1454,8 @@ impl Checker {
             if source_flags.intersects(TypeFlags::INDEXED_ACCESS) {
                 // Relate components directly before falling back to constraint relationships
                 // A type S[K] is related to a type T[J] if S is related to T and K is related to J.
-                let (s_obj, s_idx) = {
-                    let d = self.ty(source).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
-                let (t_obj, t_idx) = {
-                    let d = self.ty(target).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
+                let (s_obj, s_idx) = self.indexed_access_pair(source);
+                let (t_obj, t_idx) = self.indexed_access_pair(target);
                 result = self.is_related_to(r, s_obj, t_obj, RecursionFlags::BOTH, report_errors);
                 if result != Ternary::FALSE {
                     result &=
