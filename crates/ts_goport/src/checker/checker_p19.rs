@@ -1198,72 +1198,96 @@ pub fn type_key_no_alias(t: TypeId) -> CacheHashKey {
 }
 
 /// Go `zeebo/xxh3.Hash128` (seed 0). Returns `(hi, lo)`.
+/// The length classes are zeebo's: up to 16 bytes, up to 240, and longer.
 fn xxh3_hash128(p: &[u8]) -> (u64, u64) {
     let l = p.len();
-    let lu = l as u64;
     if l <= 16 {
-        let (lo, hi);
-        if l > 8 {
-            return xxh3_hash128_9to16(xxh_read64(p, 0), xxh_read64(p, l - 8), lu);
-        } else if l > 3 {
-            return xxh3_hash128_4to8(xxh_read32(p, 0), xxh_read32(p, l - 4), lu);
-        } else if l == 3 {
-            let c12 = p[0] as u64 | (p[1] as u64) << 8;
-            lo = (c12 << 16) + p[2] as u64 + (3 << 8);
-        } else if l == 2 {
-            let c12 = p[0] as u64 | (p[1] as u64) << 8;
-            lo = ((c12 * ((1 << 24) + 1)) >> 8) + (2 << 8);
-        } else if l == 1 {
-            lo = (p[0] as u64) * ((1 << 24) + (1 << 16) + 1) + (1 << 8);
-        } else {
-            return (0x99aa06d3014798d8, 0x6001c324468d497f);
-        }
-        hi = (lo as u32).swap_bytes().rotate_left(13) as u64;
-        let lo = lo ^ (xxh_read32(&XXH3_SECRET, 0) ^ xxh_read32(&XXH3_SECRET, 4));
-        let hi = hi ^ (xxh_read32(&XXH3_SECRET, 8) ^ xxh_read32(&XXH3_SECRET, 12));
-        return (xxh64_avalanche_small(hi), xxh64_avalanche_small(lo));
+        return xxh3_hash128_0to16(p);
     }
     if l <= 240 {
-        // acc.0 = hi, acc.1 = lo
-        let mut acc = (0u64, lu.wrapping_mul(XXH_PRIME64_1));
-        if l <= 128 {
-            if l > 32 {
-                if l > 64 {
-                    if l > 96 {
-                        xxh3_mix32(&mut acc, p, l - 64, 48, 112, 96);
-                    }
-                    xxh3_mix32(&mut acc, p, l - 48, 32, 80, 64);
-                }
-                xxh3_mix32(&mut acc, p, l - 32, 16, 48, 32);
-            }
-            xxh3_mix32(&mut acc, p, l - 16, 0, 16, 0);
-        } else {
-            for i in 0..4 {
-                xxh3_mix32(&mut acc, p, 32 * i + 16, 32 * i, 32 * i + 16, 32 * i);
-            }
-            acc.0 = xxh3_avalanche(acc.0);
-            acc.1 = xxh3_avalanche(acc.1);
-            let top = l & !31;
-            let mut i = 128;
-            while i < top {
-                xxh3_mix32(&mut acc, p, i + 16, i, i - 109, i - 125);
-                i += 32;
-            }
-            // last 32 bytes: hi mixes the first half, lo the second.
-            xxh3_mix32(&mut acc, p, l - 32, l - 16, 119, 103);
-        }
-        let (hi, lo) = acc;
-        let new_hi = lo
-            .wrapping_mul(XXH_PRIME64_1)
-            .wrapping_add(hi.wrapping_mul(XXH_PRIME64_4))
-            .wrapping_add(lu.wrapping_mul(XXH_PRIME64_2));
-        let new_lo = hi.wrapping_add(lo);
-        return (
-            xxh3_avalanche(new_hi).wrapping_neg(),
-            xxh3_avalanche(new_lo),
-        );
+        return xxh3_hash128_17to240(p);
     }
-    // Long input: stripes of 64 bytes, blocks of 1024 bytes.
+    xxh3_hash128_large(p)
+}
+
+/// `xxh3_hash128` of at most 16 bytes.
+#[inline(always)]
+fn xxh3_hash128_0to16(p: &[u8]) -> (u64, u64) {
+    let l = p.len();
+    let lu = l as u64;
+    let (lo, hi);
+    if l > 8 {
+        return xxh3_hash128_9to16(xxh_read64(p, 0), xxh_read64(p, l - 8), lu);
+    } else if l > 3 {
+        return xxh3_hash128_4to8(xxh_read32(p, 0), xxh_read32(p, l - 4), lu);
+    } else if l == 3 {
+        let c12 = p[0] as u64 | (p[1] as u64) << 8;
+        lo = (c12 << 16) + p[2] as u64 + (3 << 8);
+    } else if l == 2 {
+        let c12 = p[0] as u64 | (p[1] as u64) << 8;
+        lo = ((c12 * ((1 << 24) + 1)) >> 8) + (2 << 8);
+    } else if l == 1 {
+        lo = (p[0] as u64) * ((1 << 24) + (1 << 16) + 1) + (1 << 8);
+    } else {
+        return (0x99aa06d3014798d8, 0x6001c324468d497f);
+    }
+    hi = (lo as u32).swap_bytes().rotate_left(13) as u64;
+    let lo = lo ^ (xxh_read32(&XXH3_SECRET, 0) ^ xxh_read32(&XXH3_SECRET, 4));
+    let hi = hi ^ (xxh_read32(&XXH3_SECRET, 8) ^ xxh_read32(&XXH3_SECRET, 12));
+    (xxh64_avalanche_small(hi), xxh64_avalanche_small(lo))
+}
+
+/// `xxh3_hash128` of 17 to 240 bytes.
+#[inline(always)]
+fn xxh3_hash128_17to240(p: &[u8]) -> (u64, u64) {
+    let l = p.len();
+    let lu = l as u64;
+    // acc.0 = hi, acc.1 = lo
+    let mut acc = (0u64, lu.wrapping_mul(XXH_PRIME64_1));
+    if l <= 128 {
+        if l > 32 {
+            if l > 64 {
+                if l > 96 {
+                    xxh3_mix32(&mut acc, p, l - 64, 48, 112, 96);
+                }
+                xxh3_mix32(&mut acc, p, l - 48, 32, 80, 64);
+            }
+            xxh3_mix32(&mut acc, p, l - 32, 16, 48, 32);
+        }
+        xxh3_mix32(&mut acc, p, l - 16, 0, 16, 0);
+    } else {
+        for i in 0..4 {
+            xxh3_mix32(&mut acc, p, 32 * i + 16, 32 * i, 32 * i + 16, 32 * i);
+        }
+        acc.0 = xxh3_avalanche(acc.0);
+        acc.1 = xxh3_avalanche(acc.1);
+        let top = l & !31;
+        let mut i = 128;
+        while i < top {
+            xxh3_mix32(&mut acc, p, i + 16, i, i - 109, i - 125);
+            i += 32;
+        }
+        // last 32 bytes: hi mixes the first half, lo the second.
+        xxh3_mix32(&mut acc, p, l - 32, l - 16, 119, 103);
+    }
+    let (hi, lo) = acc;
+    let new_hi = lo
+        .wrapping_mul(XXH_PRIME64_1)
+        .wrapping_add(hi.wrapping_mul(XXH_PRIME64_4))
+        .wrapping_add(lu.wrapping_mul(XXH_PRIME64_2));
+    let new_lo = hi.wrapping_add(lo);
+    (
+        xxh3_avalanche(new_hi).wrapping_neg(),
+        xxh3_avalanche(new_lo),
+    )
+}
+
+/// `xxh3_hash128` of more than 240 bytes: stripes of 64 bytes in blocks of
+/// 1024.
+#[inline(always)]
+fn xxh3_hash128_large(p: &[u8]) -> (u64, u64) {
+    let l = p.len();
+    let lu = l as u64;
     let mut accs: [u64; 8] = [
         XXH_PRIME32_3,
         XXH_PRIME64_1,
