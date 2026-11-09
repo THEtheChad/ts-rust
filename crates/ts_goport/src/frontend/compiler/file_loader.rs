@@ -5,7 +5,7 @@
 //! (`crate::tracing::get`).
 
 use super::files_parser::{
-    TakenParse, count_prep, free_prep_off_loader, note_commit, note_names_own, note_prep_taken,
+    TakenParse, count_prep, free_prep_off_loader, note_names_own, note_prep_taken,
 };
 use crate::contentmapper::{
     ConcurrentTransform, DiagnosticDirectiveError, DiagnosticDirectiveErrorKind, InitializeError,
@@ -2103,11 +2103,15 @@ impl FileLoader {
                     if usable {
                         return Some(prep);
                     }
-                    count_prep(|c| c.preps_unfit += 1);
+                    count_prep!(|c| c.preps_unfit += 1);
                     free_prep_off_loader(prep);
                     None
                 });
-            let (mut names_taken, mut names_own) = (0, 0);
+            // The module names that the loader took from the prep (the debug
+            // counts, diagnostics) and that it resolved itself.
+            #[cfg(feature = "diagnostics")]
+            let mut names_taken = 0;
+            let mut names_own = 0;
             let mut resolutions_trace: Vec<DiagAndArgs> = Vec::new();
             // PERF: the names, usages and JSDoc flags of the imports and
             // module augmentations of a parse that the loads keep
@@ -2147,7 +2151,11 @@ impl FileLoader {
                 .filter(|_| named && !options_for_file.trace_resolution.is_true())
                 .and_then(|prep| prep.commit.take());
             if named {
-                note_commit(commit.is_some());
+                let taken = commit.is_some();
+                count_prep!(|c| {
+                    c.commits_taken += usize::from(taken);
+                    c.commits_missing += usize::from(!taken);
+                });
             }
             #[cfg(test)]
             if commit.is_some() {
@@ -2227,7 +2235,10 @@ impl FileLoader {
                     }
                     for answer in prep.answers().iter().flatten() {
                         self.note_worker_logs(&answer.package_jsons, &answer.lookups);
-                        names_taken += 1;
+                        #[cfg(feature = "diagnostics")]
+                        {
+                            names_taken += 1;
+                        }
                     }
                     for add in commit.adds.drain(..) {
                         let import_index = add.index as i32 - imports_start;
@@ -2379,7 +2390,10 @@ impl FileLoader {
                     });
                 let resolved_module = match taken {
                     Some(resolved_module) => {
-                        names_taken += 1;
+                        #[cfg(feature = "diagnostics")]
+                        {
+                            names_taken += 1;
+                        }
                         resolved_module
                     }
                     None => {
@@ -2485,7 +2499,7 @@ impl FileLoader {
                 }
                 note_prep_taken();
                 note_names_own(names_own);
-                count_prep(|c| {
+                count_prep!(|c| {
                     c.preps_taken += 1;
                     c.preps_named += usize::from(named);
                     c.names_taken += names_taken;

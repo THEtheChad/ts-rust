@@ -2,16 +2,17 @@
 //! build): the loader's phase times of each program load on stderr
 //! (`LoadTimes`, the S0 line and the loader v2 L0 phases: CLOCK_MONOTONIC
 //! timestamps and the thread's `RUSAGE_THREAD` utime, stime and minor
-//! faults), and the publish and bind phases (`PhaseTimer`). Without the
+//! faults), the publish and bind phases (`PhaseTimer`), and the loader's
+//! waits for workers that the debug counts time (`WaitTimer`). Without the
 //! feature the timers are zero-sized no-ops and none of the state is
 //! compiled (`off`), as emitter/phase_times.rs does.
 // PORT: not in Go (perf diagnostics).
 
 #[cfg(feature = "diagnostics")]
-pub use on::{LoadTimes, PhaseTimer, monotonic_ms, times_enabled};
+pub use on::{LoadTimes, PhaseTimer, WaitTimer, monotonic_ms, times_enabled};
 
 #[cfg(not(feature = "diagnostics"))]
-pub use off::{LoadTimes, PhaseTimer};
+pub use off::{LoadTimes, PhaseTimer, WaitTimer};
 
 #[cfg(feature = "diagnostics")]
 mod on {
@@ -138,6 +139,33 @@ mod on {
         }
     }
 
+    /// The time of a wait of the loader for a worker, for the debug counts
+    /// of resolve ahead (`AheadStats`) and of the parse workers
+    /// (`GOPORT_PREFETCH_STATS`): `start` reads the clock once, at the
+    /// first of the wait's sleeps. Without the feature it is a no-op that
+    /// reads no clock.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WaitTimer(Option<Instant>);
+
+    impl WaitTimer {
+        /// A timer that started now.
+        #[must_use]
+        pub fn now() -> Self {
+            WaitTimer(Some(Instant::now()))
+        }
+
+        /// Starts the timer, unless it started already.
+        pub fn start(&mut self) {
+            self.0.get_or_insert_with(Instant::now);
+        }
+
+        /// The time since `start`, if it started.
+        #[must_use]
+        pub fn elapsed(&self) -> Option<std::time::Duration> {
+            self.0.map(|start| start.elapsed())
+        }
+    }
+
     /// The loader's phase times of one load (`GOPORT_LOAD_TIMES`): none
     /// when the times are off.
     pub struct LoadTimes(Option<Phases>);
@@ -242,6 +270,21 @@ mod off {
 
         #[inline(always)]
         pub fn report(self, _files: usize, _resolved_ahead: bool) {}
+    }
+
+    /// No timer: no clock.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WaitTimer;
+
+    impl WaitTimer {
+        #[inline(always)]
+        #[must_use]
+        pub fn now() -> Self {
+            WaitTimer
+        }
+
+        #[inline(always)]
+        pub fn start(&mut self) {}
     }
 
     /// No timer: `start` gives none.

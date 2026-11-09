@@ -28,7 +28,7 @@ from array import array
 from collections import Counter, defaultdict
 from pathlib import Path
 
-VERSION = 12  # bump when snapshot content changes (invalidates the cache)
+VERSION = 13  # bump when snapshot content changes (invalidates the cache)
 CACHE = Path(os.environ.get("PERF_QUALITY_CACHE", Path.home() / ".cache/perf-rearch/quality"))
 RCA = Path(os.environ.get("PERF_QUALITY_RCA", Path.home() / ".cache/perf-rearch/tools/rca/bin/rust-code-analysis-cli"))
 REPO = Path(__file__).resolve().parents[2]
@@ -160,6 +160,68 @@ def attr_body(texts: list[str], i: int) -> tuple[list[str], int]:
     return texts[j + 1 : end], end + 1
 
 
+# Items whose body (a `{ ... }` at depth 0, or a `;`) ends them: `fn`, `impl`, `mod`, ... and the
+# statements that are blocks (`if`, `match`, loops, `unsafe { }`, a bare block).
+BLOCK_ITEM_KW = {"fn", "impl", "mod", "trait", "struct", "enum", "union", "if", "match", "for", "while",
+                 "loop", "unsafe", "async", "extern", "macro_rules", "{"}
+
+
+def item_end(texts: list[str], j: int) -> int:
+    """The index of the last token of the item, statement, struct field (of a struct or a struct
+    literal), enum variant or match arm that starts at token `j` (after its attributes).
+
+    - An item or block statement (`BLOCK_ITEM_KW`, `const fn`) ends with its first `{ ... }` at
+      depth 0 (an `if`'s `else` branches too), or at a `;` at depth 0 (`mod x;`, `struct S;`).
+    - Anything else (a field, a `let` or expression statement, a `const`/`static`/`use`, a variant,
+      a match arm) ends at the first `,` or `;` at depth 0, with `(...)`, `[...]` and `{...}`
+      nested; a `{` after `=>` (an arm's block) or after `!` (a macro call such as
+      `thread_local! { }`) ends it with its `}`; a closer of the enclosing struct, call or block
+      ends it before that closer (a last field with no comma).
+    Strings and chars are single tokens (`lex`), so their brackets and commas do not count."""
+    n = len(texts)
+    k = j
+    if k < n and texts[k] == "pub":
+        k += 1
+        if k < n and texts[k] == "(":
+            k = match_close(texts, k, "(", ")") + 1
+    first = texts[k] if k < n else ""
+    block = first in BLOCK_ITEM_KW or (first == "const" and k + 1 < n and texts[k + 1] in ("fn", "unsafe", "async"))
+    depth = 0
+    prev = None
+    while k < n:
+        t = texts[k]
+        if block:
+            if t in ("(", "["):
+                depth += 1
+            elif t in (")", "]"):
+                depth -= 1
+            elif depth == 0 and t == ";":
+                return k
+            elif depth == 0 and t == "{":
+                end = match_close(texts, k, "{", "}")
+                if end + 1 < n and texts[end + 1] == "else":
+                    k = end + 1
+                    continue
+                return end
+            elif depth == 0 and t == "}":
+                return max(j, k - 1)
+        else:
+            if t in ("(", "[", "{"):
+                if t == "{" and depth == 0 and prev in ("=>", "!"):
+                    return match_close(texts, k, "{", "}")
+                depth += 1
+            elif t in (")", "]", "}"):
+                if depth == 0:
+                    return max(j, k - 1)
+                depth -= 1
+            elif depth == 0 and t in (",", ";"):
+                return k
+            if depth == 0:
+                prev = t
+        k += 1
+    return n - 1
+
+
 def is_test_attr(body: list[str]) -> bool:
     if body == ["test"] or (len(body) >= 3 and body[-1] == "test" and body[-2] == "::"):
         return True  # #[test], #[tokio::test]
@@ -187,32 +249,11 @@ def test_spans(texts: list[str], lines: list[int]):
                     if b2[:1] == ["path"] and len(b2) >= 3:
                         path_attr = b2[2].strip('"')
                     j = j2
-                # item: up to '{' or ';' at depth 0, or a '}' first (a struct field or a struct
-                # literal's field, which ends at a ','; the span runs to the end of its struct)
-                depth = 0
-                k = j
-                while k < n:
-                    t = texts[k]
-                    if t in ("(", "["):
-                        depth += 1
-                    elif t in (")", "]"):
-                        depth -= 1
-                    elif depth == 0 and t in ("{", ";", "}"):
-                        break
-                    k += 1
-                if k >= n:
+                if j >= n:
                     break
-                if texts[k] == "}":
-                    spans.append((start_line, lines[k]))
-                    i = k
-                    continue
-                if texts[k] == ";":
-                    if k >= 2 and texts[k - 2] == "mod":
-                        mods.append((texts[k - 1], path_attr))
-                    spans.append((start_line, lines[k]))
-                    i = k + 1
-                    continue
-                end = match_close(texts, k, "{", "}")
+                end = item_end(texts, j)
+                if texts[end] == ";" and end >= 2 and texts[end - 2] == "mod":
+                    mods.append((texts[end - 1], path_attr))
                 spans.append((start_line, lines[end]))
                 i = end + 1
                 continue
@@ -243,22 +284,9 @@ def feature_spans(texts: list[str], lines: list[int]):
                 j = after
                 while j < n and texts[j] == "#":
                     j = attr_body(texts, j)[1]
-                depth = 0
-                k = j
-                while k < n:
-                    t = texts[k]
-                    if t in ("(", "["):
-                        depth += 1
-                    elif t in (")", "]"):
-                        depth -= 1
-                    elif depth == 0 and t in ("{", ";", "}"):
-                        break
-                    k += 1
-                if k >= n:
+                if j >= n:
                     break
-                # A `}` first: the item was a struct field or a struct literal's field, which
-                # ends at a `,`; the span runs to the end of its struct, not into what follows.
-                end = k if texts[k] in (";", "}") else match_close(texts, k, "{", "}")
+                end = item_end(texts, j)
                 out.append([lines[i], lines[end], feat])
                 i = after
                 continue
