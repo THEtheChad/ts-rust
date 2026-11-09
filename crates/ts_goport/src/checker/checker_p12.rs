@@ -1370,6 +1370,21 @@ impl Checker {
         t
     }
 
+    /// Go `c.isEvolvingArrayOperationTarget(node)` in `checkIdentifier`, whose
+    /// answer matters only when `t` is an automatic type.
+    /// PERF: chkA. For any other type only the element assignment part runs,
+    /// at the same point, because that part can make types; the length, push
+    /// and unshift part only reads the tree. Returns false then.
+    #[inline]
+    fn is_evolving_array_operation_target_of_automatic(&mut self, node: Node, t: TypeId) -> bool {
+        if t == self.auto_type || t == self.auto_array_type {
+            return self.is_evolving_array_operation_target(node);
+        }
+        let root = self.get_reference_root(node);
+        self.is_evolving_array_element_assignment(root, root.parent());
+        false
+    }
+
     // Go: checker/checker.go:11275 checkIdentifier
     pub fn check_identifier(&mut self, node: Node, check_mode: CheckMode) -> TypeId {
         if is_this_in_type_query(node) {
@@ -1581,20 +1596,8 @@ impl Checker {
         // A variable is considered uninitialized when it is possible to analyze the entire control flow graph
         // from declaration to use, and when the variable's declared type doesn't include undefined but the
         // control flow based type does include undefined.
-        // PERF: chkA. Go calls `isEvolvingArrayOperationTarget(node)` first,
-        // but its answer matters only for an automatic type. For any other
-        // type only its element assignment part runs, at the same point,
-        // because that part can make types. The length, push and unshift part
-        // only reads the tree.
-        let is_evolving_array_operation_target = if t == self.auto_type || t == self.auto_array_type
-        {
-            self.is_evolving_array_operation_target(node)
-        } else {
-            let root = self.get_reference_root(node);
-            self.is_evolving_array_element_assignment(root, root.parent());
-            false
-        };
-        if !is_evolving_array_operation_target && (t == self.auto_type || t == self.auto_array_type)
+        if !self.is_evolving_array_operation_target_of_automatic(node, t)
+            && (t == self.auto_type || t == self.auto_array_type)
         {
             if flow_type == self.auto_type || flow_type == self.auto_array_type {
                 if self.no_implicit_any {
