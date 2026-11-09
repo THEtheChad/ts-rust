@@ -2109,6 +2109,7 @@ mod tests {
     /// - enumeration (`package_json_cache_entries`, the build info and the
     ///   watch): the same entries;
     /// - `get` (a later lookup of the loader): the same entry for each key.
+    ///
     /// The two stores themselves differ: the adopted reads are pending, so
     /// `range` and `contains_key` do not see them until a `get` takes one;
     /// the enumeration lists them through the taken lookups instead.

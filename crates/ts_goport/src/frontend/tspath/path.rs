@@ -178,7 +178,7 @@ fn last_index_byte(s: &str, c: u8) -> isize {
         .map_or(-1, |i| i as isize)
 }
 
-/// Path Tests
+// Path Tests
 
 // Go: tspath/path.go:25 isAnyDirectorySeparator
 // Determines whether a byte corresponds to `/` or `\`.
@@ -1270,7 +1270,7 @@ impl Path {
     }
 }
 
-/// Relative Paths
+// Relative Paths
 
 // Go: tspath/path.go:738 GetPathComponentsRelativeTo
 pub fn get_path_components_relative_to(

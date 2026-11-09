@@ -267,6 +267,7 @@ impl StatusPrefetch {
     ///   with two names). The task writes the file in place under its own
     ///   name, and only that name is noted as written, so the prefetched
     ///   mtime of this name stays.
+    ///
     /// The build drops what its checks did not take
     /// (`BuildTask::drop_status_prefetch`), so a later build reads the file
     /// system. Each path is read once: the build info lists the root files

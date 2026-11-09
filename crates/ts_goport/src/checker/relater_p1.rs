@@ -1910,6 +1910,7 @@ impl Checker {
      *    (this means that 'toString', for example, is not usually a known property).
      * 4. In a union or intersection type,
      *    a property is considered known if it is known in any constituent type.
+     *
      * @param targetType a type to search a given name in
      * @param name a property name to search
      * @param isComparingJsxAttributes a boolean flag indicating whether we are searching in JsxAttributesType

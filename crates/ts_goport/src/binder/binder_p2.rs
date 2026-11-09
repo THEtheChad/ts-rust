@@ -11,6 +11,7 @@
 //! - `flow_node_arena: Vec<FlowNode>` indexed by `FlowNodeId::local_index()`.
 //! - `symbol_arena` (Go `symbolArena`): the `SymbolArena` (owned or `&mut`).
 //! - `common_js_module_indicator: Node` (Go `file.CommonJSModuleIndicator`, set by the binder).
+//!
 //! The small module-private helpers below read and write that state.
 
 use crate::astdata::NodeData;

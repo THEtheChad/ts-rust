@@ -704,6 +704,7 @@ impl URL {
     /// For example:
     /// - setPath("/foo/bar")   will set Path="/foo/bar" and RawPath=""
     /// - setPath("/foo%2fbar") will set Path="/foo/bar" and RawPath="/foo%2fbar"
+    ///
     /// setPath will return an error only if the provided path contains an invalid
     /// escaping.
     pub fn set_path(&mut self, p: &str) -> Result<(), GoError> {

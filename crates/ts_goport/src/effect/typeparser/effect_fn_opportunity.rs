@@ -990,6 +990,7 @@ impl TypeParser<'_> {
     /// 1. Layer service context (ServiceTag.memberName)
     /// 2. Exported function declarations — returns the function name
     /// 3. Exported const variable initializers — returns the variable name
+    ///
     /// Returns "" if no context-aware name can be inferred.
     // Go: typeparser/effect_fn_opportunity.go getInferredTraceName
     fn get_inferred_trace_name(&mut self, node: Node, suggested_trace_name: &str) -> String {

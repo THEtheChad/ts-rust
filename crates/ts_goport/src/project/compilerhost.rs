@@ -719,6 +719,7 @@ impl compiler::CompilerHost for CompilerHost {
 ///   are checked and replayed once per load: the snapshot does not change
 ///   its answers during the load, and the replay notes the same paths
 ///   again.
+///
 /// What `accept_ahead_answer` keeps during one load.
 struct AheadCheck {
     /// The snapshot's lookup cache (`SnapshotFSBuilder::cached_fs`).

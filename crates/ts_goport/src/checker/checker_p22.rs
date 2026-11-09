@@ -747,7 +747,7 @@ impl Checker {
      * A declaration name is only late-bindable if:
      * - It is a `ComputedPropertyName`.
      * - Its expression is an `Identifier` or either a `PropertyAccessExpression` an
-     * `ElementAccessExpression` consisting only of these same three types of nodes.
+     *   `ElementAccessExpression` consisting only of these same three types of nodes.
      * - The type of its expression is a string or numeric literal type, or is a `unique symbol` type.
      */
     // Go: checker/checker.go:20397 isLateBindableName

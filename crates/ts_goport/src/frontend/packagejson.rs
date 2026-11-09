@@ -1293,6 +1293,7 @@ impl InfoCache {
     ///   pending), which `range` and `contains_key` do not see;
     /// - `get <key> ...`: for each key of either store, the entry that `get`
     ///   would give (the entry, else the pending read parsed), with no change.
+    ///
     /// The contents are the parsed fields and whether they parsed; the lazily
     /// found version paths are left out.
     #[cfg(feature = "diagnostics")]

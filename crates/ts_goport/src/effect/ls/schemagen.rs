@@ -695,7 +695,9 @@ impl<'f> SchemaGen<'f> {
     // Go: schemagen/schemagen.go:632 createExportSchemaClassDeclaration
     /// createExportSchemaClassDeclaration creates:
     ///
-    ///	export class <Name> extends Schema.Class<Name>("Name")({...}) { }
+    /// ```text
+    /// export class <Name> extends Schema.Class<Name>("Name")({...}) { }
+    /// ```
     fn create_export_schema_class_declaration(&self, name: &str, properties: &[Node]) -> Node {
         let fields = self
             .f
