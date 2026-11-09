@@ -1093,22 +1093,22 @@ impl Checker {
                         let constituent_string = self.type_to_string(constituent);
                         let d = new_diagnostic_for_node(
                             target,
-                            if is_call {
-                                diag::Type_0_has_no_call_signatures
-                            } else {
-                                diag::Type_0_has_no_construct_signatures
-                            },
+                            if_else(
+                                is_call,
+                                diag::Type_0_has_no_call_signatures,
+                                diag::Type_0_has_no_construct_signatures,
+                            ),
                             args![constituent_string],
                         );
                         let apparent_string = self.type_to_string(apparent_type);
                         diagnostic = Some(new_diagnostic_chain_for_node(
                             Some(d),
                             target,
-                            if is_call {
-                                diag::Not_all_constituents_of_type_0_are_callable
-                            } else {
-                                diag::Not_all_constituents_of_type_0_are_constructable
-                            },
+                            if_else(
+                                is_call,
+                                diag::Not_all_constituents_of_type_0_are_callable,
+                                diag::Not_all_constituents_of_type_0_are_constructable,
+                            ),
                             args![apparent_string],
                         ));
                     }
@@ -1122,11 +1122,11 @@ impl Checker {
                 let apparent_string = self.type_to_string(apparent_type);
                 diagnostic = Some(new_diagnostic_for_node(
                     target,
-                    if is_call {
-                        diag::No_constituent_of_type_0_is_callable
-                    } else {
-                        diag::No_constituent_of_type_0_is_constructable
-                    },
+                    if_else(
+                        is_call,
+                        diag::No_constituent_of_type_0_is_callable,
+                        diag::No_constituent_of_type_0_is_constructable,
+                    ),
                     args![apparent_string],
                 ));
             }
@@ -1134,11 +1134,7 @@ impl Checker {
                 let apparent_string = self.type_to_string(apparent_type);
                 diagnostic = Some(new_diagnostic_for_node(
                     target,
-                    if is_call {
-                        diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other
-                    } else {
-                        diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other
-                    },
+                    if_else(is_call, diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other, diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other),
                     args![apparent_string],
                 ));
             }
@@ -1147,19 +1143,19 @@ impl Checker {
             diagnostic = Some(new_diagnostic_chain_for_node(
                 diagnostic,
                 target,
-                if is_call {
-                    diag::Type_0_has_no_call_signatures
-                } else {
-                    diag::Type_0_has_no_construct_signatures
-                },
+                if_else(
+                    is_call,
+                    diag::Type_0_has_no_call_signatures,
+                    diag::Type_0_has_no_construct_signatures,
+                ),
                 args![apparent_string],
             ));
         }
-        let mut head_message = if is_call {
-            diag::This_expression_is_not_callable
-        } else {
-            diag::This_expression_is_not_constructable
-        };
+        let mut head_message = if_else(
+            is_call,
+            diag::This_expression_is_not_callable,
+            diag::This_expression_is_not_constructable,
+        );
         // Diagnose get accessors incorrectly called as functions
         if is_call_expression(error_target.parent()) && error_target.parent().arguments().is_empty()
         {
