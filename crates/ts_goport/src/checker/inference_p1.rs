@@ -773,12 +773,7 @@ impl Checker {
                 }
                 let ctx = n.inferences;
                 if !self.inference_context(ctx).inferences[inference].is_fixed {
-                    let propagation_type = n.propagation_type;
-                    let candidate = if propagation_type.is_some() {
-                        propagation_type
-                    } else {
-                        source
-                    };
+                    let candidate = n.propagation_type.get().unwrap_or(source);
                     if candidate == self.blocked_string_type {
                         return;
                     }
@@ -818,12 +813,10 @@ impl Checker {
                     if !priority.intersects(InferencePriority::RETURN_TYPE)
                         && self.ty(target).flags.intersects(TypeFlags::TYPE_PARAMETER)
                         && self.inference_context(ctx).inferences[inference].top_level
+                        && !self.is_type_parameter_at_top_level(n.original_target, target, 0)
                     {
-                        let original_target = n.original_target;
-                        if !self.is_type_parameter_at_top_level(original_target, target, 0) {
-                            self.inference_context_mut(ctx).inferences[inference].top_level = false;
-                            self.clear_cached_inferences(ctx);
-                        }
+                        self.inference_context_mut(ctx).inferences[inference].top_level = false;
+                        self.clear_cached_inferences(ctx);
                     }
                 }
                 {
