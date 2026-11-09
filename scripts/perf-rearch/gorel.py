@@ -934,7 +934,7 @@ def md_summary(g: dict) -> list[str]:
         f"- Go at `{g['go_root']}`: {s['go_functions']:,} functions, {s['go_closures_named']} named closures.",
         f"- Rust prod functions {s['rust_functions']:,}: by `// Go:` marker {c['marker']:,}, by prose in the doc comment {c['prose']:,}, by name high {c['high']:,} / medium {c['medium']:,} / "
         f"low {c['low']:,}, lifted by name {c['lifted']}, ambiguous {c['ambiguous']}, none {c['none']:,}. "
-        f"{s['parts']} are summed into another function's row (splits and lifted Go closures, {s['lifted_closures']} of them closures); "
+        f"{s['parts']} are summed into another function's row (splits, same-named variants and lifted Go closures, {s['lifted_closures']} of them closures); "
         f"{s['nested_folded']:,} nested fns stay folded in their parent. Markers naming nothing at the pin: {s['markers_unresolved']:,}.",
         f"- Name matcher checked against the markers: it places {nv['name_matcher_placed']:,} of {nv['marker_resolved']:,} marked functions "
         f"and agrees on {nv['agree']:,} ({100 * nv['agree'] / max(1, nv['name_matcher_placed']):.1f}%); by confidence "
@@ -1048,7 +1048,8 @@ def md_planning(g: dict, rev: str, sha: str, top: int = 60, files_per_area: int 
             for k, x in v["subareas"].items():
                 o.append(f"| {k} | {x['port_diff_ge10']} | {x['port_excess']:,} | {x['own_gt25']} | {x['own_excess']:,} |")
             files = sorted(((f, x) for f, x in ft.items() if x["area"] == a), key=lambda fx: -(fx[1]["port_excess"] + fx[1]["own_excess"]))
-            o += ["", f"Files by Σ excess (top {files_per_area} of {len(files)}):", "",
+            shown = f"top {files_per_area} of {len(files)}" if len(files) > files_per_area else f"{len(files)} files"
+            o += ["", f"Files by Σ excess ({shown}):", "",
                   "| file | port targets | Σ Δ | own targets | Σ own excess |", "|---|---:|---:|---:|---:|"]
             for f, x in files[:files_per_area]:
                 o.append(f"| `{short(f)}` | {x['port']} | {x['port_excess']:,} | {x['own']} | {x['own_excess']:,} |")
