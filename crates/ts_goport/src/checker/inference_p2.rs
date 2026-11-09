@@ -132,29 +132,20 @@ impl Checker {
     // arrow function, but is considered partially inferable because property 'a' has an inferable type.
     // Go: checker/inference.go:1071 isPartiallyInferableType
     pub fn is_partially_inferable_type(&mut self, t: TypeId) -> bool {
-        if !self
+        !self
             .ty(t)
             .object_flags
             .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
-        {
-            return true;
-        }
-        if self.is_object_literal_type(t) {
-            for prop in self.get_properties_of_type(t) {
-                let prop_type = self.get_type_of_symbol(prop);
-                if self.is_partially_inferable_type(prop_type) {
-                    return true;
-                }
-            }
-        }
-        if self.is_tuple_type(t) {
-            for e in self.get_element_types(t) {
-                if self.is_partially_inferable_type(e) {
-                    return true;
-                }
-            }
-        }
-        false
+            || self.is_object_literal_type(t)
+                && self.get_properties_of_type(t).into_iter().any(|prop| {
+                    let prop_type = self.get_type_of_symbol(prop);
+                    self.is_partially_inferable_type(prop_type)
+                })
+            || self.is_tuple_type(t)
+                && self
+                    .get_element_types(t)
+                    .into_iter()
+                    .any(|e| self.is_partially_inferable_type(e))
     }
 
     // Go: checker/inference.go:1077 inferReverseMappedType
