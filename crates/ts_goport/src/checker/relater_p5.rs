@@ -718,18 +718,14 @@ impl Checker {
                         );
                     } else {
                         let prop_str = self.symbol_to_string(target_prop);
-                        let source_is_private =
-                            source_prop_flags.intersects(ModifierFlags::PRIVATE);
-                        let first = self.type_to_string_exported(if source_is_private {
-                            source
-                        } else {
-                            target
-                        });
-                        let second = self.type_to_string_exported(if source_is_private {
-                            target
-                        } else {
-                            source
-                        });
+                        let (private_type, public_type) =
+                            if source_prop_flags.intersects(ModifierFlags::PRIVATE) {
+                                (source, target)
+                            } else {
+                                (target, source)
+                            };
+                        let first = self.type_to_string_exported(private_type);
+                        let second = self.type_to_string_exported(public_type);
                         self.report_error(
                             r,
                             diag::Property_0_is_private_in_type_1_but_not_in_type_2,
@@ -742,14 +738,14 @@ impl Checker {
         } else if target_prop_flags.intersects(ModifierFlags::PROTECTED) {
             if !self.is_valid_override_of(source_prop, target_prop) {
                 if report_errors {
-                    let mut source_type = self.get_declaring_class(source_prop);
-                    if source_type.is_nil() {
-                        source_type = source;
-                    }
-                    let mut target_type = self.get_declaring_class(target_prop);
-                    if target_type.is_nil() {
-                        target_type = target;
-                    }
+                    let source_type = self
+                        .get_declaring_class(source_prop)
+                        .get()
+                        .unwrap_or(source);
+                    let target_type = self
+                        .get_declaring_class(target_prop)
+                        .get()
+                        .unwrap_or(target);
                     let prop_str = self.symbol_to_string(target_prop);
                     let source_str = self.type_to_string_exported(source_type);
                     let target_str = self.type_to_string_exported(target_type);
