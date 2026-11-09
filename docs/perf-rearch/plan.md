@@ -1283,3 +1283,21 @@ once a **reconciliation step** is built and tested.
       with equal icount, so this was the load, not the change.
   - **icount:** flat. umami emit-mt read +0.37% and then −0.30% on a recheck
     with 5 runs; that cell's spread is 0.43%.
+- **Wave 2 begins** (shared lane brief: `cleanup/w2-brief.md`). Area targets
+  at `62843b5a1`:
+  - checker: 107 port targets, Σ Δ 1,775;
+  - frontend: 14 + 14 own;
+  - ls: 13 + 2;
+  - execute/build/emit: 3 + 3;
+  - effect: 85 own, Σ 1,312;
+  - other: 12 + 33, `gostd`/`locale` last.
+
+  Builds share one cargo slot and the gate allows one run at a time, so 3
+  code lanes run beside Q5 at first:
+  - **W2-CA:** checker `relater_p*`, `inference_p*`, `flow_p*`,
+    `flow_skip.rs`, `nameresolver.rs`, `utilities_p*`, `mapper.rs`;
+  - **W2-CB:** checker `checker_p01`–`p19`, `grammarchecks_p*`, `jsx_p*`;
+  - **W2-EF:** `effect/`.
+
+  Next, as slots free: W2-CC (the rest of checker), W2-FE (frontend,
+  execute/build/emit, the "other" ports) and W2-LS.
