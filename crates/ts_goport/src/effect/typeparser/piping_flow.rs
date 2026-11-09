@@ -729,6 +729,61 @@ fn enqueue_child(queue: &mut Vec<WorkItem>, child: Node) -> bool {
     false
 }
 
+/// The state of the Go `PipingFlows` walk: its work queue and the flows
+/// found so far. A flow under construction lives in the queue's parent flows
+/// until its subject chain ends.
+#[derive(Default)]
+struct PipingFlowWalk {
+    queue: Vec<WorkItem>,
+    result: Vec<Rc<RefCell<PipingFlow>>>,
+}
+
+impl PipingFlowWalk {
+    /// Prepends `transformations` to the parent flow of `item`, or starts a
+    /// new flow at `flow_node` with them, and continues the subject chain at
+    /// `subject` (flattening nested pipes into one flow).
+    fn extend_or_start_flow(
+        &mut self,
+        item: &WorkItem,
+        flow_node: Node,
+        mut transformations: Vec<PipingFlowTransformation>,
+        subject: Node,
+    ) {
+        let parent_flow = match &item.parent_flow {
+            Some(parent_flow) => {
+                // Extend parent flow: prepend our transformations
+                let mut parent = parent_flow.borrow_mut();
+                transformations.append(&mut parent.partial_piping_flow.transformations);
+                parent.partial_piping_flow.transformations = transformations;
+                parent_flow.clone()
+            }
+            // Start a new flow
+            None => Rc::new(RefCell::new(PipingFlow {
+                node: flow_node,
+                partial_piping_flow: PartialPipingFlow {
+                    subject: PipingFlowSubject::default(),
+                    transformations,
+                },
+            })),
+        };
+        // Continue traversing the subject for further flattening
+        self.queue.push(WorkItem {
+            node: subject,
+            parent_flow: Some(parent_flow),
+        });
+    }
+
+    /// Queues the children of each non-nil node of `nodes` for independent
+    /// inner flow traversal.
+    fn enqueue_children_of_each(&mut self, nodes: &[Node]) {
+        for &arg in nodes {
+            if arg.is_some() {
+                arg.for_each_child(|child| enqueue_child(&mut self.queue, child));
+            }
+        }
+    }
+}
+
 impl TypeParser<'_> {
     // Go: typeparser/piping_flow.go TypeParser.PipingFlows
     /// PipingFlows returns all piping flows found in a source file, sorted by source position.
@@ -760,13 +815,12 @@ impl TypeParser<'_> {
         sf: Node,
         include_effect_fn: bool,
     ) -> Rc<Vec<Rc<PipingFlow>>> {
-        let mut result: Vec<Rc<RefCell<PipingFlow>>> = Vec::new();
+        let mut walk = PipingFlowWalk::default();
 
         // Initialize work queue with all children of the source file
-        let mut queue: Vec<WorkItem> = Vec::new();
-        sf.for_each_child(|child| enqueue_child(&mut queue, child));
+        sf.for_each_child(|child| enqueue_child(&mut walk.queue, child));
 
-        while let Some(item) = queue.pop() {
+        while let Some(item) = walk.queue.pop() {
             // Pop from end (stack behavior for depth-first)
             let node = item.node;
             if node.is_nil() {
@@ -774,222 +828,29 @@ impl TypeParser<'_> {
             }
             let unwrapped = skip_parentheses(node);
             if unwrapped != node {
-                queue.push(WorkItem {
+                walk.queue.push(WorkItem {
                     node: unwrapped,
                     parent_flow: item.parent_flow.clone(),
                 });
                 continue;
             }
 
-            if node.kind() == SyntaxKind::CallExpression {
-                // Try Effect.fn call first (must be before pipe and singleArg)
-                if include_effect_fn && let Some(efn_result) = self.parse_effect_fn_call(node) {
-                    let (transformations, subject_type) =
-                        self.build_effect_fn_transformations(&efn_result);
-                    let flow = PipingFlow {
-                        node,
-                        partial_piping_flow: PartialPipingFlow {
-                            subject: PipingFlowSubject {
-                                node,
-                                out_type: subject_type,
-                            },
-                            transformations,
-                        },
-                    };
-                    result.push(Rc::new(RefCell::new(flow)));
-
-                    // If we were building a parent flow, finalize it with this node as subject
-                    if let Some(parent_flow) = &item.parent_flow {
-                        let out_type = self.get_type_at_location(node);
-                        parent_flow.borrow_mut().partial_piping_flow.subject =
-                            PipingFlowSubject { node, out_type };
-                        result.push(parent_flow.clone());
-                    }
-
-                    // Queue function body argument children for independent inner flow traversal
-                    if efn_result.body_node.is_some() {
-                        efn_result
-                            .body_node
-                            .for_each_child(|child| enqueue_child(&mut queue, child));
-                    }
-                    // Queue trailing arg children for independent inner flow traversal
-                    for &arg in &efn_result.trailing_args {
-                        if arg.is_some() {
-                            arg.for_each_child(|child| enqueue_child(&mut queue, child));
-                        }
-                    }
-                    continue;
-                }
-
-                // Try pipe call
-                if let Some(pipe_result) = self.parse_pipe_call(node) {
-                    let transformations = self.build_pipe_transformations(&pipe_result);
-                    let flow_node = pipe_result.node;
-
-                    if let Some(parent_flow) = &item.parent_flow {
-                        // Extend parent flow: prepend our transformations
-                        {
-                            let mut parent = parent_flow.borrow_mut();
-                            let mut prepended = transformations;
-                            prepended.append(&mut parent.partial_piping_flow.transformations);
-                            parent.partial_piping_flow.transformations = prepended;
-                        }
-                        // Continue traversing the subject for further flattening
-                        queue.push(WorkItem {
-                            node: pipe_result.subject,
-                            parent_flow: Some(parent_flow.clone()),
-                        });
-                    } else {
-                        // Start a new flow
-                        let new_flow = PipingFlow {
-                            node: flow_node,
-                            partial_piping_flow: PartialPipingFlow {
-                                subject: PipingFlowSubject::default(),
-                                transformations,
-                            },
-                        };
-                        queue.push(WorkItem {
-                            node: pipe_result.subject,
-                            parent_flow: Some(Rc::new(RefCell::new(new_flow))),
-                        });
-                    }
-
-                    // Queue transformation argument children for independent inner flow traversal
-                    for &arg in &pipe_result.args {
-                        if arg.is_some() {
-                            arg.for_each_child(|child| enqueue_child(&mut queue, child));
-                        }
-                    }
-                    continue;
-                }
-
-                // Try single-arg call
-                if let Some(data_first_result) = self.data_first_or_last_call(node) {
-                    let call_out_type = self.get_type_at_location(node);
-                    let mut kind = TransformationKind::DataFirst;
-                    if data_first_result.subject_index != 0 {
-                        kind = TransformationKind::DataLast;
-                    }
-                    let transformation = PipingFlowTransformation {
-                        kind,
-                        callee: data_first_result.callee,
-                        type_arguments: piping_flow_type_arguments(node, data_first_result.callee),
-                        args: data_first_result.args.clone(),
-                        out_type: call_out_type,
-                    };
-
-                    if let Some(parent_flow) = &item.parent_flow {
-                        parent_flow
-                            .borrow_mut()
-                            .partial_piping_flow
-                            .transformations
-                            .insert(0, transformation);
-                        queue.push(WorkItem {
-                            node: data_first_result.subject,
-                            parent_flow: Some(parent_flow.clone()),
-                        });
-                    } else {
-                        let new_flow = PipingFlow {
-                            node,
-                            partial_piping_flow: PartialPipingFlow {
-                                subject: PipingFlowSubject::default(),
-                                transformations: vec![transformation],
-                            },
-                        };
-                        queue.push(WorkItem {
-                            node: data_first_result.subject,
-                            parent_flow: Some(Rc::new(RefCell::new(new_flow))),
-                        });
-                    }
-
-                    data_first_result
-                        .callee
-                        .for_each_child(|child| enqueue_child(&mut queue, child));
-                    for &arg in &data_first_result.args {
-                        if arg.is_some() {
-                            arg.for_each_child(|child| enqueue_child(&mut queue, child));
-                        }
-                    }
-                    continue;
-                }
-
-                // Try single-arg call
-                if let Some(single_result) = self.parse_single_arg_call(node) {
-                    let mut call_out_type = TypeId::NIL;
-                    let call_sig = self.checker.get_resolved_signature_exported(node);
-                    if call_sig.is_some() {
-                        call_out_type =
-                            self.checker.get_return_type_of_signature_exported(call_sig);
-                    }
-                    let transformation = PipingFlowTransformation {
-                        kind: TransformationKind::Call,
-                        callee: single_result.callee,
-                        type_arguments: piping_flow_type_arguments(
-                            single_result.type_arguments_src,
-                            single_result.callee,
-                        ),
-                        args: single_result.args.clone(),
-                        out_type: call_out_type,
-                    };
-
-                    if let Some(parent_flow) = &item.parent_flow {
-                        // Extend parent flow: prepend this transformation
-                        parent_flow
-                            .borrow_mut()
-                            .partial_piping_flow
-                            .transformations
-                            .insert(0, transformation);
-                        // Continue traversing the subject
-                        queue.push(WorkItem {
-                            node: single_result.subject,
-                            parent_flow: Some(parent_flow.clone()),
-                        });
-                    } else {
-                        // Start a new flow
-                        let new_flow = PipingFlow {
-                            node,
-                            partial_piping_flow: PartialPipingFlow {
-                                subject: PipingFlowSubject::default(),
-                                transformations: vec![transformation],
-                            },
-                        };
-                        queue.push(WorkItem {
-                            node: single_result.subject,
-                            parent_flow: Some(Rc::new(RefCell::new(new_flow))),
-                        });
-                    }
-
-                    // Queue callee children for independent inner flow traversal
-                    if !single_result.args.is_empty() {
-                        // Curried factory: the applied function and the factory
-                        // arguments belong to this transformation's subtree.
-                        enqueue_child(&mut queue, single_result.callee);
-                        for &arg in &single_result.args {
-                            if arg.is_some() {
-                                enqueue_child(&mut queue, arg);
-                            }
-                        }
-                    } else {
-                        single_result
-                            .callee
-                            .for_each_child(|child| enqueue_child(&mut queue, child));
-                    }
-                    continue;
-                }
+            if node.kind() == SyntaxKind::CallExpression
+                && self.walk_piping_call(&mut walk, &item, include_effect_fn)
+            {
+                continue;
             }
 
             // Node is not a parseable pipe/call
             if let Some(parent_flow) = &item.parent_flow {
                 // Subject chain terminated — finalize the flow
-                let out_type = self.get_type_at_location(node);
-                parent_flow.borrow_mut().partial_piping_flow.subject =
-                    PipingFlowSubject { node, out_type };
-                result.push(parent_flow.clone());
+                self.finalize_parent_flow(&mut walk, parent_flow, node);
             }
             // Queue children for further traversal (independent inner flows)
-            node.for_each_child(|child| enqueue_child(&mut queue, child));
+            node.for_each_child(|child| enqueue_child(&mut walk.queue, child));
         }
 
+        let mut result = walk.result;
         // Sort by source position
         crate::gostd::slices::sort_slice(&mut result, |a, b| {
             a.borrow().node.pos() < b.borrow().node.pos()
@@ -1007,6 +868,156 @@ impl TypeParser<'_> {
                 })
                 .collect(),
         )
+    }
+
+    /// The call expression `item.node` of the [`Self::compute_piping_flows`]
+    /// walk, tried as an `Effect.fn` call (first), a pipe call, a data-first
+    /// or data-last call, and a single-argument call. Returns false when it is
+    /// none of them.
+    fn walk_piping_call(
+        &mut self,
+        walk: &mut PipingFlowWalk,
+        item: &WorkItem,
+        include_effect_fn: bool,
+    ) -> bool {
+        let node = item.node;
+        // Try Effect.fn call first (must be before pipe and singleArg)
+        if include_effect_fn && let Some(efn_result) = self.parse_effect_fn_call(node) {
+            self.walk_effect_fn_call(walk, item, &efn_result);
+            return true;
+        }
+
+        // Try pipe call
+        if let Some(pipe_result) = self.parse_pipe_call(node) {
+            let transformations = self.build_pipe_transformations(&pipe_result);
+            walk.extend_or_start_flow(item, pipe_result.node, transformations, pipe_result.subject);
+            // Queue transformation argument children for independent inner flow traversal
+            walk.enqueue_children_of_each(&pipe_result.args);
+            return true;
+        }
+
+        // Try single-arg call
+        if let Some(data_first_result) = self.data_first_or_last_call(node) {
+            let call_out_type = self.get_type_at_location(node);
+            let kind = if data_first_result.subject_index != 0 {
+                TransformationKind::DataLast
+            } else {
+                TransformationKind::DataFirst
+            };
+            let transformation = PipingFlowTransformation {
+                kind,
+                callee: data_first_result.callee,
+                type_arguments: piping_flow_type_arguments(node, data_first_result.callee),
+                args: data_first_result.args.clone(),
+                out_type: call_out_type,
+            };
+            walk.extend_or_start_flow(item, node, vec![transformation], data_first_result.subject);
+            data_first_result
+                .callee
+                .for_each_child(|child| enqueue_child(&mut walk.queue, child));
+            walk.enqueue_children_of_each(&data_first_result.args);
+            return true;
+        }
+
+        // Try single-arg call
+        if let Some(single_result) = self.parse_single_arg_call(node) {
+            self.walk_single_arg_call(walk, item, &single_result);
+            return true;
+        }
+        false
+    }
+
+    /// An `Effect.fn` call in the [`Self::compute_piping_flows`] walk: a flow
+    /// of its own, the subject of the parent flow if there is one, and its
+    /// body and trailing arguments queued for inner flows.
+    fn walk_effect_fn_call(
+        &mut self,
+        walk: &mut PipingFlowWalk,
+        item: &WorkItem,
+        efn_result: &ParsedEffectFnCallResult,
+    ) {
+        let node = item.node;
+        let (transformations, subject_type) = self.build_effect_fn_transformations(efn_result);
+        let flow = PipingFlow {
+            node,
+            partial_piping_flow: PartialPipingFlow {
+                subject: PipingFlowSubject {
+                    node,
+                    out_type: subject_type,
+                },
+                transformations,
+            },
+        };
+        walk.result.push(Rc::new(RefCell::new(flow)));
+
+        // If we were building a parent flow, finalize it with this node as subject
+        if let Some(parent_flow) = &item.parent_flow {
+            self.finalize_parent_flow(walk, parent_flow, node);
+        }
+
+        // Queue function body argument children for independent inner flow traversal
+        if efn_result.body_node.is_some() {
+            efn_result
+                .body_node
+                .for_each_child(|child| enqueue_child(&mut walk.queue, child));
+        }
+        // Queue trailing arg children for independent inner flow traversal
+        walk.enqueue_children_of_each(&efn_result.trailing_args);
+    }
+
+    /// A single-argument call in the [`Self::compute_piping_flows`] walk: a
+    /// `Call` transformation typed by the call's resolved signature.
+    fn walk_single_arg_call(
+        &mut self,
+        walk: &mut PipingFlowWalk,
+        item: &WorkItem,
+        single_result: &ParsedSingleArgCallResult,
+    ) {
+        let mut call_out_type = TypeId::NIL;
+        let call_sig = self.checker.get_resolved_signature_exported(item.node);
+        if call_sig.is_some() {
+            call_out_type = self.checker.get_return_type_of_signature_exported(call_sig);
+        }
+        let transformation = PipingFlowTransformation {
+            kind: TransformationKind::Call,
+            callee: single_result.callee,
+            type_arguments: piping_flow_type_arguments(
+                single_result.type_arguments_src,
+                single_result.callee,
+            ),
+            args: single_result.args.clone(),
+            out_type: call_out_type,
+        };
+        walk.extend_or_start_flow(item, item.node, vec![transformation], single_result.subject);
+
+        // Queue callee children for independent inner flow traversal
+        if !single_result.args.is_empty() {
+            // Curried factory: the applied function and the factory
+            // arguments belong to this transformation's subtree.
+            enqueue_child(&mut walk.queue, single_result.callee);
+            for &arg in &single_result.args {
+                if arg.is_some() {
+                    enqueue_child(&mut walk.queue, arg);
+                }
+            }
+        } else {
+            single_result
+                .callee
+                .for_each_child(|child| enqueue_child(&mut walk.queue, child));
+        }
+    }
+
+    /// Ends the subject chain of `parent_flow` at `node` and adds the flow to
+    /// the result.
+    fn finalize_parent_flow(
+        &mut self,
+        walk: &mut PipingFlowWalk,
+        parent_flow: &Rc<RefCell<PipingFlow>>,
+        node: Node,
+    ) {
+        let out_type = self.get_type_at_location(node);
+        parent_flow.borrow_mut().partial_piping_flow.subject = PipingFlowSubject { node, out_type };
+        walk.result.push(parent_flow.clone());
     }
 
     // Go: typeparser/piping_flow.go TypeParser.LongestPipingFlowAt
