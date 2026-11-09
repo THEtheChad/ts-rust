@@ -327,10 +327,12 @@ class Script {
     entry("watch delta", "watch/delta", { added: delta.added.map(JSON.parse), removed: delta.removed.map(JSON.parse) });
     entry("watch active", "watch/active", after.map(JSON.parse));
     entry("publishDiagnostics", "publishDiagnostics", pushed);
+    // With ATA on, the npm calls ATA made since the last report end the list (lane H5: each call's
+    // arguments and exit code, sorted), so which typings each server's ATA acquired is compared too
+    // (ata-overlay reports them at every ataIdle as items of their own). They are part of this item, not
+    // one of their own, so the items of a scenario keep their indices.
+    if (this.ata) other.push(...this.npmReport().map((call) => ({ ata: call })));
     entry("server messages", "server/messages", other);
-    // With ATA on: the npm calls since the last report (each call's arguments and exit code), sorted, so
-    // which typings each server's ATA acquired is compared too (ata-overlay also reports at ataIdle).
-    if (this.ata) entry("ata npm", "ata/npm", this.npmReport());
   }
 
   // Every registration (watchers and other methods) as a sorted list of JSON keys, ids masked.

@@ -235,7 +235,7 @@ with no request pending, then adds five items for what arrived since the last ch
 | `<cp> watch delta` | `watch/delta` | the registrations added and removed since the last checkpoint, sorted: the net effect, free of order |
 | `<cp> watch active` | `watch/active` | every registration in force after the checkpoint, sorted |
 | `<cp> publishDiagnostics` | `publishDiagnostics` | the pushed diagnostics, stable-sorted by uri |
-| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, progress, …) and notification, with payload, in order. Only `window/logMessage`, the server's log with timings, is left out |
+| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, progress, …) and notification, with payload, in order. Only `window/logMessage`, the server's log with timings, is left out. With ATA on, the list ends with the npm calls ATA made since the last checkpoint (`{ ata: { args, code } }`, package names sorted, the calls sorted; lane H5) |
 
 Normalization: the project root is `<root>`, as for answers. Registration ids are
 `<name> watcher <n>.<i>`, and the `<n>` comes from a process-wide counter (Go
@@ -681,10 +681,11 @@ material allows.
   only a loopback that is down.
 - **Kept:** ND2's completion barrier (the waits pair the stand-in npm's start and done lines and
   last at least `ATA_IDLE_MS`), and what the scenarios test: ATA's installs still change the inferred
-  projects, schedule the refreshes and add the typings watchers. Every checkpoint of a scenario with
-  ATA on now also has an `<cp> ata npm` item: the npm calls since the last one, each call's package
-  names sorted (Go builds the list from a map), so which typings each server acquires is compared
-  too.
+  projects, schedule the refreshes and add the typings watchers. Every checkpoint's `server
+  messages` item of a scenario with ATA on now ends with the npm calls ATA made since the last
+  checkpoint, each call's package names sorted (Go builds the list from a map), so which typings each
+  server acquires is compared too. They are not items of their own: a first draft had an `<cp> ata
+  npm` item per checkpoint, which moved every later item's index, so 414 base items were NOT RUN.
 
 **External inputs, found and keyed.**
 
@@ -718,7 +719,8 @@ user-npm environment are in the old record only.
 **Discovery run** (`parity_lsp.py --tier full --no-js` on the 9 scenarios with ATA on, store
 `d339a2b67e79850a`, tsc-rs `tsgo-head-0bf6ff2a7-rel`, 592 s): no store miss; 591 MATCH and 4
 GO-BROKEN (watch-hono-f12 `end watch ids`, watch-umami-f12 `load watch events` and `end watch ids`,
-and watch-hono-f12's new `load ata npm` before the names were sorted). The npm calls, the same for Go
+and watch-hono-f12's `load ata npm` item of the first draft, before the names were sorted: Go's order
+of the package names varied). The npm calls, the same for Go
 and tsc-rs: `watch-hono-f12` installs the registry and all 7 `@types` (two calls: `jsdom ws` and
 `bun less node stylus yargs`); `watch-ts-pattern-f12` the registry and `@types/node`; `ata-overlay`
 its two fixture packages; fsevents, fsevents-narrow, unsaved-ts-pattern, second-project-query and the
