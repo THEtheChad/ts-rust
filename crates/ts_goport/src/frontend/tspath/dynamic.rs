@@ -405,7 +405,7 @@ fn hex_decode_utf8(encoded: &str) -> Option<String> {
         return None;
     }
     let mut decoded = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         decoded.push((digit(pair[0])? << 4) | digit(pair[1])?);
     }
     String::from_utf8(decoded).ok()

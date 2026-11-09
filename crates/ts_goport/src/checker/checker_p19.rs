@@ -1449,8 +1449,8 @@ impl KeyBuilder {
         };
         let (head, tail) = dst.split_at_mut(8);
         head.copy_from_slice(&(types.len() as i32 as i64 as u64).to_le_bytes());
-        for (d, &t) in tail.chunks_exact_mut(4).zip(types) {
-            d.copy_from_slice(&t.0.to_le_bytes());
+        for (d, &t) in tail.as_chunks_mut::<4>().0.iter_mut().zip(types) {
+            *d = t.0.to_le_bytes();
         }
         self.inline_length = len + size;
     }
@@ -1638,8 +1638,13 @@ impl ShortKey {
             _ => {
                 let len = self.len;
                 let end = len + 4 * types.len();
-                for (d, &t) in self.buf[len..end].chunks_exact_mut(4).zip(types) {
-                    d.copy_from_slice(&t.0.to_le_bytes());
+                for (d, &t) in self.buf[len..end]
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(types)
+                {
+                    *d = t.0.to_le_bytes();
                 }
                 self.len = end;
             }

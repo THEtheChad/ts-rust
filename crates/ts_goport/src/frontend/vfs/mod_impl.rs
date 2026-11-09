@@ -562,7 +562,9 @@ fn decode_bytes(mut s: Vec<u8>) -> (String, bool) {
 // `String::from_utf16_lossy`.
 fn decode_utf16(s: &[u8], big_endian: bool) -> String {
     let ints: Vec<u16> = s
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             if big_endian {
                 u16::from_be_bytes([pair[0], pair[1]])

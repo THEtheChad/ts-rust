@@ -2552,7 +2552,12 @@ pub mod syntax {
     fn match_rune(re: &Regexp, r: Rune) -> bool {
         match re.op {
             OP_LITERAL => re.rune.len() == 1 && re.rune[0] == r,
-            OP_CHAR_CLASS => re.rune.chunks_exact(2).any(|p| p[0] <= r && r <= p[1]),
+            OP_CHAR_CLASS => re
+                .rune
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .any(|p| p[0] <= r && r <= p[1]),
             OP_ANY_CHAR_NOT_NL => r != '\n' as Rune,
             OP_ANY_CHAR => true,
             _ => false,
@@ -2826,7 +2831,8 @@ pub mod syntax {
         // Sort by lo increasing, hi decreasing to break ties.
         // Go: regexp/syntax/parse.go:1935 sort.Sort(ranges{rp})
         // PORT: the pairs of `r` are one slice of pairs here.
-        let mut pairs: Vec<(Rune, Rune)> = r.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+        let mut pairs: Vec<(Rune, Rune)> =
+            r.as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
         crate::gostd::slices::sort_slice(&mut pairs, |a, b| a.0 < b.0 || a.0 == b.0 && a.1 > b.1);
         for (k, (lo, hi)) in pairs.into_iter().enumerate() {
             r[2 * k] = lo;
@@ -2943,7 +2949,7 @@ pub mod syntax {
     /// appendClass appends the class x to the class r.
     /// It assume x is clean.
     fn append_class(r: &mut Vec<Rune>, x: &[Rune]) {
-        for p in x.chunks_exact(2) {
+        for p in x.as_chunks::<2>().0 {
             append_range(r, p[0], p[1]);
         }
     }
@@ -2951,7 +2957,7 @@ pub mod syntax {
     // Go: regexp/syntax/parse.go:2063 appendFoldedClass
     /// appendFoldedClass appends the case folding of the class x to the class r.
     fn append_folded_class(r: &mut Vec<Rune>, x: &[Rune]) {
-        for p in x.chunks_exact(2) {
+        for p in x.as_chunks::<2>().0 {
             append_folded_range(r, p[0], p[1]);
         }
     }
@@ -2961,7 +2967,7 @@ pub mod syntax {
     /// It assumes x is clean.
     fn append_negated_class(r: &mut Vec<Rune>, x: &[Rune]) {
         let mut next_lo: Rune = 0;
-        for p in x.chunks_exact(2) {
+        for p in x.as_chunks::<2>().0 {
             let (lo, hi) = (p[0], p[1]);
             if next_lo < lo {
                 append_range(r, next_lo, lo - 1);

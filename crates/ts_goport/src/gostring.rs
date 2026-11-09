@@ -687,9 +687,8 @@ pub fn compare_go_strings(a: &str, b: &str) -> std::cmp::Ordering {
     /// different byte.
     fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
         let mut p = 0;
-        for (x, y) in a.chunks_exact(8).zip(b.chunks_exact(8)) {
-            let diff = u64::from_le_bytes(x.try_into().unwrap())
-                ^ u64::from_le_bytes(y.try_into().unwrap());
+        for (x, y) in a.as_chunks::<8>().0.iter().zip(b.as_chunks::<8>().0) {
+            let diff = u64::from_le_bytes(*x) ^ u64::from_le_bytes(*y);
             if diff != 0 {
                 return p + (diff.trailing_zeros() / 8) as usize;
             }

@@ -1487,8 +1487,8 @@ pub fn append_uint32s(buf: &mut Vec<u8>, values: &[u32]) {
 #[inline]
 fn append_node(buf: &mut Vec<u8>, values: [u32; 7]) {
     let mut bytes = [0u8; NODE_SIZE];
-    for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
-        chunk.copy_from_slice(&value.to_le_bytes());
+    for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+        *chunk = value.to_le_bytes();
     }
     buf.extend_from_slice(&bytes);
 }
