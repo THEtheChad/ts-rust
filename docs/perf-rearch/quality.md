@@ -653,4 +653,21 @@ logs (`GOPORT_VERIFY_REUSE*`, `GOPORT_REUSE_STATS`, `GOPORT_FLOWSKIP=verify`,
 `GOPORT_THP_GUARD_DEBUG`, the loader's `GOPORT_LOAD_*` and
 `GOPORT_RESOLVE_AHEAD*`, `GOPORT_EMIT_PHASE_TIMES`, ...); `--features
 test-hooks` the `GOPORT_TEST_*` hooks. `quality.sh report --hatches` lists
-them as feature-only.
+them as feature-only, with one known exception below.
+
+**Over-reported as shipped.** `quality.py` sees a `#[cfg(feature = ...)]`
+on an item, not on the `mod` declaration that brings in a whole file. So
+`GOPORT_REUSE_STATS`, `GOPORT_VERIFY_REUSE_CHILD_ARGS` and
+`GOPORT_VERIFY_REUSE_CHILD_OUT` show up in the inventory as shipped reads.
+They are not: they are read only in `project/reuse_verify.rs`, which
+`project/mod.rs` declares as `#[cfg(feature = "diagnostics")] pub mod
+reuse_verify;`. The binaries show it (lane Q3, 2026-11-09, plain
+`--profile goport` builds of `e658d4d29` and `11a8642a0`): `strings` finds
+none of the three names, no `GOPORT_VERIFY_REUSE*` name and no `goport
+verify-reuse` message, and `nm -C` no `reuse_verify` symbol. A
+`--features diagnostics` release build of `11a8642a0` has them (the control:
+each name once, 3 `goport verify-reuse` messages, 73 `project::reuse_verify`
+symbols). The report
+errs on the safe side here: a read in a gated module shows as shipped, never
+as hidden. The tooling lane that moves `quality.py` to rustc's
+cfg-expanded source removes the exception.
