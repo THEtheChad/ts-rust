@@ -1205,10 +1205,7 @@ impl StderrLogger {
     fn write(&self, data: &[u8]) -> usize {
         let mut pending = lock(&self.pending);
         pending.extend_from_slice(data);
-        loop {
-            let Some(index) = pending.iter().position(|&b| b == b'\n') else {
-                break;
-            };
+        while let Some(index) = pending.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = pending.drain(..=index).collect();
             let line = &line[..line.len() - 1];
             self.log(line.strip_suffix(b"\r").unwrap_or(line));

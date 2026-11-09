@@ -498,8 +498,7 @@ pub fn read_dirent(fd: i32, buf: &mut [u8]) -> Result<i32, GoError> {
     let mut raw = vec![std::mem::MaybeUninit::<u8>::uninit(); buf.len()];
     let mut dir = rustix::fs::RawDir::new(&*f, &mut raw);
     let mut n = 0usize;
-    loop {
-        let Some(ent) = dir.next() else { break };
+    while let Some(ent) = dir.next() {
         let ent = ent.map_err(errno_error)?;
         let name = ent.file_name().to_bytes();
         let reclen = (DIRENT_NAME_OFFSET + name.len() + 1 + 7) & !7;

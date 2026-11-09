@@ -641,16 +641,12 @@ impl Checker {
     // visited too; the index loop below re-reads the set each step to match.
     pub fn check_deferred_nodes(&mut self, context: Node) {
         let mut i = 0;
-        loop {
-            let node = match self
-                .source_file_links
-                .get(context)
-                .deferred_nodes
-                .get_index(i)
-            {
-                Some(&node) => node,
-                None => break,
-            };
+        while let Some(&node) = self
+            .source_file_links
+            .get(context)
+            .deferred_nodes
+            .get_index(i)
+        {
             if self.is_canceled() {
                 break;
             }

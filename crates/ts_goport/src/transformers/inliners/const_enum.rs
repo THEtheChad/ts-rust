@@ -126,10 +126,7 @@ fn safe_multi_line_comment(text: &str) -> String {
     let mut b = String::with_capacity(text.len() + 2);
     b.push(' ');
     let mut text = text;
-    loop {
-        let Some(i) = text.find("*/") else {
-            break;
-        };
+    while let Some(i) = text.find("*/") {
         b.push_str(&text[..i]);
         b.push_str("*_/");
         text = &text[i + 2..];
