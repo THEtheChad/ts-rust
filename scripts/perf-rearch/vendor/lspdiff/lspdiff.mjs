@@ -66,9 +66,11 @@
 // --js-kinds m1,m2 replaces the refereed kinds (referee.mjs REFEREED_KINDS; the self-test uses it).
 //
 //   node scripts/lspdiff/lspdiff.mjs diff  --project <dir> [--files 6] [--positions 4] [--file <rel>...]
-//                                          [--scenario <name>] [--rs-runs 1] [--rs-env K=V...] [--go-cache <dir>]
+//                                          [--scenario <name> [--ata-store <dir>]] [--rs-runs 1] [--rs-env K=V...] [--go-cache <dir>]
 //   node scripts/lspdiff/lspdiff.mjs bench --project <dir> [--files 6] [--runs 3] [--interval 120]
 //
+// --ata-store <dir>: the frozen typings store that ATA's stand-in npm installs from in the scenarios
+// with ATA on (scenario.mjs; scripts/perf-rearch/ata_typings.py builds it).
 // Options: --go <bin> (default ~/.local/bin/tsgo-lsp-oracle-3e9236361fa9), --rs <bin>
 // (default $TSC_RS_BIN or target/release/tsgo), --out <dir> (default /tmp/lspdiff/out),
 // --only go|rs (bench one server), --reuse (diff the answers saved by the last run),
@@ -109,6 +111,7 @@ const { positionals, values: opt } = parseArgs({
     "go-final": { type: "string" },
     "js-stage": { type: "string" },
     scenario: { type: "string" },
+    "ata-store": { type: "string" },
     "rs-runs": { type: "string", default: "1" },
     "go-runs": { type: "string", default: "2" },
     "rs-env": { type: "string", multiple: true },
@@ -278,7 +281,7 @@ if (mode === "diff") {
   // One server run of the session (or scenario): its log.
   const runOne = (name, cmd, env) =>
     scenario
-      ? runScenario(cmd, scenario, root, { files, stderr, env, serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
+      ? runScenario(cmd, scenario, root, { files, stderr, env, ataStore: opt["ata-store"], serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
       : runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
   // { log, broken, session }: a crash or a timeout ends the run with the answers it gave; session is
   // the server's result (sandbox.mjs), mandatory for every run.
@@ -290,7 +293,7 @@ if (mode === "diff") {
     try {
       ({ log, session } = await runOne(name, cmd, env));
     } catch (e) {
-      if (!e.log) throw e;
+      if (!e.log || e.harness) throw e; // a harness error (scenario.mjs: an input that is not the frozen one) is no server's answer
       log = e.log;
       session = e.session ?? { clean: false, why: [`no session result (${String(e.message).slice(0, 200)})`] };
       fail = { kind: e.timeout ? "timeout" : "crash", reason: String(e.message).slice(0, 300), at: e.log.length };

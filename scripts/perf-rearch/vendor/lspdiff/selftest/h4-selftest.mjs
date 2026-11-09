@@ -1,6 +1,7 @@
 // Negative controls of lane H4 (LSP side): Astra's H3 re-review (docs/perf-rearch/reviews/
 // 2026-11-05-astra-h3.md), findings 5, 6, 9, 10 and 11, each run as the reviewer ran it, and lane ND2's
-// scenario waits (the npm barrier of the scenarios with ATA on)
+// scenario waits (the npm barrier of the scenarios with ATA on), and lane H5's hermetic servers (the
+// stand-in npm and its store, the server environment and sandbox)
 // (~/.cache/perf-rearch/scratch/review-h3-astra/: js-probes.mjs, malformed-tsserver.cjs, late-crash/,
 // alignment/, ata-probe.mjs), plus the session result's other outcomes (stderr, a server that does not
 // exit, a server that writes into its project). The Python side is scripts/perf-rearch/parity_h4_test.py.
@@ -11,7 +12,7 @@
 // The checks also run against older lspdiff versions (copy this file into their selftest/): a missing
 // module or function there is a FAIL of that check, not an error of the test. About 30 s.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,7 +129,8 @@ await part("finding 9", async () => {
   writeFileSync(join(snap, "a.ts"), "export const a = 1;\n");
   const writer = fake("rs-writer", `open(${JSON.stringify(join(project, "a.ts"))},'w').write('tampered')`, "  sys.exit(0)");
   writeFileSync(join(project, "a.ts"), "export const a = 1;\n");
-  const sandbox = JSON.stringify({ scratch: join(ROOT, "sandbox"), mounts: [{ lower: snap, target: project, writable: false }] });
+  mkdirSync(join(ROOT, "home"), { recursive: true });
+  const sandbox = JSON.stringify({ scratch: join(ROOT, "sandbox"), home: join(ROOT, "home"), mounts: [{ lower: snap, target: project }] });
   const w = lspdiff("writer", writer, { LSPDIFF_SANDBOX: sandbox });
   check("finding 9: a server that writes into its project fails its session (rsFailure input)",
     sessionBad(w.items, (it) => it.status === "DIFF" && it.rsFailure === "input"), JSON.stringify(bad(w.items)) + w.out.slice(-300));
@@ -260,7 +262,7 @@ await part("go variants", async () => {
 await part("finding 11", async () => {
   const { PLUMBING } = await import(join(LSPDIFF, "settings.mjs"));
   const reads = [];
-  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs", "user-npm/user-npm.mjs"]) {
+  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs"]) {
     for (const m of readFileSync(join(LSPDIFF, f), "utf8").matchAll(/process\.env\.((?:LSPDIFF|ATA)_\w+)|process\.env\[["'`]((?:LSPDIFF|ATA)_\w+)/g)) reads.push(`${f}:${m[1] ?? m[2]}`);
   }
   const stray = reads.filter((r) => !PLUMBING.includes(r.split(":")[1]));
@@ -282,7 +284,7 @@ await part("finding 11", async () => {
 // logged npm process still runs (finding 11: always).
 function scriptProbe(npmLog, now, alive = true) {
   const src = readFileSync(join(LSPDIFF, "scenario.mjs"), "utf8");
-  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async settle(ms, label) {", "async ataIdle(label) {"].map((head) => {
+  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async settle(ms, label) {", "async ataIdle(label) {", "npmReport() {"].map((head) => {
     const at = src.indexOf(`\n  ${head}`);
     if (at < 0) throw new Error(`scenario.mjs has no ${head}`);
     return src.slice(at, src.indexOf("\n  }\n", at) + 4);
@@ -337,6 +339,67 @@ await part("nd2", async () => {
   off.script.ata = undefined;
   const quick = await off.script.settle(300, "probe");
   check("nd2: with ATA off, a scenario wait is the server's quiet window alone", off.reads() === 0 && quick < 1500, `reads ${off.reads()}, waited ${quick}`);
+});
+
+// ---- lane H5: hermetic servers and ATA ------------------------------------------------------------
+await part("h5", async () => {
+  const { ATA_STORE, writeTree } = await import(join(LSPDIFF, "fixtures.mjs"));
+  const dir = join(ROOT, "h5");
+  const store = join(dir, "store");
+  writeTree(ATA_STORE, store);
+  const home = join(dir, "home");
+  const typings = join(home, ".cache/typescript/7.1");
+  mkdirSync(typings, { recursive: true });
+  const log = join(dir, "npm.log");
+  const npm = (args, cwd = typings) => {
+    const r = spawnSync(join(LSPDIFF, "ata-npm/npm"), args, {
+      cwd,
+      env: { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: join(home, ".cache"), ATA_NODE: process.execPath, ATA_STORE: store, ATA_NPM_LOG: log, ATA_NPM_DELAY_MS: "0" },
+      encoding: "utf8",
+    });
+    const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    return { code: r.status, last: lines.at(-1) };
+  };
+  const reg = npm(["install", "--ignore-scripts", "types-registry@latest"]);
+  const two = npm(["install", "--ignore-scripts", "@types/ata-fake-lib@latest", "@types/ata-fake-two@latest", "--save-dev", '--user-agent="typesInstaller/7.1"']);
+  const pkg = JSON.parse(readFileSync(join(typings, "package.json"), "utf8"));
+  check(
+    "h5: the stand-in npm installs the registry and each package's closure from its store, and records them as npm does",
+    reg.code === 0 && two.code === 0 && existsSync(join(typings, "node_modules/types-registry/index.json")) && existsSync(join(typings, "node_modules/@types/ata-fake-two/index.d.ts")) && pkg.devDependencies?.["@types/ata-fake-lib"] === "^1.0.0" && pkg.dependencies?.["types-registry"] === "^0.1.0",
+    JSON.stringify({ reg, two, pkg }),
+  );
+  const miss = npm(["install", "--ignore-scripts", "@types/ata-fake-lib@latest", "@types/not-in-store@latest", "--save-dev"]);
+  check("h5: a package the store lacks fails the call, is logged as missing, and nothing of the call is installed", miss.code === 1 && JSON.stringify(miss.last.missing) === '["@types/not-in-store@latest"]', JSON.stringify(miss));
+  const out = npm(["install", "--ignore-scripts", "types-registry@latest"], dir);
+  check("h5: a call outside the private XDG_CACHE_HOME is refused (the real typings cache, say)", out.code === 1 && /not under the private XDG_CACHE_HOME/.test(out.last.refused ?? ""), JSON.stringify(out));
+  for (const [what, line] of [["missing", '{"done":true,"pid":1,"args":[],"code":1,"missing":["@types/x@latest"]}'], ["refused", '{"done":true,"pid":1,"args":[],"code":1,"refused":"outside"}']]) {
+    const probe = scriptProbe(() => '{"start":true,"pid":1}\n' + line + "\n", () => 0, false);
+    let threw = null;
+    try {
+      await probe.script.settle(300, "probe");
+    } catch (e) {
+      threw = e;
+    }
+    check(`h5: a ${what} npm call makes the scenario's wait a harness error (no server's answer: never GO-BROKEN)`, threw?.harness === true && !threw.timeout, threw ? threw.message : "no error");
+  }
+  // The server environment: nothing of lspdiff's own, a private home; with the sandbox, the home at its
+  // fixed path, empty again afterwards, and no network.
+  const fixed = join(dir, "fixed-home");
+  mkdirSync(fixed);
+  const probe = (sandbox) =>
+    JSON.parse(
+      execFileSync(process.execPath, ["--input-type=module", "-e", `
+        const { ServerProcess } = await import(${JSON.stringify(join(LSPDIFF, "sandbox.mjs"))});
+        const p = new ServerProcess(["sh", "-c", 'env | sort | cut -d= -f1 | tr "\\n" " "; echo; echo "$HOME"; ls -A "$HOME" | tr "\\n" " "; echo; tail -n +3 /proc/net/dev | wc -l; touch "$HOME/.cache/written"'], {});
+        let out = ""; p.proc.stdout.on("data", (c) => (out += c));
+        const r = await p.result({ shutdown: "ok", forced: false });
+        console.log(JSON.stringify({ out: out.split("\\n"), r }));`], { env: { ...process.env, LEAK_ME: "1", ...(sandbox ? { LSPDIFF_SANDBOX: JSON.stringify({ scratch: join(dir, "scratch"), home: fixed, mounts: [] }) } : { LSPDIFF_SANDBOX: "" }) }, encoding: "utf8" }),
+    );
+  const plain = probe(false);
+  const keys = plain.out[0].trim().split(" ");
+  check("h5: a server gets none of lspdiff's environment, a private home and the system PATH only", !keys.includes("LEAK_ME") && !keys.includes("ATA_REAL_NPM") && keys.includes("XDG_CACHE_HOME") && plain.out[1] !== homedir() && plain.out[2].includes(".cache") && plain.r.inputs.homeWrites === 1, JSON.stringify(plain));
+  const boxed = probe(true);
+  check("h5: in the sandbox the private home is at its fixed path, new and empty again after, and there is no network (loopback only)", boxed.out[1] === fixed && boxed.out[3].trim() === "1" && boxed.r.inputs.homeWrites === 1 && readdirSync(fixed).length === 0, JSON.stringify(boxed));
 });
 
 rmSync(ROOT, { recursive: true, force: true });

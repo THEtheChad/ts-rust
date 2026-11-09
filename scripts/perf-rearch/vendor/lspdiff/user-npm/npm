@@ -1,7 +1,0 @@
-#!/bin/sh
-# The logging shim of the user's npm in the watch scenarios with ATA on the user's typings cache
-# (scenario.mjs): first on the language server's PATH. It writes the call's start line itself, before
-# node starts (under load node takes longer to start than a scenario's quiet window), then runs
-# user-npm.mjs, with the same pid, with the node that runs lspdiff (ATA_NODE).
-printf '{"start":true,"pid":%s,"at":%s}\n' "$$" "$(date +%s%3N)" >> "$ATA_NPM_LOG"
-exec "$ATA_NODE" "$(dirname -- "$0")/user-npm.mjs" "$@"
