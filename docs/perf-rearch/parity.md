@@ -726,7 +726,75 @@ and tsc-rs: `watch-hono-f12` installs the registry and all 7 `@types` (two calls
 its two fixture packages; fsevents, fsevents-narrow, unsaved-ts-pattern, second-project-query and the
 umami scenarios make no npm call. `watch-ts-pattern-f12/0018` is MATCH (4 Go runs and tsc-rs agree).
 
-<!-- H5-GATE -->
+**Negative controls** (`parity_h5_test.py`, unit and `--e2e`; the `h5` part of
+`selftest/h4-selftest.mjs`), all ok on the final harness (`9da6b4dea`):
+
+| control | result |
+|---|---|
+| another store hash is another key; the old store's cache dir, priors (any run count) and refills are not read | ok (unit) |
+| another store hash is another variant record (file name and material): never merged | ok (unit) |
+| e2e: a store with one byte changed (in `@types/node/index.d.ts`) is another key and another record; Go runs again (no cached log, no prior, an empty record) | ok |
+| e2e: a manifest whose hash is not its store's makes the session ERROR | ok |
+| e2e: a store that lacks a package ATA asks for (`@types/node` on watch-ts-pattern-f12) makes the session ERROR ("lspdiff: harness error ... lacks @types/node"), not GO-BROKEN | ok |
+| e2e: a tsc-rs (a wrapper of the head binary) that reads `~/.cache/typescript/7.1/package.json`, or that runs with `XDG_CACHE_HOME` = the real `~/.cache` (its ATA reads the real cache), makes ata-overlay ERROR, and no Go or JS log of that tier is published | ok, ok |
+| tripwire: a read and a listing through the read-only bind in a nested namespace are seen; the watch's own listing is not | ok (unit) |
+| ancestors: a `package.json` made above a project is seen and changes the key; another file there is not; no ancestor of the real projects holds a lookup name | ok (unit) |
+| the stand-in npm: installs the registry and closures and records them; a missing package fails the call with nothing installed; a call outside the private cache is refused; either is a harness error of the scenario's wait | ok (JS) |
+| a server gets none of lspdiff's environment and a private home; in the sandbox the home is at its fixed path, empty again after, and there is no network | ok (JS) |
+
+The H4 and earlier self-tests still pass (`H4 SELFTEST OK`, `H4 LSP SELFTEST OK`).
+
+**Go fills.** First a refill of the sessions where Go races
+(`parity_lsp.py --tier full --only <re> --go-refill <re>` with hono-f12-p6, umami-f12-p6,
+watch-hono-f12, watch-umami-f12, watch-narrow-umami-f12 and second-project-query; 549 s; it also ran
+watch-ts-pattern-f12 and ata-overlay to check that the item names are the base's), then the gate,
+which made each session's main fill (hono and query 8 Go runs, the others 4) and used the refill as a
+prior.
+
+**Gate.** `parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-0bf6ff2a7-rel` (sha `0e02a10d506e`, the
+perf head code; the tests tier on this lane's checkout, whose `crates/` equal `0bf6ff2a7`) against
+`base-current` (`nd2-e92f96b39-full`), harness `9da6b4dea`, run
+`runs/h5-head-0bf6ff2a7-full`, 28 min (06:52 to 07:20 UTC, load 0.3 to 16):
+
+- 187,187 items compared: **0 lost**, 0 known-bad not as pinned, 0 new not good, 0 crashes, 36
+  grandfathered (exactly as pinned), 0 stale entries.
+- **13 NOT RUN, on purpose, the only difference**: the tests the C3 deletions and moves and the C2
+  rename removed, the same 13 as in `runs/head-0bf6ff2a7-full`. They are `goport_core.lib` tests
+  `checker_p24::tests::fast_never_order_can_skip_a_union_property` and
+  `fast_never_order_tests_public_methods_last`, the five `lazy_members::tests` (`pr_case_diagnostics_match_go_in_both_modes`,
+  `resolve_inside_prepare_is_not_repeated`, `switch_off_lookup_resolves_full_table`,
+  `switch_on_lookup_is_lazy_and_full_table_reuses_members`, `switch_on_reserved_name_resolves_full_table`),
+  `fast_mode::tests::cost_split_balances_and_keeps_imports_together` and
+  `take_flag_reads_the_command_line_as_go`,
+  `files_parser::move_up_tests::a_queued_job_moves_up_only_with_the_switch`, and `tsgo_fast`'s
+  `build_keeps_four_checkers`, `fast_mode_is_off_by_default` and `same_output_on_every_run`. So the
+  verdict line is PARITY FAIL on NOT RUN alone.
+- cli 170 MATCH; tests 139,908 PASS, 1,731 IGNORED (no FLAKY this run); fuzz 29,955 MATCH, 36 DIFF
+  (all grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH.
+- **lsp: every item is good**: 2,629 MATCH and 29 GO-BROKEN, no DIFF, the same 2,658 item names as
+  the base. `watch-ts-pattern-f12/0018` (the lost item of the combined-head gate) is MATCH: 1,147
+  items on 4 Go runs and 3 tsc-rs runs, under the store's key. The GO-BROKEN items: 23 hono-f12-p6
+  references and 5 umami-f12-p6 completions (GO-BROKEN in the base too) and two newly GO-BROKEN from
+  MATCH: `hono-f12-p6/0295` references (Go's runs differ in order: `go | go2..go8`, the cross-project
+  search of `ls/crossproject.go`) and `watch-hono-f12/0050 end watch ids` (the raw watcher counter of
+  Go's background tasks; every Go run of the gate and refill differs). Both are races in Go, with
+  tsc-rs stable on its 3 runs.
+- This run is meant as the new base: one clean run dir, no retries in it. The stopped first run is
+  `runs/h5-head-0bf6ff2a7-full-stopped` (the `ata npm` items of the first draft; cli, tests and lsp
+  ran, lsp 2,693 MATCH and 33 GO-BROKEN).
+
+**Cost.**
+- **Store:** built once in under a minute (the registry tarball and 7 installs over the network), 17 MB, plus
+  38 MB of kept downloads (`ata-typings/dl-*`). The manifest in the repo is 236 KB.
+- **Per tier:** the store's snapshot and checks add about 1 s (lsp snapshots 20.8 s, end check
+  4.6 s); the tripwires and the ancestor watch cost nothing measurable.
+- **Per server run:** the private home is one mkdir and one bind. The stand-in npm takes
+  `ATA_NPM_DELAY_MS` (500 ms) per call, as ata-overlay's did, against 0.3 to 1.15 s for the real npm.
+  watch-ts-pattern-f12 runs took 28 to 31 s before and after.
+- **lsp tier:** 587 s here at a load of about 5, against the base's 687 s (another run, another load).
+- **New Go fills:** every lsp key changed, so the first runs refill all 13 sessions: about 9 min for
+  the refill and about 7 min in the gate's lsp tier.
+
 ## LSP watch scenarios on the perf head (2026-11-04)
 
 The full gate with the new LSP items ran on `tsgo-head-b2febcd86-goport-w1` (sha256
