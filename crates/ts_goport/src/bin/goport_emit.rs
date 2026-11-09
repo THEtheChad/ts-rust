@@ -49,7 +49,6 @@
 //! port keeps (`core::go_panic`) ends the run as in Go: the output so far,
 //! `panic: <message>` on stderr and exit 2.
 
-use std::any::Any;
 use std::cell::{Cell, OnceCell};
 use std::collections::HashSet;
 use std::io::Write;
@@ -67,8 +66,6 @@ use ts_goport::frontend::tspath;
 use ts_goport::gostd::context;
 use ts_goport::prelude::*;
 use ts_goport::scanner_util::go_string_bytes;
-
-const UNPORTED_PREFIX: &str = "unported Go code";
 
 const USAGE: &str = "usage: goport_emit -p <tsconfig.json | project dir> --outDir <dir> [--writeRoot <dir>] [tsc options]";
 
@@ -89,7 +86,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    install_panic_hook();
+    ts_goport::core::install_dev_panic_hook("goport_emit");
     let worker = std::thread::Builder::new()
         .name("goport_emit".to_string())
         .stack_size(ts_goport::gostd::stack::max_stack_size())
@@ -139,50 +136,13 @@ fn is_inside(path: &str, dir: &str) -> bool {
     path == dir || path.starts_with(&format!("{dir}/"))
 }
 
-/// Keeps unported panics quiet (they are counted) and prints other panics.
-/// `run` prints a Go panic.
-fn install_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        if info.payload().is::<GoPanic>() {
-            return;
-        }
-        let message = payload_message(info.payload());
-        if message.starts_with(UNPORTED_PREFIX) {
-            ts_goport::gostd::backtrace::trace_panic(Some(&message));
-            return;
-        }
-        let location = info
-            .location()
-            .map(|l| format!(" at {}:{}", go_site_file(l.file()), l.line()))
-            .unwrap_or_default();
-        eprintln!("goport_emit: panic{location}: {message}");
-        ts_goport::gostd::backtrace::trace_panic(None);
-    }));
-}
-
-fn payload_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        (*message).to_string()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        String::new()
-    }
-}
-
-fn note_panic(payload: &(dyn Any + Send)) {
-    if !payload_message(payload).starts_with(UNPORTED_PREFIX) {
-        record_unported("panic");
-    }
-}
-
 /// Runs `f`, or returns the default value when it panics. A Go panic goes
 /// on.
 fn guard<T: Default>(f: impl FnOnce() -> T) -> T {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(value) => value,
         Err(payload) => {
-            note_panic(resume_go_panic(payload).as_ref());
+            ts_goport::core::note_caught_panic(resume_go_panic(payload).as_ref());
             T::default()
         }
     }
@@ -374,7 +334,7 @@ fn finish(
         Ok(status) => status.code(),
         Err(payload) if print_go_panic(payload.as_ref()) => EXIT_GO_PANIC,
         Err(payload) => {
-            note_panic(payload.as_ref());
+            ts_goport::core::note_caught_panic(payload.as_ref());
             ExitStatus::Success.code()
         }
     };
@@ -432,7 +392,7 @@ fn check_file_guarded(checker: &mut Checker, file: Node) -> Vec<Diagnostic> {
     })) {
         Ok(diagnostics) => diagnostics,
         Err(payload) => {
-            note_panic(resume_go_panic(payload).as_ref());
+            ts_goport::core::note_caught_panic(resume_go_panic(payload).as_ref());
             let index = (checker.id - 1) as usize;
             *checker = Checker::new(index);
             Vec::new()

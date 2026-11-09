@@ -37,7 +37,6 @@
 //! PORT: on Windows the main thread ends the process: it returns the exit
 //! code from `main` (`exit`).
 
-use std::any::Any;
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
@@ -49,8 +48,6 @@ use ts_goport::execute::execute_tsc::{GoTsc, command_line};
 use ts_goport::execute::tsc::{EXIT_UNPORTED, System, new_os_system};
 use ts_goport::gostd::context;
 use ts_goport::prelude::*;
-
-const UNPORTED_PREFIX: &str = "unported Go code";
 
 /// jemalloc is the global allocator (default feature `jemalloc`). A build
 /// without the feature uses glibc malloc. See `goport.rs`
@@ -1006,7 +1003,7 @@ fn finish(result: std::thread::Result<i32>) -> i32 {
         Ok(code) => code,
         Err(payload) if print_go_panic(payload.as_ref()) => EXIT_GO_PANIC,
         Err(payload) => {
-            note_panic(payload.as_ref());
+            ts_goport::core::note_caught_panic(payload.as_ref());
             EXIT_UNPORTED
         }
     };
@@ -1037,8 +1034,9 @@ fn install_panic_hook() {
         if info.payload().is::<GoPanic>() {
             return;
         }
-        let message = payload_message(info.payload());
-        if message.starts_with(UNPORTED_PREFIX) || ts_goport::core::in_go_recover() {
+        let message = ts_goport::core::panic_message(info.payload());
+        if message.starts_with(ts_goport::core::UNPORTED_PREFIX) || ts_goport::core::in_go_recover()
+        {
             ts_goport::gostd::backtrace::trace_panic(Some(&message));
             return;
         }
@@ -1051,22 +1049,4 @@ fn install_panic_hook() {
         let _ = writeln!(std::io::stderr(), "tsgo: panic{location}: {message}");
         ts_goport::gostd::backtrace::trace_panic(None);
     }));
-}
-
-fn payload_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        (*message).to_string()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        String::new()
-    }
-}
-
-/// Counts a caught panic. Unported panics already counted themselves; any
-/// other panic is counted as `panic`.
-fn note_panic(payload: &(dyn Any + Send)) {
-    if !payload_message(payload).starts_with(UNPORTED_PREFIX) {
-        record_unported("panic");
-    }
 }

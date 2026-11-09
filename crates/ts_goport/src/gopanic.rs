@@ -52,8 +52,57 @@ pub fn restore_unported(report: &[(&'static str, u64)]) {
     *names = report.iter().copied().collect();
 }
 
+/// The start of the message of an `unported!` panic.
+pub const UNPORTED_PREFIX: &str = "unported Go code";
+
+/// The message of a panic payload: a `&str` or `String`, else "".
+#[must_use]
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        String::new()
+    }
+}
+
+/// Counts a caught panic of the bins' runs: an unported panic counted
+/// itself (`unported!`); any other panic counts as `panic`.
+pub fn note_caught_panic(payload: &(dyn std::any::Any + Send)) {
+    if !panic_message(payload).starts_with(UNPORTED_PREFIX) {
+        record_unported("panic");
+    }
+}
+
+/// The panic hook of the dev bins (`goport`, `goport_build`, `goport_emit`,
+/// `goport_typesyms`): a Go panic prints nothing here (the bin prints it),
+/// an unported panic is quiet (it is counted), and any other panic prints
+/// `<bin>: panic at <site>: <message>` on stderr. A `diagnostics` build
+/// adds the backtraces of `gostd::backtrace::trace_panic`. `tsgo` has its
+/// own hook (bin/tsgo.rs).
+pub fn install_dev_panic_hook(bin: &'static str) {
+    std::panic::set_hook(Box::new(move |info| {
+        if info.payload().is::<GoPanic>() {
+            return;
+        }
+        let message = panic_message(info.payload());
+        if message.starts_with(UNPORTED_PREFIX) {
+            crate::gostd::backtrace::trace_panic(Some(&message));
+            return;
+        }
+        let location = info
+            .location()
+            .map(|l| format!(" at {}:{}", go_site_file(l.file()), l.line()))
+            .unwrap_or_default();
+        eprintln!("{bin}: panic{location}: {message}");
+        crate::gostd::backtrace::trace_panic(None);
+    }));
+}
+
 /// Marks unported Go code. It records the hit, then panics so the gap is
-/// loud. Use only where a port is missing, never as a fallback.
+/// loud (its message starts with `UNPORTED_PREFIX`). Use only where a port
+/// is missing, never as a fallback.
 #[macro_export]
 macro_rules! unported {
     ($go_name:expr) => {{
