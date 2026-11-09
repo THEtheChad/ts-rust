@@ -1110,15 +1110,13 @@ impl Checker {
             let ext = if ts_extension == tspath_p17::EXTENSION_MTS
                 || ts_extension == tspath_p17::EXTENSION_DMTS
             {
-                if prefer_ts { ".mts" } else { ".mjs" }
+                if_else(prefer_ts, ".mts", ".mjs")
             } else if ts_extension == tspath_p17::EXTENSION_CTS
                 || ts_extension == tspath_p17::EXTENSION_DCTS
             {
-                if prefer_ts { ".cts" } else { ".cjs" }
-            } else if prefer_ts {
-                ".ts"
+                if_else(prefer_ts, ".cts", ".cjs")
             } else {
-                ".js"
+                if_else(prefer_ts, ".ts", ".js")
             };
 
             return format!("{import_source_without_extension}{ext}");
