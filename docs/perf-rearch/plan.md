@@ -1064,3 +1064,20 @@ once a **reconciliation step** is built and tested.
       | ttfd | 0.93× |
       | concurrent typing | 0.28–0.69× |
       | probes | 0.13–0.26× |
+- **2026-11-08, combined-head gate** (`runs/head-0bf6ff2a7-full`): 1 lost, and
+  13 not run on purpose (the C3 deletions and moves, and the C2 rename).
+  - **The lost item:** `watch-ts-pattern-f12/0018`. tsc-rs gives 1,147 items
+    against Go's cached 1,150.
+    - Every binary now gives 1,147, including `427ff93d5`, which had matched
+      before.
+    - A Go refill also gives 1,147 on all 4 runs.
+  - **Cause:** a non-frozen input. The watch scenarios run ATA with the real
+    npm (`types-registry@latest`) and the shared `~/.cache/typescript`, and
+    neither is in the cache key.
+  - **Consequence:** the H4 variant record merged answers from two different
+    environments as "Go varies", which is the wrong widening Astra warned
+    about.
+  - **Lane H5:** make ATA hermetic in every LSP scenario (a frozen typings
+    snapshot, a stand-in npm, no network), key all external inputs, and fail
+    closed on unkeyed access. Then run a fresh full gate, which becomes the
+    new base.
