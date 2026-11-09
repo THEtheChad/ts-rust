@@ -3,9 +3,11 @@
 //
 // usage: gocog <root> <dir>...   (for example gocog ~/.explore/repos/microsoft__TypeScript@<pin>/tsc internal cmd)
 //
-// It reads every non-test .go file under each <root>/<dir>, skips generated files ("Code generated
-// ... DO NOT EDIT.") and testdata directories, and prints one JSON object:
-// {"version": N, "funcs": [{pkg, file, line, end, recv, name, cog, cyc, lines, closures: [...]}]}.
+// It reads every non-test .go file under each <root>/<dir>, skipping testdata directories, and
+// prints one JSON object:
+// {"version": N, "funcs": [{pkg, file, line, end, recv, name, cog, cyc, lines, generated, closures: [...]}]}.
+// "generated" marks a file headed "Code generated ... DO NOT EDIT." (ast_generated.go and the like):
+// the Rust port writes some of that code by hand, so it stays in the list.
 // Standard library only (go/ast, go/parser); it downloads nothing and writes nothing.
 //
 // The metrics mirror rust-code-analysis 0.0.25's Rust rules (src/metrics/cognitive.rs and
@@ -50,7 +52,7 @@ import (
 	"strings"
 )
 
-const version = 1
+const version = 2
 
 var generatedRE = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 
@@ -74,6 +76,7 @@ type Func struct {
 	Cog      int       `json:"cog"`
 	Cyc      int       `json:"cyc"`
 	Lines    int       `json:"lines"`
+	Gen      bool      `json:"generated,omitempty"`
 	Closures []Closure `json:"closures,omitempty"`
 }
 
@@ -362,9 +365,7 @@ func scanFile(fset *token.FileSet, root, path string) ([]Func, error) {
 	if i := strings.Index(string(src), "\npackage "); i >= 0 {
 		head = src[:i]
 	}
-	if generatedRE.Match(head) {
-		return nil, nil
-	}
+	gen := generatedRE.Match(head)
 	f, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
@@ -382,7 +383,7 @@ func scanFile(fset *token.FileSet, root, path string) ([]Func, error) {
 		end := fset.Position(d.End()).Line
 		out = append(out, Func{
 			Pkg: filepath.ToSlash(filepath.Dir(rel)), File: filepath.Base(rel), Line: start, End: end,
-			Recv: recvName(d.Recv), Name: d.Name.Name, Cog: cog, Cyc: cyc, Lines: end - start + 1, Closures: cl,
+			Recv: recvName(d.Recv), Name: d.Name.Name, Cog: cog, Cyc: cyc, Lines: end - start + 1, Gen: gen, Closures: cl,
 		})
 	}
 	return out, nil
