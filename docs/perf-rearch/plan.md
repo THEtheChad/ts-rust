@@ -1243,3 +1243,16 @@ once a **reconciliation step** is built and tested.
   - The shipped binary reads 10 names, all documented in `quality.md` §8.
   - Merged without a third Astra round: the fixes are narrow, and each one
     is checked by a test and by `nm`.
+- **H6 merged** (`t3/normalize-panic-site-lines`, merge `3282ab7d2`).
+  - Crash pins now hash tsc-rs stderr with only the digits of the final
+    `\t<file>.rs:<line>` replaced. The match is anchored to the end of
+    stderr, the file is kept, and the grandfather format is v3.
+  - Its 34 negative controls pass, and a real probe (one blank line above
+    `go_repeat`) passes all 9 crash cases.
+  - Gate `runs/h6-head-e81a14807-full`: PARITY OK, 0 lost. It is now
+    `base-current`.
+  - Merged before its Astra review (it is the one loosening, so it is
+    reviewed in parallel, and root fixes forward) so that Q4 part B can
+    revert its line-keeping commits.
+  - Root fixed the `parity_referees_test.py` "lsp keys" failure that H6
+    found (pre-existing since H5's `node` argument): `3ecee68ec`.
