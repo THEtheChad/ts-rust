@@ -446,45 +446,40 @@ impl Checker {
         // stores no string hash: its map lookups hash the text each time.
         let jsx_children_property_name =
             Name::from(self.get_jsx_element_children_property_name(jsx_namespace));
-        let mut discriminant_properties: Vec<Node> = Vec::new();
-        for p in node.properties() {
-            let symbol = p.symbol();
-            let keep = if symbol.is_nil() || !is_jsx_attribute(p) {
-                false
-            } else {
+        let discriminant_properties: Vec<Node> = node
+            .properties()
+            .into_iter()
+            .filter(|&p| {
+                let symbol = p.symbol();
+                if symbol.is_nil() || !is_jsx_attribute(p) {
+                    return false;
+                }
                 let initializer = p.initializer();
                 let name = self.sym(symbol).name.clone();
                 (initializer.is_nil() || self.is_possibly_discriminant_value(initializer))
                     && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
-            };
-            if keep {
-                discriminant_properties.push(p);
-            }
-        }
-        let mut discriminant_members: Vec<SymbolId> = Vec::new();
-        for s in self.get_properties_of_type(contextual_type) {
-            let keep = if !self.sym(s).flags.intersects(SymbolFlags::OPTIONAL)
-                || node.symbol().is_nil()
-            {
-                false
-            } else {
+            })
+            .collect();
+        let discriminant_members: Vec<SymbolId> = self
+            .get_properties_of_type(contextual_type)
+            .into_iter()
+            .filter(|&s| {
+                if !self.sym(s).flags.intersects(SymbolFlags::OPTIONAL) || node.symbol().is_nil() {
+                    return false;
+                }
                 let element = node.parent().parent();
                 let name = self.sym(s).name.clone();
                 if name == jsx_children_property_name
                     && is_jsx_element(element)
                     && !get_semantic_jsx_children(&element.children().nodes().to_vec()).is_empty()
                 {
-                    false
-                } else {
-                    let node_members = self.sym(node.symbol()).members;
-                    self.symbols.get_name(node_members, &name).is_nil()
-                        && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
+                    return false;
                 }
-            };
-            if keep {
-                discriminant_members.push(s);
-            }
-        }
+                let node_members = self.sym(node.symbol()).members;
+                self.symbols.get_name(node_members, &name).is_nil()
+                    && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
+            })
+            .collect();
         let mut discriminator = ObjectLiteralDiscriminator {
             props: discriminant_properties,
             members: discriminant_members,
