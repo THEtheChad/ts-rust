@@ -753,6 +753,8 @@ mod go_math {
 
     /// Go's `archLog` (log_amd64.s). Unlike Go's pure `log`, it does not
     /// normalize a subnormal `x`.
+    // The constants keep Go's digits (they round to the same f64).
+    #[allow(clippy::excessive_precision)]
     fn log(x: f64) -> f64 {
         const HSQRT2: f64 = 7.07106781186547524401e-01; // sqrt(2)/2
         const LN2_HI: f64 = 6.93147180369123816490e-01; // 0x3fe62e42fee00000
@@ -798,6 +800,8 @@ mod go_math {
     /// Go's `archExp` (exp_amd64.s): a reduced argument, a Taylor series of
     /// e^(r/16), four squarings, then a scale by 2^k. With `fma`, the steps
     /// that Go fuses (VFNMADD231SD, VFMADD213SD) round once.
+    // The constants keep Go's digits (they round to the same f64).
+    #[allow(clippy::excessive_precision)]
     pub(super) fn exp_with(x: f64, fma: bool) -> f64 {
         const LOG2E: f64 = 1.4426950408889634073599246810018920; // 1/LN2
         const LN2U: f64 = 0.69314718055966295651160180568695068359375; // upper half LN2
@@ -1060,6 +1064,8 @@ mod tests {
     // Go: math/all_test.go TestPow (Go 1.27). Go checks Pow(10, vf[i]) within
     // a tolerance; these are the exact bits of Go on amd64.
     #[test]
+    // The inputs keep the digits of Go's test table.
+    #[allow(clippy::excessive_precision)]
     fn go_math_pow_matches_go_test_pow() {
         use super::go_math::pow_with;
         use std::f64::consts::PI;

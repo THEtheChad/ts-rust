@@ -141,12 +141,11 @@ impl CompilerHost for WatchCompilerHost {
         let info = self.compiler_host.fs().stat(&opts.file_name);
 
         let cached = self.cache.borrow().get(&opts.path).cloned();
-        if let Some(cached) = cached {
-            if let Some(info) = &info {
-                if info.mod_time() == cached.mod_time {
-                    return Some(cached.file.clone());
-                }
-            }
+        if let Some(cached) = cached
+            && let Some(info) = &info
+            && info.mod_time() == cached.mod_time
+        {
+            return Some(cached.file.clone());
         }
 
         let file = self
@@ -457,10 +456,10 @@ impl Watcher {
 
         // Go: if w.contentMapperHost != nil && w.testing == nil { defer w.contentMapperHost.Close() }
         // PORT: `start` has no early return, so the deferred close runs here.
-        if self.testing.is_none() {
-            if let Some(host) = &self.content_mapper_host {
-                let _ = host.close();
-            }
+        if self.testing.is_none()
+            && let Some(host) = &self.content_mapper_host
+        {
+            let _ = host.close();
         }
     }
 
@@ -536,9 +535,7 @@ impl Watcher {
         for cfg_path in &self.config_file_paths {
             let real_path = self.sys.fs().realpath(cfg_path);
             let dir = get_directory_path(&real_path);
-            if !desired_dirs.contains_key(&dir) {
-                desired_dirs.insert(dir, false);
-            }
+            desired_dirs.entry(dir).or_insert(false);
         }
 
         // For no-config CLI mode, also watch the CLI-specified files' directories
@@ -547,9 +544,7 @@ impl Watcher {
                 let abs_path = get_normalized_absolute_path(file_name, &cwd);
                 let real_path = self.sys.fs().realpath(&abs_path);
                 let dir = get_directory_path(&real_path);
-                if !desired_dirs.contains_key(&dir) {
-                    desired_dirs.insert(dir, false);
-                }
+                desired_dirs.entry(dir).or_insert(false);
             }
         }
 
@@ -647,15 +642,14 @@ impl Watcher {
                     }
                     if self.config.config_file.is_some()
                         && self.config.possibly_matches_file_name(event_path)
+                        && !self.seen_files.contains(&p)
                     {
-                        if !self.seen_files.contains(&p) {
-                            // A file that matches the project but was not previously
-                            // seen appeared: a structural change that requires a full
-                            // rebuild, not the single-file fast path.
-                            self.watch_set_dirty = true;
-                            self.force_full_rebuild = true;
-                            continue;
-                        }
+                        // A file that matches the project but was not previously
+                        // seen appeared: a structural change that requires a full
+                        // rebuild, not the single-file fast path.
+                        self.watch_set_dirty = true;
+                        self.force_full_rebuild = true;
+                        continue;
                     }
                     if program_files
                         .get(&p)
@@ -674,17 +668,16 @@ impl Watcher {
                         self.force_full_rebuild = true;
                     }
                 }
-                if content_mapper_config_changed {
-                    if let Some(project) = &self.content_mapper_project {
-                        if project.refresh().is_err() {
-                            (self.report_diagnostic)(&new_compiler_diagnostic(
-                                diag::The_content_mapper_process_could_not_be_started_or_initialized,
-                                args![],
-                            ));
-                            self.wm.borrow().unlock();
-                            return;
-                        }
-                    }
+                if content_mapper_config_changed
+                    && let Some(project) = &self.content_mapper_project
+                    && project.refresh().is_err()
+                {
+                    (self.report_diagnostic)(&new_compiler_diagnostic(
+                        diag::The_content_mapper_process_could_not_be_started_or_initialized,
+                        args![],
+                    ));
+                    self.wm.borrow().unlock();
+                    return;
                 }
             } else {
                 if let Some(debug_log) = &self.wm.borrow().debug_log {
@@ -1121,12 +1114,11 @@ impl Watcher {
             return false;
         };
 
-        if let Some(old_file) = old_program.files_by_path().get(changed_path) {
-            if let Some(new_file) = host.get_source_file(old_file.parse_options()) {
-                if !equal_jsx_implicit_import(old_program.options(), old_file, &new_file) {
-                    return false;
-                }
-            }
+        if let Some(old_file) = old_program.files_by_path().get(changed_path)
+            && let Some(new_file) = host.get_source_file(old_file.parse_options())
+            && !equal_jsx_implicit_import(old_program.options(), old_file, &new_file)
+        {
+            return false;
         }
 
         // PORT: `reuse_program` is Go `Program.ReuseProgram` (tsgo#4399, the

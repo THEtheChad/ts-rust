@@ -1608,7 +1608,7 @@ pub fn compiler_options_field_values(
         ),
         (
             "MaxNodeModuleJsDepth",
-            V::IntPtr(o.max_node_module_js_depth.clone()),
+            V::IntPtr(o.max_node_module_js_depth),
         ),
         (
             "AllowSyntheticDefaultImports",
@@ -1646,7 +1646,7 @@ pub fn compiler_options_field_values(
         ("PprofDir", V::String(o.pprof_dir.clone())),
         ("SingleThreaded", V::Tristate(o.single_threaded)),
         ("Quiet", V::Tristate(o.quiet)),
-        ("Checkers", V::IntPtr(o.checkers.clone())),
+        ("Checkers", V::IntPtr(o.checkers)),
     ]
 }
 
@@ -1701,10 +1701,11 @@ pub fn for_each_compiler_option_value(
         .into_iter()
         .enumerate()
     {
-        if let Some(option_declaration) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(field_name) {
-            if decl_filter(option_declaration) && f(option_declaration, value, i) {
-                return true;
-            }
+        if let Some(option_declaration) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(field_name)
+            && decl_filter(option_declaration)
+            && f(option_declaration, value, i)
+        {
+            return true;
         }
     }
     false
@@ -1804,9 +1805,7 @@ impl NameMap {
     #[must_use]
     pub fn get_from_short(&self, short_name: &str) -> Option<&'static CommandLineOption> {
         // returns option only if shortName is a valid short option
-        let Some(name) = self.short_option_names.get(short_name) else {
-            return None;
-        };
+        let name = self.short_option_names.get(short_name)?;
         self.get(name)
     }
 
@@ -1819,12 +1818,11 @@ impl NameMap {
     ) -> Option<&'static CommandLineOption> {
         let mut option_name = strings_to_lower(option_name);
         // Try to translate short option names to their full equivalents.
-        if allow_short {
-            if let Some(short) = self.short_option_names.get(&option_name) {
-                if !short.is_empty() {
-                    option_name = short.clone();
-                }
-            }
+        if allow_short
+            && let Some(short) = self.short_option_names.get(&option_name)
+            && !short.is_empty()
+        {
+            option_name = short.clone();
         }
         self.get(&option_name)
     }

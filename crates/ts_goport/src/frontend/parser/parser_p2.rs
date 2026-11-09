@@ -1364,8 +1364,7 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_identifier()
         };
-        let body;
-        if self.parse_optional(SyntaxKind::DotToken) {
+        let body = if self.parse_optional(SyntaxKind::DotToken) {
             let implicit_export = self.factory.new_modifier(SyntaxKind::ExportKeyword);
             let node_pos = self.node_pos();
             set_node_loc(implicit_export, TextRange::new(node_pos, node_pos));
@@ -1374,16 +1373,16 @@ impl<'a> Parser<'a> {
             let implicit_modifiers =
                 self.new_modifier_list(implicit_export.loc(), &[implicit_export]);
             let inner_pos = self.node_pos();
-            body = self.parse_module_or_namespace_declaration(
+            self.parse_module_or_namespace_declaration(
                 inner_pos,
                 JsdocScannerInfo::default(), /*jsdoc*/
                 implicit_modifiers,
                 true, /*nested*/
                 keyword,
-            );
+            )
         } else {
-            body = self.parse_module_block();
-        }
+            self.parse_module_block()
+        };
         let node = self
             .factory
             .new_module_declaration(modifiers, keyword, name, Node::NIL, body);

@@ -182,9 +182,7 @@ pub fn get_possible_type_arguments_info(
 ) -> Option<PossibleTypeArgumentInfo> {
     // This is a rare case, but one that saves on a _lot_ of work if true - if the source file has _no_ `<` character,
     // then there obviously can't be any type arguments - no expensive brace-matching backwards scanning required
-    if source_file_text(source_file).rfind('<').is_none() {
-        return None;
-    }
+    source_file_text(source_file).rfind('<')?;
 
     let mut token = token_in;
     // This function determines if the node could be a type argument position
@@ -1870,15 +1868,14 @@ pub fn get_reference_at_position(
                 type_reference_directive,
                 &origin,
             )
+            && let Some(file) = program.get_source_file(&reference.resolved_file_name)
         {
-            if let Some(file) = program.get_source_file(&reference.resolved_file_name) {
-                return Some(RefInfo {
-                    reference: Some(type_reference_directive.clone()),
-                    file_name: source_file_file_name(file.root).to_string(),
-                    file: file.root,
-                    unverified: false,
-                });
-            }
+            return Some(RefInfo {
+                reference: Some(type_reference_directive.clone()),
+                file_name: source_file_file_name(file.root).to_string(),
+                file: file.root,
+                unverified: false,
+            });
         }
         return None;
     }

@@ -439,18 +439,17 @@ impl Checker {
             let members = self.ty(first_base).types_list();
             for (i, intersection_member) in members.into_iter().enumerate() {
                 // We want to ignore mixin ctors
-                if !mixin_flags[i] {
-                    if self
+                if !mixin_flags[i]
+                    && self
                         .ty(intersection_member)
                         .object_flags
                         .intersects(ObjectFlags::CLASS | ObjectFlags::INTERFACE)
-                    {
-                        if self.ty(intersection_member).symbol == target {
-                            return true;
-                        }
-                        if self.type_has_protected_accessible_base(target, intersection_member) {
-                            return true;
-                        }
+                {
+                    if self.ty(intersection_member).symbol == target {
+                        return true;
+                    }
+                    if self.type_has_protected_accessible_base(target, intersection_member) {
+                        return true;
                     }
                 }
             }
@@ -734,8 +733,10 @@ impl Checker {
         let is_instanceof = kind == SyntaxKind::BinaryExpression;
         let has_candidates_out_array = candidates_out_array.is_some();
         let report_errors = !self.is_inference_partially_blocked && !has_candidates_out_array;
-        let mut s = CallState::default();
-        s.node = node;
+        let mut s = CallState {
+            node,
+            ..Default::default()
+        };
         // PORT: Go calls the checker package's `isSuperCall`, which has the same
         // body as `ast.IsSuperCall` (utilities.go:2138): here it is inlined on
         // the kind read above.
@@ -891,7 +892,7 @@ impl Checker {
                     diag::The_left_hand_side_of_an_instanceof_expression_must_be_assignable_to_the_first_argument_of_the_right_hand_side_s_Symbol_hasInstance_method,
                 );
             }
-            self.report_call_resolution_errors(node, &mut s, signatures, head_message);
+            self.report_call_resolution_errors(node, &s, signatures, head_message);
         }
         result
     }
@@ -978,10 +979,10 @@ impl Checker {
                 *SIGNATURE_KEY_OUTER
             },
         };
-        if let Some(&cached) = self.cached_signatures.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_signatures.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let result = self.clone_signature(signature);
         self.sig_mut(result).flags |= call_chain_flags;
@@ -1457,12 +1458,11 @@ impl Checker {
         }
         let head_message = diag::Argument_of_type_0_is_not_assignable_to_parameter_of_type_1;
         let rest_type = self.get_non_array_rest_type(signature);
-        let arg_count: i32;
-        if rest_type.is_some() {
-            arg_count = (self.get_parameter_count(signature) - 1).min(args.len() as i32);
+        let arg_count: i32 = if rest_type.is_some() {
+            (self.get_parameter_count(signature) - 1).min(args.len() as i32)
         } else {
-            arg_count = args.len() as i32;
-        }
+            args.len() as i32
+        };
         for i in 0..arg_count {
             let arg = args[i as usize];
             if !is_omitted_expression(arg) {
@@ -1476,12 +1476,12 @@ impl Checker {
                 // If one or more arguments are still excluded (as indicated by CheckMode.SkipContextSensitive),
                 // we obtain the regular type of any object literal arguments because we may not have inferred complete
                 // parameter types yet and therefore excess property checks may yield false positives (see #17041).
-                let check_arg_type: TypeId;
-                if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
-                    check_arg_type = self.get_regular_type_of_object_literal(arg_type);
-                } else {
-                    check_arg_type = arg_type;
-                }
+                let check_arg_type: TypeId =
+                    if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
+                        self.get_regular_type_of_object_literal(arg_type)
+                    } else {
+                        arg_type
+                    };
                 let effective_check_argument_node = self.get_effective_check_node(arg);
                 if !self.check_type_related_to_and_optionally_elaborate(
                     check_arg_type,
@@ -1550,7 +1550,7 @@ impl Checker {
                     rest_type,
                     relation,
                     report_errors,
-                    diagnostic_output.as_deref_mut(),
+                    diagnostic_output,
                 );
                 return false;
             }
@@ -1568,22 +1568,24 @@ impl Checker {
         report_errors: bool,
         diagnostic_output: Option<&mut Vec<Diagnostic>>,
     ) {
-        if let Some(diagnostic_output) = diagnostic_output {
-            if error_node.is_some() && report_errors && !diagnostic_output.is_empty() {
-                // Bail if target is Promise-like---something else is wrong
-                if self.get_awaited_type_of_promise(target).is_some() {
-                    return;
-                }
-                let awaited_type_of_source = self.get_awaited_type_of_promise(source);
-                if awaited_type_of_source.is_some()
-                    && self.is_type_related_to(awaited_type_of_source, target, relation)
-                {
-                    diagnostic_output[0].add_related_info(Some(new_diagnostic_for_node(
-                        error_node,
-                        diag::Did_you_forget_to_use_await,
-                        args![],
-                    )));
-                }
+        if let Some(diagnostic_output) = diagnostic_output
+            && error_node.is_some()
+            && report_errors
+            && !diagnostic_output.is_empty()
+        {
+            // Bail if target is Promise-like---something else is wrong
+            if self.get_awaited_type_of_promise(target).is_some() {
+                return;
+            }
+            let awaited_type_of_source = self.get_awaited_type_of_promise(source);
+            if awaited_type_of_source.is_some()
+                && self.is_type_related_to(awaited_type_of_source, target, relation)
+            {
+                diagnostic_output[0].add_related_info(Some(new_diagnostic_for_node(
+                    error_node,
+                    diag::Did_you_forget_to_use_await,
+                    args![],
+                )));
             }
         }
     }

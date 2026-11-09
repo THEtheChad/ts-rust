@@ -85,10 +85,7 @@ impl LanguageService {
         {
             let clauses = case_clause.parent().clauses().nodes().to_vec();
             let tracker = new_case_clause_tracker(type_checker, &clauses);
-            literals = literals
-                .into_iter()
-                .filter(|literal| !tracker.has_value(literal))
-                .collect();
+            literals.retain(|literal| !tracker.has_value(literal));
             data.symbols = data
                 .symbols
                 .iter()
@@ -97,10 +94,10 @@ impl LanguageService {
                     let value_declaration = type_checker.sym(symbol).value_declaration;
                     if value_declaration.is_some() && is_enum_member(value_declaration) {
                         let value = type_checker.get_constant_value(value_declaration);
-                        if let Some(value) = value {
-                            if tracker.has_value(&value) {
-                                return false;
-                            }
+                        if let Some(value) = value
+                            && tracker.has_value(&value)
+                        {
+                            return false;
                         }
                     }
                     true
@@ -729,8 +726,7 @@ impl LanguageService {
                 ),
                 SyntaxKind::CommaToken,
             )
-        {
-            if is_method_declaration(context_token.parent().parent())
+            && (is_method_declaration(context_token.parent().parent())
                 || is_get_accessor_declaration(context_token.parent().parent())
                 || is_set_accessor_declaration(context_token.parent().parent())
                 || is_spread_assignment(context_token.parent())
@@ -740,11 +736,10 @@ impl LanguageService {
                 ) == context_token
                 || is_shorthand_property_assignment(context_token.parent())
                     && get_line_of_position(file, context_token.end())
-                        != get_line_of_position(file, position)
-            {
-                source = COMPLETION_SOURCE_OBJECT_LITERAL_MEMBER_WITH_COMMA.to_string();
-                has_action = true;
-            }
+                        != get_line_of_position(file, position))
+        {
+            source = COMPLETION_SOURCE_OBJECT_LITERAL_MEMBER_WITH_COMMA.to_string();
+            has_action = true;
         }
 
         let mut additional_text_edits: Option<Vec<lsproto::TextEdit>> = None;
@@ -1303,10 +1298,10 @@ impl LanguageService {
             abstract_,
         );
         let mut additional_text_edits: Vec<lsproto::TextEdit> = Vec::new();
-        if let Some(import_adder) = import_adder.as_mut() {
-            if import_adder.has_fixes() {
-                additional_text_edits = import_adder.edits();
-            }
+        if let Some(import_adder) = import_adder.as_mut()
+            && import_adder.has_fixes()
+        {
+            additional_text_edits = import_adder.edits();
         }
         if let Some(erase_range) = present_modifiers.erase_range {
             additional_text_edits.push(lsproto::TextEdit {
@@ -1747,22 +1742,22 @@ pub fn get_filter_text(
         return dot_accessor.to_string() + &trim_element_access(insert_text);
     }
 
-    if insert_text.starts_with("?.") {
+    if let Some(rest) = insert_text.strip_prefix("?.") {
         // Handle this case like the case above:
         // ```
         // const xyz = { 'ab c': 1 } | undefined;
         // xyz.ab|
         // ```
         // filterText should be `.ab c` instead of `?.['ab c']`.
-        if insert_text.starts_with("?.[") {
-            return dot_accessor.to_string() + &trim_element_access(&insert_text[2..]);
+        if rest.starts_with('[') {
+            return dot_accessor.to_string() + &trim_element_access(rest);
         } else {
             // ```
             // const xyz = { abc: 1 } | undefined;
             // xyz.ab|
             // ```
             // filterText should be `.abc` instead of `?.abc.
-            return dot_accessor.to_string() + &insert_text[2..];
+            return dot_accessor.to_string() + rest;
         }
     }
 
@@ -1970,16 +1965,15 @@ pub fn should_include_symbol(
         return false;
     }
 
-    all_flags = all_flags
-        | type_checker
-            .sym(symbol_origin)
-            .combined_local_and_export_symbol_flags(&type_checker.symbols);
+    all_flags |= type_checker
+        .sym(symbol_origin)
+        .combined_local_and_export_symbol_flags(&type_checker.symbols);
     if type_checker
         .sym(symbol)
         .flags
         .intersects(SymbolFlags::ALIAS)
     {
-        all_flags = all_flags | type_checker.get_symbol_flags_exported(symbol);
+        all_flags |= type_checker.get_symbol_flags_exported(symbol);
     }
 
     // import m = /**/ <-- It can only access namespace (if typing import = x. this would get member symbols and not namespace)
@@ -2311,10 +2305,10 @@ pub type SymbolIdSetValue = Option<Rc<RefCell<FxHashSet<u64>>>>;
 // Go: collections/set.go:57 (*Set).AddIfAbsent, on a by-value `Set` copy.
 fn symbol_id_set_add_if_absent(set: &mut SymbolIdSetValue, key: u64) -> bool {
     // Go: Has
-    if let Some(m) = set.as_ref() {
-        if RefCell::borrow(m).contains(&key) {
-            return false;
-        }
+    if let Some(m) = set.as_ref()
+        && RefCell::borrow(m).contains(&key)
+    {
+        return false;
     }
     // Go: Add (makes the map in this copy when it is nil)
     RefCell::borrow_mut(set.get_or_insert_with(Default::default)).insert(key);

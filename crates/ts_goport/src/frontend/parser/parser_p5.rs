@@ -232,10 +232,9 @@ impl<'a> Parser<'a> {
         // CoverInitializedName[Yield] :
         //     IdentifierReference[?Yield] Initializer[In, ?Yield]
         // this is necessary because ObjectLiteral productions are also used to cover grammar for ObjectAssignmentPattern
-        let node;
         let is_shorthand_property_assignment =
             token_is_identifier && self.token != SyntaxKind::ColonToken;
-        if is_shorthand_property_assignment {
+        let node = if is_shorthand_property_assignment {
             let equals_token = self.parse_optional_token(SyntaxKind::EqualsToken);
             let mut initializer = Node::NIL;
             if equals_token.is_some() {
@@ -245,14 +244,14 @@ impl<'a> Parser<'a> {
                     Parser::parse_assignment_expression_or_higher,
                 );
             }
-            node = self.factory.new_shorthand_property_assignment(
+            self.factory.new_shorthand_property_assignment(
                 modifiers,
                 name,
                 postfix_token,
                 Node::NIL, /*typeNode*/
                 equals_token,
                 initializer,
-            );
+            )
         } else {
             self.parse_expected(SyntaxKind::ColonToken);
             let initializer = self.do_in_context(
@@ -260,14 +259,14 @@ impl<'a> Parser<'a> {
                 false,
                 Parser::parse_assignment_expression_or_higher,
             );
-            node = self.factory.new_property_assignment(
+            self.factory.new_property_assignment(
                 modifiers,
                 name,
                 postfix_token,
                 Node::NIL, /*typeNode*/
                 initializer,
-            );
-        }
+            )
+        };
         self.finish_node(node, pos);
         self.with_js_doc(node, jsdoc);
         node
@@ -1331,7 +1330,7 @@ impl<'a> Parser<'a> {
     // Go: parser/parser.go:6407 setContextFlags
     pub fn set_context_flags(&mut self, flags: NodeFlags, value: bool) {
         if value {
-            self.context_flags = self.context_flags | flags;
+            self.context_flags |= flags;
         } else {
             self.context_flags = self.context_flags.without(flags);
         }
@@ -2124,5 +2123,5 @@ impl<'a> Parser<'a> {
 
 /// Go `core.FindIndex` over modifier nodes.
 fn find_index(nodes: NodeSlice, mut f: impl FnMut(Node) -> bool) -> i32 {
-    nodes.iter().position(|n| f(n)).map_or(-1, |i| i as i32)
+    nodes.iter().position(f).map_or(-1, |i| i as i32)
 }

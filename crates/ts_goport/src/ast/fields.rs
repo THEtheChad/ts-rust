@@ -2441,14 +2441,14 @@ pub fn is_js_doc_property_tag(node: Node) -> bool {
 #[inline]
 #[must_use]
 pub fn is_trivia_kind(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::SingleLineCommentTrivia
-        | SyntaxKind::MultiLineCommentTrivia
-        | SyntaxKind::NewLineTrivia
-        | SyntaxKind::WhitespaceTrivia
-        | SyntaxKind::ConflictMarkerTrivia => true,
-        _ => false,
-    }
+            | SyntaxKind::MultiLineCommentTrivia
+            | SyntaxKind::NewLineTrivia
+            | SyntaxKind::WhitespaceTrivia
+            | SyntaxKind::ConflictMarkerTrivia
+    )
 }
 
 // Go: ast/ast_generated.go:13545 IsLiteralKind
@@ -2463,10 +2463,10 @@ pub fn is_literal_kind(kind: SyntaxKind) -> bool {
 #[inline]
 #[must_use]
 pub fn is_pseudo_literal_kind(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::TemplateHead | SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        SyntaxKind::TemplateHead | SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail
+    )
 }
 
 // Go: ast/ast_generated.go:13557 IsPunctuationKind
@@ -2489,60 +2489,60 @@ pub fn is_keyword_kind(kind: SyntaxKind) -> bool {
 #[inline]
 #[must_use]
 pub fn is_modifier_kind(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AbstractKeyword
-        | SyntaxKind::AccessorKeyword
-        | SyntaxKind::AsyncKeyword
-        | SyntaxKind::ConstKeyword
-        | SyntaxKind::DeclareKeyword
-        | SyntaxKind::DefaultKeyword
-        | SyntaxKind::ExportKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::PrivateKeyword
-        | SyntaxKind::ProtectedKeyword
-        | SyntaxKind::PublicKeyword
-        | SyntaxKind::ReadonlyKeyword
-        | SyntaxKind::OutKeyword
-        | SyntaxKind::OverrideKeyword
-        | SyntaxKind::StaticKeyword => true,
-        _ => false,
-    }
+            | SyntaxKind::AccessorKeyword
+            | SyntaxKind::AsyncKeyword
+            | SyntaxKind::ConstKeyword
+            | SyntaxKind::DeclareKeyword
+            | SyntaxKind::DefaultKeyword
+            | SyntaxKind::ExportKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::ProtectedKeyword
+            | SyntaxKind::PublicKeyword
+            | SyntaxKind::ReadonlyKeyword
+            | SyntaxKind::OutKeyword
+            | SyntaxKind::OverrideKeyword
+            | SyntaxKind::StaticKeyword
+    )
 }
 
 // Go: ast/ast_generated.go:13573 IsKeywordTypeKind
 #[inline]
 #[must_use]
 pub fn is_keyword_type_kind(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AnyKeyword
-        | SyntaxKind::BigIntKeyword
-        | SyntaxKind::BooleanKeyword
-        | SyntaxKind::IntrinsicKeyword
-        | SyntaxKind::NeverKeyword
-        | SyntaxKind::NumberKeyword
-        | SyntaxKind::ObjectKeyword
-        | SyntaxKind::StringKeyword
-        | SyntaxKind::SymbolKeyword
-        | SyntaxKind::UndefinedKeyword
-        | SyntaxKind::UnknownKeyword
-        | SyntaxKind::VoidKeyword => true,
-        _ => false,
-    }
+            | SyntaxKind::BigIntKeyword
+            | SyntaxKind::BooleanKeyword
+            | SyntaxKind::IntrinsicKeyword
+            | SyntaxKind::NeverKeyword
+            | SyntaxKind::NumberKeyword
+            | SyntaxKind::ObjectKeyword
+            | SyntaxKind::StringKeyword
+            | SyntaxKind::SymbolKeyword
+            | SyntaxKind::UndefinedKeyword
+            | SyntaxKind::UnknownKeyword
+            | SyntaxKind::VoidKeyword
+    )
 }
 
 // Go: ast/ast_generated.go:13581 IsKeywordExpressionKind
 #[inline]
 #[must_use]
 pub fn is_keyword_expression_kind(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::NullKeyword
-        | SyntaxKind::TrueKeyword
-        | SyntaxKind::FalseKeyword
-        | SyntaxKind::ThisKeyword
-        | SyntaxKind::SuperKeyword
-        | SyntaxKind::ImportKeyword => true,
-        _ => false,
-    }
+            | SyntaxKind::TrueKeyword
+            | SyntaxKind::FalseKeyword
+            | SyntaxKind::ThisKeyword
+            | SyntaxKind::SuperKeyword
+            | SyntaxKind::ImportKeyword
+    )
 }
 
 // Go: ast/ast_generated.go:13589 IsTokenKind
@@ -2557,16 +2557,16 @@ pub fn is_token_kind(kind: SyntaxKind) -> bool {
 #[inline]
 #[must_use]
 pub fn is_jsx_token_kind(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::LessThanSlashToken
-        | SyntaxKind::EndOfFile
-        | SyntaxKind::ConflictMarkerTrivia
-        | SyntaxKind::JsxText
-        | SyntaxKind::JsxTextAllWhiteSpaces
-        | SyntaxKind::OpenBraceToken
-        | SyntaxKind::LessThanToken => true,
-        _ => false,
-    }
+            | SyntaxKind::EndOfFile
+            | SyntaxKind::ConflictMarkerTrivia
+            | SyntaxKind::JsxText
+            | SyntaxKind::JsxTextAllWhiteSpaces
+            | SyntaxKind::OpenBraceToken
+            | SyntaxKind::LessThanToken
+    )
 }
 
 // Go: ast/ast_generated.go:13601 IsJSDocNodeKind
@@ -2592,437 +2592,431 @@ pub fn is_import_phase_modifier_kind(kind: SyntaxKind) -> bool {
 #[inline]
 #[must_use]
 pub fn is_postfix_unary_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken
+    )
 }
 
 // Go: ast/ast_generated.go:13621 IsPrefixUnaryOperator
 #[inline]
 #[must_use]
 pub fn is_prefix_unary_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::TildeToken
-        | SyntaxKind::ExclamationToken
-        | SyntaxKind::PlusPlusToken
-        | SyntaxKind::MinusMinusToken => true,
-        _ => false,
-    }
+            | SyntaxKind::MinusToken
+            | SyntaxKind::TildeToken
+            | SyntaxKind::ExclamationToken
+            | SyntaxKind::PlusPlusToken
+            | SyntaxKind::MinusMinusToken
+    )
 }
 
 // Go: ast/ast_generated.go:13629 IsAssignmentOperator
 #[inline]
 #[must_use]
 pub fn is_assignment_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::EqualsToken
-        | SyntaxKind::PlusEqualsToken
-        | SyntaxKind::MinusEqualsToken
-        | SyntaxKind::AsteriskAsteriskEqualsToken
-        | SyntaxKind::AsteriskEqualsToken
-        | SyntaxKind::SlashEqualsToken
-        | SyntaxKind::PercentEqualsToken
-        | SyntaxKind::AmpersandEqualsToken
-        | SyntaxKind::BarEqualsToken
-        | SyntaxKind::CaretEqualsToken
-        | SyntaxKind::LessThanLessThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanEqualsToken
-        | SyntaxKind::BarBarEqualsToken
-        | SyntaxKind::AmpersandAmpersandEqualsToken
-        | SyntaxKind::QuestionQuestionEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::PlusEqualsToken
+            | SyntaxKind::MinusEqualsToken
+            | SyntaxKind::AsteriskAsteriskEqualsToken
+            | SyntaxKind::AsteriskEqualsToken
+            | SyntaxKind::SlashEqualsToken
+            | SyntaxKind::PercentEqualsToken
+            | SyntaxKind::AmpersandEqualsToken
+            | SyntaxKind::BarEqualsToken
+            | SyntaxKind::CaretEqualsToken
+            | SyntaxKind::LessThanLessThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanEqualsToken
+            | SyntaxKind::BarBarEqualsToken
+            | SyntaxKind::AmpersandAmpersandEqualsToken
+            | SyntaxKind::QuestionQuestionEqualsToken
+    )
 }
 
 // Go: ast/ast_generated.go:13637 IsBinaryOperator
 #[inline]
 #[must_use]
 pub fn is_binary_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::QuestionQuestionToken
-        | SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken
-        | SyntaxKind::AmpersandToken
-        | SyntaxKind::BarToken
-        | SyntaxKind::CaretToken
-        | SyntaxKind::AmpersandAmpersandToken
-        | SyntaxKind::BarBarToken
-        | SyntaxKind::EqualsToken
-        | SyntaxKind::PlusEqualsToken
-        | SyntaxKind::MinusEqualsToken
-        | SyntaxKind::AsteriskAsteriskEqualsToken
-        | SyntaxKind::AsteriskEqualsToken
-        | SyntaxKind::SlashEqualsToken
-        | SyntaxKind::PercentEqualsToken
-        | SyntaxKind::AmpersandEqualsToken
-        | SyntaxKind::BarEqualsToken
-        | SyntaxKind::CaretEqualsToken
-        | SyntaxKind::LessThanLessThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanEqualsToken
-        | SyntaxKind::BarBarEqualsToken
-        | SyntaxKind::AmpersandAmpersandEqualsToken
-        | SyntaxKind::QuestionQuestionEqualsToken
-        | SyntaxKind::CommaToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskAsteriskToken
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::EqualsEqualsToken
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+            | SyntaxKind::AmpersandToken
+            | SyntaxKind::BarToken
+            | SyntaxKind::CaretToken
+            | SyntaxKind::AmpersandAmpersandToken
+            | SyntaxKind::BarBarToken
+            | SyntaxKind::EqualsToken
+            | SyntaxKind::PlusEqualsToken
+            | SyntaxKind::MinusEqualsToken
+            | SyntaxKind::AsteriskAsteriskEqualsToken
+            | SyntaxKind::AsteriskEqualsToken
+            | SyntaxKind::SlashEqualsToken
+            | SyntaxKind::PercentEqualsToken
+            | SyntaxKind::AmpersandEqualsToken
+            | SyntaxKind::BarEqualsToken
+            | SyntaxKind::CaretEqualsToken
+            | SyntaxKind::LessThanLessThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanEqualsToken
+            | SyntaxKind::BarBarEqualsToken
+            | SyntaxKind::AmpersandAmpersandEqualsToken
+            | SyntaxKind::QuestionQuestionEqualsToken
+            | SyntaxKind::CommaToken
+    )
 }
 
 // Go: ast/ast_generated.go:13645 IsExponentiationOperator
 #[inline]
 #[must_use]
 pub fn is_exponentiation_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::AsteriskAsteriskToken => true,
-        _ => false,
-    }
+    matches!(kind, SyntaxKind::AsteriskAsteriskToken)
 }
 
 // Go: ast/ast_generated.go:13653 IsMultiplicativeOperator
 #[inline]
 #[must_use]
 pub fn is_multiplicative_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::AsteriskToken | SyntaxKind::SlashToken | SyntaxKind::PercentToken => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        SyntaxKind::AsteriskToken | SyntaxKind::SlashToken | SyntaxKind::PercentToken
+    )
 }
 
 // Go: ast/ast_generated.go:13661 IsMultiplicativeOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_multiplicative_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+    )
 }
 
 // Go: ast/ast_generated.go:13669 IsAdditiveOperator
 #[inline]
 #[must_use]
 pub fn is_additive_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::PlusToken | SyntaxKind::MinusToken => true,
-        _ => false,
-    }
+    matches!(kind, SyntaxKind::PlusToken | SyntaxKind::MinusToken)
 }
 
 // Go: ast/ast_generated.go:13677 IsAdditiveOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_additive_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+    )
 }
 
 // Go: ast/ast_generated.go:13685 IsShiftOperator
 #[inline]
 #[must_use]
 pub fn is_shift_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken => true,
-        _ => false,
-    }
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+    )
 }
 
 // Go: ast/ast_generated.go:13693 IsShiftOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_shift_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+    )
 }
 
 // Go: ast/ast_generated.go:13701 IsRelationalOperator
 #[inline]
 #[must_use]
 pub fn is_relational_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword => true,
-        _ => false,
-    }
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+    )
 }
 
 // Go: ast/ast_generated.go:13709 IsRelationalOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_relational_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+    )
 }
 
 // Go: ast/ast_generated.go:13717 IsEqualityOperator
 #[inline]
 #[must_use]
 pub fn is_equality_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+    )
 }
 
 // Go: ast/ast_generated.go:13725 IsEqualityOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_equality_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::EqualsEqualsToken
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+    )
 }
 
 // Go: ast/ast_generated.go:13733 IsBitwiseOperator
 #[inline]
 #[must_use]
 pub fn is_bitwise_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::AmpersandToken | SyntaxKind::BarToken | SyntaxKind::CaretToken => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        SyntaxKind::AmpersandToken | SyntaxKind::BarToken | SyntaxKind::CaretToken
+    )
 }
 
 // Go: ast/ast_generated.go:13741 IsBitwiseOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_bitwise_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken
-        | SyntaxKind::AmpersandToken
-        | SyntaxKind::BarToken
-        | SyntaxKind::CaretToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::EqualsEqualsToken
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+            | SyntaxKind::AmpersandToken
+            | SyntaxKind::BarToken
+            | SyntaxKind::CaretToken
+    )
 }
 
 // Go: ast/ast_generated.go:13749 IsLogicalOperator
 #[inline]
 #[must_use]
 pub fn is_logical_operator(kind: SyntaxKind) -> bool {
-    match kind {
-        SyntaxKind::AmpersandAmpersandToken | SyntaxKind::BarBarToken => true,
-        _ => false,
-    }
+    matches!(
+        kind,
+        SyntaxKind::AmpersandAmpersandToken | SyntaxKind::BarBarToken
+    )
 }
 
 // Go: ast/ast_generated.go:13757 IsLogicalOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_logical_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken
-        | SyntaxKind::AmpersandToken
-        | SyntaxKind::BarToken
-        | SyntaxKind::CaretToken
-        | SyntaxKind::AmpersandAmpersandToken
-        | SyntaxKind::BarBarToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::EqualsEqualsToken
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+            | SyntaxKind::AmpersandToken
+            | SyntaxKind::BarToken
+            | SyntaxKind::CaretToken
+            | SyntaxKind::AmpersandAmpersandToken
+            | SyntaxKind::BarBarToken
+    )
 }
 
 // Go: ast/ast_generated.go:13765 IsCompoundAssignmentOperator
 #[inline]
 #[must_use]
 pub fn is_compound_assignment_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::PlusEqualsToken
-        | SyntaxKind::MinusEqualsToken
-        | SyntaxKind::AsteriskAsteriskEqualsToken
-        | SyntaxKind::AsteriskEqualsToken
-        | SyntaxKind::SlashEqualsToken
-        | SyntaxKind::PercentEqualsToken
-        | SyntaxKind::AmpersandEqualsToken
-        | SyntaxKind::BarEqualsToken
-        | SyntaxKind::CaretEqualsToken
-        | SyntaxKind::LessThanLessThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanEqualsToken
-        | SyntaxKind::BarBarEqualsToken
-        | SyntaxKind::AmpersandAmpersandEqualsToken
-        | SyntaxKind::QuestionQuestionEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::MinusEqualsToken
+            | SyntaxKind::AsteriskAsteriskEqualsToken
+            | SyntaxKind::AsteriskEqualsToken
+            | SyntaxKind::SlashEqualsToken
+            | SyntaxKind::PercentEqualsToken
+            | SyntaxKind::AmpersandEqualsToken
+            | SyntaxKind::BarEqualsToken
+            | SyntaxKind::CaretEqualsToken
+            | SyntaxKind::LessThanLessThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanEqualsToken
+            | SyntaxKind::BarBarEqualsToken
+            | SyntaxKind::AmpersandAmpersandEqualsToken
+            | SyntaxKind::QuestionQuestionEqualsToken
+    )
 }
 
 // Go: ast/ast_generated.go:13773 IsAssignmentOperatorOrHigher
 #[inline]
 #[must_use]
 pub fn is_assignment_operator_or_higher(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::QuestionQuestionToken
-        | SyntaxKind::AsteriskAsteriskToken
-        | SyntaxKind::AsteriskToken
-        | SyntaxKind::SlashToken
-        | SyntaxKind::PercentToken
-        | SyntaxKind::PlusToken
-        | SyntaxKind::MinusToken
-        | SyntaxKind::LessThanLessThanToken
-        | SyntaxKind::GreaterThanGreaterThanToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
-        | SyntaxKind::LessThanToken
-        | SyntaxKind::LessThanEqualsToken
-        | SyntaxKind::GreaterThanToken
-        | SyntaxKind::GreaterThanEqualsToken
-        | SyntaxKind::InstanceOfKeyword
-        | SyntaxKind::InKeyword
-        | SyntaxKind::EqualsEqualsToken
-        | SyntaxKind::EqualsEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsEqualsToken
-        | SyntaxKind::ExclamationEqualsToken
-        | SyntaxKind::AmpersandToken
-        | SyntaxKind::BarToken
-        | SyntaxKind::CaretToken
-        | SyntaxKind::AmpersandAmpersandToken
-        | SyntaxKind::BarBarToken
-        | SyntaxKind::EqualsToken
-        | SyntaxKind::PlusEqualsToken
-        | SyntaxKind::MinusEqualsToken
-        | SyntaxKind::AsteriskAsteriskEqualsToken
-        | SyntaxKind::AsteriskEqualsToken
-        | SyntaxKind::SlashEqualsToken
-        | SyntaxKind::PercentEqualsToken
-        | SyntaxKind::AmpersandEqualsToken
-        | SyntaxKind::BarEqualsToken
-        | SyntaxKind::CaretEqualsToken
-        | SyntaxKind::LessThanLessThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-        | SyntaxKind::GreaterThanGreaterThanEqualsToken
-        | SyntaxKind::BarBarEqualsToken
-        | SyntaxKind::AmpersandAmpersandEqualsToken
-        | SyntaxKind::QuestionQuestionEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::AsteriskAsteriskToken
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken
+            | SyntaxKind::PercentToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::LessThanLessThanToken
+            | SyntaxKind::GreaterThanGreaterThanToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+            | SyntaxKind::LessThanToken
+            | SyntaxKind::LessThanEqualsToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::GreaterThanEqualsToken
+            | SyntaxKind::InstanceOfKeyword
+            | SyntaxKind::InKeyword
+            | SyntaxKind::EqualsEqualsToken
+            | SyntaxKind::EqualsEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsEqualsToken
+            | SyntaxKind::ExclamationEqualsToken
+            | SyntaxKind::AmpersandToken
+            | SyntaxKind::BarToken
+            | SyntaxKind::CaretToken
+            | SyntaxKind::AmpersandAmpersandToken
+            | SyntaxKind::BarBarToken
+            | SyntaxKind::EqualsToken
+            | SyntaxKind::PlusEqualsToken
+            | SyntaxKind::MinusEqualsToken
+            | SyntaxKind::AsteriskAsteriskEqualsToken
+            | SyntaxKind::AsteriskEqualsToken
+            | SyntaxKind::SlashEqualsToken
+            | SyntaxKind::PercentEqualsToken
+            | SyntaxKind::AmpersandEqualsToken
+            | SyntaxKind::BarEqualsToken
+            | SyntaxKind::CaretEqualsToken
+            | SyntaxKind::LessThanLessThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+            | SyntaxKind::GreaterThanGreaterThanEqualsToken
+            | SyntaxKind::BarBarEqualsToken
+            | SyntaxKind::AmpersandAmpersandEqualsToken
+            | SyntaxKind::QuestionQuestionEqualsToken
+    )
 }
 
 // Go: ast/ast_generated.go:13781 IsLogicalOrCoalescingAssignmentOperator
 #[inline]
 #[must_use]
 pub fn is_logical_or_coalescing_assignment_operator(kind: SyntaxKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         SyntaxKind::AmpersandAmpersandEqualsToken
-        | SyntaxKind::BarBarEqualsToken
-        | SyntaxKind::QuestionQuestionEqualsToken => true,
-        _ => false,
-    }
+            | SyntaxKind::BarBarEqualsToken
+            | SyntaxKind::QuestionQuestionEqualsToken
+    )
 }

@@ -379,8 +379,7 @@ fn write_type_or_symbol_with_checker(
         if t.is_nil() || file_checker.is_type_any(t) {
             t = file_checker.get_type_at_location(node);
         }
-        let type_string;
-        if !had_error_baseline
+        let type_string = if !had_error_baseline
             && file_checker.is_type_any(t)
             && !is_binding_element(node.parent())
             && !is_property_access_or_qualified_name(node.parent())
@@ -391,11 +390,11 @@ fn write_type_or_symbol_with_checker(
             && !is_export_statement_name(node)
             && !is_intrinsic_jsx_tag(node, current_source_file)
         {
-            type_string = file_checker
+            file_checker
                 .ty(t)
                 .as_intrinsic_type()
                 .intrinsic_name()
-                .to_string();
+                .to_string()
         } else {
             let builder = Rc::new(RefCell::new(new_node_builder(file_checker, Rc::clone(ctx))));
             let type_format_flags = TypeFormatFlags::NO_TRUNCATION
@@ -439,8 +438,8 @@ fn write_type_or_symbol_with_checker(
                 Some(Rc::clone(ctx)),
             );
             printer.write_exported(type_node, current_source_file, writer.clone(), None);
-            type_string = writer.borrow().string();
-        }
+            writer.borrow().string()
+        };
         return Some(TypeWriterResult {
             line,
             source_text,
@@ -466,8 +465,7 @@ fn write_type_or_symbol_with_checker(
         ),
     ));
     let declarations = file_checker.sym(symbol).declarations.clone();
-    let mut count = 0;
-    for declaration in &declarations {
+    for (count, declaration) in declarations.iter().enumerate() {
         if count >= 5 {
             let _ = write!(
                 symbol_string,
@@ -476,7 +474,6 @@ fn write_type_or_symbol_with_checker(
             );
             break;
         }
-        count += 1;
         symbol_string.push_str(", ");
         // PORT: Go reads `declarationTextCache` here, but never writes it, so
         // the lookup always misses and is left out.

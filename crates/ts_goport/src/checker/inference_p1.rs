@@ -2684,8 +2684,8 @@ mod tests {
             source: TypeId(n % 37),
             target: TypeId(n % 11),
             priority: InferencePriority((n % 3) as i32),
-            contravariant: n % 2 == 0,
-            bivariant: n % 5 == 0,
+            contravariant: n.is_multiple_of(2),
+            bivariant: n.is_multiple_of(5),
         };
         let mut map = InferenceVisitedMap::default();
         let mut std_map = std::collections::HashMap::new();

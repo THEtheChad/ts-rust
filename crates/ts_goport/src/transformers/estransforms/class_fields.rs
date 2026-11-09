@@ -517,33 +517,32 @@ impl ClassFieldsTransformer {
             && self.current_class_element.is_some()
             && is_super_property(node)
             && is_static_property_declaration_or_class_static_block(self.current_class_element)
+            && let Some(data) = self.lexical_environment_data()
         {
-            if let Some(data) = self.lexical_environment_data() {
-                if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
-                    return self.visit_invalid_super_property(node);
+            if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
+                return self.visit_invalid_super_property(node);
+            }
+            if data.class_constructor.is_some() && data.super_class_reference.is_some() {
+                let mut name = Node::NIL;
+                if is_element_access_expression(node) {
+                    name = self.visit_node(node.argument_expression());
+                } else if is_property_access_expression(node) && is_identifier(node.name()) {
+                    name = self
+                        .ec()
+                        .factory()
+                        .new_string_literal_from_node(node.name());
                 }
-                if data.class_constructor.is_some() && data.super_class_reference.is_some() {
-                    let mut name = Node::NIL;
-                    if is_element_access_expression(node) {
-                        name = self.visit_node(node.argument_expression());
-                    } else if is_property_access_expression(node) && is_identifier(node.name()) {
-                        name = self
-                            .ec()
-                            .factory()
-                            .new_string_literal_from_node(node.name());
-                    }
-                    if name.is_some() {
-                        let ec = self.ec();
-                        let f = ec.factory();
-                        let temp = f.new_temp_variable();
-                        let set_expr = f.new_reflect_set_call(
-                            data.super_class_reference,
-                            name,
-                            temp,
-                            data.class_constructor,
-                        );
-                        return f.new_assignment_target_wrapper(temp, set_expr);
-                    }
+                if name.is_some() {
+                    let ec = self.ec();
+                    let f = ec.factory();
+                    let temp = f.new_temp_variable();
+                    let set_expr = f.new_reflect_set_call(
+                        data.super_class_reference,
+                        name,
+                        temp,
+                        data.class_constructor,
+                    );
+                    return f.new_assignment_target_wrapper(temp, set_expr);
                 }
             }
         }
@@ -616,15 +615,14 @@ impl ClassFieldsTransformer {
         let declaration = self
             .resolver
             .get_referenced_value_declaration(ec.most_original(node));
-        if declaration.is_some() {
-            if let Some(&alias) = self.class_aliases.get(&declaration) {
-                if self.enclosing_class_declarations.contains(&declaration) {
-                    let clone = ec.factory().clone_node(alias);
-                    ec.set_source_map_range(clone, node.loc());
-                    ec.set_comment_range(clone, node.loc());
-                    return clone;
-                }
-            }
+        if declaration.is_some()
+            && let Some(&alias) = self.class_aliases.get(&declaration)
+            && self.enclosing_class_declarations.contains(&declaration)
+        {
+            let clone = ec.factory().clone_node(alias);
+            ec.set_source_map_range(clone, node.loc());
+            ec.set_comment_range(clone, node.loc());
+            return clone;
         }
         node
     }
@@ -1419,23 +1417,22 @@ impl ClassFieldsTransformer {
             && is_super_property(node)
             && is_identifier(node.name())
             && is_static_property_declaration_or_class_static_block(self.current_class_element)
+            && let Some(data) = self.lexical_environment_data()
         {
-            if let Some(data) = self.lexical_environment_data() {
-                if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
-                    return self.visit_invalid_super_property(node);
-                }
-                if data.class_constructor.is_some() && data.super_class_reference.is_some() {
-                    // converts `super.x` into `Reflect.get(_baseTemp, "x", _classTemp)`
-                    let f = ec.factory();
-                    let super_property = f.new_reflect_get_call(
-                        data.super_class_reference,
-                        f.new_string_literal_from_node(node.name()),
-                        data.class_constructor,
-                    );
-                    ec.set_original(super_property, node.expression());
-                    set_node_loc(super_property, node.expression().loc());
-                    return super_property;
-                }
+            if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
+                return self.visit_invalid_super_property(node);
+            }
+            if data.class_constructor.is_some() && data.super_class_reference.is_some() {
+                // converts `super.x` into `Reflect.get(_baseTemp, "x", _classTemp)`
+                let f = ec.factory();
+                let super_property = f.new_reflect_get_call(
+                    data.super_class_reference,
+                    f.new_string_literal_from_node(node.name()),
+                    data.class_constructor,
+                );
+                ec.set_original(super_property, node.expression());
+                set_node_loc(super_property, node.expression().loc());
+                return super_property;
             }
         }
         // Visit only the expression, not the name (when it's a regular identifier), to prevent
@@ -1479,24 +1476,23 @@ impl ClassFieldsTransformer {
             && self.current_class_element.is_some()
             && is_super_property(node)
             && is_static_property_declaration_or_class_static_block(self.current_class_element)
+            && let Some(data) = self.lexical_environment_data()
         {
-            if let Some(data) = self.lexical_environment_data() {
-                if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
-                    return self.visit_invalid_super_property(node);
-                }
-                if data.class_constructor.is_some() && data.super_class_reference.is_some() {
-                    // converts `super[x]` into `Reflect.get(_baseTemp, x, _classTemp)`
-                    let argument = self.visit_node(node.argument_expression());
-                    let ec = self.ec();
-                    let super_property = ec.factory().new_reflect_get_call(
-                        data.super_class_reference,
-                        argument,
-                        data.class_constructor,
-                    );
-                    ec.set_original(super_property, node.expression());
-                    set_node_loc(super_property, node.expression().loc());
-                    return super_property;
-                }
+            if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED != 0 {
+                return self.visit_invalid_super_property(node);
+            }
+            if data.class_constructor.is_some() && data.super_class_reference.is_some() {
+                // converts `super[x]` into `Reflect.get(_baseTemp, x, _classTemp)`
+                let argument = self.visit_node(node.argument_expression());
+                let ec = self.ec();
+                let super_property = ec.factory().new_reflect_get_call(
+                    data.super_class_reference,
+                    argument,
+                    data.class_constructor,
+                );
+                ec.set_original(super_property, node.expression());
+                set_node_loc(super_property, node.expression().loc());
+                return super_property;
             }
         }
         self.visit_each_child(node)

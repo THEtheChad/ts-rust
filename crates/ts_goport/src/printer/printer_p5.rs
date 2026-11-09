@@ -366,12 +366,12 @@ impl Printer {
                 //          a
                 //          /* End of parameter a */ -> this comment isn't considered to be trailing comment of parameter "a" due to newline
                 //          ,
-                if format.intersects(ListFormat::DELIMITERS_MASK) && previous_end != parent_end {
-                    if !self.comments_disabled
-                        && self.should_emit_trailing_comments(previous_sibling)
-                    {
-                        self.emit_leading_comments(previous_end, false /*elided*/);
-                    }
+                if format.intersects(ListFormat::DELIMITERS_MASK)
+                    && previous_end != parent_end
+                    && !self.comments_disabled
+                    && self.should_emit_trailing_comments(previous_sibling)
+                {
+                    self.emit_leading_comments(previous_end, false /*elided*/);
                 }
 
                 self.write_delimiter(format);
@@ -1109,16 +1109,15 @@ impl Printer {
         }
 
         // skip detached comments
-        if !self.detached_comments_info.is_empty() {
-            if let Some(info) = self.detached_comments_info.last() {
-                if info.node_pos == pos {
-                    pos = self
-                        .detached_comments_info
-                        .pop()
-                        .expect("detached comments info")
-                        .detached_comment_end_pos;
-                }
-            }
+        if !self.detached_comments_info.is_empty()
+            && let Some(info) = self.detached_comments_info.last()
+            && info.node_pos == pos
+        {
+            pos = self
+                .detached_comments_info
+                .pop()
+                .expect("detached comments info")
+                .detached_comment_end_pos;
         }
 
         let mut comments: Vec<CommentRange> = Vec::new();
@@ -1466,13 +1465,12 @@ impl Printer {
             .clone()
             .expect("source map generator");
         self.source_map_source_index = generator.borrow_mut().add_source(file_name);
-        if self.options.inline_sources {
-            if let Err(err) = generator
+        if self.options.inline_sources
+            && let Err(err) = generator
                 .borrow_mut()
                 .set_source_content(self.source_map_source_index, &source.text())
-            {
-                panic!("{err}");
-            }
+        {
+            panic!("{err}");
         }
 
         self.most_recent_source_map_source = source;

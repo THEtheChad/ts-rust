@@ -713,51 +713,52 @@ impl FanotifyBackend {
         let is_dir = mask & unix::FAN_ONDIR != 0;
 
         // Remove from old location.
-        if let Some(dfid_old) = dfid_old {
-            if !dfid_old.name.is_empty() && dfid_old.name != "." {
-                // PORT: Go ranges over the slice value while
-                // dropSubsForPathAndDescendantsLocked may filter the same
-                // backing array in place. The port ranges over a copy.
-                let subs = self.subscriptions_for(&dfid_old.key);
-                for s in &subs {
-                    let old_path = format!("{}/{}", s.path, dfid_old.name);
-                    // If the renamed item is a dir, drop its subscriptions and
-                    // all descendant subscriptions. The kernel marks themselves
-                    // leak when the destination is outside our watched tree:
-                    // fanotify has no path-independent unmark and we don't
-                    // keep fds open for marked directories.
-                    if is_dir {
-                        self.drop_subs_for_path_and_descendants_locked(&old_path);
-                    }
-                    s.dir_watch.events.remove(&old_path);
-                    touched.insert(Arc::as_ptr(&s.dir_watch) as usize, s.dir_watch.clone());
+        if let Some(dfid_old) = dfid_old
+            && !dfid_old.name.is_empty()
+            && dfid_old.name != "."
+        {
+            // PORT: Go ranges over the slice value while
+            // dropSubsForPathAndDescendantsLocked may filter the same
+            // backing array in place. The port ranges over a copy.
+            let subs = self.subscriptions_for(&dfid_old.key);
+            for s in &subs {
+                let old_path = format!("{}/{}", s.path, dfid_old.name);
+                // If the renamed item is a dir, drop its subscriptions and
+                // all descendant subscriptions. The kernel marks themselves
+                // leak when the destination is outside our watched tree:
+                // fanotify has no path-independent unmark and we don't
+                // keep fds open for marked directories.
+                if is_dir {
+                    self.drop_subs_for_path_and_descendants_locked(&old_path);
                 }
+                s.dir_watch.events.remove(&old_path);
+                touched.insert(Arc::as_ptr(&s.dir_watch) as usize, s.dir_watch.clone());
             }
         }
 
         // Create at new location.
-        if let Some(dfid_new) = dfid_new {
-            if !dfid_new.name.is_empty() && dfid_new.name != "." {
-                let subs = self.subscriptions_for(&dfid_new.key);
-                for s in &subs {
-                    let new_path = format!("{}/{}", s.path, dfid_new.name);
-                    s.dir_watch.events.create(&new_path);
-                    if is_dir && s.dir_watch.recursive {
-                        let _ = walk_dir(
-                            &s.dir_watch.physical_path(&new_path),
-                            true,
-                            Some(&mut |p: &str, p_is_dir: bool| -> Result<(), GoError> {
-                                if !p_is_dir {
-                                    return Ok(());
-                                }
-                                let _ =
-                                    self.mark_dir(&s.dir_watch, &s.dir_watch.display_path(p), p);
-                                Ok(())
-                            }),
-                        );
-                    }
-                    touched.insert(Arc::as_ptr(&s.dir_watch) as usize, s.dir_watch.clone());
+        if let Some(dfid_new) = dfid_new
+            && !dfid_new.name.is_empty()
+            && dfid_new.name != "."
+        {
+            let subs = self.subscriptions_for(&dfid_new.key);
+            for s in &subs {
+                let new_path = format!("{}/{}", s.path, dfid_new.name);
+                s.dir_watch.events.create(&new_path);
+                if is_dir && s.dir_watch.recursive {
+                    let _ = walk_dir(
+                        &s.dir_watch.physical_path(&new_path),
+                        true,
+                        Some(&mut |p: &str, p_is_dir: bool| -> Result<(), GoError> {
+                            if !p_is_dir {
+                                return Ok(());
+                            }
+                            let _ = self.mark_dir(&s.dir_watch, &s.dir_watch.display_path(p), p);
+                            Ok(())
+                        }),
+                    );
                 }
+                touched.insert(Arc::as_ptr(&s.dir_watch) as usize, s.dir_watch.clone());
             }
         }
     }
@@ -996,12 +997,11 @@ pub fn parse_fanotify_dfid_names(
             unix::FAN_EVENT_INFO_TYPE_DFID => {
                 // DFID without name: the handle identifies the directory itself.
                 // Use as fallback if we haven't found a DFID_NAME record.
-                if primary.is_none() {
-                    if let Some(parsed) =
+                if primary.is_none()
+                    && let Some(parsed) =
                         parse_fanotify_fid_record(&data[offset..offset + info_len], false)
-                    {
-                        primary = Some(parsed);
-                    }
+                {
+                    primary = Some(parsed);
                 }
             }
 

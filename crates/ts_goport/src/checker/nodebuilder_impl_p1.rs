@@ -419,7 +419,7 @@ impl Checker {
         let b = b.borrow();
         let c = b.ctx.borrow();
         let n = c.type_stack.len().saturating_sub(1);
-        c.type_stack[..n].iter().any(|&s| s == t)
+        c.type_stack[..n].contains(&t)
     }
 
     // Go: checker/nodebuilderimpl.go:213 shouldExpandType
@@ -691,13 +691,13 @@ impl Checker {
             let type_node = self.type_to_type_node(b, t);
             if type_node.is_some() {
                 result.push(type_node);
-                if let Some(seen_names) = seen_names.as_mut() {
-                    if is_identifier_type_reference(type_node) {
-                        seen_names
-                            .entry(type_node.type_name().text().to_string())
-                            .or_default()
-                            .push((t, result.len() - 1));
-                    }
+                if let Some(seen_names) = seen_names.as_mut()
+                    && is_identifier_type_reference(type_node)
+                {
+                    seen_names
+                        .entry(type_node.type_name().text().to_string())
+                        .or_default()
+                        .push((t, result.len() - 1));
                 }
             }
         }
@@ -714,7 +714,7 @@ impl Checker {
             {
                 let b = b.borrow();
                 let mut c = b.ctx.borrow_mut();
-                c.flags = c.flags | NodeBuilderFlags::USE_FULLY_QUALIFIED_TYPE;
+                c.flags |= NodeBuilderFlags::USE_FULLY_QUALIFIED_TYPE;
             }
             for types in seen_names.values() {
                 if !array_is_homogeneous(types, |a, b| self.types_are_same_reference(a.0, b.0)) {
@@ -1043,7 +1043,7 @@ impl Checker {
         if index == 0 {
             let b = b.borrow();
             let mut c = b.ctx.borrow_mut();
-            c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+            c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
         }
         let symbol_name = self.get_name_of_symbol_as_written(b, symbol);
         if index == 0 {
@@ -1265,7 +1265,7 @@ impl Checker {
             {
                 let b = b.borrow();
                 let mut c = b.ctx.borrow_mut();
-                c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+                c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
             }
             symbol_name = self.get_name_of_symbol_as_written(b, symbol);
             p1_add_length(b, go_len(&symbol_name) + 1);
@@ -1453,7 +1453,7 @@ impl Checker {
         if index == 0 {
             let b = b.borrow();
             let mut c = b.ctx.borrow_mut();
-            c.flags = c.flags | NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
+            c.flags |= NodeBuilderFlags::IN_INITIAL_ENTITY_NAME;
         }
         let mut symbol_name = self.get_name_of_symbol_as_written(b, symbol);
         if index == 0 {
@@ -1619,22 +1619,21 @@ impl Checker {
                 // }
                 if is_computed_property_name(name)
                     && !self.sym(symbol).check_flags.intersects(CheckFlags::LATE)
+                    && self.value_symbol_links.has_by_id(&self.symbols, symbol)
                 {
-                    if self.value_symbol_links.has_by_id(&self.symbols, symbol) {
-                        let name_type = self
-                            .value_symbol_links
-                            .get_by_id(&self.symbols, symbol)
-                            .name_type;
-                        if name_type.is_some()
-                            && self
-                                .ty(name_type)
-                                .flags
-                                .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL)
-                        {
-                            let result = self.get_name_of_symbol_from_name_type(b, symbol);
-                            if !result.is_empty() {
-                                return result;
-                            }
+                    let name_type = self
+                        .value_symbol_links
+                        .get_by_id(&self.symbols, symbol)
+                        .name_type;
+                    if name_type.is_some()
+                        && self
+                            .ty(name_type)
+                            .flags
+                            .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL)
+                    {
+                        let result = self.get_name_of_symbol_from_name_type(b, symbol);
+                        if !result.is_empty() {
+                            return result;
                         }
                     }
                 }

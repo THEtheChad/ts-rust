@@ -534,38 +534,36 @@ impl Checker {
                     .sym(local_declaration_symbol)
                     .flags
                     .intersects(SymbolFlags::BLOCK_SCOPED_VARIABLE)
-            {
-                if self
+                && self
                     .get_declaration_node_flags_from_symbol(local_declaration_symbol)
                     .intersects(NodeFlags::BLOCK_SCOPED)
+            {
+                let var_decl_list = find_ancestor_kind(
+                    self.sym(local_declaration_symbol).value_declaration,
+                    SyntaxKind::VariableDeclarationList,
+                );
+                let mut container = Node::NIL;
+                if is_variable_statement(var_decl_list.parent())
+                    && var_decl_list.parent().parent().is_some()
                 {
-                    let var_decl_list = find_ancestor_kind(
-                        self.sym(local_declaration_symbol).value_declaration,
-                        SyntaxKind::VariableDeclarationList,
-                    );
-                    let mut container = Node::NIL;
-                    if is_variable_statement(var_decl_list.parent())
-                        && var_decl_list.parent().parent().is_some()
-                    {
-                        container = var_decl_list.parent().parent();
-                    }
-                    // names of block-scoped and function scoped variables can collide only
-                    // if block scoped variable is defined in the function\module\source file scope (because of variable hoisting)
-                    let names_share_scope = container.is_some()
-                        && (is_block(container) && is_function_like(container.parent())
-                            || is_module_block(container)
-                            || is_module_declaration(container)
-                            || is_source_file(container));
-                    // here we know that function scoped variable is "shadowed" by block scoped one
-                    // a var declaration can't hoist past a lexical declaration and it results in a SyntaxError at runtime
-                    if !names_share_scope {
-                        let name = self.symbol_to_string(local_declaration_symbol);
-                        self.error(
+                    container = var_decl_list.parent().parent();
+                }
+                // names of block-scoped and function scoped variables can collide only
+                // if block scoped variable is defined in the function\module\source file scope (because of variable hoisting)
+                let names_share_scope = container.is_some()
+                    && (is_block(container) && is_function_like(container.parent())
+                        || is_module_block(container)
+                        || is_module_declaration(container)
+                        || is_source_file(container));
+                // here we know that function scoped variable is "shadowed" by block scoped one
+                // a var declaration can't hoist past a lexical declaration and it results in a SyntaxError at runtime
+                if !names_share_scope {
+                    let name = self.symbol_to_string(local_declaration_symbol);
+                    self.error(
                             node,
                             diag::Cannot_initialize_outer_scoped_variable_0_in_the_same_scope_as_block_scoped_declaration_1,
                             args![name.clone(), name],
                         );
-                    }
                 }
             }
         }
@@ -737,26 +735,24 @@ impl Checker {
                     Node::NIL
                 },
             );
-            if check_assignability {
-                if iteration_types.next_type.is_some() {
-                    let mut diagnostic: Option<&'static Message> = None;
-                    if use_.intersects(IterationUse::FOR_OF_FLAG) {
-                        diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_for_of_will_always_send_0);
-                    } else if use_.intersects(IterationUse::SPREAD_FLAG) {
-                        diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_array_spread_will_always_send_0);
-                    } else if use_.intersects(IterationUse::DESTRUCTURING_FLAG) {
-                        diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_array_destructuring_will_always_send_0);
-                    } else if use_.intersects(IterationUse::YIELD_STAR_FLAG) {
-                        diagnostic = Some(diag::Cannot_delegate_iteration_to_value_because_the_next_method_of_its_iterator_expects_type_1_but_the_containing_generator_will_always_send_0);
-                    }
-                    if diagnostic.is_some() {
-                        self.check_type_assignable_to(
-                            sent_type,
-                            iteration_types.next_type,
-                            error_node,
-                            diagnostic,
-                        );
-                    }
+            if check_assignability && iteration_types.next_type.is_some() {
+                let mut diagnostic: Option<&'static Message> = None;
+                if use_.intersects(IterationUse::FOR_OF_FLAG) {
+                    diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_for_of_will_always_send_0);
+                } else if use_.intersects(IterationUse::SPREAD_FLAG) {
+                    diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_array_spread_will_always_send_0);
+                } else if use_.intersects(IterationUse::DESTRUCTURING_FLAG) {
+                    diagnostic = Some(diag::Cannot_iterate_value_because_the_next_method_of_its_iterator_expects_type_1_but_array_destructuring_will_always_send_0);
+                } else if use_.intersects(IterationUse::YIELD_STAR_FLAG) {
+                    diagnostic = Some(diag::Cannot_delegate_iteration_to_value_because_the_next_method_of_its_iterator_expects_type_1_but_the_containing_generator_will_always_send_0);
+                }
+                if diagnostic.is_some() {
+                    self.check_type_assignable_to(
+                        sent_type,
+                        iteration_types.next_type,
+                        error_node,
+                        diagnostic,
+                    );
                 }
             }
             if iteration_types.yield_type.is_some() || iterable_exists {
@@ -993,7 +989,7 @@ impl Checker {
         }
         let result = self.get_iteration_types_of_iterable_worker(t, use_, error_node, no_cache);
         if !no_cache {
-            self.iteration_types_cache.insert(key, result.clone());
+            self.iteration_types_cache.insert(key, result);
         }
         result
     }
@@ -1263,7 +1259,7 @@ impl Checker {
     ) -> TypeId {
         let types: Vec<TypeId> = iteration_types
             .iter()
-            .map(|t| f(t))
+            .map(f)
             .filter(|t| t.is_some())
             .collect();
         if types.is_empty() {
@@ -1484,13 +1480,8 @@ impl Checker {
             error_node,
             diagnostic_output.as_deref_mut(),
         );
-        let throw = self.get_iteration_types_of_method(
-            t,
-            r,
-            "throw",
-            error_node,
-            diagnostic_output.as_deref_mut(),
-        );
+        let throw =
+            self.get_iteration_types_of_method(t, r, "throw", error_node, diagnostic_output);
         self.combine_iteration_types(&[next, return_, throw])
     }
 
@@ -1660,7 +1651,7 @@ impl Checker {
                         resolver.must_have_a_value_diagnostic,
                         args![method_name],
                     ),
-                    diagnostic_output.as_deref_mut(),
+                    diagnostic_output,
                 );
             }
             yield_type = self.any_type;

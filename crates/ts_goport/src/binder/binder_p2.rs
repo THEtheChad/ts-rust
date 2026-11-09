@@ -11,6 +11,7 @@
 //! - `flow_node_arena: Vec<FlowNode>` indexed by `FlowNodeId::local_index()`.
 //! - `symbol_arena` (Go `symbolArena`): the `SymbolArena` (owned or `&mut`).
 //! - `common_js_module_indicator: Node` (Go `file.CommonJSModuleIndicator`, set by the binder).
+//!
 //! The small module-private helpers below read and write that state.
 
 use crate::astdata::NodeData;
@@ -1178,15 +1179,15 @@ impl Binder {
                 .flags
                 .intersects(FlowFlags::UNREACHABLE)
                 && container_flags.intersects(ContainerFlags::IS_FUNCTION_LIKE)
+                && has_body_data(node)
+                && node_is_present(node.body())
             {
-                if has_body_data(node) && node_is_present(node.body()) {
-                    self.add_node_flags(node, NodeFlags::HAS_IMPLICIT_RETURN);
-                    if self.has_explicit_return {
-                        self.add_node_flags(node, NodeFlags::HAS_EXPLICIT_RETURN);
-                    }
-                    let current_flow = self.current_flow;
-                    self.set_end_flow_node(node, current_flow);
+                self.add_node_flags(node, NodeFlags::HAS_IMPLICIT_RETURN);
+                if self.has_explicit_return {
+                    self.add_node_flags(node, NodeFlags::HAS_EXPLICIT_RETURN);
                 }
+                let current_flow = self.current_flow;
+                self.set_end_flow_node(node, current_flow);
             }
             if self.seen_this_keyword {
                 self.add_node_flags(node, NodeFlags::CONTAINS_THIS);

@@ -525,15 +525,13 @@ impl LanguageService {
             if candidates[i] == resolved_signature {
                 selected_item_index = item_seen;
                 if item.len() > 1 {
-                    let mut count: i32 = 0;
-                    for j in item {
+                    for (count, j) in (0_i32..).zip(item) {
                         if j.is_variadic
                             || j.parameters.len() as i32 >= argument_info.argument_count
                         {
                             selected_item_index = item_seen + count;
                             break;
                         }
-                        count += 1;
                     }
                 }
             }
@@ -1648,6 +1646,9 @@ pub fn get_argument_index_for_template_piece(
 }
 
 // Go: ls/signaturehelp.go:1058 getAdjustedNode
+// The predicate keeps Go's redundant branches (the binding cases return
+// false, as the fallback does).
+#[allow(clippy::needless_bool, clippy::if_same_then_else)]
 pub fn get_adjusted_node(node: Node) -> Node {
     match node.kind() {
         SyntaxKind::OpenParenToken | SyntaxKind::CommaToken => node,

@@ -99,7 +99,7 @@ fn with_addresses(short: &str, full: &str) -> Option<String> {
         .rev()
         .find(|(_, address)| *address != "0x0")?
         .0;
-    let last_short = short.lines().filter_map(frame_line).last()?.0;
+    let last_short = short.lines().filter_map(frame_line).next_back()?.0;
     let skipped = last_full.checked_sub(last_short)?;
     let mut out = String::with_capacity(short.len() * 2);
     for line in short.lines() {

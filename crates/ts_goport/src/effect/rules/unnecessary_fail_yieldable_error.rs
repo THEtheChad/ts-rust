@@ -73,19 +73,18 @@ pub fn analyze_unnecessary_fail_yieldable_error(
                 let call = yield_.expression();
                 if call.expression().is_some()
                     && tp.is_node_reference_to_effect_module_api(call.expression(), member!("fail"))
+                    && !call.arguments().is_empty()
                 {
-                    if !call.arguments().is_empty() {
-                        let arg = call.arguments().get(0);
-                        let arg_type = tp.get_type_at_location(arg);
-                        if arg_type.is_some() && tp.is_yieldable_error_type(arg_type) {
-                            matches.push(UnnecessaryFailYieldableErrorMatch {
-                                source_file: sf,
-                                location: get_error_range_for_node(sf, n),
-                                yield_node: n,
-                                call_node: yield_.expression(),
-                                fail_argument: arg,
-                            });
-                        }
+                    let arg = call.arguments().get(0);
+                    let arg_type = tp.get_type_at_location(arg);
+                    if arg_type.is_some() && tp.is_yieldable_error_type(arg_type) {
+                        matches.push(UnnecessaryFailYieldableErrorMatch {
+                            source_file: sf,
+                            location: get_error_range_for_node(sf, n),
+                            yield_node: n,
+                            call_node: yield_.expression(),
+                            fail_argument: arg,
+                        });
                     }
                 }
             }

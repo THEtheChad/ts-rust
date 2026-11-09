@@ -772,11 +772,11 @@ impl SyntheticArena {
             self.free_dead_aliases();
         }
         let file = n.file_index() as u32;
-        if !self.alias_files.contains_key(&file) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.alias_files.entry(file) {
             if super::file_version::file_version_probe(n).is_none() {
                 return OwnerKey::Base;
             }
-            self.alias_files.insert(file, OwnerChunks::default());
+            e.insert(OwnerChunks::default());
         }
         OwnerKey::File(file)
     }
@@ -3054,7 +3054,7 @@ pub fn new_synthetic_modifier_list(nodes: &[Node], loc: TextRange) -> ModifierLi
 /// `new_synthetic_modifier_list` (`print`: see `new_synthetic_node_list_in`).
 #[must_use]
 pub fn new_synthetic_modifier_list_in(print: bool, nodes: &[Node], loc: TextRange) -> ModifierList {
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0);
     let list = ts_list(nodes, loc, false, flags);
     ModifierList::synthetic(push_own_list_in(print, OwnList::List(list)))
 }
@@ -3205,7 +3205,7 @@ fn modifiers_copy(modifiers: ModifierList) -> Option<SyntheticListData> {
                 &nodes,
                 modifiers.loc(),
                 modifiers.node_list().stored_trailing_comma(),
-                crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0 as u32),
+                crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0),
             )
         }
     })
@@ -3731,7 +3731,7 @@ mod tests {
     #[test]
     fn chunk_table_compacts_past_freed_numbers() {
         let count = 4 * COMPACT_MIN_EMPTY;
-        let live = |c: usize| c % 512 == 0 || c >= count - 16;
+        let live = |c: usize| c.is_multiple_of(512) || c >= count - 16;
         // Never set: as a number of the other thread of a shared counter.
         let skipped = |c: usize| c % 512 == 1;
         let mut table = ChunkTable::new();

@@ -14,7 +14,7 @@ pub type AnyOptionSelector<T> = fn(&lsutil::FormatCodeSettings) -> T;
 
 // Go: format/rulecontext.go:22 semicolonOption
 pub fn semicolon_option(options: &lsutil::FormatCodeSettings) -> lsutil::SemicolonPreference {
-    options.semicolons.clone()
+    options.semicolons
 }
 
 // Go: format/rulecontext.go:26 insertSpaceAfterCommaDelimiterOption
@@ -650,25 +650,25 @@ pub fn is_type_argument_or_parameter_or_assertion(token: &TextRangeWithKind, par
     if token.kind != SyntaxKind::LessThanToken && token.kind != SyntaxKind::GreaterThanToken {
         return false;
     }
-    match parent.kind() {
+    matches!(
+        parent.kind(),
         SyntaxKind::TypeReference
-        | SyntaxKind::TypeAssertionExpression
-        | SyntaxKind::TypeAliasDeclaration
-        | SyntaxKind::ClassDeclaration
-        | SyntaxKind::ClassExpression
-        | SyntaxKind::InterfaceDeclaration
-        | SyntaxKind::FunctionDeclaration
-        | SyntaxKind::FunctionExpression
-        | SyntaxKind::ArrowFunction
-        | SyntaxKind::MethodDeclaration
-        | SyntaxKind::MethodSignature
-        | SyntaxKind::CallSignature
-        | SyntaxKind::ConstructSignature
-        | SyntaxKind::CallExpression
-        | SyntaxKind::NewExpression
-        | SyntaxKind::ExpressionWithTypeArguments => true,
-        _ => false,
-    }
+            | SyntaxKind::TypeAssertionExpression
+            | SyntaxKind::TypeAliasDeclaration
+            | SyntaxKind::ClassDeclaration
+            | SyntaxKind::ClassExpression
+            | SyntaxKind::InterfaceDeclaration
+            | SyntaxKind::FunctionDeclaration
+            | SyntaxKind::FunctionExpression
+            | SyntaxKind::ArrowFunction
+            | SyntaxKind::MethodDeclaration
+            | SyntaxKind::MethodSignature
+            | SyntaxKind::CallSignature
+            | SyntaxKind::ConstructSignature
+            | SyntaxKind::CallExpression
+            | SyntaxKind::NewExpression
+            | SyntaxKind::ExpressionWithTypeArguments
+    )
 }
 
 // Go: format/rulecontext.go:509 isTypeArgumentOrParameterOrAssertionContext
@@ -716,16 +716,15 @@ pub fn is_not_statement_condition_context(context: &mut FormattingContext) -> bo
 
 // Go: format/rulecontext.go:538 isStatementConditionContext
 pub fn is_statement_condition_context(context: &mut FormattingContext) -> bool {
-    match context.context_node.kind() {
+    matches!(
+        context.context_node.kind(),
         SyntaxKind::IfStatement
-        | SyntaxKind::ForStatement
-        | SyntaxKind::ForInStatement
-        | SyntaxKind::ForOfStatement
-        | SyntaxKind::DoStatement
-        | SyntaxKind::WhileStatement => true,
-
-        _ => false,
-    }
+            | SyntaxKind::ForStatement
+            | SyntaxKind::ForInStatement
+            | SyntaxKind::ForOfStatement
+            | SyntaxKind::DoStatement
+            | SyntaxKind::WhileStatement
+    )
 }
 
 // Go: format/rulecontext.go:553 isSemicolonDeletionContext

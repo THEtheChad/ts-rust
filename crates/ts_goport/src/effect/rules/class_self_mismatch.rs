@@ -68,10 +68,11 @@ pub fn analyze_class_self_mismatch(
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::ClassDeclaration && node.name().is_some() {
-            if let Some(m) = check_class_self_mismatch(tp, sf, node) {
-                matches.push(m);
-            }
+        if node.kind() == SyntaxKind::ClassDeclaration
+            && node.name().is_some()
+            && let Some(m) = check_class_self_mismatch(tp, sf, node)
+        {
+            matches.push(m);
         }
 
         node_to_visit.extend(order.children(i));

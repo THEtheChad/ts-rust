@@ -185,10 +185,10 @@ fn stop_timer(t: &Arc<TimerShared>, c: Option<&Receiver<Instant>>) -> bool {
     }
     if t.is_chan() {
         // Stop any future sends with stale values.
-        if let Some(c) = c {
-            if c.try_recv().is_ok() {
-                pending = true;
-            }
+        if let Some(c) = c
+            && c.try_recv().is_ok()
+        {
+            pending = true;
         }
     }
     pending
@@ -208,12 +208,11 @@ fn reset_timer(
         state.period = period;
         pending = state.when.is_some();
         state.when = Some(when);
-        if t.is_chan() {
-            if let Some(c) = c {
-                if c.try_recv().is_ok() {
-                    pending = true;
-                }
-            }
+        if t.is_chan()
+            && let Some(c) = c
+            && c.try_recv().is_ok()
+        {
+            pending = true;
         }
         maybe_add(t, &mut state);
     }

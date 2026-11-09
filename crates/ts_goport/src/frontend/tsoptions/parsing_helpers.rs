@@ -218,9 +218,7 @@ pub fn parse_string_string_map_strict(
 // elements are all strings. A missing element or wrong element type yields false.
 // PORT: Go `([]string, bool)` is `Option<Vec<String>>`.
 pub fn parse_string_array_strict(value: &CompilerOptionsValue) -> Option<Vec<String>> {
-    let Some(arr) = value.as_any_slice() else {
-        return None;
-    };
+    let arr = value.as_any_slice()?;
     let mut result = Vec::with_capacity(arr.len());
     for v in arr {
         let CompilerOptionsValue::String(str) = v else {
@@ -988,13 +986,13 @@ pub fn convert_option_to_absolute_path(
                 return (CompilerOptionsValue::NilList, true);
             }
         }
-    } else if option.is_file_path {
-        if let CompilerOptionsValue::String(value) = v {
-            return (
-                CompilerOptionsValue::String(get_normalized_absolute_path(value, cwd)),
-                true,
-            );
-        }
+    } else if option.is_file_path
+        && let CompilerOptionsValue::String(value) = v
+    {
+        return (
+            CompilerOptionsValue::String(get_normalized_absolute_path(value, cwd)),
+            true,
+        );
     }
     (CompilerOptionsValue::Nil, false)
 }

@@ -499,10 +499,9 @@ pub fn contains_object_rest_or_spread(node: Node) -> bool {
                 if target
                     .subtree_facts()
                     .intersects(SubtreeFacts::SUBTREE_CONTAINS_ES_OBJECT_REST_OR_SPREAD)
+                    && contains_object_rest_or_spread(target)
                 {
-                    if contains_object_rest_or_spread(target) {
-                        return true;
-                    }
+                    return true;
                 }
             }
         }
@@ -512,12 +511,12 @@ pub fn contains_object_rest_or_spread(node: Node) -> bool {
 
 // Go: ast/utilities.go:4118 IsEmptyObjectLiteral
 pub fn is_empty_object_literal(expression: Node) -> bool {
-    is_object_literal_expression(expression) && expression.properties().len() == 0
+    is_object_literal_expression(expression) && expression.properties().is_empty()
 }
 
 // Go: ast/utilities.go:4122 IsEmptyArrayLiteral
 pub fn is_empty_array_literal(expression: Node) -> bool {
-    is_array_literal_expression(expression) && expression.elements().len() == 0
+    is_array_literal_expression(expression) && expression.elements().is_empty()
 }
 
 // Go: ast/utilities.go:4126 GetRestIndicatorOfBindingOrAssignmentElement
@@ -679,7 +678,7 @@ pub fn is_expando_initializer(declaration: Node, initializer: Node) -> bool {
     if is_in_js_file(initializer) {
         return is_class_expression(initializer)
             || (is_object_literal_expression(initializer)
-                && initializer.properties().len() == 0
+                && initializer.properties().is_empty()
                 && declaration.type_().is_nil());
     }
     false
@@ -912,7 +911,7 @@ pub fn class_element_or_class_element_parameter_is_decorated(
     if node_is_decorated(use_legacy_decorators, node, parent, Node::NIL) {
         return true;
     }
-    if !parameters.is_nil() && parameters.nodes().len() > 0 {
+    if !parameters.is_nil() && !parameters.nodes().is_empty() {
         for parameter in parameters.nodes().iter() {
             if is_this_parameter(parameter) {
                 continue;
@@ -992,15 +991,12 @@ pub fn get_all_accessor_declarations_for_declaration(
         }
     }
 
-    let first_accessor;
-    let second_accessor;
-    if other_accessor.is_some() && (other_accessor.pos() < accessor.pos()) {
-        first_accessor = other_accessor;
-        second_accessor = accessor;
-    } else {
-        first_accessor = accessor;
-        second_accessor = other_accessor;
-    }
+    let (first_accessor, second_accessor) =
+        if other_accessor.is_some() && (other_accessor.pos() < accessor.pos()) {
+            (other_accessor, accessor)
+        } else {
+            (accessor, other_accessor)
+        };
 
     let mut set_accessor = Node::NIL;
     let mut get_accessor = Node::NIL;

@@ -473,8 +473,9 @@ impl NameResolver {
                     SyntaxKind::PropertyDeclaration => {
                         if !is_static(location) {
                             let ctor = find_constructor_declaration(location.parent());
-                            if ctor.is_some() && ctor.locals().is_some() {
-                                if self
+                            if ctor.is_some()
+                                && ctor.locals().is_some()
+                                && self
                                     .lookup(
                                         c,
                                         ctor.locals(),
@@ -482,10 +483,9 @@ impl NameResolver {
                                         meaning & SymbolFlags::VALUE,
                                     )
                                     .is_some()
-                                {
-                                    // Remember the property node, it will be used later to report appropriate error
-                                    property_with_invalid_initializer = location;
-                                }
+                            {
+                                // Remember the property node, it will be used later to report appropriate error
+                                property_with_invalid_initializer = location;
                             }
                         }
                     }
@@ -642,13 +642,11 @@ impl NameResolver {
                             && (last_location == location.initializer()
                                 || last_location == location.name()
                                     && is_binding_pattern(last_location))
-                        {
-                            if associated_declaration_for_containing_initializer_or_binding_name
+                            && associated_declaration_for_containing_initializer_or_binding_name
                                 .is_nil()
-                            {
-                                associated_declaration_for_containing_initializer_or_binding_name =
-                                    location;
-                            }
+                        {
+                            associated_declaration_for_containing_initializer_or_binding_name =
+                                location;
                         }
                     }
                     SyntaxKind::BindingElement => {
@@ -656,14 +654,12 @@ impl NameResolver {
                             && (last_location == location.initializer()
                                 || last_location == location.name()
                                     && is_binding_pattern(last_location))
+                            && is_part_of_parameter_declaration(location)
+                            && associated_declaration_for_containing_initializer_or_binding_name
+                                .is_nil()
                         {
-                            if is_part_of_parameter_declaration(location)
-                                && associated_declaration_for_containing_initializer_or_binding_name
-                                    .is_nil()
-                            {
-                                associated_declaration_for_containing_initializer_or_binding_name =
-                                    location;
-                            }
+                            associated_declaration_for_containing_initializer_or_binding_name =
+                                location;
                         }
                     }
                     SyntaxKind::InferType => {
@@ -711,10 +707,9 @@ impl NameResolver {
             && result.is_some()
             && (last_self_reference_location.is_nil()
                 || result != last_self_reference_location.symbol())
+            && let Some(symbol_referenced) = &self.symbol_referenced
         {
-            if let Some(symbol_referenced) = &self.symbol_referenced {
-                symbol_referenced(c.hook_checker(), result, meaning);
-            }
+            symbol_referenced(c.hook_checker(), result, meaning);
         }
         if result.is_nil() && !exclude_globals {
             result = self.lookup(
@@ -724,34 +719,30 @@ impl NameResolver {
                 meaning | SymbolFlags::GLOBAL_LOOKUP,
             );
         }
-        if result.is_nil() {
-            if original_location.is_some()
-                && is_in_js_file(original_location)
-                && original_location.parent().is_some()
-            {
-                if is_require_call(
-                    original_location.parent(),
-                    false, /*requireStringLiteralLikeArgument*/
-                ) {
-                    return self.require_symbol;
-                }
-            }
+        if result.is_nil()
+            && original_location.is_some()
+            && is_in_js_file(original_location)
+            && original_location.parent().is_some()
+            && is_require_call(
+                original_location.parent(),
+                false, /*requireStringLiteralLikeArgument*/
+            )
+        {
+            return self.require_symbol;
         }
         if let Some(name_not_found_message) = name_not_found_message {
-            if property_with_invalid_initializer.is_some() {
-                if let Some(on_property_with_invalid_initializer) =
+            if property_with_invalid_initializer.is_some()
+                && let Some(on_property_with_invalid_initializer) =
                     &self.on_property_with_invalid_initializer
-                {
-                    if on_property_with_invalid_initializer(
-                        c.hook_checker(),
-                        original_location,
-                        name_key.as_str(),
-                        property_with_invalid_initializer,
-                        result,
-                    ) {
-                        return SymbolId::NIL;
-                    }
-                }
+                && on_property_with_invalid_initializer(
+                    c.hook_checker(),
+                    original_location,
+                    name_key.as_str(),
+                    property_with_invalid_initializer,
+                    result,
+                )
+            {
+                return SymbolId::NIL;
             }
             if result.is_nil() {
                 if let Some(on_failed_to_resolve_symbol) = &self.on_failed_to_resolve_symbol {
@@ -919,10 +910,8 @@ impl NameResolver {
         // Default implementation does not support following aliases or merged symbols
         if meaning != SymbolFlags::NONE {
             let symbol = c.symbol_arena().get_name(symbols, name);
-            if symbol.is_some() {
-                if c.symbol_arena().sym(symbol).flags.intersects(meaning) {
-                    return symbol;
-                }
+            if symbol.is_some() && c.symbol_arena().sym(symbol).flags.intersects(meaning) {
+                return symbol;
             }
         }
         SymbolId::NIL

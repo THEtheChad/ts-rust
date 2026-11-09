@@ -1949,23 +1949,22 @@ impl<'a> Parser<'a> {
 
         let tag_name = self.parse_js_doc_identifier_name(Some(diag::Identifier_expected));
         let indent_text = self.skip_whitespace_or_asterisk();
-        let t: PropertyLikeParse;
-        match tag_name.text() {
+        let t: PropertyLikeParse = match tag_name.text() {
             "type" => {
                 if target == PROPERTY_LIKE_PARSE_PROPERTY {
                     return self.parse_type_tag(&[], start, tag_name, -1, "");
                 }
                 // Go: a `type` tag in another target leaves `t` at zero.
-                t = 0;
+                0
             }
-            "prop" | "property" => t = PROPERTY_LIKE_PARSE_PROPERTY,
+            "prop" | "property" => PROPERTY_LIKE_PARSE_PROPERTY,
             "arg" | "argument" | "param" => {
-                t = PROPERTY_LIKE_PARSE_PARAMETER | PROPERTY_LIKE_PARSE_CALLBACK_PARAMETER
+                PROPERTY_LIKE_PARSE_PARAMETER | PROPERTY_LIKE_PARSE_CALLBACK_PARAMETER
             }
             "template" => return self.parse_template_tag(start, tag_name, indent, indent_text),
             "this" => return self.parse_this_tag(start, tag_name, indent, indent_text),
             _ => return Node::NIL,
-        }
+        };
         if (target & t) == 0 {
             return Node::NIL;
         }

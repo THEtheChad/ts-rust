@@ -10,7 +10,6 @@
     unused_variables,
     unused_mut,
     clippy::pedantic,
-    clippy::all,
     non_snake_case
 )]
 

@@ -30,10 +30,10 @@ fn run_unknown_in_effect_catch(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic>
     let mut diags = Vec::new();
 
     fn visit(ctx: &mut RuleContext<'_, '_>, diags: &mut Vec<Diagnostic>, n: Node) {
-        if n.kind() == SyntaxKind::CallExpression {
-            if let Some(diag) = check_unknown_in_effect_catch(ctx, n) {
-                diags.push(diag);
-            }
+        if n.kind() == SyntaxKind::CallExpression
+            && let Some(diag) = check_unknown_in_effect_catch(ctx, n)
+        {
+            diags.push(diag);
         }
     }
 

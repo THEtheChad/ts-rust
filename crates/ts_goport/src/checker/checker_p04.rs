@@ -51,7 +51,7 @@ impl Checker {
     pub fn check_type_reference_or_import(&mut self, node: Node) {
         let t = self.get_type_from_type_node(node);
         if !self.is_error_type(t) {
-            if node.type_arguments().len() != 0 {
+            if !node.type_arguments().is_empty() {
                 let type_parameters = self.get_type_parameters_for_type_reference_or_import(node);
                 if !type_parameters.is_empty() {
                     self.check_type_argument_constraints(node, &type_parameters);
@@ -163,7 +163,7 @@ impl Checker {
             let parameter_index = self.pred(type_predicate).parameter_index;
             if parameter_index >= 0 {
                 if self.signature_has_rest_parameter(signature)
-                    && parameter_index as i32 == self.sig(signature).parameters.len() as i32 - 1
+                    && parameter_index == self.sig(signature).parameters.len() as i32 - 1
                 {
                     self.error(
                         parameter_name,
@@ -258,14 +258,14 @@ impl Checker {
                 );
                 return true;
             }
-            if is_array_binding_pattern(name) || is_object_binding_pattern(name) {
-                if self.check_if_type_predicate_variable_is_declared_in_binding_pattern(
+            if (is_array_binding_pattern(name) || is_object_binding_pattern(name))
+                && self.check_if_type_predicate_variable_is_declared_in_binding_pattern(
                     name,
                     predicate_variable_node,
                     predicate_variable_name,
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
         }
         false
@@ -566,25 +566,25 @@ impl Checker {
         let type_parameter_declaration_node = node.type_parameter();
         self.check_source_element(type_parameter_declaration_node);
         let symbol = self.get_symbol_of_declaration(type_parameter_declaration_node);
-        if self.sym(symbol).declarations.len() > 1 {
-            if !self.declared_type_links.get(symbol).type_parameters_checked {
-                self.declared_type_links.get(symbol).type_parameters_checked = true;
-                let type_parameter = self.get_declared_type_of_type_parameter(symbol);
-                let declarations = self.get_declarations_of_kind(symbol, SyntaxKind::TypeParameter);
-                if !self.are_type_parameters_identical(
-                    &declarations,
-                    &[type_parameter],
-                    &mut |decl: Node| vec![decl],
-                ) {
-                    // Report an error on every conflicting declaration.
-                    let name = self.symbol_to_string(symbol);
-                    for &declaration in &declarations {
-                        self.error(
-                            declaration.name(),
-                            diag::All_declarations_of_0_must_have_identical_constraints,
-                            args![name],
-                        );
-                    }
+        if self.sym(symbol).declarations.len() > 1
+            && !self.declared_type_links.get(symbol).type_parameters_checked
+        {
+            self.declared_type_links.get(symbol).type_parameters_checked = true;
+            let type_parameter = self.get_declared_type_of_type_parameter(symbol);
+            let declarations = self.get_declarations_of_kind(symbol, SyntaxKind::TypeParameter);
+            if !self.are_type_parameters_identical(
+                &declarations,
+                &[type_parameter],
+                &|decl: Node| vec![decl],
+            ) {
+                // Report an error on every conflicting declaration.
+                let name = self.symbol_to_string(symbol);
+                for &declaration in &declarations {
+                    self.error(
+                        declaration.name(),
+                        diag::All_declarations_of_0_must_have_identical_constraints,
+                        args![name],
+                    );
                 }
             }
         }
@@ -937,51 +937,52 @@ impl Checker {
             });
             // We may be here because of some extra nodes between overloads that could not be parsed into a valid node.
             // In this case the subsequent node is not really consecutive (.pos !== node.end), and we must ignore it here.
-            if subsequent_node.is_some() && subsequent_node.pos() == node.end() {
-                if subsequent_node.kind() == node.kind() {
-                    let subsequent_name = subsequent_node.name();
-                    let error_node = or_else_node_p04(subsequent_name, subsequent_node);
-                    if name.is_some()
-                        && subsequent_name.is_some()
-                        && (is_private_identifier(name)
-                            && is_private_identifier(subsequent_name)
-                            && name.text() == subsequent_name.text()
-                            || is_computed_property_name(name)
-                                && is_computed_property_name(subsequent_name)
-                                && {
-                                    let t1 = c.check_computed_property_name(name);
-                                    let t2 = c.check_computed_property_name(subsequent_name);
-                                    c.is_type_identical_to(t1, t2)
-                                }
-                            || is_property_name_literal(name)
-                                && is_property_name_literal(subsequent_name)
-                                && name.text() == subsequent_name.text())
-                    {
-                        let report_error = (is_method_declaration(node)
-                            || is_method_signature_declaration(node))
-                            && is_static(node) != is_static(subsequent_node);
-                        // we can get here in two cases
-                        // 1. mixed static and instance class members
-                        // 2. something with the same name was defined before the set of overloads that prevents them from merging
-                        // here we'll report error only for the first case since for second we should already report error in binder
-                        if report_error {
-                            let diagnostic = if is_static(node) {
-                                diag::Function_overload_must_be_static
-                            } else {
-                                diag::Function_overload_must_not_be_static
-                            };
-                            c.error(error_node, diagnostic, args![]);
-                        }
-                        return;
+            if subsequent_node.is_some()
+                && subsequent_node.pos() == node.end()
+                && subsequent_node.kind() == node.kind()
+            {
+                let subsequent_name = subsequent_node.name();
+                let error_node = or_else_node_p04(subsequent_name, subsequent_node);
+                if name.is_some()
+                    && subsequent_name.is_some()
+                    && (is_private_identifier(name)
+                        && is_private_identifier(subsequent_name)
+                        && name.text() == subsequent_name.text()
+                        || is_computed_property_name(name)
+                            && is_computed_property_name(subsequent_name)
+                            && {
+                                let t1 = c.check_computed_property_name(name);
+                                let t2 = c.check_computed_property_name(subsequent_name);
+                                c.is_type_identical_to(t1, t2)
+                            }
+                        || is_property_name_literal(name)
+                            && is_property_name_literal(subsequent_name)
+                            && name.text() == subsequent_name.text())
+                {
+                    let report_error = (is_method_declaration(node)
+                        || is_method_signature_declaration(node))
+                        && is_static(node) != is_static(subsequent_node);
+                    // we can get here in two cases
+                    // 1. mixed static and instance class members
+                    // 2. something with the same name was defined before the set of overloads that prevents them from merging
+                    // here we'll report error only for the first case since for second we should already report error in binder
+                    if report_error {
+                        let diagnostic = if is_static(node) {
+                            diag::Function_overload_must_be_static
+                        } else {
+                            diag::Function_overload_must_not_be_static
+                        };
+                        c.error(error_node, diagnostic, args![]);
                     }
-                    if node_is_present(subsequent_node.body()) {
-                        c.error(
-                            error_node,
-                            diag::Function_implementation_name_must_be_0,
-                            args![declaration_name_to_string(name)],
-                        );
-                        return;
-                    }
+                    return;
+                }
+                if node_is_present(subsequent_node.body()) {
+                    c.error(
+                        error_node,
+                        diag::Function_implementation_name_must_be_0,
+                        args![declaration_name_to_string(name)],
+                    );
+                    return;
                 }
             }
             let error_node = or_else_node_p04(name, node);

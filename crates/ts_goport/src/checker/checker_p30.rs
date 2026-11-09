@@ -321,11 +321,10 @@ impl Checker {
                             diag::Property_0_does_not_exist_on_type_1_Did_you_mean_to_access_the_static_member_2_instead,
                             args![prop_name /* as string */, type_name, suggestion],
                         );
-                    } else if {
-                        let number_type = self.number_type;
-                        self.get_index_type_of_type(object_type, number_type)
-                            .is_some()
-                    } {
+                    } else if self
+                        .get_index_type_of_type(object_type, self.number_type)
+                        .is_some()
+                    {
                         self.error(
                             access_expression.argument_expression(),
                             diag::Element_implicitly_has_an_any_type_because_index_expression_is_not_of_type_number,
@@ -869,10 +868,10 @@ impl Checker {
             base_id: base_type,
             constraint_id: constraint,
         };
-        if let Some(&cached) = self.substitution_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.substitution_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let result = self.new_substitution_type(base_type, constraint);
         self.substitution_types.insert(key, result);
@@ -1650,14 +1649,14 @@ impl Checker {
             },
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return if cached == self.circular_constraint_type {
-                    t
-                } else {
-                    cached
-                };
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return if cached == self.circular_constraint_type {
+                t
+            } else {
+                cached
+            };
         }
         self.cached_types.insert(key, t);
         let mut result = self.get_simplified_indexed_access_type_worker(t, writing);
@@ -1730,14 +1729,13 @@ impl Checker {
         // If the object type is a mapped type { [P in K]: E }, where K is generic, or { [P in K as N]: E }, where
         // K is generic and N is assignable to P, instantiate E using a mapper that substitutes the index type for P.
         // For example, for an index access { [P in K]: Box<T[P]> }[X], we construct the type Box<T[X]>.
-        if self.is_generic_mapped_type(object_type) {
-            if self.get_mapped_type_name_type_kind(object_type) != MappedTypeNameTypeKind::REMAPPING
-            {
-                let substituted = self.substitute_indexed_mapped_type(object_type, t_index_type);
-                return self.map_type(substituted, &mut |c: &mut Checker, t: TypeId| {
-                    c.get_simplified_type(t, writing)
-                });
-            }
+        if self.is_generic_mapped_type(object_type)
+            && self.get_mapped_type_name_type_kind(object_type) != MappedTypeNameTypeKind::REMAPPING
+        {
+            let substituted = self.substitute_indexed_mapped_type(object_type, t_index_type);
+            return self.map_type(substituted, &mut |c: &mut Checker, t: TypeId| {
+                c.get_simplified_type(t, writing)
+            });
         }
         t
     }

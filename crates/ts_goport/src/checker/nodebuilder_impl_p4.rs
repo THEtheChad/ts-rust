@@ -534,49 +534,47 @@ impl Checker {
             return f.new_this_type_node();
         }
 
-        if in_type_alias.is_empty() {
-            if let Some(alias) = &t_alias {
-                let use_outside = nb_flags(b)
-                    .intersects(NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
-                let accessible = use_outside || {
-                    let enclosing = ctx.borrow().enclosing_declaration;
-                    self.is_type_symbol_accessible(alias.symbol(), enclosing)
-                };
-                if accessible {
-                    // If we should expand this type alias, skip the alias and fall through to expand the underlying type
-                    if !self.should_expand_type(b, t, true /*isAlias*/) {
-                        let sym = alias.symbol();
-                        let type_argument_nodes = self.map_to_type_nodes(
-                            b,
-                            alias.type_arguments(),
-                            false, /*isBareList*/
-                        );
-                        if is_reserved_member_name(&self.sym(sym).name)
-                            && !self.sym(sym).flags.intersects(SymbolFlags::CLASS)
-                        {
-                            return f.new_type_reference_node(
-                                f.new_identifier(""),
-                                type_argument_nodes,
-                            );
-                        }
-                        let global_array_symbol = self.ty(self.global_array_type).symbol;
-                        if type_argument_nodes.is_some()
-                            && type_argument_nodes.nodes().len() == 1
-                            && sym == global_array_symbol
-                        {
-                            return f.new_array_type_node(type_argument_nodes.nodes().get(0));
-                        }
-                        return self.symbol_to_type_node(
-                            b,
-                            sym,
-                            SymbolFlags::TYPE,
-                            type_argument_nodes,
-                        );
+        if in_type_alias.is_empty()
+            && let Some(alias) = &t_alias
+        {
+            let use_outside =
+                nb_flags(b).intersects(NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
+            let accessible = use_outside || {
+                let enclosing = ctx.borrow().enclosing_declaration;
+                self.is_type_symbol_accessible(alias.symbol(), enclosing)
+            };
+            if accessible {
+                // If we should expand this type alias, skip the alias and fall through to expand the underlying type
+                if !self.should_expand_type(b, t, true /*isAlias*/) {
+                    let sym = alias.symbol();
+                    let type_argument_nodes = self.map_to_type_nodes(
+                        b,
+                        alias.type_arguments(),
+                        false, /*isBareList*/
+                    );
+                    if is_reserved_member_name(&self.sym(sym).name)
+                        && !self.sym(sym).flags.intersects(SymbolFlags::CLASS)
+                    {
+                        return f
+                            .new_type_reference_node(f.new_identifier(""), type_argument_nodes);
                     }
-                    // Expanding: increment depth and process the underlying type
-                    ctx.borrow_mut().depth += 1;
-                    *depth_incremented = true;
+                    let global_array_symbol = self.ty(self.global_array_type).symbol;
+                    if type_argument_nodes.is_some()
+                        && type_argument_nodes.nodes().len() == 1
+                        && sym == global_array_symbol
+                    {
+                        return f.new_array_type_node(type_argument_nodes.nodes().get(0));
+                    }
+                    return self.symbol_to_type_node(
+                        b,
+                        sym,
+                        SymbolFlags::TYPE,
+                        type_argument_nodes,
+                    );
                 }
+                // Expanding: increment depth and process the underlying type
+                ctx.borrow_mut().depth += 1;
+                *depth_incremented = true;
             }
         }
 

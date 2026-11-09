@@ -45,8 +45,8 @@ pub fn delete_declaration(
                 .iter()
                 .find(|&s| is_any_import_syntax(s))
                 .unwrap_or(Node::NIL);
-            let is_first_import =
-                imports.len() > 0 && node == imports.get(0).parent() || node == first_import_syntax;
+            let is_first_import = !imports.is_empty() && node == imports.get(0).parent()
+                || node == first_import_syntax;
             // For first import, leave header comment in place, otherwise only delete JSDoc comments
             let mut leading_trivia = LeadingTriviaOption::START_LINE;
             if is_first_import {
@@ -382,21 +382,20 @@ fn delete_node_in_list(
     deleted_nodes_in_lists.insert(node);
 
     let start_pos = t.start_position_to_delete_node_in_list(source_file, node);
-    let end_pos: i32;
-    if index == containing_nodes.len() as i32 - 1 {
-        end_pos = t.get_adjusted_end_position(source_file, node, TrailingTriviaOption::NONE);
+    let end_pos: i32 = if index == containing_nodes.len() as i32 - 1 {
+        t.get_adjusted_end_position(source_file, node, TrailingTriviaOption::NONE)
     } else {
         let mut prev_node = Node::NIL;
         if index > 0 {
             prev_node = containing_nodes.get((index - 1) as usize);
         }
-        end_pos = t.end_position_to_delete_node_in_list(
+        t.end_position_to_delete_node_in_list(
             source_file,
             node,
             prev_node,
             containing_nodes.get((index + 1) as usize),
-        );
-    }
+        )
+    };
 
     t.replace_text_range_with_text(source_file, TextRange::new(start_pos, end_pos), "");
 }
@@ -493,5 +492,5 @@ fn has_js_doc_nodes(node: Node) -> bool {
     }
     // nil is ok for JSDoc - it will return empty slice if not available
     let jsdocs = node.js_doc(Node::NIL);
-    jsdocs.len() > 0
+    !jsdocs.is_empty()
 }

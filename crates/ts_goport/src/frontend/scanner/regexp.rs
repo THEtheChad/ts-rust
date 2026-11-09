@@ -75,15 +75,15 @@ impl<'a> Scanner<'a> {
         pos: i32,
         size: i32,
     ) {
-        if let Some(available_from) = reg_exp_flag_to_first_available_language_version(flag) {
-            if self.language_version() < available_from {
-                self.error_at(
-                    diag::This_regular_expression_flag_is_only_available_when_targeting_0_or_later,
-                    pos,
-                    size,
-                    args![available_from.string().to_lowercase()],
-                );
-            }
+        if let Some(available_from) = reg_exp_flag_to_first_available_language_version(flag)
+            && self.language_version() < available_from
+        {
+            self.error_at(
+                diag::This_regular_expression_flag_is_only_available_when_targeting_0_or_later,
+                pos,
+                size,
+                args![available_from.string().to_lowercase()],
+            );
         }
     }
 }
@@ -459,19 +459,18 @@ impl<'a, 't> RegExpParser<'a, 't> {
                                     is_previous_term_quantifiable = true;
                                     continue;
                                 }
-                            } else if !max_str.is_empty() {
-                                if compare_decimal_strings(&min_str, &max_str) > 0
-                                    && (self.any_unicode_mode_or_non_annex_b
-                                        || self.char() == '}' as i32)
-                                {
-                                    let len = self.pos() - digits_start;
-                                    self.error(
-                                        diag::Numbers_out_of_order_in_quantifier,
-                                        digits_start,
-                                        len,
-                                        vec![],
-                                    );
-                                }
+                            } else if !max_str.is_empty()
+                                && compare_decimal_strings(&min_str, &max_str) > 0
+                                && (self.any_unicode_mode_or_non_annex_b
+                                    || self.char() == '}' as i32)
+                            {
+                                let len = self.pos() - digits_start;
+                                self.error(
+                                    diag::Numbers_out_of_order_in_quantifier,
+                                    digits_start,
+                                    len,
+                                    vec![],
+                                );
                             }
                         } else if min_str.is_empty() {
                             if self.any_unicode_mode_or_non_annex_b {
@@ -1295,38 +1294,33 @@ impl<'a, 't> RegExpParser<'a, 't> {
                     return self.scan_character_escape(false /*atomEscape*/);
                 }
             }
-        } else if self.pos() + 1 < self.end && ch == self.char_at(self.pos() + 1) {
-            match rune(ch) {
-                Some(
-                    '&' | '!' | '#' | '%' | '*' | '+' | ',' | '.' | ':' | ';' | '<' | '=' | '>'
-                    | '?' | '@' | '`' | '~',
-                ) => {
-                    let pos = self.pos();
-                    self.error(
-                        diag::A_character_class_must_not_contain_a_reserved_double_punctuator_Did_you_mean_to_escape_it_with_backslash,
-                        pos,
-                        2,
-                        vec![],
-                    );
-                    self.inc_pos(2);
-                    return self.text_bytes(self.pos() - 2, self.pos());
-                }
-                _ => {}
-            }
+        } else if self.pos() + 1 < self.end
+            && ch == self.char_at(self.pos() + 1)
+            && let Some(
+                '&' | '!' | '#' | '%' | '*' | '+' | ',' | '.' | ':' | ';' | '<' | '=' | '>' | '?'
+                | '@' | '`' | '~',
+            ) = rune(ch)
+        {
+            let pos = self.pos();
+            self.error(
+                diag::A_character_class_must_not_contain_a_reserved_double_punctuator_Did_you_mean_to_escape_it_with_backslash,
+                pos,
+                2,
+                vec![],
+            );
+            self.inc_pos(2);
+            return self.text_bytes(self.pos() - 2, self.pos());
         }
-        match rune(ch) {
-            Some('/' | '(' | ')' | '[' | ']' | '{' | '}' | '-' | '|') => {
-                let pos = self.pos();
-                self.error(
-                    diag::Unexpected_0_Did_you_mean_to_escape_it_with_backslash,
-                    pos,
-                    1,
-                    args![rune_to_string(ch)],
-                );
-                self.inc_pos(1);
-                return rune_to_bytes(ch);
-            }
-            _ => {}
+        if let Some('/' | '(' | ')' | '[' | ']' | '{' | '}' | '-' | '|') = rune(ch) {
+            let pos = self.pos();
+            self.error(
+                diag::Unexpected_0_Did_you_mean_to_escape_it_with_backslash,
+                pos,
+                1,
+                args![rune_to_string(ch)],
+            );
+            self.inc_pos(1);
+            return rune_to_bytes(ch);
         }
         self.scan_source_character()
     }
@@ -1427,28 +1421,28 @@ impl<'a, 't> RegExpParser<'a, 't> {
                             self.error(diag::Expected_a_Unicode_property_value, pos, 0, vec![]);
                         } else if !property_name.is_empty() {
                             let values = values_of_non_binary_unicode_properties(property_name);
-                            if let Some(values) = values {
-                                if !values.contains(&property_value.as_str()) {
-                                    let len = self.pos() - property_value_start;
+                            if let Some(values) = values
+                                && !values.contains(&property_value.as_str())
+                            {
+                                let len = self.pos() - property_value_start;
+                                self.error(
+                                    diag::Unknown_Unicode_property_value,
+                                    property_value_start,
+                                    len,
+                                    vec![],
+                                );
+                                let suggestion = self
+                                    .get_spelling_suggestion_for_unicode_property_value(
+                                        property_name,
+                                        &property_value,
+                                    );
+                                if !suggestion.is_empty() {
                                     self.error(
-                                        diag::Unknown_Unicode_property_value,
+                                        diag::Did_you_mean_0,
                                         property_value_start,
                                         len,
-                                        vec![],
+                                        args![suggestion],
                                     );
-                                    let suggestion = self
-                                        .get_spelling_suggestion_for_unicode_property_value(
-                                            property_name,
-                                            &property_value,
-                                        );
-                                    if !suggestion.is_empty() {
-                                        self.error(
-                                            diag::Did_you_mean_0,
-                                            property_value_start,
-                                            len,
-                                            args![suggestion],
-                                        );
-                                    }
                                 }
                             }
                         }
@@ -1604,13 +1598,12 @@ impl<'a, 't> RegExpParser<'a, 't> {
                 // Not a valid rune; consume one raw byte.
                 // PORT: an invalid byte is one unit of the port form (see
                 // `scanner_util::GO_STRING_MARKER`) that holds the Go byte.
-                if size > 3 {
-                    if let (GoUnit::InvalidByte(byte), unit_size) =
+                if size > 3
+                    && let (GoUnit::InvalidByte(byte), unit_size) =
                         go_unit_at(self.text(), self.pos() as usize)
-                    {
-                        self.inc_pos(unit_size as i32);
-                        return rune_to_bytes(i32::from(byte));
-                    }
+                {
+                    self.inc_pos(unit_size as i32);
+                    return rune_to_bytes(i32::from(byte));
                 }
                 self.inc_pos(1);
                 let byte = self.text().as_bytes()[self.pos() as usize - 1];

@@ -774,16 +774,17 @@ impl ClassFieldsTransformer {
     /// The Strada noSubstitution set (ensureDynamicThisIfNeeded) is not needed because
     /// transformAutoAccessor() passes the receiver directly rather than emitting `this`.
     pub(super) fn visit_this_expression(&mut self, node: Node) -> Node {
-        if self.inside_computed_property_name && self.should_transform_this_in_static_initializers {
-            if let Some(data) = self.lexical_environment_data() {
-                // Don't replace `this` in computed property names for ES-decorated classes.
-                // The esDecorator transformer wraps them in an arrow IIFE where `this` already
-                // refers to the correct outer scope.
-                if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED == 0 || self.legacy_decorators {
-                    let class_this = self.try_get_class_this_no_container();
-                    if class_this.is_some() {
-                        return class_this;
-                    }
+        if self.inside_computed_property_name
+            && self.should_transform_this_in_static_initializers
+            && let Some(data) = self.lexical_environment_data()
+        {
+            // Don't replace `this` in computed property names for ES-decorated classes.
+            // The esDecorator transformer wraps them in an arrow IIFE where `this` already
+            // refers to the correct outer scope.
+            if data.facts & CLASS_FACTS_CLASS_WAS_DECORATED == 0 || self.legacy_decorators {
+                let class_this = self.try_get_class_this_no_container();
+                if class_this.is_some() {
+                    return class_this;
                 }
             }
         }
@@ -2147,13 +2148,13 @@ impl ClassFieldsTransformer {
     pub(super) fn access_private_identifier(&self, name: Node) -> Option<PrivateIdentifierInfoRef> {
         let mut env = self.lexical_environment.clone();
         while let Some(e) = env {
-            if let Some(private_env) = e.private_env() {
-                if let Some(info) = self.get_private_identifier(&private_env, name) {
-                    if info.borrow().kind == PrivateIdentifierKind::UNTRANSFORMED {
-                        return None;
-                    }
-                    return Some(info);
+            if let Some(private_env) = e.private_env()
+                && let Some(info) = self.get_private_identifier(&private_env, name)
+            {
+                if info.borrow().kind == PrivateIdentifierKind::UNTRANSFORMED {
+                    return None;
                 }
+                return Some(info);
             }
             env = e.previous.clone();
         }

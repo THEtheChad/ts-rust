@@ -157,10 +157,7 @@ mod tests {
             go_assert!(false);
         })
         .expect_err("no panic");
-        let p = payload
-            .downcast::<crate::core::GoPanic>()
-            .ok()
-            .expect("GoPanic");
+        let p = payload.downcast::<crate::core::GoPanic>().expect("GoPanic");
         assert_eq!((p.location.file(), p.location.line()), (file!(), line));
     }
 }

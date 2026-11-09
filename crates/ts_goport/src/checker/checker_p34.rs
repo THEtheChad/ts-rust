@@ -777,10 +777,10 @@ impl Checker {
             kind: CachedTypeKind::AWAITED_TYPE,
             type_id: t,
         };
-        if let Some(&awaited_type) = self.cached_types.get(&key) {
-            if awaited_type.is_some() {
-                return awaited_type;
-            }
+        if let Some(&awaited_type) = self.cached_types.get(&key)
+            && awaited_type.is_some()
+        {
+            return awaited_type;
         }
         // For a union, get a union of the awaited types of each constituent.
         if self.ty(t).flags.intersects(TypeFlags::UNION) {
@@ -1017,9 +1017,9 @@ impl Checker {
             return false;
         }
         let then_type = self.get_type_with_facts(then_function, TypeFacts::NE_UNDEFINED_OR_NULL);
-        self.get_signatures_of_type(then_type, SignatureKind::CALL)
-            .len()
-            != 0
+        !self
+            .get_signatures_of_type(then_type, SignatureKind::CALL)
+            .is_empty()
     }
 
     // Go: checker/checker.go:32102 getAwaitedTypeOfPromise

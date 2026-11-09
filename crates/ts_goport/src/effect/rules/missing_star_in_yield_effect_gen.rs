@@ -73,21 +73,21 @@ pub fn analyze_missing_star_in_yield_effect_gen(
     ) {
         if n.kind() == SyntaxKind::YieldExpression {
             let yield_ = n;
-            if yield_.is_some() && yield_.expression().is_some() && yield_.asterisk_token().is_nil()
-            {
-                if tp
+            if yield_.is_some()
+                && yield_.expression().is_some()
+                && yield_.asterisk_token().is_nil()
+                && tp
                     .get_effect_context_flags(n)
                     .intersects(EffectContextFlags::CAN_YIELD_EFFECT)
-                {
-                    let gen_fn = tp.get_effect_yield_generator_function(n);
-                    if gen_fn.is_some() {
-                        matches.push(MissingStarInYieldEffectGenMatch {
-                            source_file: sf,
-                            location: get_error_range_for_node(sf, n),
-                            yield_node: n,
-                            gen_fn_node: gen_fn,
-                        });
-                    }
+            {
+                let gen_fn = tp.get_effect_yield_generator_function(n);
+                if gen_fn.is_some() {
+                    matches.push(MissingStarInYieldEffectGenMatch {
+                        source_file: sf,
+                        location: get_error_range_for_node(sf, n),
+                        yield_node: n,
+                        gen_fn_node: gen_fn,
+                    });
                 }
             }
         }

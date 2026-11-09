@@ -296,14 +296,13 @@ impl EsDecoratorTransformer {
             top_kind as i32
         );
         let mut entry = LexicalEntry::new(LexicalEntryKind::ClassElement, self.top.take());
-        if is_class_static_block_declaration(node)
-            || is_property_declaration(node) && has_static_modifier(node)
+        if (is_class_static_block_declaration(node)
+            || is_property_declaration(node) && has_static_modifier(node))
+            && let Some(ci) = entry.next.as_ref().and_then(|n| n.class_info_data.clone())
         {
-            if let Some(ci) = entry.next.as_ref().and_then(|n| n.class_info_data.clone()) {
-                let ci = ci.borrow();
-                entry.class_this_data = ci.class_this;
-                entry.class_super_data = ci.class_super;
-            }
+            let ci = ci.borrow();
+            entry.class_this_data = ci.class_this;
+            entry.class_super_data = ci.class_super;
         }
         self.top = Some(Box::new(entry));
         self.update_state();

@@ -77,13 +77,14 @@ pub fn analyze_prefer_typed_schema_decoder(
         let mut input_type = flow.subject.out_type;
         for transformation in &flow.transformations {
             let (callee, schema) = schema_decoder_transformation(transformation);
-            if callee.is_some() && schema.is_some() {
-                if let Some(m) = analyze_typed_schema_decoder_application(
+            if callee.is_some()
+                && schema.is_some()
+                && let Some(m) = analyze_typed_schema_decoder_application(
                     tp, sf, callee, schema, input_node, input_type,
-                ) {
-                    handled_decoder_names.insert(m.decoder_name);
-                    matches.push(m);
-                }
+                )
+            {
+                handled_decoder_names.insert(m.decoder_name);
+                matches.push(m);
             }
             input_node = Node::NIL;
             input_type = transformation.out_type;
@@ -105,20 +106,20 @@ pub fn analyze_prefer_typed_schema_decoder(
                 && call.expression().kind() == SyntaxKind::CallExpression
             {
                 let factory = call.expression();
-                if factory.argument_list().is_some() && !factory.arguments().is_empty() {
-                    if let Some(m) = analyze_typed_schema_decoder_application(
+                if factory.argument_list().is_some()
+                    && !factory.arguments().is_empty()
+                    && let Some(m) = analyze_typed_schema_decoder_application(
                         tp,
                         sf,
                         factory.expression(),
                         factory.arguments().get(0),
                         call.arguments().get(0),
                         TypeId::NIL,
-                    ) {
-                        if !handled_decoder_names.contains(&m.decoder_name) {
-                            handled_decoder_names.insert(m.decoder_name);
-                            matches.push(m);
-                        }
-                    }
+                    )
+                    && !handled_decoder_names.contains(&m.decoder_name)
+                {
+                    handled_decoder_names.insert(m.decoder_name);
+                    matches.push(m);
                 }
             }
         }
@@ -162,9 +163,7 @@ fn analyze_typed_schema_decoder_application(
 
     let schema_at = tp.get_type_at_location(schema);
     let schema_type = tp.effect_schema_types(schema_at);
-    let Some(schema_type) = schema_type else {
-        return None;
-    };
+    let schema_type = schema_type?;
     if schema_type.e.is_nil() {
         return None;
     }

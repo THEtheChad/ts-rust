@@ -313,6 +313,8 @@ const EXPORT_SYNTAX_INDEX: [u8; 11] = [0, 16, 36, 53, 80, 110, 128, 143, 159, 19
 
 impl ExportSyntax {
     // Go: ls/autoimport/export_stringer_generated.go:27 String
+    // Go's stringer subtracts the first value (0) from the index.
+    #[allow(clippy::identity_op)]
     pub fn string(self) -> String {
         let idx = self.0 - 0;
         if self.0 < 0 || idx as usize >= EXPORT_SYNTAX_INDEX.len() - 1 {

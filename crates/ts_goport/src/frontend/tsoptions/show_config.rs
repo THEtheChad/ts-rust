@@ -450,19 +450,19 @@ fn serialize_compiler_options(
             CommandLineOptionKind::STRING => {
                 if option_decl.is_file_path {
                     // File path option - make relative to config
-                    if let CompilerOptionsValue::String(s) = &value {
-                        if !s.is_empty() {
-                            let abs_path = get_normalized_absolute_path(s, &config_dir);
-                            result.insert(
-                                name.to_string(),
-                                CompilerOptionsValue::String(get_relative_path_from_file(
-                                    config_file_path,
-                                    &abs_path,
-                                    compare_paths_options,
-                                )),
-                            );
-                            continue;
-                        }
+                    if let CompilerOptionsValue::String(s) = &value
+                        && !s.is_empty()
+                    {
+                        let abs_path = get_normalized_absolute_path(s, &config_dir);
+                        result.insert(
+                            name.to_string(),
+                            CompilerOptionsValue::String(get_relative_path_from_file(
+                                config_file_path,
+                                &abs_path,
+                                compare_paths_options,
+                            )),
+                        );
+                        continue;
                     }
                 }
                 result.insert(name.to_string(), value);
@@ -500,7 +500,7 @@ fn serialize_compiler_options(
 fn show_config_value_as_int(value: &CompilerOptionsValue) -> Option<i64> {
     use CompilerOptionsValue as V;
     match value {
-        V::Int(i) => Some(i64::from(*i)),
+        V::Int(i) => Some(*i),
         V::ScriptTarget(k) => Some(i64::from(k.0)),
         V::ModuleKind(k) => Some(i64::from(k.0)),
         V::ModuleResolutionKind(k) => Some(i64::from(k.0)),
@@ -593,10 +593,10 @@ fn add_implied_options(
 // PORT: Go `map[string]bool` with only true values is a set.
 fn any_dependency_provided(dependencies: &[&str], provided: &FxHashSet<String>) -> bool {
     for dep in dependencies {
-        if let Some(dep_decl) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(dep) {
-            if provided.contains(dep_decl.name) {
-                return true;
-            }
+        if let Some(dep_decl) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(dep)
+            && provided.contains(dep_decl.name)
+        {
+            return true;
         }
     }
     false

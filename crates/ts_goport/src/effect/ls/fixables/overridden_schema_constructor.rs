@@ -32,16 +32,17 @@ fn run_overridden_schema_constructor_fix(ctx: &mut FixableContext<'_, '_>) -> Ve
         let mut actions = Vec::new();
 
         // _static action: Rewrite using the static 'new' pattern (only when body exists)
-        if m.has_body && constructor_supports_static_rewrite(m.constructor_node) {
-            if let Some(action) = ctx.new_fix_action(
+        if m.has_body
+            && constructor_supports_static_rewrite(m.constructor_node)
+            && let Some(action) = ctx.new_fix_action(
                 "Rewrite using the static 'new' pattern".to_string(),
                 |tracker| {
                     let new_method = static_new_method(tracker.node_factory(), m.constructor_node);
                     tracker.replace_node(sf, m.constructor_node, new_method, None);
                 },
-            ) {
-                actions.push(action);
-            }
+            )
+        {
+            actions.push(action);
         }
 
         // _fix action: Remove the constructor override (always available)

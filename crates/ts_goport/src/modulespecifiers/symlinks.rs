@@ -117,13 +117,13 @@ impl KnownSymlinks {
             link.symlink = symlink.to_string();
             link
         });
-        if let Some(real_directory) = &real_directory {
-            if !self.directories.contains_key(&symlink_path) {
-                self.directories_by_realpath
-                    .entry(real_directory.real_path.clone())
-                    .or_default()
-                    .insert(symlink.to_string());
-            }
+        if let Some(real_directory) = &real_directory
+            && !self.directories.contains_key(&symlink_path)
+        {
+            self.directories_by_realpath
+                .entry(real_directory.real_path.clone())
+                .or_default()
+                .insert(symlink.to_string());
         }
         self.directories.insert(symlink_path, real_directory);
     }

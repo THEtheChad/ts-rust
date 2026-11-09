@@ -255,10 +255,10 @@ impl DeclarationTransformer {
             let params = parse_tree_node.parent().parameters();
             let param_idx = params.iter().position(|p| p == parse_tree_node);
             let mut previous_sibling = Node::NIL;
-            if let Some(idx) = param_idx {
-                if idx > 0 {
-                    previous_sibling = params.get(idx - 1);
-                }
+            if let Some(idx) = param_idx
+                && idx > 0
+            {
+                previous_sibling = params.get(idx - 1);
             }
 
             let text = source_file_text(source_file);
@@ -807,7 +807,7 @@ impl DeclarationTransformer {
 
         if kind == SyntaxKind::HeritageClause {
             let types = input.types().nodes();
-            if types.len() == 0 || (types.len() == 1 && node_is_missing(types.get(0))) {
+            if types.is_empty() || (types.len() == 1 && node_is_missing(types.get(0))) {
                 return Node::NIL;
             }
         }

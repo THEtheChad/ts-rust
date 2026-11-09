@@ -139,13 +139,11 @@ impl LanguageService {
         if let Some(request) = symbol_completion.request {
             match request {
                 CompletionData::JSDocTagName(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
+                    create_simple_details(item, &data.name, doc_format)
                 }
-                CompletionData::JSDocTag(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
-                }
+                CompletionData::JSDocTag(_) => create_simple_details(item, &data.name, doc_format),
                 CompletionData::JSDocParameterName(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
+                    create_simple_details(item, &data.name, doc_format)
                 }
                 CompletionData::Keyword(request) => {
                     if request
@@ -155,7 +153,7 @@ impl LanguageService {
                     {
                         return create_simple_details(item, &data.name, doc_format);
                     }
-                    return item;
+                    item
                 }
                 // PORT: Go prints the dynamic type with `%T`; the only other
                 // variant is `*completionDataData`.
@@ -164,22 +162,22 @@ impl LanguageService {
                 ),
             }
         } else if let Some(symbol_details) = symbol_completion.symbol {
-            return self.create_completion_details_for_symbol(
+            self.create_completion_details_for_symbol(
                 item,
                 symbol_details.symbol,
                 checker,
                 symbol_details.location,
                 position,
                 doc_format,
-            );
+            )
         } else if let Some(literal) = symbol_completion.literal {
-            return create_simple_details(
+            create_simple_details(
                 item,
                 &completion_name_for_literal(file, &preferences, &literal),
                 doc_format,
-            );
+            )
         } else if symbol_completion.cases.is_some() {
-            return item;
+            item
         } else {
             // Didn't find a symbol with this name.  See if we can find a keyword instead.
             if all_keyword_completions()
@@ -188,7 +186,7 @@ impl LanguageService {
             {
                 return create_simple_details(item, &data.name, doc_format);
             }
-            return item;
+            item
         }
     }
 }
@@ -1489,34 +1487,30 @@ impl LanguageService {
                     if !tracker.has_value(&value) {
                         match value {
                             LiteralValue::PseudoBigInt(mut v) => {
-                                let big_int: Node;
-                                if v.negative {
+                                let big_int: Node = if v.negative {
                                     v.negative = false;
-                                    big_int = factory.new_prefix_unary_expression(
+                                    factory.new_prefix_unary_expression(
                                         SyntaxKind::MinusToken,
                                         factory
                                             .new_big_int_literal(format!("{v}n"), TokenFlags::NONE),
-                                    );
+                                    )
                                 } else {
-                                    big_int = factory
-                                        .new_big_int_literal(format!("{v}n"), TokenFlags::NONE);
-                                }
+                                    factory.new_big_int_literal(format!("{v}n"), TokenFlags::NONE)
+                                };
                                 elements.push(big_int);
                             }
                             LiteralValue::Number(v) => {
-                                let number: Node;
-                                if v.0 < 0.0 {
-                                    number = factory.new_prefix_unary_expression(
+                                let number: Node = if v.0 < 0.0 {
+                                    factory.new_prefix_unary_expression(
                                         SyntaxKind::MinusToken,
                                         factory.new_numeric_literal(
                                             v.abs().to_string(),
                                             TokenFlags::NONE,
                                         ),
-                                    );
+                                    )
                                 } else {
-                                    number = factory
-                                        .new_numeric_literal(v.to_string(), TokenFlags::NONE);
-                                }
+                                    factory.new_numeric_literal(v.to_string(), TokenFlags::NONE)
+                                };
                                 elements.push(number);
                             }
                             LiteralValue::String(v) => {

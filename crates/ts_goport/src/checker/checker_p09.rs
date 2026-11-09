@@ -396,7 +396,7 @@ impl Checker {
         let mut base_name = base_name;
         while base_name.len() > 1 && {
             let last = base_name.as_bytes()[base_name.len() - 1];
-            last >= b'0' && last <= b'9'
+            last.is_ascii_digit()
         } {
             base_name = &base_name[..base_name.len() - 1];
         }
@@ -941,8 +941,7 @@ impl Checker {
             );
             return self.create_array_literal_type(tuple);
         }
-        let element_type;
-        if !element_types.is_empty() {
+        let element_type = if !element_types.is_empty() {
             for i in 0..element_types.len() {
                 if element_infos[i].flags.intersects(ElementFlags::VARIADIC) {
                     let e = element_types[i];
@@ -960,15 +959,14 @@ impl Checker {
                     };
                 }
             }
-            element_type =
-                self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL);
+            self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL)
         } else {
-            element_type = if self.strict_null_checks {
+            if self.strict_null_checks {
                 self.implicit_never_type
             } else {
                 self.undefined_widening_type
-            };
-        }
+            }
+        };
         let array_type = self.create_array_type_ex(element_type, in_const_context);
         self.create_array_literal_type(array_type)
     }
@@ -1003,13 +1001,12 @@ impl Checker {
     // Go: checker/checker.go:8320 checkQualifiedName
     pub fn check_qualified_name(&mut self, node: Node, check_mode: CheckMode) -> TypeId {
         let left = node.left();
-        let left_type;
-        if is_part_of_type_query(node) && is_this_identifier(left) {
+        let left_type = if is_part_of_type_query(node) && is_this_identifier(left) {
             let this_type = self.check_this_expression(left);
-            left_type = self.check_non_null_type(this_type, left);
+            self.check_non_null_type(this_type, left)
         } else {
-            left_type = self.check_non_null_expression(left);
-        }
+            self.check_non_null_expression(left)
+        };
         self.check_property_access_expression_or_qualified_name(
             node,
             left,
@@ -1070,9 +1067,8 @@ impl Checker {
             effective_index_type = self.number_type;
         }
         let assignment_target_kind = get_assignment_target_kind(node);
-        let access_flags;
-        if assignment_target_kind == AssignmentKind::NONE {
-            access_flags = AccessFlags::EXPRESSION_POSITION;
+        let access_flags = if assignment_target_kind == AssignmentKind::NONE {
+            AccessFlags::EXPRESSION_POSITION
         } else {
             let mut flags = AccessFlags::WRITING;
             if assignment_target_kind == AssignmentKind::COMPOUND {
@@ -1082,8 +1078,8 @@ impl Checker {
             {
                 flags |= AccessFlags::NO_INDEX_SIGNATURES;
             }
-            access_flags = flags;
-        }
+            flags
+        };
         let indexed = self.get_indexed_access_type_or_undefined(
             object_type,
             effective_index_type,
@@ -1142,7 +1138,7 @@ impl Checker {
         let initializer = node.initializer();
         if is_variable_declaration_list(initializer) {
             let declarations = initializer.declarations().nodes();
-            if declarations.len() > 0 {
+            if !declarations.is_empty() {
                 let variable = declarations.get(0);
                 if !variable.is_nil() && !is_binding_pattern(variable.name()) {
                     return self.get_symbol_of_declaration(variable);

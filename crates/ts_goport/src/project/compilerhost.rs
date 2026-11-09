@@ -523,7 +523,7 @@ impl compiler::CompilerHost for CompilerHost {
                 return true;
             }
             let guess = |metadata| {
-                parser::get_external_module_indicator_options(&key.file_name, &options, metadata)
+                parser::get_external_module_indicator_options(&key.file_name, options, metadata)
             };
             let plain = guess(&no_scope);
             key.jsx == plain.jsx
@@ -719,6 +719,7 @@ impl compiler::CompilerHost for CompilerHost {
 ///   are checked and replayed once per load: the snapshot does not change
 ///   its answers during the load, and the replay notes the same paths
 ///   again.
+///
 /// What `accept_ahead_answer` keeps during one load.
 struct AheadCheck {
     /// The snapshot's lookup cache (`SnapshotFSBuilder::cached_fs`).

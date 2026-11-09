@@ -745,10 +745,10 @@ mod tests {
             "goport_typesyms: panic: boom"
         );
         // Only goport_build and goport_emit traced printed panics.
-        assert!(!DevPanicHook::GOPORT.trace_printed);
-        assert!(DevPanicHook::GOPORT_BUILD.trace_printed);
-        assert!(DevPanicHook::GOPORT_EMIT.trace_printed);
-        assert!(!DevPanicHook::GOPORT_TYPESYMS.trace_printed);
+        const { assert!(!DevPanicHook::GOPORT.trace_printed) };
+        const { assert!(DevPanicHook::GOPORT_BUILD.trace_printed) };
+        const { assert!(DevPanicHook::GOPORT_EMIT.trace_printed) };
+        const { assert!(!DevPanicHook::GOPORT_TYPESYMS.trace_printed) };
     }
 
     fn eagain() -> Error {

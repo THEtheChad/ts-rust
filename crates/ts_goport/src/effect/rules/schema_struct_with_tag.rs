@@ -70,10 +70,10 @@ pub fn analyze_schema_struct_with_tag(
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::CallExpression {
-            if let (m, true) = analyze_schema_struct_with_tag_node(tp, sf, node) {
-                matches.push(m);
-            }
+        if node.kind() == SyntaxKind::CallExpression
+            && let (m, true) = analyze_schema_struct_with_tag_node(tp, sf, node)
+        {
+            matches.push(m);
         }
 
         // Enqueue children

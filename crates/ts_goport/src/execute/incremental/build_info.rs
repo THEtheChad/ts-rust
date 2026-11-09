@@ -309,7 +309,7 @@ pub fn marshal_any(enc: &mut String, v: &CompilerOptionsValue) -> Result<(), Jso
         CompilerOptionsValue::Nil | CompilerOptionsValue::IntPtr(None) => enc.push_str("null"),
         CompilerOptionsValue::Bool(b) => b.marshal_json_to(enc)?,
         CompilerOptionsValue::Int(i) | CompilerOptionsValue::IntPtr(Some(i)) => {
-            marshal_int(enc, i64::from(*i));
+            marshal_int(enc, *i);
         }
         CompilerOptionsValue::Number(f) => marshal_float(enc, *f)?,
         CompilerOptionsValue::String(s) => s.marshal_json_to(enc)?,
@@ -1292,9 +1292,7 @@ impl BuildInfoEmitSignature {
             list.push(info.signature.clone());
             signature_with_different_options = Some(list);
         } else if self.differs_in_options {
-            let mut list = Vec::with_capacity(1);
-            list.push(self.signature.clone());
-            signature_with_different_options = Some(list);
+            signature_with_different_options = Some(vec![self.signature.clone()]);
         } else {
             signature = self.signature.clone();
         }

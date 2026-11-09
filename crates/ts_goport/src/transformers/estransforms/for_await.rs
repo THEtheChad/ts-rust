@@ -722,15 +722,17 @@ impl ForawaitTransformer {
             node.asterisk_token()
         };
 
-        let parameters;
-        let body;
-        if self.is_async() && self.is_generator() {
-            parameters = self.transform_async_generator_function_parameter_list(node);
-            body = self.transform_async_generator_function_body(node);
+        let (parameters, body) = if self.is_async() && self.is_generator() {
+            (
+                self.transform_async_generator_function_parameter_list(node),
+                self.transform_async_generator_function_body(node),
+            )
         } else {
-            parameters = self.visit_parameters(node.parameter_list());
-            body = self.visit_function_body(node.body());
-        }
+            (
+                self.visit_parameters(node.parameter_list()),
+                self.visit_function_body(node.body()),
+            )
+        };
         (modifiers, asterisk_token, parameters, body)
     }
 

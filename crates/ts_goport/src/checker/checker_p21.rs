@@ -586,10 +586,10 @@ impl Checker {
             // so a name that the filters of their member names reject
             // gives nil and changes no state. The filters return that nil
             // with no lookups. A text key takes the lookups.
-            if let TableKey::Name(key) = name {
-                if self.augment_lookups_miss(t, key) {
-                    return SymbolId::NIL;
-                }
+            if let TableKey::Name(key) = name
+                && self.augment_lookups_miss(t, key)
+            {
+                return SymbolId::NIL;
             }
             let resolved = self.ty(t).as_structured_type();
             let call_count = resolved.call_signatures().len();
@@ -1416,13 +1416,12 @@ impl Checker {
             return;
         }
         let base_type_node = self.get_base_type_node_of_class(t);
-        let base_type: TypeId;
         let mut original_base_type = TypeId::NIL;
         let base_constructor_symbol = self.ty(base_constructor_type).symbol;
         if base_constructor_symbol.is_some() {
             original_base_type = self.get_declared_type_of_symbol(base_constructor_symbol);
         }
-        if base_constructor_symbol.is_some()
+        let base_type: TypeId = if base_constructor_symbol.is_some()
             && self
                 .sym(base_constructor_symbol)
                 .flags
@@ -1432,16 +1431,13 @@ impl Checker {
             // When base constructor type is a class with no captured type arguments we know that the constructors all have the same type parameters as the
             // class and all return the instance type of the class. There is no need for further checks and we can apply the
             // type arguments in the same manner as a type reference to get the same error reporting experience.
-            base_type = self.get_type_from_class_or_interface_reference(
-                base_type_node,
-                base_constructor_symbol,
-            );
+            self.get_type_from_class_or_interface_reference(base_type_node, base_constructor_symbol)
         } else if self
             .ty(base_constructor_type)
             .flags
             .intersects(TypeFlags::ANY)
         {
-            base_type = base_constructor_type;
+            base_constructor_type
         } else {
             // The class derives from a "class-like" constructor function, check that we have at least one construct signature
             // with a matching number of type parameters and use the return type of the first instantiated signature. Elsewhere
@@ -1460,8 +1456,8 @@ impl Checker {
                 );
                 return;
             }
-            base_type = self.get_return_type_of_signature(constructors[0]);
-        }
+            self.get_return_type_of_signature(constructors[0])
+        };
         if self.is_error_type(base_type) {
             return;
         }
@@ -1877,10 +1873,10 @@ impl Checker {
             sig: signature,
             key: *SIGNATURE_KEY_BASE,
         };
-        if let Some(&cached) = self.cached_signatures.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_signatures.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         // PORT: copied only on a cache miss, like `get_erased_signature`.
         // PERF: the type parameters, the constraints and the passes use

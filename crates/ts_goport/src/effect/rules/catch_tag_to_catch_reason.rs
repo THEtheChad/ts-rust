@@ -86,10 +86,9 @@ pub fn analyze_catch_tag_to_catch_reason(
                 }
             } else if tp
                 .is_node_reference_to_effect_module_api(transformation.callee, member!("catchTags"))
+                && let Some(m) = analyze_catch_tags_transformation(tp, sf, Some(transformation))
             {
-                if let Some(m) = analyze_catch_tags_transformation(tp, sf, Some(transformation)) {
-                    matches.push(m);
-                }
+                matches.push(m);
             }
         }
     }
@@ -103,9 +102,7 @@ fn analyze_catch_tag_transformation(
     sf: Node,
     transformation: Option<&PipingFlowTransformation>,
 ) -> Option<CatchTagToCatchReasonMatch> {
-    let Some(transformation) = transformation else {
-        return None;
-    };
+    let transformation = transformation?;
     if transformation.args.len() != 2 {
         return None;
     }
@@ -138,9 +135,7 @@ fn analyze_catch_tags_transformation(
     sf: Node,
     transformation: Option<&PipingFlowTransformation>,
 ) -> Option<CatchTagToCatchReasonMatch> {
-    let Some(transformation) = transformation else {
-        return None;
-    };
+    let transformation = transformation?;
     if transformation.args.len() != 1 {
         return None;
     }
@@ -175,9 +170,7 @@ fn analyze_catch_tags_transformation(
         candidate = Some(handler);
         break;
     }
-    let Some(candidate) = candidate else {
-        return None;
-    };
+    let candidate = candidate?;
 
     Some(CatchTagToCatchReasonMatch {
         source_file: sf,

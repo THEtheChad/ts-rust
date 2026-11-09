@@ -100,8 +100,7 @@ pub fn parse_lazy_expression(
     }
 
     // Extract the inner expression
-    let expr: Node;
-    if body.kind() == SyntaxKind::Block {
+    let expr: Node = if body.kind() == SyntaxKind::Block {
         let block = body;
         if block.statement_list().is_nil() || block.statements().len() != 1 {
             return None;
@@ -114,11 +113,11 @@ pub fn parse_lazy_expression(
         if return_expr.is_nil() {
             return None;
         }
-        expr = return_expr;
+        return_expr
     } else {
         // Expression body (arrow function only)
-        expr = body;
-    }
+        body
+    };
 
     Some(Rc::new(ParsedLazyExpression {
         node,

@@ -162,27 +162,26 @@ impl PseudoChecker {
         let init = declaration.initializer();
         if init.is_some() && declaration.symbol().is_some() {
             let declarations = &symbols.sym(declaration.symbol()).declarations;
-            if declarations.len() == 1
+            if (declarations.len() == 1
                 || declarations
                     .iter()
                     .filter(|&&d| is_variable_declaration(d))
                     .count()
-                    == 1
+                    == 1)
+                && !is_contextually_typed(declaration)
             {
-                if !is_contextually_typed(declaration) {
-                    // TODO: also should bail on expando declarations; reuse syntactic expando check used in declaration emit
-                    // TODO: Strada forces an inference fallback on `const` variables with template expression initializers, to leave space for template literal freshness in the future
-                    if is_var_const(declaration) && is_template_expression(init) {
-                        return new_pseudo_type_no_result(declaration);
-                    }
-                    let expr = self.type_from_expression(symbols, init);
-                    if expr.kind != PseudoTypeKind::INFERRED
-                        || !expr.as_pseudo_type_inferred().error_nodes.is_empty()
-                    {
-                        return expr;
-                    }
-                    // fallback to NoResult if PseudoTypeKindInferred without error nodes
+                // TODO: also should bail on expando declarations; reuse syntactic expando check used in declaration emit
+                // TODO: Strada forces an inference fallback on `const` variables with template expression initializers, to leave space for template literal freshness in the future
+                if is_var_const(declaration) && is_template_expression(init) {
+                    return new_pseudo_type_no_result(declaration);
                 }
+                let expr = self.type_from_expression(symbols, init);
+                if expr.kind != PseudoTypeKind::INFERRED
+                    || !expr.as_pseudo_type_inferred().error_nodes.is_empty()
+                {
+                    return expr;
+                }
+                // fallback to NoResult if PseudoTypeKindInferred without error nodes
             }
         }
         new_pseudo_type_no_result(declaration)
@@ -252,7 +251,7 @@ impl PseudoChecker {
             return node.type_();
         }
         let parameters = node.parameter_list();
-        if parameters.is_nil() || parameters.nodes().len() < 1 {
+        if parameters.is_nil() || parameters.nodes().is_empty() {
             return Node::NIL;
         }
         let p = parameters.nodes().get(0);

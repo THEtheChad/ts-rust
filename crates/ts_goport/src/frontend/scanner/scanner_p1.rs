@@ -932,7 +932,7 @@ impl<'a> Scanner<'a> {
                 return (i32::from(b), 1);
             }
         }
-        utf8_decode_rune_in_string(&self.text, self.scanner_state.pos as usize)
+        utf8_decode_rune_in_string(self.text, self.scanner_state.pos as usize)
     }
 
     /// The position of the first `*/` at or after `pos`, and the position
@@ -981,7 +981,7 @@ impl<'a> Scanner<'a> {
     // PORT: split borrow of `text` and `on_error`, so the Go method value can
     // be passed while the text is read.
     pub(crate) fn scan_conflict_marker_trivia_at_pos(&mut self) -> i32 {
-        let text: &str = &self.text;
+        let text: &str = self.text;
         let on_error = &mut self.on_error;
         let mut report =
             |diagnostic: &'static crate::diagnostics::Message, pos: i32, length: i32| {
@@ -1354,10 +1354,7 @@ impl<'a> Scanner<'a> {
                     }
                     Some(b'<') => {
                         if self.char_at(1) == i32::from(b'<')
-                            && is_conflict_marker_trivia(
-                                &self.text,
-                                self.scanner_state.pos as usize,
-                            )
+                            && is_conflict_marker_trivia(self.text, self.scanner_state.pos as usize)
                         {
                             self.scanner_state.pos = self.scan_conflict_marker_trivia_at_pos();
                             if self.skip_trivia {
@@ -1391,10 +1388,7 @@ impl<'a> Scanner<'a> {
                     }
                     Some(b'=') => {
                         if self.char_at(1) == i32::from(b'=')
-                            && is_conflict_marker_trivia(
-                                &self.text,
-                                self.scanner_state.pos as usize,
-                            )
+                            && is_conflict_marker_trivia(self.text, self.scanner_state.pos as usize)
                         {
                             self.scanner_state.pos = self.scan_conflict_marker_trivia_at_pos();
                             if self.skip_trivia {
@@ -1422,10 +1416,7 @@ impl<'a> Scanner<'a> {
                     }
                     Some(b'>') => {
                         if self.char_at(1) == i32::from(b'>')
-                            && is_conflict_marker_trivia(
-                                &self.text,
-                                self.scanner_state.pos as usize,
-                            )
+                            && is_conflict_marker_trivia(self.text, self.scanner_state.pos as usize)
                         {
                             self.scanner_state.pos = self.scan_conflict_marker_trivia_at_pos();
                             if self.skip_trivia {
@@ -1480,10 +1471,7 @@ impl<'a> Scanner<'a> {
                     }
                     Some(b'|') => {
                         if self.char_at(1) == i32::from(b'|')
-                            && is_conflict_marker_trivia(
-                                &self.text,
-                                self.scanner_state.pos as usize,
-                            )
+                            && is_conflict_marker_trivia(self.text, self.scanner_state.pos as usize)
                         {
                             self.scanner_state.pos = self.scan_conflict_marker_trivia_at_pos();
                             if self.skip_trivia {
@@ -1649,14 +1637,13 @@ impl<'a> Scanner<'a> {
             return;
         }
         pos += 1;
-        let kind;
-        if text[pos..].starts_with(b"ts-expect-error") {
-            kind = CommentDirectiveKind::EXPECT_ERROR;
+        let kind = if text[pos..].starts_with(b"ts-expect-error") {
+            CommentDirectiveKind::EXPECT_ERROR
         } else if text[pos..].starts_with(b"ts-ignore") {
-            kind = CommentDirectiveKind::IGNORE;
+            CommentDirectiveKind::IGNORE
         } else {
             return;
-        }
+        };
         // Go: append(s.commentDirectives, ...) on the state's slice header.
         let len = self.scanner_state.comment_directives_len;
         self.comment_directives.truncate(len);
@@ -1838,7 +1825,7 @@ impl<'a> Scanner<'a> {
                 }
                 // Whitespaces and semicolons at the end are not likely to be part of the regex
                 while p > start_of_reg_exp_body {
-                    let (ch, size) = utf8_decode_last_rune_in_string(&self.text, p as usize);
+                    let (ch, size) = utf8_decode_last_rune_in_string(self.text, p as usize);
                     if is_white_space_like(rune_to_char(ch)) || ch == i32::from(b';') {
                         p -= size;
                     } else {
@@ -1856,7 +1843,7 @@ impl<'a> Scanner<'a> {
                 p += 1;
                 let mut reg_exp_flags = RegularExpressionFlags::NONE;
                 while p < self.end {
-                    let (ch, size) = utf8_decode_rune_in_string(&self.text, p as usize);
+                    let (ch, size) = utf8_decode_rune_in_string(self.text, p as usize);
                     if ch == RUNE_ERROR || !is_identifier_part(rune_to_char(ch)) {
                         break;
                     }

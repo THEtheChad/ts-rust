@@ -7,15 +7,14 @@ impl Checker {
         // `TypeParameterList()` returns that same list.
         let range_ = node.type_parameter_list();
         if !range_.is_nil() {
-            let pos: i32;
-            if range_.pos() == range_.end() {
-                pos = range_.pos();
+            let pos: i32 = if range_.pos() == range_.end() {
+                range_.pos()
             } else {
-                pos = skip_trivia(
+                skip_trivia(
                     &source_file_text(get_source_file_of_node(node)),
                     range_.pos(),
-                );
-            }
+                )
+            };
             return self.grammar_error_at_pos(
                 node,
                 pos,
@@ -294,10 +293,10 @@ impl Checker {
         file: Node,
     ) -> bool {
         for decl in file.statements().iter() {
-            if is_declaration_node(decl) || decl.kind() == SyntaxKind::VariableStatement {
-                if self.check_grammar_top_level_element_for_required_declare_modifier(decl) {
-                    return true;
-                }
+            if (is_declaration_node(decl) || decl.kind() == SyntaxKind::VariableStatement)
+                && self.check_grammar_top_level_element_for_required_declare_modifier(decl)
+            {
+                return true;
             }
         }
         false
@@ -385,7 +384,7 @@ impl Checker {
         // 1) when `node` represents an integer <= 2 ** 53 - 1, `node.text` is its exact string representation and thus `value` precisely represents the integer.
         // 2) otherwise, although `node.text` may be imprecise string representation, its mathematical value and consequently `value` cannot be less than 2 ** 53,
         //    thus the result of the predicate won't be affected.
-        let value = crate::jsnum::from_string(&node.text());
+        let value = crate::jsnum::from_string(node.text());
         if value <= crate::jsnum::MAX_SAFE_INTEGER {
             return;
         }
@@ -409,14 +408,13 @@ impl Checker {
             // Don't error on BigInt literals in ambient contexts
             if !node.flags().intersects(NodeFlags::AMBIENT)
                 && self.language_version < ScriptTarget::ES2020
-            {
-                if self.grammar_error_on_node(
+                && self.grammar_error_on_node(
                     node,
                     diag::BigInt_literals_are_not_available_when_targeting_lower_than_ES2020,
                     args![],
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
         }
         false
@@ -619,7 +617,7 @@ impl Checker {
             }
         }
 
-        if argument_nodes.len() == 0 || argument_nodes.len() > 2 {
+        if argument_nodes.is_empty() || argument_nodes.len() > 2 {
             return self.grammar_error_on_node(
                 node,
                 diag::Dynamic_imports_can_only_accept_a_module_specifier_and_an_optional_set_of_attributes_as_arguments,

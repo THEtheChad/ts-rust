@@ -1543,7 +1543,7 @@ impl NodeSlice {
         let ids = match self.0 {
             SliceRepr::Nodes(nodes) => SliceIds::Nodes(nodes),
             // An empty slice reads no node, so it needs no store lookup.
-            SliceRepr::Ids { ids, .. } if ids.is_empty() => SliceIds::Nodes(&[]),
+            SliceRepr::Ids { ids: [], .. } => SliceIds::Nodes(&[]),
             SliceRepr::Ids { file, ids } => match frozen_store_ids(file as usize) {
                 Some(frozen) => SliceIds::Frozen(ids, frozen),
                 None => SliceIds::Slow,
@@ -3267,7 +3267,7 @@ impl Node {
     // Go: ast.go:530 MemberList
     #[must_use]
     pub fn member_list(self) -> NodeList {
-        let list = list_by_data!(
+        list_by_data!(
             self,
             list_of,
             NodeList::NIL,
@@ -3279,8 +3279,7 @@ impl Node {
                 EnumDeclaration,
                 TypeLiteralNode,
             ] => req members,
-        );
-        list
+        )
     }
 
     // Go: ast.go:548 Members
@@ -4014,10 +4013,10 @@ struct NodeChildVisit<'a, 'b> {
 impl NodeChildVisit<'_, '_> {
     #[inline(always)]
     fn report(&mut self, l: NodeList, is_mod: bool) {
-        if let Some(h) = self.lists.as_mut() {
-            if l.is_some() {
-                h(l, is_mod);
-            }
+        if let Some(h) = self.lists.as_mut()
+            && l.is_some()
+        {
+            h(l, is_mod);
         }
     }
 
@@ -6690,9 +6689,9 @@ enum DiagnosticList {
 /// The list of `info` that `key` (a `DiagnosticList`) names.
 fn diagnostic_list(info: &crate::program::SourceFileInfo, key: usize) -> &[Diagnostic] {
     match key {
-        k if k == DiagnosticList::Parse as usize => &*info.diagnostics,
-        k if k == DiagnosticList::Js as usize => &*info.js_diagnostics,
-        _ => &*info.jsdoc_diagnostics,
+        k if k == DiagnosticList::Parse as usize => &info.diagnostics,
+        k if k == DiagnosticList::Js as usize => &info.js_diagnostics,
+        _ => &info.jsdoc_diagnostics,
     }
 }
 

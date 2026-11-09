@@ -82,43 +82,6 @@ impl Checker {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn synthetic_flow_guard_survives_free() {
-        std::thread::spawn(|| {
-            let id0 = push_synthetic_flow(FlowNode {
-                flags: FlowFlags::START,
-                node: Node::NIL,
-                antecedent: FlowNodeId::NIL,
-                antecedents: Vec::new(),
-            });
-            let id1 = push_synthetic_flow(FlowNode {
-                flags: FlowFlags::TRUE_CONDITION,
-                node: Node(1),
-                antecedent: id0,
-                antecedents: Vec::new(),
-            });
-            let held = id0.get_flow();
-            assert_eq!(held.flags, FlowFlags::START);
-            assert_eq!(held.node, Node::NIL);
-            assert_eq!(held.antecedent, FlowNodeId::NIL);
-            {
-                let flow = id1.get_flow();
-                assert_eq!(flow.flags, FlowFlags::TRUE_CONDITION);
-                assert_eq!(flow.node, Node(1));
-                assert_eq!(flow.antecedent, id0);
-            }
-            free_synthetic_flows();
-            assert_eq!(held.flags, FlowFlags::START);
-        })
-        .join()
-        .unwrap();
-    }
-}
-
 // Go: checker/nodebuilderimpl.go:1194 TryGetModuleSpecifierFromDeclaration
 pub fn try_get_module_specifier_from_declaration(node: Node) -> Node {
     let res = try_get_module_specifier_from_declaration_worker(node);
@@ -164,5 +127,42 @@ fn try_get_module_specifier_from_declaration_worker(node: Node) -> Node {
         _ => {
             crate::gostd::debug::assert_never(&crate::gostd::debug::kind_string(node.kind()), None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_flow_guard_survives_free() {
+        std::thread::spawn(|| {
+            let id0 = push_synthetic_flow(FlowNode {
+                flags: FlowFlags::START,
+                node: Node::NIL,
+                antecedent: FlowNodeId::NIL,
+                antecedents: Vec::new(),
+            });
+            let id1 = push_synthetic_flow(FlowNode {
+                flags: FlowFlags::TRUE_CONDITION,
+                node: Node(1),
+                antecedent: id0,
+                antecedents: Vec::new(),
+            });
+            let held = id0.get_flow();
+            assert_eq!(held.flags, FlowFlags::START);
+            assert_eq!(held.node, Node::NIL);
+            assert_eq!(held.antecedent, FlowNodeId::NIL);
+            {
+                let flow = id1.get_flow();
+                assert_eq!(flow.flags, FlowFlags::TRUE_CONDITION);
+                assert_eq!(flow.node, Node(1));
+                assert_eq!(flow.antecedent, id0);
+            }
+            free_synthetic_flows();
+            assert_eq!(held.flags, FlowFlags::START);
+        })
+        .join()
+        .unwrap();
     }
 }

@@ -24,6 +24,40 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 redundant_clone = "warn"
+# The clippy::all lints that still fire in the goport lib crates (ts_goport,
+# goport_core, goport_util, goport_lsproto): the work list of the code-quality
+# phase. Every other clippy::all lint is enforced everywhere (CI runs clippy
+# with -D warnings); drop a line here once its lint is at zero. Narrower
+# exceptions sit next to the code: generated modules allow lints at their mod
+# declarations, and single sites carry their own allow with a reason. The lib
+# crate roots also allow clippy::pedantic (out of scope there); bins, tests
+# and tools keep it.
+approx_constant = "allow"
+borrowed_box = "allow"
+byte_char_slices = "allow"
+collapsible_match = "allow"
+declare_interior_mutable_const = "allow"
+default_constructed_unit_structs = "allow"
+double_must_use = "allow"
+enum_variant_names = "allow"
+if_same_then_else = "allow"
+large_enum_variant = "allow"
+len_without_is_empty = "allow"
+manual_clamp = "allow"
+module_inception = "allow"
+needless_range_loop = "allow"
+never_loop = "allow"
+new_without_default = "allow"
+nonminimal_bool = "allow"
+only_used_in_recursion = "allow"
+ptr_arg = "allow"
+result_large_err = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+unnecessary_unwrap = "allow"
+useless_vec = "allow"
+wrong_self_convention = "allow"
 
 # Release profile for the goport binaries: `cargo build --profile goport`.
 # Binaries land in <target>/goport/. Other crates keep the default release

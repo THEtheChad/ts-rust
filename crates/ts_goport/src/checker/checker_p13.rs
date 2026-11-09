@@ -271,8 +271,7 @@ impl Checker {
             );
         }
         self.mark_linked_references(node, ReferenceHint::PROPERTY, prop, left_type);
-        let prop_type;
-        if prop.is_nil() {
+        let prop_type = if prop.is_nil() {
             let mut index_info = IndexInfoId::NIL;
             if !is_private_identifier(right)
                 && (assignment_kind == AssignmentKind::NONE
@@ -363,7 +362,7 @@ impl Checker {
             if info_declaration.is_some() && self.is_deprecated_declaration(info_declaration) {
                 self.add_deprecated_suggestion(right, &[info_declaration], right.text());
             }
-            prop_type = t;
+            t
         } else {
             let target_prop_symbol = self.resolve_alias_with_deprecation_check(prop, right);
             if self.is_deprecated_symbol(target_prop_symbol)
@@ -394,14 +393,14 @@ impl Checker {
                 );
                 return self.error_type;
             }
-            prop_type = if self.is_this_property_access_in_constructor(node, prop) {
+            if self.is_this_property_access_in_constructor(node, prop) {
                 self.auto_type
             } else if write_only || is_write_only_access(node) {
                 self.get_write_type_of_symbol(prop)
             } else {
                 self.get_type_of_symbol(prop)
-            };
-        }
+            }
+        };
         self.get_flow_type_of_access_expression(node, prop, prop_type, right, check_mode)
     }
 
@@ -902,7 +901,7 @@ impl Checker {
             let feature_map = get_feature_map();
             if let Some(type_features) = feature_map.get(self.sym(container).name.as_str()) {
                 for entry in type_features.iter() {
-                    if entry.props.iter().any(|p| *p == missing_property) {
+                    if entry.props.contains(&missing_property) {
                         return entry.lib.to_string();
                     }
                 }

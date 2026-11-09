@@ -341,10 +341,9 @@ impl Checker {
         let kind = node.kind();
         if !self.within_unreachable_code
             && self.compiler_options.allow_unreachable_code != Tristate::True
+            && self.check_source_element_unreachable(node, kind)
         {
-            if self.check_source_element_unreachable(node, kind) {
-                self.within_unreachable_code = true;
-            }
+            self.within_unreachable_code = true;
         }
 
         match kind {
@@ -642,16 +641,12 @@ impl Checker {
     // visited too; the index loop below re-reads the set each step to match.
     pub fn check_deferred_nodes(&mut self, context: Node) {
         let mut i = 0;
-        loop {
-            let node = match self
-                .source_file_links
-                .get(context)
-                .deferred_nodes
-                .get_index(i)
-            {
-                Some(&node) => node,
-                None => break,
-            };
+        while let Some(&node) = self
+            .source_file_links
+            .get(context)
+            .deferred_nodes
+            .get_index(i)
+        {
             if self.is_canceled() {
                 break;
             }
@@ -1042,14 +1037,15 @@ impl Checker {
         self.check_variable_like_declaration(node);
         self.set_node_links_for_private_identifier_scope(node);
         // property signatures already report "initializer not allowed in ambient context" elsewhere
-        if has_syntactic_modifier(node, ModifierFlags::ABSTRACT) && is_property_declaration(node) {
-            if node.initializer().is_some() {
-                self.error(
-                    node,
-                    diag::Property_0_cannot_have_an_initializer_because_it_is_marked_abstract,
-                    args![declaration_name_to_string(node.name())],
-                );
-            }
+        if has_syntactic_modifier(node, ModifierFlags::ABSTRACT)
+            && is_property_declaration(node)
+            && node.initializer().is_some()
+        {
+            self.error(
+                node,
+                diag::Property_0_cannot_have_an_initializer_because_it_is_marked_abstract,
+                args![declaration_name_to_string(node.name())],
+            );
         }
     }
 
@@ -1404,15 +1400,13 @@ impl Checker {
         }
         self.check_decorators(node);
         self.check_signature_declaration(node);
-        if is_get_accessor_declaration(node) {
-            if !node.flags().intersects(NodeFlags::AMBIENT)
-                && node_is_present(node.body())
-                && node.flags().intersects(NodeFlags::HAS_IMPLICIT_RETURN)
-            {
-                if !node.flags().intersects(NodeFlags::HAS_EXPLICIT_RETURN) {
-                    self.error(name, diag::A_get_accessor_must_return_a_value, args![]);
-                }
-            }
+        if is_get_accessor_declaration(node)
+            && !node.flags().intersects(NodeFlags::AMBIENT)
+            && node_is_present(node.body())
+            && node.flags().intersects(NodeFlags::HAS_IMPLICIT_RETURN)
+            && !node.flags().intersects(NodeFlags::HAS_EXPLICIT_RETURN)
+        {
+            self.error(name, diag::A_get_accessor_must_return_a_value, args![]);
         }
         // Do not use hasDynamicName here, because that returns false for well known symbols.
         // We want to perform checkComputedPropertyName for all computed properties, including

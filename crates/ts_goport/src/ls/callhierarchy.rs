@@ -297,8 +297,8 @@ pub fn get_text_of_call_hierarchy_name(
         None,
     );
     p.write_exported(print_node, source_file, writer.clone(), None);
-    let text = writer.borrow().string();
-    text
+
+    writer.borrow().string()
 }
 
 // Go: ls/callhierarchy.go:252 getCallHierarchyItemContainerName
@@ -362,12 +362,10 @@ pub fn get_call_hierarchy_item_container_name(
         SyntaxKind::FunctionDeclaration
         | SyntaxKind::ClassDeclaration
         | SyntaxKind::ModuleDeclaration => {
-            if is_module_block(node.parent()) {
-                if is_module_declaration(node.parent().parent()) {
-                    let name = node.parent().parent().name();
-                    if name.is_some() && is_identifier(name) {
-                        return name.text().to_string();
-                    }
+            if is_module_block(node.parent()) && is_module_declaration(node.parent().parent()) {
+                let name = node.parent().parent().name();
+                if name.is_some() && is_identifier(name) {
+                    return name.text().to_string();
                 }
             }
         }

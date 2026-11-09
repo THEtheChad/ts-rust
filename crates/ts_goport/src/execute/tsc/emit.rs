@@ -312,8 +312,10 @@ fn since(sys: &dyn System, start: SystemTime) -> std::time::Duration {
 // waits for the started check and emit before this call, so the build task
 // adds that wait to the started time (`Program::add_started_check_time`).
 pub fn emit_files_and_report_errors(input: &EmitInput) -> CompileAndEmitResult {
-    let mut result = CompileAndEmitResult::default();
-    result.times = input.compile_times.clone();
+    let mut result = CompileAndEmitResult {
+        times: input.compile_times.clone(),
+        ..Default::default()
+    };
     let program_like = input.program_like;
     let times = result.times.clone();
 

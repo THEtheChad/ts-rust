@@ -205,23 +205,23 @@ impl Emitter {
     ) -> Vec<Box<dyn DeclarationTransformerLike>> {
         let force_dts_emit = self.emit_only == EmitOnly::BuilderSignature
             || self.force_emit && self.emit_only == EmitOnly::Dts;
-        let mut transformers: Vec<Box<dyn DeclarationTransformerLike>> = Vec::with_capacity(2);
-        transformers.push(Box::new(crate::declarations::new_declaration_transformer(
-            self.host.clone(),
-            emit_resolver,
-            options(),
-            declaration_file_path,
-            declaration_map_path,
-        )));
-        // PORT: Go passes the source file, and the transformer reads its
-        // `SupplementalSourceFiles()`. The Rust transformer takes that list.
-        transformers.push(Box::new(new_supplemental_references_transformer(
-            self.host.clone(),
-            source_file_supplemental_source_files(source_file).to_vec(),
-            declaration_file_path,
-            force_dts_emit,
-        )));
-        transformers
+        vec![
+            Box::new(crate::declarations::new_declaration_transformer(
+                self.host.clone(),
+                emit_resolver,
+                options(),
+                declaration_file_path,
+                declaration_map_path,
+            )),
+            // PORT: Go passes the source file, and the transformer reads its
+            // `SupplementalSourceFiles()`. The Rust transformer takes that list.
+            Box::new(new_supplemental_references_transformer(
+                self.host.clone(),
+                source_file_supplemental_source_files(source_file).to_vec(),
+                declaration_file_path,
+                force_dts_emit,
+            )),
+        ]
     }
 
     // Go: compiler/emitter.go:70 emitter.runScriptTransformers

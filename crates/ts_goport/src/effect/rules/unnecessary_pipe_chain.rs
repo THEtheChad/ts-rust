@@ -62,19 +62,17 @@ pub fn analyze_unnecessary_pipe_chain(
         matches: &mut Vec<UnnecessaryPipeChainMatch>,
         n: Node,
     ) {
-        if n.kind() == SyntaxKind::CallExpression {
-            if let Some(result) = tp.parse_pipe_call(n) {
-                if let Some(inner) = tp.parse_pipe_call(result.subject) {
-                    if pipe_merge_supports_arity(tp, &inner, &result) {
-                        matches.push(UnnecessaryPipeChainMatch {
-                            source_file: sf,
-                            location: get_error_range_for_node(sf, result.node),
-                            outer: result,
-                            inner,
-                        });
-                    }
-                }
-            }
+        if n.kind() == SyntaxKind::CallExpression
+            && let Some(result) = tp.parse_pipe_call(n)
+            && let Some(inner) = tp.parse_pipe_call(result.subject)
+            && pipe_merge_supports_arity(tp, &inner, &result)
+        {
+            matches.push(UnnecessaryPipeChainMatch {
+                source_file: sf,
+                location: get_error_range_for_node(sf, result.node),
+                outer: result,
+                inner,
+            });
         }
     }
 

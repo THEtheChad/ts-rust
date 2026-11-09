@@ -104,15 +104,14 @@ impl LanguageService {
                 {
                     let end_offset = position.position;
                     let fold_end_char = source_text.as_bytes()[(end_offset - 1) as usize];
-                    if fold_end_char == b'}'
+                    if (fold_end_char == b'}'
                         || fold_end_char == b']'
                         || fold_end_char == b')'
                         || fold_end_char == b'`'
-                        || fold_end_char == b'>'
+                        || fold_end_char == b'>')
+                        && r.end_line > r.start_line
                     {
-                        if r.end_line > r.start_line {
-                            r.end_line -= 1;
-                        }
+                        r.end_line -= 1;
                     }
                 }
             }
@@ -340,14 +339,13 @@ fn visit_node(
         // PORT: Go reads the `Members` field of ClassDeclaration,
         // ClassExpression or InterfaceDeclaration; `member_list()` is that
         // field for each of them.
-        let members;
-        if is_class_declaration(n) {
-            members = n.member_list();
+        let members = if is_class_declaration(n) {
+            n.member_list()
         } else if is_class_expression(n) {
-            members = n.member_list();
+            n.member_list()
         } else {
-            members = n.member_list();
-        }
+            n.member_list()
+        };
         if members.is_some() {
             folding_range.extend(add_outlining_for_leading_comments_for_pos(
                 ctx,
@@ -631,17 +629,17 @@ fn get_outlining_span_for_node(
                             source_file,
                             l,
                         );
-                    } else if try_statement.finally_block() == n {
-                        if let Some(span) = span_for_node(
+                    } else if try_statement.finally_block() == n
+                        && let Some(span) = span_for_node(
                             ctx,
                             n,
                             SyntaxKind::OpenBraceToken,
                             true, /*useFullStart*/
                             source_file,
                             l,
-                        ) {
-                            return Some(span);
-                        }
+                        )
+                    {
+                        return Some(span);
                     }
                     // PORT: Go `fallthrough` into the default case.
                     // Block was a standalone block.  In this case we want to only collapse
@@ -985,12 +983,11 @@ fn span_for_jsx_attributes(
     source_file: Node,
     l: &LanguageService,
 ) -> Option<lsproto::FoldingRange> {
-    let attributes;
-    if node.kind() == SyntaxKind::JsxSelfClosingElement {
-        attributes = node.attributes();
+    let attributes = if node.kind() == SyntaxKind::JsxSelfClosingElement {
+        node.attributes()
     } else {
-        attributes = node.attributes();
-    }
+        node.attributes()
+    };
     if attributes.properties().is_empty() {
         return None;
     }

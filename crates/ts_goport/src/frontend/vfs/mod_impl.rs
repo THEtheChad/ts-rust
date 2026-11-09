@@ -385,7 +385,7 @@ pub fn root_length(p: &str) -> i32 {
 
 // Go: internal.go:30 SplitPath
 pub fn split_path(p: &str) -> (String, String) {
-    let p: String = normalize_path(p).into();
+    let p: String = normalize_path(p);
     let l = root_length(&p) as usize;
     let root_name = p[..l].to_string();
     let rest: String = remove_trailing_directory_separator(&p[l..]).into();
@@ -444,10 +444,8 @@ impl Common {
                 return false;
             };
 
-            if is_link {
-                if let Some(symlinks) = result.symlinks.as_mut() {
-                    symlinks.insert(name.clone());
-                }
+            if is_link && let Some(symlinks) = result.symlinks.as_mut() {
+                symlinks.insert(name.clone());
             }
             list.push(name);
             true
@@ -471,18 +469,18 @@ impl Common {
                 continue;
             }
 
-            if entry_type.intersects(FileMode::IRREGULAR) {
-                if let Some(is_reparse_point) = self.is_reparse_point {
-                    // Could be a Windows junction or other reparse point.
-                    // Check using the OS-specific helper.
-                    let full_path = format!("{}/{}", path, entry.name());
-                    if is_reparse_point(&full_path) {
-                        if let Some(stat) = self.stat(&full_path) {
-                            add_to_result(&mut result, entry.name, stat.mode(), true);
-                        }
-                    }
-                    continue;
+            if entry_type.intersects(FileMode::IRREGULAR)
+                && let Some(is_reparse_point) = self.is_reparse_point
+            {
+                // Could be a Windows junction or other reparse point.
+                // Check using the OS-specific helper.
+                let full_path = format!("{}/{}", path, entry.name());
+                if is_reparse_point(&full_path)
+                    && let Some(stat) = self.stat(&full_path)
+                {
+                    add_to_result(&mut result, entry.name, stat.mode(), true);
                 }
+                continue;
             }
         }
 
@@ -497,10 +495,7 @@ impl Common {
         };
 
         // PORT: Go `fs.ReadDir` calls the `ReadDirFS` method directly.
-        match fsys.read_dir(&rest) {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        }
+        fsys.read_dir(&rest).unwrap_or_default()
     }
 
     // Go: internal.go:132 ReadFile
@@ -567,7 +562,9 @@ fn decode_bytes(mut s: Vec<u8>) -> (String, bool) {
 // `String::from_utf16_lossy`.
 fn decode_utf16(s: &[u8], big_endian: bool) -> String {
     let ints: Vec<u16> = s
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             if big_endian {
                 u16::from_be_bytes([pair[0], pair[1]])
@@ -696,13 +693,12 @@ pub fn basename(name: &str) -> &str {
     }
     // Remove leading directory name
     // PORT: Go starts the search one byte before the last byte.
-    if name.len() > 1 {
-        if let Some(i) = name.as_bytes()[..name.len() - 1]
+    if name.len() > 1
+        && let Some(i) = name.as_bytes()[..name.len() - 1]
             .iter()
             .rposition(|&b| b == b'/')
-        {
-            name = &name[i + 1..];
-        }
+    {
+        name = &name[i + 1..];
     }
     name
 }

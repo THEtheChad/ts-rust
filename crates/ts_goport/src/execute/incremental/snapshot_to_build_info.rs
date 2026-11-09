@@ -155,21 +155,19 @@ impl ToBuildInfo<'_> {
             if option
                 .elements()
                 .is_some_and(|elements| elements.is_file_path)
+                && let CompilerOptionsValue::StringList(arr) = &v
             {
-                if let CompilerOptionsValue::StringList(arr) = &v {
-                    return CompilerOptionsValue::StringList(
-                        arr.iter()
-                            .map(|item| self.relative_to_build_info(item))
-                            .collect(),
-                    );
-                }
+                return CompilerOptionsValue::StringList(
+                    arr.iter()
+                        .map(|item| self.relative_to_build_info(item))
+                        .collect(),
+                );
             }
-        } else if option.is_file_path {
-            if let CompilerOptionsValue::String(str_) = &v {
-                if !str_.is_empty() {
-                    return CompilerOptionsValue::String(self.relative_to_build_info(str_));
-                }
-            }
+        } else if option.is_file_path
+            && let CompilerOptionsValue::String(str_) = &v
+            && !str_.is_empty()
+        {
+            return CompilerOptionsValue::String(self.relative_to_build_info(str_));
         }
         v
     }

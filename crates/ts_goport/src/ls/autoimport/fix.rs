@@ -722,8 +722,7 @@ pub fn get_new_imports(
     }
 
     if let Some(namespace_like_import) = namespace_like_import {
-        let declaration;
-        if namespace_like_import.kind == lsproto::ImportKind::COMMON_JS {
+        let declaration = if namespace_like_import.kind == lsproto::ImportKind::COMMON_JS {
             let is_type_only =
                 should_use_type_only(namespace_like_import.add_as_type_only, preferences);
             let name = ct
@@ -732,12 +731,12 @@ pub fn get_new_imports(
             let module_reference = ct
                 .node_factory()
                 .new_external_module_reference(module_specifier_string_literal);
-            declaration = ct.node_factory().new_import_equals_declaration(
+            ct.node_factory().new_import_equals_declaration(
                 /*modifiers*/ ModifierList::NIL,
                 is_type_only,
                 name,
                 module_reference,
-            );
+            )
         } else {
             let phase_modifier =
                 if should_use_type_only(namespace_like_import.add_as_type_only, preferences) {
@@ -754,13 +753,13 @@ pub fn get_new_imports(
                 /*name*/ Node::NIL,
                 namespace_import,
             );
-            declaration = ct.node_factory().new_import_declaration(
+            ct.node_factory().new_import_declaration(
                 /*modifiers*/ ModifierList::NIL,
                 import_clause,
                 module_specifier_string_literal,
                 /*attributes*/ Node::NIL,
-            );
-        }
+            )
+        };
         statements.push(declaration);
     }
     if statements.is_empty() {
@@ -1174,9 +1173,7 @@ impl View {
         export: &Export,
         usage_position: Option<lsproto::Position>,
     ) -> Option<Rc<Fix>> {
-        if usage_position.is_none() {
-            return None;
-        }
+        usage_position?;
 
         if get_import_kind(
             self.importing_file,

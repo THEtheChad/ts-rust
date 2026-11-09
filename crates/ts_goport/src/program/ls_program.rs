@@ -1290,7 +1290,7 @@ fn new_checker_pool_with_tracing(program: &Rc<NewProgram>) -> CompilerCheckerPoo
     if program.single_threaded() {
         checker_count = 1;
     } else if let Some(c) = program.options().checkers {
-        checker_count = i64::from(c);
+        checker_count = c;
     }
 
     checker_count = checker_count

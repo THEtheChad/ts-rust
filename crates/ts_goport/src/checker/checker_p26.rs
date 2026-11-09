@@ -18,7 +18,7 @@ impl Checker {
 
     // Go: checker/checker.go:23782 checkNoTypeArguments
     pub fn check_no_type_arguments(&mut self, node: Node, symbol: SymbolId) -> bool {
-        if node.type_arguments().len() != 0 {
+        if !node.type_arguments().is_empty() {
             let type_name = if symbol.is_some() {
                 self.symbol_to_string(symbol)
             } else {
@@ -216,7 +216,7 @@ impl Checker {
         let tuple_target = self.get_tuple_target_type(&n.infos, readonly);
         if tuple_target == self.empty_generic_type {
             return self.empty_object_type;
-        } else if n.types.len() != 0 {
+        } else if !n.types.is_empty() {
             return self.create_type_reference_ex(tuple_target, &n.types, object_flags);
         }
         tuple_target
@@ -605,7 +605,7 @@ impl Checker {
         }
         let t = self.get_declared_type_of_symbol(symbol);
         let type_parameters = self.type_alias_links.get(symbol).type_parameters.clone();
-        if type_parameters.len() != 0 {
+        if !type_parameters.is_empty() {
             let num_type_arguments = type_arguments.len() as i32;
             let min_type_argument_count = self.get_min_type_argument_count(&type_parameters);
             if num_type_arguments < min_type_argument_count
@@ -686,15 +686,15 @@ impl Checker {
         let t = self.get_declared_type_of_symbol(symbol);
         if t == self.intrinsic_marker_type {
             let name = self.sym(symbol).name.clone();
-            if let Some(&type_kind) = INTRINSIC_TYPE_KINDS.get(name.as_str()) {
-                if type_arguments.len() == 1 {
-                    match type_kind {
-                        IntrinsicTypeKind::NO_INFER => {
-                            return self.get_no_infer_type(type_arguments[0]);
-                        }
-                        _ => {
-                            return self.get_string_mapping_type(symbol, type_arguments[0]);
-                        }
+            if let Some(&type_kind) = INTRINSIC_TYPE_KINDS.get(name.as_str())
+                && type_arguments.len() == 1
+            {
+                match type_kind {
+                    IntrinsicTypeKind::NO_INFER => {
+                        return self.get_no_infer_type(type_arguments[0]);
+                    }
+                    _ => {
+                        return self.get_string_mapping_type(symbol, type_arguments[0]);
                     }
                 }
             }
@@ -926,7 +926,7 @@ impl Checker {
                             .first()
                             .copied()
                             .unwrap_or_default();
-                        if signature.is_some() && self.sig(signature).type_parameters.len() != 0 {
+                        if signature.is_some() && !self.sig(signature).type_parameters.is_empty() {
                             outer_type_parameters
                                 .extend(self.sig(signature).type_parameters.iter().copied());
                             return outer_type_parameters;
@@ -1078,7 +1078,7 @@ impl Checker {
             if self.pop_type_resolution() {
                 let type_parameters =
                     self.get_local_type_parameters_of_class_or_interface_or_type_alias(symbol);
-                if type_parameters.len() != 0 {
+                if !type_parameters.is_empty() {
                     // Initialize the instantiation cache for generic type aliases. The declared type corresponds to
                     // an instantiation of the type alias with the type parameters supplied as type arguments.
                     let key = get_type_list_key(&type_parameters);
@@ -1136,7 +1136,7 @@ impl Checker {
                     }
                 }
             }
-            let enum_type = if member_type_list.len() != 0 {
+            let enum_type = if !member_type_list.is_empty() {
                 self.get_union_type_ex(
                     &member_type_list,
                     UnionReduction::LITERAL,
@@ -1291,11 +1291,10 @@ impl Checker {
         let ev = self.evaluate.clone();
         let result = ev(self, initializer, member);
         if result.value.is_some() {
-            if is_const_enum {
-                if let Some(LiteralValue::Number(num_value)) = &result.value {
-                    let num_value = *num_value;
-                    if num_value.is_infinite() || num_value.is_nan() {
-                        self.error(
+            if is_const_enum && let Some(LiteralValue::Number(num_value)) = &result.value {
+                let num_value = *num_value;
+                if num_value.is_infinite() || num_value.is_nan() {
+                    self.error(
                             initializer,
                             if num_value.is_nan() {
                                 diag::X_const_enum_member_initializer_was_evaluated_to_disallowed_value_NaN
@@ -1304,21 +1303,19 @@ impl Checker {
                             },
                             vec![],
                         );
-                    }
                 }
             }
-            if self.compiler_options.get_isolated_modules() {
-                if matches!(result.value, Some(LiteralValue::String(_)))
-                    && !result.is_syntactically_string
-                {
-                    let member_name =
-                        format!("{}.{}", member.parent().name().text(), member.name().text());
-                    self.error(
+            if self.compiler_options.get_isolated_modules()
+                && matches!(result.value, Some(LiteralValue::String(_)))
+                && !result.is_syntactically_string
+            {
+                let member_name =
+                    format!("{}.{}", member.parent().name().text(), member.name().text());
+                self.error(
                         initializer,
                         diag::X_0_has_a_string_type_but_must_have_syntactically_recognizable_string_syntax_when_isolatedModules_is_enabled,
                         args![member_name],
                     );
-                }
             }
         } else if is_const_enum {
             self.error(
@@ -1359,25 +1356,24 @@ impl Checker {
                 if symbol.is_nil() {
                     return new_result(None, false, false, false);
                 }
-                if expr.kind() == SyntaxKind::Identifier {
-                    if is_infinity_or_nan_string(expr.text())
-                        && (symbol
-                            == self.get_global_symbol(
-                                expr.text(),
-                                SymbolFlags::VALUE,
-                                None, /*diagnostic*/
-                            ))
-                    {
-                        // Technically we resolved a global lib file here, but the decision to treat this as numeric
-                        // is more predicated on the fact that the single-file resolution *didn't* resolve to a
-                        // different meaning of `Infinity` or `NaN`. Transpilers handle this no problem.
-                        return new_result(
-                            Some(LiteralValue::Number(crate::jsnum::from_string(expr.text()))),
-                            false,
-                            false,
-                            false,
-                        );
-                    }
+                if expr.kind() == SyntaxKind::Identifier
+                    && is_infinity_or_nan_string(expr.text())
+                    && (symbol
+                        == self.get_global_symbol(
+                            expr.text(),
+                            SymbolFlags::VALUE,
+                            None, /*diagnostic*/
+                        ))
+                {
+                    // Technically we resolved a global lib file here, but the decision to treat this as numeric
+                    // is more predicated on the fact that the single-file resolution *didn't* resolve to a
+                    // different meaning of `Infinity` or `NaN`. Transpilers handle this no problem.
+                    return new_result(
+                        Some(LiteralValue::Number(crate::jsnum::from_string(expr.text()))),
+                        false,
+                        false,
+                        false,
+                    );
                 }
                 if self.sym(symbol).flags.intersects(SymbolFlags::ENUM_MEMBER) {
                     if location.is_some() {
@@ -1535,7 +1531,7 @@ impl Checker {
                 some
             }) && self.is_deferred_type_reference_node(node, false)
             {
-                if node.kind() == SyntaxKind::TupleType && node.elements().len() == 0 {
+                if node.kind() == SyntaxKind::TupleType && node.elements().is_empty() {
                     resolved_type = target;
                 } else {
                     resolved_type = self.create_deferred_type_reference(

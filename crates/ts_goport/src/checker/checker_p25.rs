@@ -103,12 +103,9 @@ impl Checker {
                     if t_object_flags.intersects(
                         ObjectFlags::REFERENCE | ObjectFlags::INSTANTIATION_EXPRESSION_TYPE,
                     ) {
-                        type_parameters = type_parameters
-                            .into_iter()
-                            .filter(|&tp| {
-                                self.is_type_parameter_possibly_referenced(tp, declaration)
-                            })
-                            .collect();
+                        type_parameters.retain(|&tp| {
+                            self.is_type_parameter_possibly_referenced(tp, declaration)
+                        });
                     } else {
                         let target_symbol = self.ty(target).symbol;
                         if self
@@ -118,14 +115,11 @@ impl Checker {
                         {
                             let t_symbol = self.ty(t).symbol;
                             let declarations = self.sym(t_symbol).declarations.clone();
-                            type_parameters = type_parameters
-                                .into_iter()
-                                .filter(|&tp| {
-                                    declarations
-                                        .iter()
-                                        .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
-                                })
-                                .collect();
+                            type_parameters.retain(|&tp| {
+                                declarations
+                                    .iter()
+                                    .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
+                            });
                         }
                     }
                 }
@@ -429,11 +423,11 @@ impl Checker {
             alias = self.instantiate_type_alias(t_alias, m);
         }
         self.ty_mut(result).alias = alias.clone();
-        if let Some(a) = &alias {
-            if !a.type_arguments.is_empty() {
-                let flags = self.get_propagating_flags_of_types(&a.type_arguments, TypeFlags::NONE);
-                self.ty_mut(result).object_flags |= flags;
-            }
+        if let Some(a) = &alias
+            && !a.type_arguments.is_empty()
+        {
+            let flags = self.get_propagating_flags_of_types(&a.type_arguments, TypeFlags::NONE);
+            self.ty_mut(result).object_flags |= flags;
         }
         let d = self.ty_mut(result).as_object_type_mut();
         d.target = t;
@@ -718,37 +712,36 @@ impl Checker {
         let mut new_element_infos = element_infos.clone();
         for (i, &e) in element_types.iter().enumerate() {
             let flags = element_infos[i].flags;
-            let mapped: TypeId;
-            if (i as i32) < fixed_length {
+            let mapped: TypeId = if (i as i32) < fixed_length {
                 let key = self.get_string_literal_type(&i.to_string());
-                mapped = self.instantiate_mapped_type_template(
+                self.instantiate_mapped_type_template(
                     mapped_type,
                     key,
                     flags.intersects(ElementFlags::OPTIONAL),
                     fixed_mapper,
-                );
+                )
             } else if flags.intersects(ElementFlags::VARIADIC) {
                 let prepended = self.prepend_type_mapping(type_variable, e, m);
-                mapped = self.instantiate_type(mapped_type, prepended);
+                self.instantiate_type(mapped_type, prepended)
             } else {
                 let array_type = self.create_array_type(e);
                 let prepended = self.prepend_type_mapping(type_variable, array_type, m);
                 let instantiated = self.instantiate_type(mapped_type, prepended);
                 let element = self.get_element_type_of_array_type(instantiated);
-                mapped = if element.is_nil() {
+                if element.is_nil() {
                     self.unknown_type
                 } else {
                     element
-                };
-            }
+                }
+            };
             if modifiers.intersects(MappedTypeModifiers::INCLUDE_OPTIONAL) {
                 if flags.intersects(ElementFlags::REQUIRED) {
                     new_element_infos[i].flags = ElementFlags::OPTIONAL;
                 }
-            } else if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL) {
-                if flags.intersects(ElementFlags::OPTIONAL) {
-                    new_element_infos[i].flags = ElementFlags::REQUIRED;
-                }
+            } else if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL)
+                && flags.intersects(ElementFlags::OPTIONAL)
+            {
+                new_element_infos[i].flags = ElementFlags::REQUIRED;
             }
             new_element_types[i] = mapped;
         }
@@ -1189,20 +1182,20 @@ impl Checker {
         );
         if container.is_some() {
             let parent = container.parent();
-            if parent.is_some() && (is_class_like(parent) || is_interface_declaration(parent)) {
-                if !is_static(container)
-                    && (!is_constructor_declaration(container)
-                        || is_node_descendant_of(node, container.body()))
-                {
-                    let symbol = self.get_symbol_of_declaration(parent);
-                    let declared = self.get_declared_type_of_class_or_interface(symbol);
-                    let this_type = self.ty(declared).as_interface_type().this_type;
-                    return if this_type.is_some() {
-                        this_type
-                    } else {
-                        self.error_type
-                    };
-                }
+            if parent.is_some()
+                && (is_class_like(parent) || is_interface_declaration(parent))
+                && !is_static(container)
+                && (!is_constructor_declaration(container)
+                    || is_node_descendant_of(node, container.body()))
+            {
+                let symbol = self.get_symbol_of_declaration(parent);
+                let declared = self.get_declared_type_of_class_or_interface(symbol);
+                let this_type = self.ty(declared).as_interface_type().this_type;
+                return if this_type.is_some() {
+                    this_type
+                } else {
+                    self.error_type
+                };
             }
         }
         self.error(
@@ -1611,24 +1604,22 @@ impl Checker {
                 && (num_type_arguments < min_type_argument_count
                     || num_type_arguments > type_parameters.len() as i32)
             {
-                let message: &'static crate::diagnostics::Message;
-
                 let missing_augments_tag = is_js
                     && is_expression_with_type_arguments(node)
                     && !is_js_doc_augments_tag(node.parent());
-                if missing_augments_tag {
-                    message = if (min_type_argument_count as usize) < type_parameters.len() {
+                let message: &'static crate::diagnostics::Message = if missing_augments_tag {
+                    if (min_type_argument_count as usize) < type_parameters.len() {
                         diag::Expected_0_1_type_arguments_provide_these_with_an_extends_tag
                     } else {
                         diag::Expected_0_type_arguments_provide_these_with_an_extends_tag
-                    };
+                    }
                 } else {
-                    message = if (min_type_argument_count as usize) < type_parameters.len() {
+                    if (min_type_argument_count as usize) < type_parameters.len() {
                         diag::Generic_type_0_requires_between_1_and_2_type_arguments
                     } else {
                         diag::Generic_type_0_requires_1_type_argument_s
-                    };
-                }
+                    }
+                };
                 let type_str = self.type_to_string_ex(
                     t,
                     Node::NIL, /*enclosingDeclaration*/

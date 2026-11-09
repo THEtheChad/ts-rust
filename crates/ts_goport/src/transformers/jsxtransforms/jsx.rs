@@ -569,16 +569,15 @@ impl JsxTransformer {
                 break;
             }
         }
-        let object;
-        if !attrs.is_empty() {
-            object = self.transform_jsx_attributes_to_object_props(&attrs, children_prop);
+        let object = if !attrs.is_empty() {
+            self.transform_jsx_attributes_to_object_props(&attrs, children_prop)
         } else {
             let mut object_children: Vec<Node> = Vec::new();
             if children_prop.is_some() {
                 object_children.push(children_prop);
             }
-            object = f.new_object_literal_expression(f.new_node_list(&object_children), false); // When there are no attributes, React wants {}
-        }
+            f.new_object_literal_expression(f.new_node_list(&object_children), false) // When there are no attributes, React wants {}
+        };
         self.visit_jsx_opening_like_element_or_fragment_jsx(
             tag_name, object, key_attr, children, location,
         )

@@ -471,20 +471,22 @@ impl<'a> Parser<'a> {
     // Go: parser.go:157 parseJSONText
     pub fn parse_json_text(&mut self) -> ParsedSourceFile {
         let pos = self.node_pos();
-        let statements;
-        let eof;
 
-        if self.token == SyntaxKind::EndOfFile {
+        let (statements, eof) = if self.token == SyntaxKind::EndOfFile {
             let end = self.node_pos();
-            statements = self.new_node_list(TextRange::new(pos, end), &[]);
-            eof = self.parse_token_node();
+            (
+                self.new_node_list(TextRange::new(pos, end), &[]),
+                self.parse_token_node(),
+            )
         } else {
             // PORT: Go keeps `any` (one expression or a slice). A vector holds
             // both cases here; one element is the Go single expression.
             let mut expressions: Vec<Node> = Vec::new();
 
             while self.token != SyntaxKind::EndOfFile {
-                let expression = match { self.token } {
+                // A copy: the guards below advance the parser.
+                let token = self.token;
+                let expression = match token {
                     SyntaxKind::OpenBracketToken => self.parse_array_literal_expression(),
                     SyntaxKind::TrueKeyword
                     | SyntaxKind::FalseKeyword
@@ -528,9 +530,11 @@ impl<'a> Parser<'a> {
             let statement = self.factory.new_expression_statement(expression);
             let statement = self.finish_node(statement, pos);
             let end = self.node_pos();
-            statements = self.new_node_list(TextRange::new(pos, end), &[statement]);
-            eof = self.parse_expected_token(SyntaxKind::EndOfFile);
-        }
+            (
+                self.new_node_list(TextRange::new(pos, end), &[statement]),
+                self.parse_expected_token(SyntaxKind::EndOfFile),
+            )
+        };
         let node =
             self.factory
                 .new_parsed_source_file(&self.opts, self.source_text, statements, eof);
@@ -2092,8 +2096,7 @@ impl<'a> Parser<'a> {
                 initializer = self.do_in_context(NodeFlags::DISALLOW_IN_CONTEXT, true, Parser::parse_expression);
             }
         }
-        let result;
-        if await_token.is_some() && self.parse_expected(SyntaxKind::OfKeyword)
+        let result = if await_token.is_some() && self.parse_expected(SyntaxKind::OfKeyword)
             || await_token.is_nil() && self.parse_optional(SyntaxKind::OfKeyword)
         {
             let expression = self.do_in_context(
@@ -2103,24 +2106,24 @@ impl<'a> Parser<'a> {
             );
             self.parse_expected(SyntaxKind::CloseParenToken);
             let statement = self.parse_statement();
-            result = self.factory.new_for_in_or_of_statement(
+            self.factory.new_for_in_or_of_statement(
                 SyntaxKind::ForOfStatement,
                 await_token,
                 initializer,
                 expression,
                 statement,
-            );
+            )
         } else if self.parse_optional(SyntaxKind::InKeyword) {
             let expression = self.parse_expression_allow_in();
             self.parse_expected(SyntaxKind::CloseParenToken);
             let statement = self.parse_statement();
-            result = self.factory.new_for_in_or_of_statement(
+            self.factory.new_for_in_or_of_statement(
                 SyntaxKind::ForInStatement,
                 Node::NIL, /*awaitToken*/
                 initializer,
                 expression,
                 statement,
-            );
+            )
         } else {
             self.parse_expected(SyntaxKind::SemicolonToken);
             let mut condition = Node::NIL;
@@ -2135,10 +2138,9 @@ impl<'a> Parser<'a> {
             }
             self.parse_expected(SyntaxKind::CloseParenToken);
             let statement = self.parse_statement();
-            result = self
-                .factory
-                .new_for_statement(initializer, condition, incrementor, statement);
-        }
+            self.factory
+                .new_for_statement(initializer, condition, incrementor, statement)
+        };
         let result = self.finish_node(result, pos);
         self.with_js_doc(result, jsdoc);
         result

@@ -363,11 +363,11 @@ impl WatchManager {
             recursive: entry.recursive,
             ignore: Some(Arc::new(should_ignore_watch_path)),
             callback: Arc::new(move |events: Vec<fswatch::Event>, err: Option<GoError>| {
-                if let Some(e) = &err {
-                    if errors::is(e, &fswatch::ERR_WATCH_TERMINATED) {
-                        shared.handle_watch_terminated(debug_log, &key, &identity);
-                        return;
-                    }
+                if let Some(e) = &err
+                    && errors::is(e, &fswatch::ERR_WATCH_TERMINATED)
+                {
+                    shared.handle_watch_terminated(debug_log, &key, &identity);
+                    return;
                 }
                 shared.on_watch_events(debug_log, events, err);
             }),
@@ -414,13 +414,13 @@ impl WatchManager {
                 }
                 continue;
             }
-            if watch_dir != *dir {
-                if let Some(debug_log) = &self.debug_log {
-                    write_str(
-                        debug_log,
-                        &format!("[watch] resolved {dir} to ancestor {watch_dir}\n"),
-                    );
-                }
+            if watch_dir != *dir
+                && let Some(debug_log) = &self.debug_log
+            {
+                write_str(
+                    debug_log,
+                    &format!("[watch] resolved {dir} to ancestor {watch_dir}\n"),
+                );
             }
             let key = path_key(&watch_dir, self.use_case_sensitive_file_names);
             if let Some(existing) = resolved_by_path.get_mut(&key) {
@@ -704,11 +704,11 @@ impl WatchManagerShared {
         self.mu.lock();
         {
             let mut watched_dirs = self.watched_dirs.lock().unwrap();
-            if let Some(wd) = watched_dirs.get(key) {
-                if Arc::ptr_eq(wd, identity) {
-                    stale_closer = Some(wd.clone());
-                    watched_dirs.remove(key);
-                }
+            if let Some(wd) = watched_dirs.get(key)
+                && Arc::ptr_eq(wd, identity)
+            {
+                stale_closer = Some(wd.clone());
+                watched_dirs.remove(key);
             }
         }
         self.mu.unlock();

@@ -1321,10 +1321,10 @@ impl Checker {
             return quick_type;
         }
         // If a type has been cached for the node, return it.
-        if let Some(&cached_type) = self.flow_type_cache.get(&node) {
-            if cached_type.is_some() {
-                return cached_type;
-            }
+        if let Some(&cached_type) = self.flow_type_cache.get(&node)
+            && cached_type.is_some()
+        {
+            return cached_type;
         }
         let start_invocation_count = self.flow_invocation_count;
         let t = self.check_expression_ex(node, CheckMode::TYPE_ONLY);
@@ -1620,10 +1620,10 @@ impl Checker {
     // It sets the contextual type of the node to any before calling getTypeOfExpression.
     // Go: checker/checker.go:7740 getContextFreeTypeOfExpression
     pub fn get_context_free_type_of_expression(&mut self, node: Node) -> TypeId {
-        if let Some(&cached) = self.context_free_types.get(&node) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.context_free_types.get(&node)
+            && cached.is_some()
+        {
+            return cached;
         }
         let any_type = self.any_type;
         self.push_contextual_type(node, any_type, false /*isCache*/);

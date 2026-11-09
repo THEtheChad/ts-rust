@@ -374,10 +374,10 @@ pub fn get_range_of_enclosing_comment(
     }
     let leading_ranges_of_next_token = get_leading_comment_ranges_of_node(token_at_position, file);
     // PORT: Go `core.ConcatenateSeq`.
-    let comment_ranges = trailing_ranges_of_previous_token
+    let mut comment_ranges = trailing_ranges_of_previous_token
         .into_iter()
         .chain(leading_ranges_of_next_token);
-    for comment_range in comment_ranges {
+    comment_ranges.find(|&comment_range| {
         // The end marker of a single-line comment does not include the newline character.
         // In the following case where the cursor is at `^`, we are inside a comment:
         //
@@ -391,15 +391,11 @@ pub fn get_range_of_enclosing_comment(
         //
         // However, unterminated multi-line comments lack a `/`, end at the end of the file, and *do* contain their end.
         //
-        if comment_range.text_range.contains_exclusive(position)
+        comment_range.text_range.contains_exclusive(position)
             || position == comment_range.end()
                 && (comment_range.kind == SyntaxKind::SingleLineCommentTrivia
                     || position == source_file_text(file).len() as i32)
-        {
-            return Some(comment_range);
-        }
-    }
-    None
+    })
 }
 
 // Go: ls/format_test.go

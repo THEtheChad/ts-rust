@@ -299,10 +299,8 @@ where
     let mut e = JoinError {
         errs: Vec::with_capacity(n),
     };
-    for err in errs {
-        if let Some(err) = err {
-            e.errs.push(err);
-        }
+    for err in errs.into_iter().flatten() {
+        e.errs.push(err);
     }
     Some(GoError::from_repr(ErrorRepr::JoinError(e)))
 }
@@ -455,10 +453,7 @@ fn as_type_unexported<T: Any + Clone>(err: &GoError) -> Option<T> {
             return Some(e);
         }
         match err.unwrapped() {
-            Unwrapped::One(u) => match u {
-                Some(u) => err = u,
-                None => return None,
-            },
+            Unwrapped::One(u) => err = u?,
             Unwrapped::Many(errs) => {
                 for err in &errs {
                     if let Some(x) = as_type_unexported::<T>(err) {

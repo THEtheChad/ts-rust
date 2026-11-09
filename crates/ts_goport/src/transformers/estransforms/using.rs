@@ -84,10 +84,9 @@ impl UsingDeclarationTransformer {
 
         let ec = self.ec();
         let f = ec.factory();
-        let visited;
         let node_statements = node.statements().to_vec();
         let using_kind = get_using_kind_of_statements(&node_statements);
-        if using_kind != UsingKind::None {
+        let visited = if using_kind != UsingKind::None {
             // Imports and exports must stay at the top level. This means we must hoist all imports, exports, and
             // top-level function declarations and bindings out of the `try` statements we generate. For example:
             //
@@ -209,14 +208,14 @@ impl UsingDeclarationTransformer {
                 ));
             }
 
-            visited = f.update_source_file(
+            f.update_source_file(
                 node,
                 f.new_node_list(&top_level_statements),
                 node.end_of_file_token(),
-            );
+            )
         } else {
-            visited = self.visit_each_child(node);
-        }
+            self.visit_each_child(node)
+        };
         ec.add_emit_helper(visited, &ec.read_emit_helpers());
         self.export_vars = Vec::new();
         self.export_bindings = None;

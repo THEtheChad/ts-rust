@@ -288,20 +288,18 @@ impl Checker {
                     let t = self.get_type_of_symbol(member_symbol);
                     if !(self.ty(t).flags.intersects(TypeFlags::ANY_OR_UNKNOWN)
                         || self.contains_undefined_type(t))
-                    {
-                        if constructor.is_nil()
+                        && (constructor.is_nil()
                             || !self.is_property_initialized_in_constructor(
                                 prop_name,
                                 t,
                                 constructor,
-                            )
-                        {
-                            self.error(
+                            ))
+                    {
+                        self.error(
                                 member.name(),
                                 diag::Property_0_has_no_initializer_and_is_not_definitely_assigned_in_the_constructor,
                                 args![declaration_name_to_string(prop_name)],
                             );
-                        }
                     }
                 }
             }
@@ -652,14 +650,15 @@ impl Checker {
             // If we hit a module declaration in an illegal context, just bail out to avoid cascading errors.
             return;
         }
-        if !self.check_grammar_modifiers(node) {
-            if !in_ambient_context && is_string_literal(node.name()) {
-                self.grammar_error_on_node(
-                    node.name(),
-                    diag::Only_ambient_modules_can_use_quoted_names,
-                    args![],
-                );
-            }
+        if !self.check_grammar_modifiers(node)
+            && !in_ambient_context
+            && is_string_literal(node.name())
+        {
+            self.grammar_error_on_node(
+                node.name(),
+                diag::Only_ambient_modules_can_use_quoted_names,
+                args![],
+            );
         }
         if is_identifier(node.name()) {
             self.check_collisions_for_declaration_name(node, node.name());
@@ -826,7 +825,6 @@ impl Checker {
         if let Some(&t) = self.module_import_attributes_types.get(&symbol) {
             return t;
         }
-        let result;
         let module_decl = self
             .sym(symbol)
             .declarations
@@ -834,12 +832,11 @@ impl Checker {
             .copied()
             .find(|&d| is_module_with_string_literal_name(d))
             .unwrap_or(Node::NIL);
-        if module_decl.is_nil() {
-            result = self.empty_object_type;
+        let result = if module_decl.is_nil() {
+            self.empty_object_type
         } else {
-            result =
-                self.get_type_of_module_declaration_import_attributes(module_decl.attributes());
-        }
+            self.get_type_of_module_declaration_import_attributes(module_decl.attributes())
+        };
         self.module_import_attributes_types.insert(symbol, result);
         result
     }
@@ -1075,10 +1072,8 @@ impl Checker {
         }
         if !is_import_equals_declaration(node) {
             let attributes = get_import_attributes(node);
-            if attributes.is_some() {
-                if self.check_grammar_import_attribute_values(attributes) {
-                    return false;
-                }
+            if attributes.is_some() && self.check_grammar_import_attribute_values(attributes) {
+                return false;
             }
         }
         true
@@ -1109,16 +1104,16 @@ impl Checker {
         }
         if !allow_string_literal {
             self.grammar_error_on_node(name, diag::Identifier_expected, args![]);
-        } else if self.module_kind == ModuleKind::ES2015 || self.module_kind == ModuleKind::ES2020 {
-            if !with_source_file_info(get_source_file_of_node(name), |info| {
+        } else if (self.module_kind == ModuleKind::ES2015 || self.module_kind == ModuleKind::ES2020)
+            && !with_source_file_info(get_source_file_of_node(name), |info| {
                 info.is_declaration_file
-            }) {
-                self.grammar_error_on_node(
+            })
+        {
+            self.grammar_error_on_node(
                     name,
                     diag::String_literal_import_and_export_names_are_not_supported_when_the_module_flag_is_set_to_es2015_or_es2020,
                     args![],
                 );
-            }
         }
     }
 }
@@ -1168,17 +1163,16 @@ impl Checker {
         }
 
         let module_specifier = get_external_module_name(declaration);
-        if module_specifier.is_some() {
-            if self.get_emit_syntax_for_module_specifier_expression(module_specifier)
+        if module_specifier.is_some()
+            && self.get_emit_syntax_for_module_specifier_expression(module_specifier)
                 == ModuleKind::COMMON_JS
-            {
-                self.grammar_error_on_node(
+        {
+            self.grammar_error_on_node(
                     node,
                     diag::Import_attributes_are_not_allowed_on_statements_that_compile_to_CommonJS_require_calls,
                     args![],
                 );
-                return;
-            }
+            return;
         }
 
         if override_ != RESOLUTION_MODE_NONE {

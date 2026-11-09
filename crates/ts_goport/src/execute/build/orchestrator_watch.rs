@@ -201,35 +201,35 @@ impl Orchestrator {
                 // PORT: Go reads the entry under `buildInfoEntryMu`; one
                 // thread here.
                 let bi = task.build_info_entry.clone();
-                if let Some(bi) = bi {
-                    if let Some(build_info) = &bi.build_info {
-                        let build_info_dir = get_directory_path(&bi.file_name);
-                        for file_name in build_info.file_names.iter().flatten() {
-                            let fp = self.to_path(
-                                &self.resolve_build_info_file_name(file_name, &build_info_dir),
-                            );
-                            if roots.contains(&fp) {
-                                continue;
-                            }
-                            if normalized_paths.contains_key(&fp) {
-                                task.reset_status();
-                                *needs_update = true;
-                                break;
-                            }
+                if let Some(bi) = bi
+                    && let Some(build_info) = &bi.build_info
+                {
+                    let build_info_dir = get_directory_path(&bi.file_name);
+                    for file_name in build_info.file_names.iter().flatten() {
+                        let fp = self.to_path(
+                            &self.resolve_build_info_file_name(file_name, &build_info_dir),
+                        );
+                        if roots.contains(&fp) {
+                            continue;
                         }
-                        for package_json in build_info.get_package_jsons(&build_info_dir) {
-                            if self.package_json_lookup_changed(&package_json, &normalized_paths) {
-                                task.reset_status();
-                                *needs_update = true;
-                                break;
-                            }
+                        if normalized_paths.contains_key(&fp) {
+                            task.reset_status();
+                            *needs_update = true;
+                            break;
                         }
-                        for package_json in build_info.get_missing_package_jsons(&build_info_dir) {
-                            if self.package_json_lookup_changed(&package_json, &normalized_paths) {
-                                task.reset_status();
-                                *needs_update = true;
-                                break;
-                            }
+                    }
+                    for package_json in build_info.get_package_jsons(&build_info_dir) {
+                        if self.package_json_lookup_changed(&package_json, &normalized_paths) {
+                            task.reset_status();
+                            *needs_update = true;
+                            break;
+                        }
+                    }
+                    for package_json in build_info.get_missing_package_jsons(&build_info_dir) {
+                        if self.package_json_lookup_changed(&package_json, &normalized_paths) {
+                            task.reset_status();
+                            *needs_update = true;
+                            break;
                         }
                     }
                 }
@@ -378,33 +378,32 @@ impl Orchestrator {
             // Non-root dependency directories from buildinfo (e.g. node_modules .d.ts files).
             // PORT: Go reads the entry under `buildInfoEntryMu`; one thread here.
             let bi = task.build_info_entry.clone();
-            if let Some(bi) = bi {
-                if let Some(build_info) = &bi.build_info {
-                    let build_info_dir = get_directory_path(&bi.file_name);
-                    let roots: FxHashSet<Path> = resolved
-                        .file_names()
-                        .iter()
-                        .map(|file_name| self.to_path(file_name))
-                        .collect();
-                    for file_name in build_info.file_names.iter().flatten() {
-                        let abs_path = fs.realpath(
-                            &self.resolve_build_info_file_name(file_name, &build_info_dir),
-                        );
-                        let fp = self.to_path(&abs_path);
-                        if roots.contains(&fp) {
-                            continue;
-                        }
-                        self.add_program_file_watch_dir(
-                            &mut desired_dirs,
-                            &get_directory_path(&abs_path),
-                        );
+            if let Some(bi) = bi
+                && let Some(build_info) = &bi.build_info
+            {
+                let build_info_dir = get_directory_path(&bi.file_name);
+                let roots: FxHashSet<Path> = resolved
+                    .file_names()
+                    .iter()
+                    .map(|file_name| self.to_path(file_name))
+                    .collect();
+                for file_name in build_info.file_names.iter().flatten() {
+                    let abs_path =
+                        fs.realpath(&self.resolve_build_info_file_name(file_name, &build_info_dir));
+                    let fp = self.to_path(&abs_path);
+                    if roots.contains(&fp) {
+                        continue;
                     }
-                    for package_json in build_info.get_package_jsons(&build_info_dir) {
-                        self.add_package_json_watch_dirs(&mut desired_dirs, &package_json);
-                    }
-                    for package_json in build_info.get_missing_package_jsons(&build_info_dir) {
-                        self.add_package_json_watch_dirs(&mut desired_dirs, &package_json);
-                    }
+                    self.add_program_file_watch_dir(
+                        &mut desired_dirs,
+                        &get_directory_path(&abs_path),
+                    );
+                }
+                for package_json in build_info.get_package_jsons(&build_info_dir) {
+                    self.add_package_json_watch_dirs(&mut desired_dirs, &package_json);
+                }
+                for package_json in build_info.get_missing_package_jsons(&build_info_dir) {
+                    self.add_package_json_watch_dirs(&mut desired_dirs, &package_json);
                 }
             }
             for package_json in &task.package_jsons {
@@ -657,13 +656,13 @@ impl BuildTask {
         orchestrator: &Orchestrator,
         old_cache: &FxHashMap<Path, Option<SystemTime>>,
     ) {
-        if let Some(resolved) = &self.resolved {
-            if self.can_update_js_dts_output_timestamps() {
-                for output_file in resolved.get_output_file_names() {
-                    orchestrator
-                        .host
-                        .store_m_time_from_old_cache(&output_file, old_cache);
-                }
+        if let Some(resolved) = &self.resolved
+            && self.can_update_js_dts_output_timestamps()
+        {
+            for output_file in resolved.get_output_file_names() {
+                orchestrator
+                    .host
+                    .store_m_time_from_old_cache(&output_file, old_cache);
             }
         }
     }

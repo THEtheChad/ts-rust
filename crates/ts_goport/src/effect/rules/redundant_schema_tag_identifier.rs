@@ -60,10 +60,10 @@ pub fn analyze_redundant_schema_tag_identifier(
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::ClassDeclaration {
-            if let Some(m) = analyze_redundant_schema_tag_identifier_node(tp, sf, node) {
-                matches.push(m);
-            }
+        if node.kind() == SyntaxKind::ClassDeclaration
+            && let Some(m) = analyze_redundant_schema_tag_identifier_node(tp, sf, node)
+        {
+            matches.push(m);
         }
 
         node_to_visit.extend(order.children(i));

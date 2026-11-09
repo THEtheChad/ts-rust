@@ -574,21 +574,20 @@ pub fn get_source_file_to_import(
     if let Some(resolved) = program.get_resolved_module_from_module_specifier(
         &autoimport::source_file_has_file_name(source_file),
         import_literal,
-    ) {
-        if !resolved.resolved_file_name.is_empty() {
-            let old_file_name = resolved.resolved_file_name.clone();
-            let (new_file_name, ok) = old_to_new(&old_file_name);
-            if ok {
-                return Some(ToImport {
-                    new_file_name,
-                    updated: true,
-                });
-            }
+    ) && !resolved.resolved_file_name.is_empty()
+    {
+        let old_file_name = resolved.resolved_file_name.clone();
+        let (new_file_name, ok) = old_to_new(&old_file_name);
+        if ok {
             return Some(ToImport {
-                new_file_name: old_file_name,
-                updated: false,
+                new_file_name,
+                updated: true,
             });
         }
+        return Some(ToImport {
+            new_file_name: old_file_name,
+            updated: false,
+        });
     }
 
     None

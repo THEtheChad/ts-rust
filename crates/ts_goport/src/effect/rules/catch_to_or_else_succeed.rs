@@ -101,7 +101,7 @@ pub fn analyze_catch_to_or_else_succeed(
                 }
             }
 
-            if call.arguments().len() < 1 {
+            if call.arguments().is_empty() {
                 continue;
             }
 

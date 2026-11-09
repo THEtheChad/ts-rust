@@ -87,8 +87,9 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
     }
 
     // Fix 2: toEffectFnUntraced - available when gen opportunity (generator function exists)
-    if effect_config.effect_fn_includes(EFFECT_FN_UNTRACED) && result.generator_function.is_some() {
-        if let Some(action) =
+    if effect_config.effect_fn_includes(EFFECT_FN_UNTRACED)
+        && result.generator_function.is_some()
+        && let Some(action) =
             ctx.new_fix_action("Convert to Effect.fnUntraced".to_string(), |tracker| {
                 effect_fn_build_replacement(
                     ctx,
@@ -101,14 +102,13 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
                     is_func_decl,
                 );
             })
-        {
-            actions.push(action);
-        }
+    {
+        actions.push(action);
     }
 
     // Fix 3: toEffectFnNoSpan - available when no-span variant is enabled
-    if effect_config.effect_fn_includes(EFFECT_FN_NO_SPAN) {
-        if let Some(action) =
+    if effect_config.effect_fn_includes(EFFECT_FN_NO_SPAN)
+        && let Some(action) =
             ctx.new_fix_action("Convert to Effect.fn (no span)".to_string(), |tracker| {
                 effect_fn_build_replacement(
                     ctx,
@@ -121,17 +121,15 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
                     is_func_decl,
                 );
             })
-        {
-            actions.push(action);
-        }
+    {
+        actions.push(action);
     }
 
     // Fix 4: toEffectFnSpanInferred - available when no explicit withSpan and inferred trace name exists
     if effect_config.effect_fn_includes(EFFECT_FN_INFERRED_SPAN)
         && result.explicit_trace_expression.is_nil()
         && !result.inferred_trace_name.is_empty()
-    {
-        if let Some(action) = ctx.new_fix_action(
+        && let Some(action) = ctx.new_fix_action(
             format!("Convert to Effect.fn(\"{}\")", result.inferred_trace_name),
             |tracker| {
                 let trace = strconv::quote(&result.inferred_trace_name);
@@ -146,9 +144,9 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
                     is_func_decl,
                 );
             },
-        ) {
-            actions.push(action);
-        }
+        )
+    {
+        actions.push(action);
     }
 
     // Fix 5: toEffectFnSpanSuggested - available when no explicit withSpan, has suggested trace name,
@@ -158,8 +156,7 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
         && !result.suggested_trace_name.is_empty()
         && (!effect_config.effect_fn_includes(EFFECT_FN_INFERRED_SPAN)
             || result.suggested_trace_name != result.inferred_trace_name)
-    {
-        if let Some(action) = ctx.new_fix_action(
+        && let Some(action) = ctx.new_fix_action(
             format!("Convert to Effect.fn(\"{}\")", result.suggested_trace_name),
             |tracker| {
                 let trace = strconv::quote(&result.suggested_trace_name);
@@ -174,9 +171,9 @@ fn run_effect_fn_opportunity_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<CodeAc
                     is_func_decl,
                 );
             },
-        ) {
-            actions.push(action);
-        }
+        )
+    {
+        actions.push(action);
     }
 
     actions

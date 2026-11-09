@@ -1106,7 +1106,7 @@ impl Checker {
                     } else {
                         CheckFlags::NONE
                     };
-                    let property = self.new_symbol_ex(symbol_flags, &i.to_string(), check_flags);
+                    let property = self.new_symbol_ex(symbol_flags, i.to_string(), check_flags);
                     self.value_symbol_links
                         .get_by_id(&self.symbols, property)
                         .resolved_type = type_parameter;

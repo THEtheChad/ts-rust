@@ -202,7 +202,7 @@ impl Node {
 /// so `==` compares ids. It orders, hashes and prints like the `str` it
 /// holds. The low bit of the id is set when the text starts with
 /// `INTERNAL_SYMBOL_NAME_PREFIX` (`Name::is_internal`).
-#[derive(PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct Name(u32);
 
 impl Name {
@@ -288,12 +288,6 @@ impl Clone for Name {
     #[inline]
     fn clone(&self) -> Self {
         Name(self.0)
-    }
-}
-
-impl Default for Name {
-    fn default() -> Self {
-        Name(0)
     }
 }
 
@@ -1145,7 +1139,7 @@ impl Declarations {
             DeclarationList::Many(list) => Arc::make_mut(list).push(node),
             DeclarationList::Static(list) => {
                 let mut owned = Vec::with_capacity(list.len() + 1);
-                owned.extend_from_slice(*list);
+                owned.extend_from_slice(list);
                 owned.push(node);
                 self.0 = DeclarationList::Many(Arc::new(owned));
             }
@@ -1158,10 +1152,10 @@ impl Declarations {
     // list changes a reference count that the checker threads share
     // (`instantiate_symbol`, `clone_symbol`, member code).
     fn make_static(&mut self) {
-        if matches!(self.0, DeclarationList::Many(_)) {
-            if let DeclarationList::Many(list) = std::mem::take(&mut self.0) {
-                self.0 = DeclarationList::Static(Box::leak(Box::new(Arc::unwrap_or_clone(list))));
-            }
+        if matches!(self.0, DeclarationList::Many(_))
+            && let DeclarationList::Many(list) = std::mem::take(&mut self.0)
+        {
+            self.0 = DeclarationList::Static(Box::leak(Box::new(Arc::unwrap_or_clone(list))));
         }
     }
 }
@@ -2972,10 +2966,10 @@ impl SymbolArena {
                 place: symbol.0,
             };
         }
-        if self.ids.shadows.is_some() {
-            if let Some(origin) = self.shadow_origin(symbol) {
-                return origin;
-            }
+        if self.ids.shadows.is_some()
+            && let Some(origin) = self.shadow_origin(symbol)
+        {
+            return origin;
         }
         IdSlot {
             key: self.ids.key,
@@ -3459,10 +3453,11 @@ impl SymbolArena {
                 .find_id(hash, name.0)
                 .map(|position| (position, current.entries[position].symbol))
         };
-        if let Some((_, old)) = found {
-            if old.is_some() && !replace(self.sym(old)) {
-                return false;
-            }
+        if let Some((_, old)) = found
+            && old.is_some()
+            && !replace(self.sym(old))
+        {
+            return false;
         }
         // Only a write takes a shared table chunk back, like `set`.
         let current = self.tables.get_mut(table.index());
@@ -4055,9 +4050,9 @@ fn link_flat_ids<V: Default, P: LinkPage<V>>() -> usize {
 const LINK_BLOCK_SHIFT: usize = 16;
 
 const _: () = assert!(
-    LINK_FLAT_IDS % LINK_PAGE_SIZE == 0
-        && LINK_SESSION_FLAT_IDS % LINK_PAGE_SIZE == 0
-        && (1 << LINK_BLOCK_SHIFT) % LINK_PAGE_SIZE == 0,
+    LINK_FLAT_IDS.is_multiple_of(LINK_PAGE_SIZE)
+        && LINK_SESSION_FLAT_IDS.is_multiple_of(LINK_PAGE_SIZE)
+        && (1_usize << LINK_BLOCK_SHIFT).is_multiple_of(LINK_PAGE_SIZE),
     "a block page holds the keys of one flat page (`LinkSlot::index`)"
 );
 

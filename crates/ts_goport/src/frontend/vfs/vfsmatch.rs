@@ -1188,13 +1188,13 @@ impl GlobVisitor<'_> {
             }
             let abs_dir = format!("{abs_prefix}{dir}");
             let mut child_real_path = String::new();
-            if let Some(symlinks) = &entries.symlinks {
-                if !symlinks.contains(dir) {
-                    // Non-symlink directory: compute realpath incrementally.
-                    child_real_path = combine_paths(&real_path, &[dir.as_str()]);
-                }
-                // else: symlink directory; leave child_real_path empty to force Realpath call.
+            if let Some(symlinks) = &entries.symlinks
+                && !symlinks.contains(dir)
+            {
+                // Non-symlink directory: compute realpath incrementally.
+                child_real_path = combine_paths(&real_path, &[dir.as_str()]);
             }
+            // else: symlink directory; leave child_real_path empty to force Realpath call.
             // If Symlinks is nil, the FS doesn't track symlinks;
             // leave child_real_path empty to call Realpath (preserving old behavior).
             self.visit(

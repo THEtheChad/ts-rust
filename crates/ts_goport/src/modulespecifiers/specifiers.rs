@@ -344,10 +344,10 @@ pub fn get_each_file_name_of_module(
     );
     let mut reference_redirect = String::new();
     let output_and_reference = host.get_project_reference_from_source(&imported_path);
-    if let Some(output_and_reference) = output_and_reference {
-        if !output_and_reference.output_dts.is_empty() {
-            reference_redirect = output_and_reference.output_dts.clone();
-        }
+    if let Some(output_and_reference) = output_and_reference
+        && !output_and_reference.output_dts.is_empty()
+    {
+        reference_redirect = output_and_reference.output_dts.clone();
     }
 
     let redirects = host.get_redirect_targets(&imported_path);
@@ -702,18 +702,18 @@ fn get_local_module_specifier(
     }
 
     let mut from_paths = String::new();
-    if paths_only || from_package_json_imports.is_empty() {
-        if let Some(paths) = paths {
-            from_paths = try_get_module_name_from_paths(
-                &relative_to_base_url,
-                module_file_name,
-                paths,
-                &allowed_endings,
-                &base_directory,
-                host,
-                compiler_options,
-            );
-        }
+    if (paths_only || from_package_json_imports.is_empty())
+        && let Some(paths) = paths
+    {
+        from_paths = try_get_module_name_from_paths(
+            &relative_to_base_url,
+            module_file_name,
+            paths,
+            &allowed_endings,
+            &base_directory,
+            host,
+            compiler_options,
+        );
     }
 
     if paths_only {
@@ -1243,10 +1243,10 @@ fn try_directory_with_package_json(
     }
 
     let mut version_paths = VersionPaths::default();
-    if let Some(content) = package_json_content {
-        if matches!(content.fields.types_versions, JSONValue::Object(_)) {
-            version_paths = content.get_version_paths().clone();
-        }
+    if let Some(content) = package_json_content
+        && matches!(content.fields.types_versions, JSONValue::Object(_))
+    {
+        version_paths = content.get_version_paths().clone();
     }
     let version_paths_paths = version_paths.get_paths();
     if let Some(paths) = &version_paths_paths {

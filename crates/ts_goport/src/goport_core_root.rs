@@ -13,7 +13,6 @@
     unused_variables,
     unused_mut,
     clippy::pedantic,
-    clippy::all,
     non_snake_case
 )]
 
@@ -28,6 +27,12 @@ pub mod binder;
 pub mod checker;
 // Go `internal/contentmapper` and `internal/spanmap` (tsgo#4712).
 pub mod contentmapper;
+// Without the bundled libs (the wasm build) `lib_names::COUNT` is 0, so the
+// lib-name range checks compare with 0 and a test loops over 0..0.
+#[cfg_attr(
+    target_family = "wasm",
+    allow(clippy::absurd_extreme_comparisons, clippy::reversed_empty_ranges)
+)]
 pub mod core;
 pub mod declarations;
 // Native Effect diagnostics (Effect-TS/tsgo port).

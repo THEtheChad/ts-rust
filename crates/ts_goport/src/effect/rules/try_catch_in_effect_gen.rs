@@ -22,10 +22,10 @@ fn run_try_catch_in_effect_gen(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic>
     fn visit(ctx: &mut RuleContext<'_, '_>, diags: &mut Vec<Diagnostic>, n: Node) {
         if n.kind() == SyntaxKind::TryStatement {
             let try_stmt = n;
-            if try_stmt.catch_clause().is_some() {
-                if let Some(d) = check_try_catch_scope(ctx, n) {
-                    diags.push(d);
-                }
+            if try_stmt.catch_clause().is_some()
+                && let Some(d) = check_try_catch_scope(ctx, n)
+            {
+                diags.push(d);
             }
         }
     }

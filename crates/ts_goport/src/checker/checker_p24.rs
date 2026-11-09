@@ -309,7 +309,7 @@ impl Checker {
                         if is_union {
                             optional_flag |= prop_symbol_flags & SymbolFlags::OPTIONAL;
                         } else {
-                            optional_flag = optional_flag & prop_symbol_flags;
+                            optional_flag &= prop_symbol_flags;
                         }
                     }
                     if single_prop.is_nil() {
@@ -1810,18 +1810,15 @@ impl Checker {
             if order == NO_SORT_ORDER {
                 return None;
             }
-            match previous {
+            if let Some((was_contained, previous_order)) = previous {
                 // A new part starts where the contained members end.
-                Some((was_contained, previous_order)) => {
-                    if was_contained == contained {
-                        if previous_order >= order {
-                            return None;
-                        }
-                    } else if !(was_contained && !contained) {
+                if was_contained == contained {
+                    if previous_order >= order {
                         return None;
                     }
+                } else if !(was_contained && !contained) {
+                    return None;
                 }
-                None => {}
             }
             previous = Some((contained, order));
             positions.push(*positions_of.get(&symbol)?);
@@ -2209,28 +2206,28 @@ impl Checker {
 
     // Go: checker/checker.go:22727 isNonGenericTopLevelType
     pub fn is_non_generic_top_level_type(&self, t: TypeId) -> bool {
-        if let Some(alias) = self.ty(t).alias.as_deref() {
-            if alias.type_arguments.is_empty() {
-                let mut declaration = get_declaration_of_kind(
+        if let Some(alias) = self.ty(t).alias.as_deref()
+            && alias.type_arguments.is_empty()
+        {
+            let mut declaration = get_declaration_of_kind(
+                &self.symbols,
+                alias.symbol,
+                SyntaxKind::TypeAliasDeclaration,
+            );
+            if declaration.is_nil() {
+                declaration = get_declaration_of_kind(
                     &self.symbols,
                     alias.symbol,
-                    SyntaxKind::TypeAliasDeclaration,
+                    SyntaxKind::JsTypeAliasDeclaration,
                 );
-                if declaration.is_nil() {
-                    declaration = get_declaration_of_kind(
-                        &self.symbols,
-                        alias.symbol,
-                        SyntaxKind::JsTypeAliasDeclaration,
-                    );
-                }
-                return declaration.is_some()
-                    && find_ancestor_or_quit(declaration.parent(), |n: Node| match n.kind() {
-                        SyntaxKind::SourceFile => FindAncestorResult::FIND_ANCESTOR_TRUE,
-                        SyntaxKind::ModuleDeclaration => FindAncestorResult::FIND_ANCESTOR_FALSE,
-                        _ => FindAncestorResult::FIND_ANCESTOR_QUIT,
-                    })
-                    .is_some();
             }
+            return declaration.is_some()
+                && find_ancestor_or_quit(declaration.parent(), |n: Node| match n.kind() {
+                    SyntaxKind::SourceFile => FindAncestorResult::FIND_ANCESTOR_TRUE,
+                    SyntaxKind::ModuleDeclaration => FindAncestorResult::FIND_ANCESTOR_FALSE,
+                    _ => FindAncestorResult::FIND_ANCESTOR_QUIT,
+                })
+                .is_some();
         }
         false
     }

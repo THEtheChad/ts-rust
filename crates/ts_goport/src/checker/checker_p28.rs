@@ -116,10 +116,10 @@ impl Checker {
         object_flags: ObjectFlags,
     ) -> TypeId {
         let id = self.get_type_list_key(type_arguments);
-        if let Some(instantiations) = &self.ty(target).as_interface_type().instantiations {
-            if let Some(&t) = instantiations.get(&id) {
-                return t;
-            }
+        if let Some(instantiations) = &self.ty(target).as_interface_type().instantiations
+            && let Some(&t) = instantiations.get(&id)
+        {
+            return t;
         }
         let propagating = self.get_propagating_flags_of_types(type_arguments, TypeFlags::NONE);
         let target_symbol = self.ty(target).symbol;
@@ -154,18 +154,18 @@ impl Checker {
         let mut alias = alias;
         if alias.is_none() {
             alias = self.get_alias_for_type_node(node);
-            if let Some(a) = &alias {
-                if mapper.is_some() {
-                    // PORT: Go mutates the freshly created alias in place. The
-                    // `Rc` is not shared yet, so a rebuilt alias is equivalent.
-                    let symbol = a.symbol;
-                    let type_arguments = a.type_arguments.clone();
-                    let instantiated = self.instantiate_types(&type_arguments, mapper);
-                    alias = Some(Rc::new(TypeAlias {
-                        symbol,
-                        type_arguments: instantiated,
-                    }));
-                }
+            if let Some(a) = &alias
+                && mapper.is_some()
+            {
+                // PORT: Go mutates the freshly created alias in place. The
+                // `Rc` is not shared yet, so a rebuilt alias is equivalent.
+                let symbol = a.symbol;
+                let type_arguments = a.type_arguments.clone();
+                let instantiated = self.instantiate_types(&type_arguments, mapper);
+                alias = Some(Rc::new(TypeAlias {
+                    symbol,
+                    type_arguments: instantiated,
+                }));
             }
         }
         let target_symbol = self.ty(target).symbol;
@@ -344,10 +344,12 @@ impl Checker {
         access_flags: AccessFlags,
     ) -> TypeId {
         self.new_type_with(TypeFlags::INDEXED_ACCESS, ObjectFlags::NONE, || {
-            let mut data = IndexedAccessType::default();
-            data.object_type = object_type;
-            data.index_type = index_type;
-            data.access_flags = access_flags;
+            let data = IndexedAccessType {
+                object_type,
+                index_type,
+                access_flags,
+                ..Default::default()
+            };
             TypeData::IndexedAccess(data)
         })
     }
@@ -355,9 +357,11 @@ impl Checker {
     // Go: checker/checker.go:25796 newIndexType
     pub fn new_index_type(&mut self, target: TypeId, index_flags: IndexFlags) -> TypeId {
         self.new_type_with(TypeFlags::INDEX, ObjectFlags::NONE, || {
-            let mut data = IndexType::default();
-            data.target = target;
-            data.index_flags = index_flags;
+            let data = IndexType {
+                target,
+                index_flags,
+                ..Default::default()
+            };
             TypeData::Index(data)
         })
     }
@@ -384,8 +388,10 @@ impl Checker {
     // Go: checker/checker.go:25810 newStringMappingType
     pub fn new_string_mapping_type(&mut self, symbol: SymbolId, target: TypeId) -> TypeId {
         let t = self.new_type_with(TypeFlags::STRING_MAPPING, ObjectFlags::NONE, || {
-            let mut data = StringMappingType::default();
-            data.target = target;
+            let data = StringMappingType {
+                target,
+                ..Default::default()
+            };
             TypeData::StringMapping(data)
         });
         self.ty_mut(t).symbol = symbol;
@@ -428,9 +434,11 @@ impl Checker {
     // Go: checker/checker.go:25828 newSubstitutionType
     pub fn new_substitution_type(&mut self, base_type: TypeId, constraint: TypeId) -> TypeId {
         self.new_type_with(TypeFlags::SUBSTITUTION, ObjectFlags::NONE, || {
-            let mut data = SubstitutionType::default();
-            data.base_type = base_type;
-            data.constraint = constraint;
+            let data = SubstitutionType {
+                base_type,
+                constraint,
+                ..Default::default()
+            };
             TypeData::Substitution(data)
         })
     }
@@ -1618,10 +1626,10 @@ impl Checker {
         let mut type_variables: Vec<TypeId> = Vec::new();
         // First collect a list of the type variables occurring in constraining intersections.
         for &t in types.iter() {
-            if let Some((variable, _)) = self.constrained_type_variable_parts_p28(t) {
-                if !type_variables.contains(&variable) {
-                    type_variables.push(variable);
-                }
+            if let Some((variable, _)) = self.constrained_type_variable_parts_p28(t)
+                && !type_variables.contains(&variable)
+            {
+                type_variables.push(variable);
             }
         }
         // For each type variable, check if the constraining intersections for that type variable fully
@@ -1631,10 +1639,10 @@ impl Checker {
             let mut primitives: Vec<TypeId> = Vec::new();
             // First collect the primitive types from the constraining intersections.
             for &t in types.iter() {
-                if let Some((variable, primitive)) = self.constrained_type_variable_parts_p28(t) {
-                    if variable == type_variable {
-                        (primitives, _) = self.insert_type(&primitives, primitive);
-                    }
+                if let Some((variable, primitive)) = self.constrained_type_variable_parts_p28(t)
+                    && variable == type_variable
+                {
+                    (primitives, _) = self.insert_type(&primitives, primitive);
                 }
             }
             // If every constituent in the type variable's constraint is covered by an intersection of the type
@@ -1652,10 +1660,10 @@ impl Checker {
                     i -= 1;
                     let t = types[i];
                     if let Some((variable, primitive)) = self.constrained_type_variable_parts_p28(t)
+                        && variable == type_variable
+                        && self.contains_type(&primitives, primitive)
                     {
-                        if variable == type_variable && self.contains_type(&primitives, primitive) {
-                            types.remove(i);
-                        }
+                        types.remove(i);
                     }
                 }
                 // Go `insertType(types, typeVariable)`, in place.

@@ -390,10 +390,12 @@ pub fn pdqsort_cmp_func<T, F: FnMut(&T, &T) -> i32>(
         }
 
         // The slice is likely already sorted.
-        if was_balanced && was_partitioned && hint == SortedHint::IncreasingHint {
-            if partial_insertion_sort_cmp_func(data, a, b, cmp) {
-                return;
-            }
+        if was_balanced
+            && was_partitioned
+            && hint == SortedHint::IncreasingHint
+            && partial_insertion_sort_cmp_func(data, a, b, cmp)
+        {
+            return;
         }
 
         // Probably the slice contains many duplicate elements, partition the slice into
@@ -584,6 +586,8 @@ pub fn break_patterns_cmp_func<T, F: FnMut(&T, &T) -> i32>(
 /// [0,8): chooses a static pivot.
 /// [8,shortestNinther): uses the simple median-of-three method.
 /// [shortestNinther,∞): uses the Tukey ninther method.
+// Go writes the three sample points as l/4*1, l/4*2 and l/4*3.
+#[allow(clippy::identity_op)]
 pub fn choose_pivot_cmp_func<T, F: FnMut(&T, &T) -> i32>(
     data: &mut [T],
     a: isize,
@@ -1030,10 +1034,12 @@ pub fn pdqsort_func<T, F: FnMut(&T, &T) -> bool>(
         }
 
         // The slice is likely already sorted.
-        if was_balanced && was_partitioned && hint == SortedHint::IncreasingHint {
-            if partial_insertion_sort_func(data, a, b) {
-                return;
-            }
+        if was_balanced
+            && was_partitioned
+            && hint == SortedHint::IncreasingHint
+            && partial_insertion_sort_func(data, a, b)
+        {
+            return;
         }
 
         // Probably the slice contains many duplicate elements, partition the slice into
@@ -1220,6 +1226,8 @@ pub fn break_patterns_func<T, F: FnMut(&T, &T) -> bool>(
 /// [0,8): chooses a static pivot.
 /// [8,shortestNinther): uses the simple median-of-three method.
 /// [shortestNinther,∞): uses the Tukey ninther method.
+// Go writes the three sample points as l/4*1, l/4*2 and l/4*3.
+#[allow(clippy::identity_op)]
 pub fn choose_pivot_func<T, F: FnMut(&T, &T) -> bool>(
     data: &mut LessSwap<'_, T, F>,
     a: isize,
@@ -1703,11 +1711,11 @@ mod tests {
         for n in [0, 1, 2, 19, 20, 21, 50, 64, 100, 300, 1000, 5000] {
             let input = keys(n);
             let (mut want, mut got) = (input.clone(), input.clone());
-            want.sort_by(|a, b| (a.file, a.pos).cmp(&(b.file, b.pos)));
+            want.sort_by_key(|a| (a.file, a.pos));
             by_index::stable_sort_by(&mut got, |a, b| (a.file, a.pos).cmp(&(b.file, b.pos)));
             assert_eq!(ids(&got), ids(&want));
             let (mut want, mut got) = (input.clone(), input);
-            want.sort_by(|a, b| b.file.cmp(&a.file));
+            want.sort_by_key(|b| std::cmp::Reverse(b.file));
             by_index::stable_sort_by(&mut got, |a, b| b.file.cmp(&a.file));
             assert_eq!(ids(&got), ids(&want));
         }
@@ -1726,13 +1734,13 @@ mod tests {
             let mut b = input.clone();
             sort_stable_func_hot(&mut b, |_, _| (rng.next() % 3) as i32 - 1);
             let mut c = input.clone();
-            sort_slice_direct(&mut c, |_, _| rng.next() % 2 == 0);
+            sort_slice_direct(&mut c, |_, _| rng.next().is_multiple_of(2));
             let mut d = input.clone();
             sort_func(&mut d, |_, _| (rng.next() % 3) as i32 - 1);
             let mut e = input.clone();
             sort_stable_func(&mut e, |_, _| (rng.next() % 3) as i32 - 1);
             let mut f = input.clone();
-            sort_slice(&mut f, |_, _| rng.next() % 2 == 0);
+            sort_slice(&mut f, |_, _| rng.next().is_multiple_of(2));
             for mut out in [a, b, c, d, e, f] {
                 out.sort_unstable();
                 assert_eq!(out, input);

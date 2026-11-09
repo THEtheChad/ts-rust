@@ -5024,9 +5024,11 @@ impl MarshalerTo for SourceFileResponse {
 struct PlainJsonText<'a>(&'a str);
 
 impl MarshalerTo for PlainJsonText<'_> {
+    #[allow(clippy::manual_range_contains)]
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
         // A fold over each chunk, with no early exit inside it, so the test
-        // is vector code.
+        // is vector code. Hence the non-short-circuit & of the comparisons,
+        // not a range contains.
         let plain = self.0.as_bytes().chunks(64).all(|chunk| {
             chunk.iter().fold(true, |plain, &b| {
                 plain & (b >= 0x20) & (b < 0x80) & (b != b'"') & (b != b'\\')

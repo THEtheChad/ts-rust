@@ -587,6 +587,9 @@ impl Binder {
     }
 
     // Go: binder/binder.go:2196 bindPrefixUnaryExpressionFlow
+    // clippy::manual_swap misreads the save: `save_true_target` is read again
+    // after the children bind.
+    #[allow(clippy::manual_swap)]
     pub fn bind_prefix_unary_expression_flow(&mut self, node: Node) {
         let operator = node.operator();
         if operator == SyntaxKind::ExclamationToken {
@@ -710,14 +713,10 @@ impl Binder {
             self.bind_assignment_target_flow(left);
             if operator == SyntaxKind::EqualsToken
                 && left.kind() == SyntaxKind::ElementAccessExpression
+                && is_narrowable_operand(left.expression())
             {
-                if is_narrowable_operand(left.expression()) {
-                    self.current_flow = self.create_flow_mutation(
-                        FlowFlags::ARRAY_MUTATION,
-                        self.current_flow,
-                        node,
-                    );
-                }
+                self.current_flow =
+                    self.create_flow_mutation(FlowFlags::ARRAY_MUTATION, self.current_flow, node);
             }
         }
     }
@@ -1705,10 +1704,10 @@ pub fn has_narrowable_argument(expr: Node) -> bool {
         }
     }
     let call_expression = expr.expression();
-    if is_property_access_expression(call_expression) {
-        if contains_narrowable_reference(call_expression.expression()) {
-            return true;
-        }
+    if is_property_access_expression(call_expression)
+        && contains_narrowable_reference(call_expression.expression())
+    {
+        return true;
     }
     false
 }

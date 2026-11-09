@@ -1205,10 +1205,7 @@ impl StderrLogger {
     fn write(&self, data: &[u8]) -> usize {
         let mut pending = lock(&self.pending);
         pending.extend_from_slice(data);
-        loop {
-            let Some(index) = pending.iter().position(|&b| b == b'\n') else {
-                break;
-            };
+        while let Some(index) = pending.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = pending.drain(..=index).collect();
             let line = &line[..line.len() - 1];
             self.log(line.strip_suffix(b"\r").unwrap_or(line));
@@ -2311,13 +2308,12 @@ impl ProjectLease {
         }
         {
             let mut leases = host.project_leases.borrow_mut();
-            if let Some(leases) = leases.as_mut() {
-                if leases
+            if let Some(leases) = leases.as_mut()
+                && leases
                     .get(&self.key)
                     .is_some_and(|lease| std::ptr::eq(Rc::as_ptr(lease), self))
-                {
-                    leases.shift_remove(&self.key);
-                }
+            {
+                leases.shift_remove(&self.key);
             }
         }
         for key in self.entries.values() {
@@ -2332,13 +2328,11 @@ impl ProjectLease {
                     entry.project_handle.clone(),
                 )
             };
-            if opened {
-                if let Some(conn) = host.live_conn(&mapper.identity()) {
-                    result = errors::join([
-                        result,
-                        host.close_project(&mapper, &conn, &project_handle).err(),
-                    ]);
-                }
+            if opened && let Some(conn) = host.live_conn(&mapper.identity()) {
+                result = errors::join([
+                    result,
+                    host.close_project(&mapper, &conn, &project_handle).err(),
+                ]);
             }
             if let Some(projects) = host.projects.borrow_mut().as_mut() {
                 projects.shift_remove(key);
@@ -4444,7 +4438,7 @@ mod tests {
 
         let release_vue_a = r.acquire(&[vue_a.clone(), vue_a.clone()]);
         let release_vue_b = r.acquire(&[vue_b]);
-        let release_svelte = r.acquire(&[svelte.clone()]);
+        let release_svelte = r.acquire(std::slice::from_ref(&svelte));
         for mapper in [&vue_a, &svelte] {
             r.transform(mapper, request("/x", "y")).expect("transform");
         }
@@ -4470,7 +4464,7 @@ mod tests {
             "final vue owner should close once"
         );
 
-        let release_new = r.acquire(&[vue_a.clone()]);
+        let release_new = r.acquire(std::slice::from_ref(&vue_a));
         r.transform(&vue_a, request("/x", "y")).expect("transform");
         assert_eq!(
             spawner.spawns.load(Ordering::SeqCst),
@@ -5109,7 +5103,7 @@ mod tests {
         let r = new_host(&test_ctx(), spawner.clone(), locale::DEFAULT);
 
         let definition = mapper("", "vue", "1.0.0", "vue-mapper");
-        let release = r.acquire(&[definition.clone()]);
+        let release = r.acquire(std::slice::from_ref(&definition));
 
         r.transform(&definition, request("/a.vue", "x"))
             .expect("transform");
@@ -5141,7 +5135,7 @@ mod tests {
         let spawner = recording_spawner(&mapper_process);
         let r = new_host(&test_ctx(), spawner.clone(), locale::DEFAULT);
         let definition = mapper("", "vue", "1.0.0", "vue-mapper");
-        let release = r.acquire(&[definition.clone()]);
+        let release = r.acquire(std::slice::from_ref(&definition));
 
         r.transform(&definition, request("/a.vue", "x"))
             .expect("transform");

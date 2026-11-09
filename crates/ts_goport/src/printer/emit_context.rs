@@ -764,11 +764,10 @@ impl EmitContext {
     #[must_use]
     pub fn get_node_for_generated_name(&self, name: Node) -> Node {
         let auto_generate = self.auto_generate.borrow().get(&name).cloned();
-        if let Some(auto_generate) = auto_generate {
-            if auto_generate.flags.is_node() {
-                return self
-                    .get_node_for_generated_name_worker(auto_generate.node, auto_generate.id);
-            }
+        if let Some(auto_generate) = auto_generate
+            && auto_generate.flags.is_node()
+        {
+            return self.get_node_for_generated_name_worker(auto_generate.node, auto_generate.id);
         }
         name
     }
@@ -1046,7 +1045,7 @@ impl EmitContext {
     pub fn add_emit_flags(&self, node: Node, flags: EmitFlags) {
         let mut emit_nodes = self.emit_nodes.borrow_mut();
         let emit_node = emit_nodes.get(node);
-        emit_node.emit_flags = emit_node.emit_flags | flags;
+        emit_node.emit_flags |= flags;
     }
 
     // Go: printer/emitcontext.go:570 EmitContext.SnippetElement
@@ -1067,10 +1066,10 @@ impl EmitContext {
     // Gets the range to use for a node when emitting comments.
     #[must_use]
     pub fn comment_range(&self, node: Node) -> TextRange {
-        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node) {
-            if emit_node.flags & HAS_COMMENT_RANGE != 0 {
-                return emit_node.comment_range;
-            }
+        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node)
+            && emit_node.flags & HAS_COMMENT_RANGE != 0
+        {
+            return emit_node.comment_range;
         }
         node.loc()
     }
@@ -1094,10 +1093,10 @@ impl EmitContext {
     // Gets the range to use for a node when emitting source maps.
     #[must_use]
     pub fn source_map_range(&self, node: Node) -> TextRange {
-        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node) {
-            if emit_node.flags & HAS_SOURCE_MAP_RANGE != 0 {
-                return emit_node.source_map_range;
-            }
+        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node)
+            && emit_node.flags & HAS_SOURCE_MAP_RANGE != 0
+        {
+            return emit_node.source_map_range;
         }
         node.loc()
     }
@@ -1135,12 +1134,11 @@ impl EmitContext {
     // Gets the range for a token of a node when emitting source maps.
     #[must_use]
     pub fn token_source_map_range(&self, node: Node, kind: SyntaxKind) -> (TextRange, bool) {
-        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node) {
-            if let Some(ranges) = &emit_node.token_source_map_ranges {
-                if let Some(loc) = ranges.get(&kind) {
-                    return (*loc, true);
-                }
-            }
+        if let Some(emit_node) = self.emit_nodes.borrow().try_get(node)
+            && let Some(ranges) = &emit_node.token_source_map_ranges
+            && let Some(loc) = ranges.get(&kind)
+        {
+            return (*loc, true);
         }
         (TextRange::new(0, 0), false)
     }
@@ -1270,10 +1268,10 @@ impl EmitContext {
     #[must_use]
     pub fn get_external_helpers_module_name(&self, node: Node) -> Node {
         let parse_node = self.parse_node(node);
-        if parse_node.is_some() {
-            if let Some(emit_node) = self.emit_nodes.borrow().try_get(parse_node) {
-                return emit_node.external_helpers_module_name;
-            }
+        if parse_node.is_some()
+            && let Some(emit_node) = self.emit_nodes.borrow().try_get(parse_node)
+        {
+            return emit_node.external_helpers_module_name;
         }
         Node::NIL
     }

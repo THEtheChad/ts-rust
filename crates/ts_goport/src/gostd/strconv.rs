@@ -254,11 +254,11 @@ pub fn is_print(r: char) -> bool {
     let r = r as u32;
     // Fast check for Latin-1
     if r <= 0xFF {
-        if 0x20 <= r && r <= 0x7E {
+        if (0x20..=0x7E).contains(&r) {
             // All the ASCII is printable from space through DEL-1.
             return true;
         }
-        if 0xA1 <= r && r <= 0xFF {
+        if (0xA1..=0xFF).contains(&r) {
             // Similarly for ¡ through ÿ...
             return r != 0xAD; // ...except for the bizarre soft hyphen.
         }

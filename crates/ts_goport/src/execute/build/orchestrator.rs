@@ -348,17 +348,17 @@ impl Orchestrator {
             let path = self.to_path(config);
             let mut task: Option<Rc<RefCell<BuildTask>>> = None;
             let mut build_info: Option<BuildInfoEntry> = None;
-            if let Some(old_tasks) = old_tasks {
-                if let Some(existing) = old_tasks.get(&path) {
-                    if !existing.borrow().dirty {
-                        // Reuse existing task if config is same
-                        task = Some(existing.clone());
-                    } else {
-                        if let Some(project) = &existing.borrow().content_mapper_project {
-                            let _ = project.close();
-                        }
-                        build_info = existing.borrow().build_info_entry.clone();
+            if let Some(old_tasks) = old_tasks
+                && let Some(existing) = old_tasks.get(&path)
+            {
+                if !existing.borrow().dirty {
+                    // Reuse existing task if config is same
+                    task = Some(existing.clone());
+                } else {
+                    if let Some(project) = &existing.borrow().content_mapper_project {
+                        let _ = project.close();
                     }
+                    build_info = existing.borrow().build_info_entry.clone();
                 }
             }
             let task = task.unwrap_or_else(|| {
@@ -481,10 +481,10 @@ impl Orchestrator {
             completed.insert(path);
             self.order.push(config_name.to_string());
         }
-        if self.opts.command.compiler_options.watch.is_true() {
-            if let Some(down_stream) = down_stream {
-                task.borrow_mut().down_stream.push(down_stream.clone());
-            }
+        if self.opts.command.compiler_options.watch.is_true()
+            && let Some(down_stream) = down_stream
+        {
+            task.borrow_mut().down_stream.push(down_stream.clone());
         }
         Some(task)
     }

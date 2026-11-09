@@ -209,7 +209,7 @@ impl DefaultResolver {
             // ts#64159 (resolver.go:2489)
             resolved_path: to_path(
                 &resolved_file_name,
-                &self.host.get_current_directory(),
+                self.host.get_current_directory(),
                 self.host.fs().use_case_sensitive_file_names(),
             ),
             resolved_file_name,

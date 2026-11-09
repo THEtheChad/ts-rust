@@ -383,10 +383,8 @@ impl SignatureTypeMatcher {
                 let left_symbol = c.ty(left).symbol();
                 let right_symbol = c.ty(right).symbol();
                 same_symbol_reference(c, left_symbol, right_symbol)
-            } else if left_flags.intersects(TypeFlags::SINGLETON) {
-                true
             } else {
-                false
+                left_flags.intersects(TypeFlags::SINGLETON)
             }
         };
         self.active.remove(&pair);

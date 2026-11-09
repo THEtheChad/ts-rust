@@ -641,7 +641,7 @@ fn new_ad_hoc_message(message: &str) -> &'static crate::diagnostics::Message {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(existing) = messages.get(message) {
-        return *existing;
+        return existing;
     }
     let text: &'static str = Box::leak(message.to_string().into_boxed_str());
     let leaked: &'static crate::diagnostics::Message =

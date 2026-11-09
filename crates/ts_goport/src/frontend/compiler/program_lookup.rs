@@ -767,13 +767,13 @@ impl NewProgram {
         module_reference: &str,
         mode: ResolutionMode,
     ) -> Option<Arc<ResolvedModule>> {
-        if let Some(resolutions) = self.processed_files.resolved_modules.get(&file.path()) {
-            if let Some(resolved) = resolutions.get(&ModeAwareCacheKey {
+        if let Some(resolutions) = self.processed_files.resolved_modules.get(&file.path())
+            && let Some(resolved) = resolutions.get(&ModeAwareCacheKey {
                 name: module_reference.to_string(),
                 mode,
-            }) {
-                return Some(resolved.clone());
-            }
+            })
+        {
+            return Some(resolved.clone());
         }
         None
     }
@@ -1040,7 +1040,7 @@ pub fn source_file_may_be_emitted(
             &output_path,
             &ComparePathsOptions {
                 use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-                current_directory: current_directory,
+                current_directory,
             },
         ) == 0
         {

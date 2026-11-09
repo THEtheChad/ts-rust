@@ -1349,62 +1349,57 @@ impl Checker {
                         == self.get_control_flow_container(location))
                 {
                     let parent = declaration.parent().parent();
-                    if is_variable_declaration(root_declaration)
+                    if (is_variable_declaration(root_declaration)
                         && self
                             .get_combined_node_flags_cached(root_declaration)
                             .intersects(NodeFlags::CONSTANT)
-                        || is_parameter_declaration(root_declaration)
-                    {
-                        if !self
+                        || is_parameter_declaration(root_declaration))
+                        && !self
                             .node_links
                             .get(parent)
                             .flags
                             .intersects(NodeCheckFlags::IN_CHECK_IDENTIFIER)
+                    {
+                        self.node_links.get(parent).flags |= NodeCheckFlags::IN_CHECK_IDENTIFIER;
+                        let parent_type =
+                            self.get_type_for_binding_element_parent(parent, CheckMode::NORMAL);
+                        let mut parent_type_constraint = TypeId::NIL;
+                        if parent_type.is_some() {
+                            parent_type_constraint = self
+                                .map_type(parent_type, &mut |c: &mut Checker, t: TypeId| {
+                                    c.get_base_constraint_or_type(t)
+                                });
+                        }
+                        // Guard parent-type resolution only; flow analysis should allow re-entrant narrowing
+                        let links = self.node_links.get(parent);
+                        links.flags = links.flags.without(NodeCheckFlags::IN_CHECK_IDENTIFIER);
+                        if parent_type_constraint.is_some()
+                            && self
+                                .ty(parent_type_constraint)
+                                .flags
+                                .intersects(TypeFlags::UNION)
+                            && !(is_parameter_declaration(root_declaration)
+                                && self.is_some_symbol_assigned(root_declaration))
                         {
-                            self.node_links.get(parent).flags |=
-                                NodeCheckFlags::IN_CHECK_IDENTIFIER;
-                            let parent_type =
-                                self.get_type_for_binding_element_parent(parent, CheckMode::NORMAL);
-                            let mut parent_type_constraint = TypeId::NIL;
-                            if parent_type.is_some() {
-                                parent_type_constraint = self.map_type(
-                                    parent_type,
-                                    &mut |c: &mut Checker, t: TypeId| {
-                                        c.get_base_constraint_or_type(t)
-                                    },
+                            let pattern = declaration.parent();
+                            let narrowed_type = self.get_flow_type_of_reference_ex(
+                                pattern,
+                                parent_type_constraint,
+                                parent_type_constraint,
+                                Node::NIL, /*flowContainer*/
+                                get_flow_node_of_node(location),
+                            );
+                            if self.ty(narrowed_type).flags.intersects(TypeFlags::NEVER) {
+                                t = self.never_type;
+                            } else {
+                                // Destructurings are validated against the parent type elsewhere. Here we disable tuple bounds
+                                // checks because the narrowed type may have lower arity than the full parent type. For example,
+                                // for the declaration [x, y]: [1, 2] | [3], we may have narrowed the parent type to just [3].
+                                t = self.get_binding_element_type_from_parent_type(
+                                    declaration,
+                                    narrowed_type,
+                                    true, /*noTupleBoundsCheck*/
                                 );
-                            }
-                            // Guard parent-type resolution only; flow analysis should allow re-entrant narrowing
-                            let links = self.node_links.get(parent);
-                            links.flags = links.flags.without(NodeCheckFlags::IN_CHECK_IDENTIFIER);
-                            if parent_type_constraint.is_some()
-                                && self
-                                    .ty(parent_type_constraint)
-                                    .flags
-                                    .intersects(TypeFlags::UNION)
-                                && !(is_parameter_declaration(root_declaration)
-                                    && self.is_some_symbol_assigned(root_declaration))
-                            {
-                                let pattern = declaration.parent();
-                                let narrowed_type = self.get_flow_type_of_reference_ex(
-                                    pattern,
-                                    parent_type_constraint,
-                                    parent_type_constraint,
-                                    Node::NIL, /*flowContainer*/
-                                    get_flow_node_of_node(location),
-                                );
-                                if self.ty(narrowed_type).flags.intersects(TypeFlags::NEVER) {
-                                    t = self.never_type;
-                                } else {
-                                    // Destructurings are validated against the parent type elsewhere. Here we disable tuple bounds
-                                    // checks because the narrowed type may have lower arity than the full parent type. For example,
-                                    // for the declaration [x, y]: [1, 2] | [3], we may have narrowed the parent type to just [3].
-                                    t = self.get_binding_element_type_from_parent_type(
-                                        declaration,
-                                        narrowed_type,
-                                        true, /*noTupleBoundsCheck*/
-                                    );
-                                }
                             }
                         }
                     }
@@ -1666,7 +1661,7 @@ impl Checker {
         resolve_name(
             self,
             reference,
-            &text,
+            text,
             SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE | SymbolFlags::ALIAS,
             None,
             false, /*isUse*/
@@ -1678,7 +1673,7 @@ impl Checker {
     pub fn get_cannot_find_name_diagnostic_for_name(&self, node: Node) -> &'static Message {
         let text = node.text();
         let uses_wildcard_types = self.compiler_options.uses_wildcard_types();
-        match &*text {
+        match text {
             "document" | "console" => {
                 diag::Cannot_find_name_0_Do_you_need_to_change_your_target_library_Try_changing_the_lib_compiler_option_to_include_dom
             }
@@ -1718,7 +1713,7 @@ impl Checker {
             }
             _ => {
                 // PORT: Go's "await" case falls through to the default branch when the parent is not a call.
-                if &*text == "await" && is_call_expression(node.parent()) {
+                if text == "await" && is_call_expression(node.parent()) {
                     return diag::Cannot_find_name_0_Did_you_mean_to_write_this_in_an_async_function;
                 }
                 if node.parent().kind() == SyntaxKind::ShorthandPropertyAssignment {

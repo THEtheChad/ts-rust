@@ -210,10 +210,10 @@ impl ProjectCollection {
                 projects.push(project as Rc<dyn ls::Project>);
             }
         }
-        if let Some(inferred_project) = &self.inferred_project {
-            if inferred_project.borrow().contains_file(path) {
-                projects.push(inferred_project.clone() as Rc<dyn ls::Project>);
-            }
+        if let Some(inferred_project) = &self.inferred_project
+            && inferred_project.borrow().contains_file(path)
+        {
+            projects.push(inferred_project.clone() as Rc<dyn ls::Project>);
         }
         projects
     }
@@ -288,10 +288,10 @@ impl ProjectCollection {
             return Some(containing_projects[0].clone());
         }
         if containing_projects.is_empty() {
-            if let Some(inferred_project) = &self.inferred_project {
-                if inferred_project.borrow().contains_file(path) {
-                    return Some(inferred_project.clone());
-                }
+            if let Some(inferred_project) = &self.inferred_project
+                && inferred_project.borrow().contains_file(path)
+            {
+                return Some(inferred_project.clone());
             }
             return None;
         }
@@ -406,14 +406,13 @@ impl ProjectCollection {
             .config_file_registry
             .as_ref()
             .unwrap_or_else(|| crate::core::go_nil_dereference());
-        if let Some(config) = config_file_registry.get_config(path) {
-            if config
+        if let Some(config) = config_file_registry.get_config(path)
+            && config
                 .compiler_options()
                 .disable_solution_searching
                 .is_true()
-            {
-                return fallback;
-            }
+        {
+            return fallback;
         }
         let ancestor_config_name =
             config_file_registry.get_ancestor_config_file_name(path, config_file_name);

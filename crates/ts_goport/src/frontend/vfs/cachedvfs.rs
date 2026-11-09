@@ -119,10 +119,10 @@ impl CachedFs {
 impl Fs for CachedFs {
     // Go: cachedvfs.go:49 DirectoryExists
     fn directory_exists(&self, path: &str) -> bool {
-        if self.enabled.get() {
-            if let Some(ret) = cache_load(&self.directory_exists_cache, path) {
-                return ret;
-            }
+        if self.enabled.get()
+            && let Some(ret) = cache_load(&self.directory_exists_cache, path)
+        {
+            return ret;
         }
 
         let ret = self.fs.directory_exists(path);
@@ -138,10 +138,10 @@ impl Fs for CachedFs {
 
     // Go: cachedvfs.go:65 FileExists
     fn file_exists(&self, path: &str) -> bool {
-        if self.enabled.get() {
-            if let Some(ret) = cache_load(&self.file_exists_cache, path) {
-                return ret;
-            }
+        if self.enabled.get()
+            && let Some(ret) = cache_load(&self.file_exists_cache, path)
+        {
+            return ret;
         }
 
         let ret = self.fs.file_exists(path);
@@ -157,10 +157,10 @@ impl Fs for CachedFs {
 
     // Go: cachedvfs.go:81 GetAccessibleEntries
     fn get_accessible_entries(&self, path: &str) -> Entries {
-        if self.enabled.get() {
-            if let Some(ret) = cache_load(&self.get_accessible_entries_cache, path) {
-                return ret;
-            }
+        if self.enabled.get()
+            && let Some(ret) = cache_load(&self.get_accessible_entries_cache, path)
+        {
+            return ret;
         }
 
         let ret = self.fs.get_accessible_entries(path);
@@ -181,10 +181,10 @@ impl Fs for CachedFs {
 
     // Go: cachedvfs.go:101 Realpath
     fn realpath(&self, path: &str) -> String {
-        if self.enabled.get() {
-            if let Some(ret) = cache_load(&self.realpath_cache, path) {
-                return ret;
-            }
+        if self.enabled.get()
+            && let Some(ret) = cache_load(&self.realpath_cache, path)
+        {
+            return ret;
         }
 
         let ret = self.fs.realpath(path);
@@ -215,10 +215,10 @@ impl Fs for CachedFs {
 
     // Go: cachedvfs.go:125 Stat
     fn stat(&self, path: &str) -> Option<FileInfo> {
-        if self.enabled.get() {
-            if let Some(ret) = cache_load(&self.stat_cache, path) {
-                return ret;
-            }
+        if self.enabled.get()
+            && let Some(ret) = cache_load(&self.stat_cache, path)
+        {
+            return ret;
         }
 
         let ret = self.fs.stat(path);

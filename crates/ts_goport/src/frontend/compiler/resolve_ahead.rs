@@ -1447,7 +1447,7 @@ impl AheadFs {
         let view = &self.job.view;
         let open = view.open_directories.contains(&canonical);
         if open || view.open_files.contains(&canonical) {
-            let call = (canonical.as_str() == path).then(|| AheadCall::DirectoryExists {
+            let call = (canonical.as_str() == path).then_some(AheadCall::DirectoryExists {
                 path: canonical,
                 exists: open,
             });

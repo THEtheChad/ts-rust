@@ -592,29 +592,27 @@ impl Checker {
                 let assigned_type = self.get_assignment_declaration_initializer_type(declaration);
                 if assigned_type.is_some() {
                     // We ignore initial assignments of undefined to CommonJS exports when there are multiple assignment declarations
-                    if get_assignment_declaration_kind(declaration)
+                    if (get_assignment_declaration_kind(declaration)
                         != JSDeclarationKind::EXPORTS_PROPERTY
                         || i != 0
                         || declarations.len() == 1
                         || !self
                             .ty(assigned_type)
                             .flags
-                            .intersects(TypeFlags::UNDEFINED)
+                            .intersects(TypeFlags::UNDEFINED))
+                        && !types.contains(&assigned_type)
                     {
-                        if !types.contains(&assigned_type) {
-                            types.push(assigned_type);
-                        }
+                        types.push(assigned_type);
                     }
                 }
             }
             if kind == ThisAssignmentDeclarationKind::THIS_ASSIGNMENT_DECLARATION_METHOD
                 && !types.is_empty()
+                && self.strict_null_checks
             {
-                if self.strict_null_checks {
-                    let undefined_or_missing_type = self.undefined_or_missing_type;
-                    if !types.contains(&undefined_or_missing_type) {
-                        types.push(undefined_or_missing_type);
-                    }
+                let undefined_or_missing_type = self.undefined_or_missing_type;
+                if !types.contains(&undefined_or_missing_type) {
+                    types.push(undefined_or_missing_type);
                 }
             }
             if t.is_nil() {
@@ -643,12 +641,11 @@ impl Checker {
     // Go: checker/checker.go:18548 getAssignmentDeclarationInitializerType
     pub fn get_assignment_declaration_initializer_type(&mut self, node: Node) -> TypeId {
         if is_binary_expression(node) {
-            let t: TypeId;
-            match get_assignment_declaration_kind(node) {
+            let t: TypeId = match get_assignment_declaration_kind(node) {
                 JSDeclarationKind::MODULE_EXPORTS | JSDeclarationKind::EXPORTS_PROPERTY => {
                     let expr_type =
                         self.check_expression_cached(get_right_most_assigned_expression(node));
-                    t = self.get_regular_type_of_literal_type(expr_type);
+                    self.get_regular_type_of_literal_type(expr_type)
                 }
                 kind => {
                     if kind == JSDeclarationKind::THIS_PROPERTY
@@ -657,9 +654,9 @@ impl Checker {
                         return TypeId::NIL;
                     }
                     // fallthrough
-                    t = self.check_expression_for_mutable_location(node.right(), CheckMode::NORMAL);
+                    self.check_expression_for_mutable_location(node.right(), CheckMode::NORMAL)
                 }
-            }
+            };
             if self.is_empty_array_literal_type(t)
                 && !self.has_parent_with_type_annotation(node.symbol())
             {
@@ -854,10 +851,8 @@ impl Checker {
             t = self.any_type;
         }
         // Report implicit any errors unless this is a private property within an ambient declaration
-        if report_errors {
-            if !declaration_belongs_to_private_ambient_member(declaration) {
-                self.report_implicit_any(declaration, t, WideningKind::NORMAL);
-            }
+        if report_errors && !declaration_belongs_to_private_ambient_member(declaration) {
+            self.report_implicit_any(declaration, t, WideningKind::NORMAL);
         }
         t
     }
@@ -1054,12 +1049,11 @@ impl Checker {
                 kind: CachedTypeKind::WIDENED,
                 type_id: t,
             };
-            if context.is_none() {
-                if let Some(&cached) = self.cached_types.get(&key) {
-                    if cached.is_some() {
-                        return cached;
-                    }
-                }
+            if context.is_none()
+                && let Some(&cached) = self.cached_types.get(&key)
+                && cached.is_some()
+            {
+                return cached;
             }
             let mut result = TypeId::NIL;
             let flags = self.ty(t).flags;
@@ -1132,12 +1126,11 @@ impl Checker {
         t: TypeId,
         context: Option<Rc<RefCell<WideningContext>>>,
     ) -> TypeId {
-        if let Some(ctx) = &context {
-            if let Some(&cached) = ctx.borrow().widened_types.get(&t) {
-                if cached.is_some() {
-                    return cached;
-                }
-            }
+        if let Some(ctx) = &context
+            && let Some(&cached) = ctx.borrow().widened_types.get(&t)
+            && cached.is_some()
+        {
+            return cached;
         }
         let members = self.symbols.new_table();
         for prop in self.get_properties_of_object_type(t) {
@@ -1183,10 +1176,10 @@ impl Checker {
             self.ty(t).object_flags & (ObjectFlags::JS_LITERAL | ObjectFlags::NON_INFERRABLE_TYPE);
         self.ty_mut(result).object_flags |= retained;
         // Only cache in child contexts since the root context never widens a particular object literal type more than once
-        if let Some(ctx) = &context {
-            if ctx.borrow().parent.is_some() {
-                ctx.borrow_mut().widened_types.insert(t, result);
-            }
+        if let Some(ctx) = &context
+            && ctx.borrow().parent.is_some()
+        {
+            ctx.borrow_mut().widened_types.insert(t, result);
         }
         result
     }
@@ -1305,10 +1298,10 @@ impl Checker {
 
     // Go: checker/checker.go:18929 getUndefinedProperty
     pub fn get_undefined_property(&mut self, prop: SymbolId) -> SymbolId {
-        if let Some(&cached) = self.undefined_properties.get(&prop) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.undefined_properties.get(&prop)
+            && cached.is_some()
+        {
+            return cached;
         }
         let undefined_or_missing_type = self.undefined_or_missing_type;
         let result = self.create_symbol_with_type(prop, undefined_or_missing_type);

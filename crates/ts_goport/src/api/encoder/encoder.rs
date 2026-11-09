@@ -1135,6 +1135,8 @@ fn store_node_data<'f>(
 }
 
 // Go: api/encoder/encoder.go:540 (the visitor.Visit func of encodeTree)
+// `base + 0` lines up with the `base + 1..3` byte stores, as in Go.
+#[allow(clippy::identity_op)]
 fn encode_visit(node: Node, visitor: &mut EncodeVisitor<'_>, fast: Option<&StoreFile<'_>>) -> Node {
     // PERF: (apiperf2) a node of the store file reads its record once.
     let in_file = fast.filter(|fast| node.file_index() == fast.file);
@@ -1433,6 +1435,8 @@ fn encode_store_list(list: NodeList, visitor: &mut EncodeVisitor<'_>, fast: &Sto
 
 /// The start of the VisitNodes hook of Go `encodeTree`: the entry of a
 /// list at `pos`..`end` with `len` nodes. Returns its index.
+// `base + 0` lines up with the `base + 1..3` byte stores, as in Go.
+#[allow(clippy::identity_op)]
 fn begin_node_list(
     st: &mut EncodeTreeState,
     pos: i32,
@@ -1483,8 +1487,8 @@ pub fn append_uint32s(buf: &mut Vec<u8>, values: &[u32]) {
 #[inline]
 fn append_node(buf: &mut Vec<u8>, values: [u32; 7]) {
     let mut bytes = [0u8; NODE_SIZE];
-    for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
-        chunk.copy_from_slice(&value.to_le_bytes());
+    for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+        *chunk = value.to_le_bytes();
     }
     buf.extend_from_slice(&bytes);
 }

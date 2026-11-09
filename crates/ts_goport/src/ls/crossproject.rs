@@ -21,6 +21,7 @@
 //!   3. commit (dispatch thread): for each location in search order, Go
 //!      `GetProjectsForFile` and `enqueueItem`; then the response, or the
 //!      first error.
+//!
 //!   Items get their number when they leave the queue, and commit strictly
 //!   in that order. So the enqueue calls, `results` (keys, order, winning
 //!   positions) and the first error are those of a serial run in Go start

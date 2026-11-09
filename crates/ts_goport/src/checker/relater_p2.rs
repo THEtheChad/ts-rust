@@ -926,16 +926,15 @@ impl Checker {
         if self.is_error_type(t) {
             return t;
         }
-        let result: TypeId;
-        if self.sym(symbol).flags.intersects(SymbolFlags::TYPE_ALIAS) {
+        let result: TypeId = if self.sym(symbol).flags.intersects(SymbolFlags::TYPE_ALIAS) {
             let type_parameters = self.type_alias_links.get(symbol).type_parameters.clone();
             let type_arguments = self.instantiate_types(&type_parameters, mapper);
-            result = self.get_type_alias_instantiation(symbol, &type_arguments, None);
+            self.get_type_alias_instantiation(symbol, &type_arguments, None)
         } else {
             let type_parameters = self.ty(t).as_interface_type().type_parameters().to_vec();
             let type_arguments = self.instantiate_types(&type_parameters, mapper);
-            result = self.create_type_reference(t, &type_arguments);
-        }
+            self.create_type_reference(t, &type_arguments)
+        };
         self.marker_types.insert(result);
         result
     }
@@ -1286,27 +1285,29 @@ impl Checker {
                 if result == Ternary::FALSE && report_errors {
                     // The errors reported here serve as markers that trigger error chain reduction in the (*Relater).reportError
                     // method. The markers are elided in the final diagnostic chain and never actually reported.
-                    let message: &'static crate::diagnostics::Message;
                     let source_is_construct =
                         self.sig(source).flags.intersects(SignatureFlags::CONSTRUCT);
-                    if self.sig(source).parameters.is_empty()
+                    let message: &'static crate::diagnostics::Message = if self
+                        .sig(source)
+                        .parameters
+                        .is_empty()
                         && self.sig(target).parameters.is_empty()
                     {
-                        message = if source_is_construct {
+                        if source_is_construct {
                             diag::Construct_signatures_with_no_arguments_have_incompatible_return_types_0_and_1
                         } else {
                             diag::Call_signatures_with_no_arguments_have_incompatible_return_types_0_and_1
-                        };
+                        }
                     } else {
-                        message = if source_is_construct {
+                        if source_is_construct {
                             diag::Construct_signature_return_types_0_and_1_are_incompatible
                         } else {
                             diag::Call_signature_return_types_0_and_1_are_incompatible
-                        };
-                    }
+                        }
+                    };
                     let source_str = self.type_to_string_exported(source_return_type);
                     let target_str = self.type_to_string_exported(target_return_type);
-                    let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+                    let reporter = error_reporter.expect("call of nil func");
                     reporter(self, message, args![source_str, target_str]);
                 }
             }
@@ -1339,27 +1340,26 @@ impl Checker {
             }
             return Ternary::FALSE;
         }
-        if source_pred.kind == TypePredicateKind::IDENTIFIER
-            || source_pred.kind == TypePredicateKind::ASSERTS_IDENTIFIER
+        if (source_pred.kind == TypePredicateKind::IDENTIFIER
+            || source_pred.kind == TypePredicateKind::ASSERTS_IDENTIFIER)
+            && source_pred.parameter_index != target_pred.parameter_index
         {
-            if source_pred.parameter_index != target_pred.parameter_index {
-                if report_errors {
-                    let reporter = error_reporter.as_deref_mut().expect("call of nil func");
-                    reporter(
-                        self,
-                        diag::Parameter_0_is_not_in_the_same_position_as_parameter_1,
-                        args![source_pred.parameter_name, target_pred.parameter_name],
-                    );
-                    let source_str = self.type_predicate_to_string(source);
-                    let target_str = self.type_predicate_to_string(target);
-                    reporter(
-                        self,
-                        diag::Type_predicate_0_is_not_assignable_to_1,
-                        args![source_str, target_str],
-                    );
-                }
-                return Ternary::FALSE;
+            if report_errors {
+                let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+                reporter(
+                    self,
+                    diag::Parameter_0_is_not_in_the_same_position_as_parameter_1,
+                    args![source_pred.parameter_name, target_pred.parameter_name],
+                );
+                let source_str = self.type_predicate_to_string(source);
+                let target_str = self.type_predicate_to_string(target);
+                reporter(
+                    self,
+                    diag::Type_predicate_0_is_not_assignable_to_1,
+                    args![source_str, target_str],
+                );
             }
+            return Ternary::FALSE;
         }
         let related: Ternary = if source_pred.t == target_pred.t {
             Ternary::TRUE
@@ -1371,7 +1371,7 @@ impl Checker {
         if related == Ternary::FALSE && report_errors {
             let source_str = self.type_predicate_to_string(source);
             let target_str = self.type_predicate_to_string(target);
-            let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+            let reporter = error_reporter.expect("call of nil func");
             reporter(
                 self,
                 diag::Type_predicate_0_is_not_assignable_to_1,
@@ -1607,19 +1607,18 @@ impl Checker {
         let mut types: Vec<TypeId> = vec![TypeId::NIL; length];
         let mut infos: Vec<TupleElementInfo> = vec![TupleElementInfo::default(); length];
         for i in 0..length {
-            let flags: ElementFlags;
             let position = i as i32 + pos;
-            if rest_type.is_nil() || i < length - 1 {
+            let flags: ElementFlags = if rest_type.is_nil() || i < length - 1 {
                 types[i] = self.get_type_at_position(source, position);
-                flags = if position < min_argument_count {
+                if position < min_argument_count {
                     ElementFlags::REQUIRED
                 } else {
                     ElementFlags::OPTIONAL
-                };
+                }
             } else {
                 types[i] = rest_type;
-                flags = ElementFlags::VARIADIC;
-            }
+                ElementFlags::VARIADIC
+            };
             let labeled_declaration = self.get_nameable_declaration_at_position(source, position);
             infos[i] = TupleElementInfo {
                 flags,

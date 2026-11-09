@@ -185,7 +185,7 @@ impl Checker {
             || flags.intersects(TypeFormatFlags::NO_TRUNCATION);
         let mut combined_flags = to_node_builder_flags(flags) | NodeBuilderFlags::IGNORE_ERRORS;
         if no_truncation {
-            combined_flags = combined_flags | NodeBuilderFlags::NO_TRUNCATION;
+            combined_flags |= NodeBuilderFlags::NO_TRUNCATION;
         }
         // PORT: Go defers the release func from getNodeBuilder, which lets
         // the factory drop its arenas. Here `PrintScope` frees the nodes of
@@ -237,10 +237,10 @@ impl Checker {
         let result = writer.borrow_mut().take_string();
 
         let mut max_length = DEFAULT_MAXIMUM_TRUNCATION_LENGTH * 2;
-        if let Some(vc) = vc {
-            if vc.max_truncation_length > 0 {
-                max_length = vc.max_truncation_length * 10; // hard cutoff matching Strada's absoluteMaximumLength
-            }
+        if let Some(vc) = vc
+            && vc.max_truncation_length > 0
+        {
+            max_length = vc.max_truncation_length * 10; // hard cutoff matching Strada's absoluteMaximumLength
         }
         if no_truncation {
             max_length = NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH * 2;
@@ -287,21 +287,19 @@ impl Checker {
         let mut node_flags = NodeBuilderFlags::IGNORE_ERRORS;
         let mut internal_node_flags = InternalNodeBuilderFlags::NONE;
         if flags.intersects(SymbolFormatFlags::USE_ONLY_EXTERNAL_ALIASING) {
-            node_flags = node_flags | NodeBuilderFlags::USE_ONLY_EXTERNAL_ALIASING;
+            node_flags |= NodeBuilderFlags::USE_ONLY_EXTERNAL_ALIASING;
         }
         if flags.intersects(SymbolFormatFlags::WRITE_TYPE_PARAMETERS_OR_ARGUMENTS) {
-            node_flags = node_flags | NodeBuilderFlags::WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
+            node_flags |= NodeBuilderFlags::WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
         }
         if flags.intersects(SymbolFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE) {
-            node_flags = node_flags | NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
+            node_flags |= NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
         }
         if flags.intersects(SymbolFormatFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN) {
-            internal_node_flags =
-                internal_node_flags | InternalNodeBuilderFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN;
+            internal_node_flags |= InternalNodeBuilderFlags::DO_NOT_INCLUDE_SYMBOL_CHAIN;
         }
         if flags.intersects(SymbolFormatFlags::WRITE_COMPUTED_PROPS) {
-            internal_node_flags =
-                internal_node_flags | InternalNodeBuilderFlags::WRITE_COMPUTED_PROPS;
+            internal_node_flags |= InternalNodeBuilderFlags::WRITE_COMPUTED_PROPS;
         }
 
         // PORT: see type_to_string_ex about the release func.
@@ -344,8 +342,8 @@ impl Checker {
         }; // TODO: GH#18217
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         printer_.write_exported(entity, source_file, inner, None); // TODO: GH#18217
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // Go: checker/printer.go:179 signatureToString
@@ -410,8 +408,8 @@ impl Checker {
         let writer = Rc::new(RefCell::new(get_single_line_string_writer()));
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         p.write_exported(sig, source_file, inner, None);
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // Go: checker/printer.go:229 typePredicateToString
@@ -451,8 +449,8 @@ impl Checker {
         let source_file = source_file_of_enclosing(enclosing_declaration);
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         printer_.write_exported(predicate, source_file, inner, None);
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // PORT: Go checker/printer.go:379 valueToString is a wrapper over
@@ -467,7 +465,7 @@ impl Checker {
         while i < types.len() {
             let t = types[i];
             let t_flags = self.ty(t).flags;
-            flags = flags | t_flags;
+            flags |= t_flags;
             if !t_flags.intersects(TypeFlags::NULLABLE) {
                 if t_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
                     || (!expanding_enum && t_flags.intersects(TypeFlags::ENUM_LIKE))
@@ -566,7 +564,8 @@ impl Checker {
         let _print = PrintScope::open(&node_builder);
         let _verbosity = VerbosityRestore::install(&node_builder, vc);
         let nodes = self.node_builder_expand_symbol_for_hover(&node_builder, symbol, meaning);
-        let result = if nodes.is_empty() {
+
+        if nodes.is_empty() {
             String::new()
         } else {
             let emit_context = node_builder.borrow().emit_context();
@@ -585,8 +584,7 @@ impl Checker {
                 b.push_str(&p.emit(node, source_file));
             }
             b
-        };
-        result
+        }
     }
 
     /// Renders a type parameter declaration (e.g. "T extends Foo") with optional verbosity support.
@@ -610,7 +608,8 @@ impl Checker {
             InternalNodeBuilderFlags::NONE,
             None,
         );
-        let result = if type_param_node.is_nil() {
+
+        if type_param_node.is_nil() {
             // PORT: Go calls TypeToString while the deferred verbosity restore
             // is still pending, so the node builder still holds `vc` here.
             self.type_to_string_exported(t)
@@ -619,8 +618,7 @@ impl Checker {
             let mut p = create_printer_with_remove_comments(emit_context);
             let source_file = source_file_of_enclosing(enclosing_declaration);
             p.emit(type_param_node, source_file)
-        };
-        result
+        }
     }
 
     // Go: checker/printer.go:348 TypeToTypeNodeEx

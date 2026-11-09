@@ -178,7 +178,7 @@ fn last_index_byte(s: &str, c: u8) -> isize {
         .map_or(-1, |i| i as isize)
 }
 
-//// Path Tests
+// Path Tests
 
 // Go: tspath/path.go:25 isAnyDirectorySeparator
 // Determines whether a byte corresponds to `/` or `\`.
@@ -824,7 +824,7 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
                     normalized_up_to = index + 2;
                 }
             } else if !changed {
-                if normalized_up_to as isize - 1 >= 0 {
+                if normalized_up_to as isize > 0 {
                     // PORT: Go slices bytes; the byte before `normalizedUpTo`
                     // can be inside a char, so search the bytes.
                     let last = fb[..normalized_up_to - 1]
@@ -1270,7 +1270,7 @@ impl Path {
     }
 }
 
-//// Relative Paths
+// Relative Paths
 
 // Go: tspath/path.go:738 GetPathComponentsRelativeTo
 pub fn get_path_components_relative_to(
@@ -1506,14 +1506,11 @@ pub fn relative_path_within_directory<'a>(
     if !roots_equal {
         return None;
     }
-    let relative = match trim_file_path_prefix(
+    let relative = trim_file_path_prefix(
         &child[child_root_length..],
         &parent[parent_root_length..],
         case_sensitive,
-    ) {
-        Some(relative) => relative,
-        None => return None,
-    };
+    )?;
     if !relative.is_empty()
         && !has_trailing_directory_separator(parent)
         && parent.len() != parent_root_length

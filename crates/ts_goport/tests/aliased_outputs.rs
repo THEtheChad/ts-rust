@@ -352,13 +352,12 @@ fn dirlink_project(layout: DirLink) -> PathBuf {
     root
 }
 
-/// One run of `args` on a fresh `out` with the layout's link: the out
-/// tree (path, kind, link target, bytes), stdout and the exit code.
-fn dirlink_run(
-    root: &Path,
-    layout: DirLink,
-    args: &[&str],
-) -> (Vec<(String, Vec<u8>)>, Vec<u8>, Option<i32>) {
+/// The out tree (path, kind, link target, bytes), stdout and the exit code
+/// of one run.
+type DirLinkRun = (Vec<(String, Vec<u8>)>, Vec<u8>, Option<i32>);
+
+/// One run of `args` on a fresh `out` with the layout's link.
+fn dirlink_run(root: &Path, layout: DirLink, args: &[&str]) -> DirLinkRun {
     let out = root.join("out");
     let _ = fs::remove_dir_all(&out);
     let _ = fs::remove_file(root.join("x.tsbuildinfo"));

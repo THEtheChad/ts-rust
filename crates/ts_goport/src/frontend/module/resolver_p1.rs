@@ -549,13 +549,13 @@ impl Tracer {
         &mut self,
         redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
     ) {
-        if let Some(redirected_reference) = redirected_reference {
-            if redirected_reference.compiler_options().is_some() {
-                self.write(
-                    diag::Using_compiler_options_of_project_reference_redirect_0,
-                    args![redirected_reference.config_name()],
-                );
-            }
+        if let Some(redirected_reference) = redirected_reference
+            && redirected_reference.compiler_options().is_some()
+        {
+            self.write(
+                diag::Using_compiler_options_of_project_reference_redirect_0,
+                args![redirected_reference.config_name()],
+            );
         }
     }
 }
@@ -1138,9 +1138,7 @@ impl ResolutionState<'_> {
     // This is used as a fallback after node_modules resolution fails, for declaration file lookups.
     // Returns nil if typeRoots is not configured or if no matching module is found in any typeRoot directory.
     pub fn resolve_from_type_root(&mut self) -> Option<Resolved> {
-        let Some(type_roots) = self.compiler_options.type_roots.clone() else {
-            return None;
-        };
+        let type_roots = self.compiler_options.type_roots.clone()?;
         for type_root in &type_roots {
             let candidate = self.get_candidate_from_type_root(type_root);
             let directory_exists = self.resolver.host.fs().directory_exists(type_root);
@@ -1241,7 +1239,7 @@ impl ResolutionState<'_> {
                 diag::Resolution_of_non_relative_name_failed_trying_with_modern_Node_resolution_features_disabled_to_see_if_npm_library_needs_configuration_update
             );
             self.features = self.features.without(NodeResolutionFeatures::EXPORTS);
-            self.extensions = self.extensions & (Extensions::TYPE_SCRIPT | Extensions::DECLARATION);
+            self.extensions &= Extensions::TYPE_SCRIPT | Extensions::DECLARATION;
             let diagnostics_count = self.diagnostics.len();
             let diagnostic_result = self.resolve_node_like_worker();
             if diagnostic_result.is_resolved() && diagnostic_result.is_external_library_import {
@@ -1536,19 +1534,20 @@ impl ResolutionState<'_> {
         scope: &Rc<InfoCacheEntry>,
         is_imports: bool,
     ) -> Option<Resolved> {
-        if !module_name.ends_with('/') && !module_name.contains('*') {
-            if let Some(target) = lookup_table.get(module_name) {
-                return self.load_module_from_target_export_or_import(
-                    extensions,
-                    module_name,
-                    scope,
-                    is_imports,
-                    target,
-                    "",
-                    false, /*isPattern*/
-                    module_name,
-                );
-            }
+        if !module_name.ends_with('/')
+            && !module_name.contains('*')
+            && let Some(target) = lookup_table.get(module_name)
+        {
+            return self.load_module_from_target_export_or_import(
+                extensions,
+                module_name,
+                scope,
+                is_imports,
+                target,
+                "",
+                false, /*isPattern*/
+                module_name,
+            );
         }
 
         let mut expanding_keys: Vec<&String> = Vec::with_capacity(lookup_table.len());

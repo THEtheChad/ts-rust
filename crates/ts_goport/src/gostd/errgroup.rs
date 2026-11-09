@@ -225,10 +225,10 @@ impl Group {
         F: FnOnce() -> Result<(), GoError> + Send + 'static,
     {
         let sem = lock(&self.0.sem).clone();
-        if let Some(sem) = sem {
-            if !sem.try_send() {
-                return false;
-            }
+        if let Some(sem) = sem
+            && !sem.try_send()
+        {
+            return false;
         }
 
         self.0.wg.add(1);

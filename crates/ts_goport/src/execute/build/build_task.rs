@@ -267,6 +267,7 @@ impl StatusPrefetch {
     ///   with two names). The task writes the file in place under its own
     ///   name, and only that name is noted as written, so the prefetched
     ///   mtime of this name stays.
+    ///
     /// The build drops what its checks did not take
     /// (`BuildTask::drop_status_prefetch`), so a later build reads the file
     /// system. Each path is read once: the build info lists the root files
@@ -1641,17 +1642,15 @@ impl BuildTask {
                     let reader = reader_of(&prefetched, &owned_reader);
                     let (build_info_file_info, resolved_input_path) =
                         reader.get_build_info_file_info(input_path);
-                    if let Some(file_info) = build_info_file_info.map(|b| b.get_file_info()) {
-                        if !file_info.version().is_empty() {
-                            version = file_info.version().to_string();
-                            let (text, ok) =
-                                orchestrator.fs().read_file(resolved_input_path.as_str());
-                            if ok {
-                                current_version =
-                                    compute_hash(&text, orchestrator.testing().is_some());
-                                if version == current_version {
-                                    input_text_unchanged = true;
-                                }
+                    if let Some(file_info) = build_info_file_info.map(|b| b.get_file_info())
+                        && !file_info.version().is_empty()
+                    {
+                        version = file_info.version().to_string();
+                        let (text, ok) = orchestrator.fs().read_file(resolved_input_path.as_str());
+                        if ok {
+                            current_version = compute_hash(&text, orchestrator.testing().is_some());
+                            if version == current_version {
+                                input_text_unchanged = true;
                             }
                         }
                     }
@@ -1685,7 +1684,7 @@ impl BuildTask {
         make_reader(&mut owned_reader);
         let reader = reader_of(&prefetched, &owned_reader);
         for root in reader.roots() {
-            let root: &Path = &root;
+            let root: &Path = root;
             if !seen_roots.contains(root) {
                 // File was root file when project was built but its not any more
                 // ts#64159: the message names the root as the build info
@@ -2235,10 +2234,10 @@ impl BuildTask {
         build_info_file_name: &str,
     ) -> (Option<Rc<BuildInfo>>, Option<SystemTime>) {
         let path = orchestrator.to_path(build_info_file_name);
-        if let Some(entry) = &self.build_info_entry {
-            if entry.path == path {
-                return (entry.build_info.clone(), entry.m_time);
-            }
+        if let Some(entry) = &self.build_info_entry
+            && entry.path == path
+        {
+            return (entry.build_info.clone(), entry.m_time);
         }
         let build_info = orchestrator.read_build_info_file(self.resolved());
         let status_prefetch = orchestrator

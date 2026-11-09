@@ -62,11 +62,11 @@ impl SymbolTracker for SymbolTrackerImpl {
         meaning: SymbolFlags,
     ) -> bool {
         if !self.disable_track_symbol.get() {
-            if let Some(inner) = &self.inner {
-                if inner.track_symbol(c, symbol, enclosing_declaration, meaning) {
-                    self.on_diagnostic_reported();
-                    return true;
-                }
+            if let Some(inner) = &self.inner
+                && inner.track_symbol(c, symbol, enclosing_declaration, meaning)
+            {
+                self.on_diagnostic_reported();
+                return true;
             }
             // Skip recording type parameters as they dont contribute to late painted statements
             if !c.sym(symbol).flags.intersects(SymbolFlags::TYPE_PARAMETER) {

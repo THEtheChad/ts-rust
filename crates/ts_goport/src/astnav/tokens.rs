@@ -199,7 +199,7 @@ fn get_token_at_position_unexported(
     };
 
     let visit_node_list = |node_list: NodeList, _v: &mut NodeVisitor<'_, ()>| -> NodeList {
-        if node_list.is_nil() || node_list.nodes().len() == 0 {
+        if node_list.is_nil() || node_list.nodes().is_empty() {
             return node_list;
         }
         if node_after_left.get().is_nil() {
@@ -367,19 +367,19 @@ fn get_token_at_position_unexported(
                         flags,
                     );
                 }
-                if let Some(include) = include_preceding_token_at_end_position {
-                    if token_end == position {
-                        let prev_token = source_file_get_or_create_token(
-                            source_file,
-                            token,
-                            token_full_start,
-                            token_end,
-                            current,
-                            flags,
-                        );
-                        if include(prev_token) {
-                            return prev_token;
-                        }
+                if let Some(include) = include_preceding_token_at_end_position
+                    && token_end == position
+                {
+                    let prev_token = source_file_get_or_create_token(
+                        source_file,
+                        token,
+                        token_full_start,
+                        token_end,
+                        current,
+                        flags,
+                    );
+                    if include(prev_token) {
+                        return prev_token;
                     }
                 }
                 left.set(token_end);
@@ -508,7 +508,7 @@ pub fn find_preceding_token_ex(
             if found_child.get().is_some() {
                 return node_list;
             }
-            if node_list.is_some() && node_list.nodes().len() > 0 {
+            if node_list.is_some() && !node_list.nodes().is_empty() {
                 let nodes: Vec<Node> = node_list.nodes().to_vec();
                 let (index, match_) =
                     binary_search_unique_func(&nodes, |middle: i32, _node: Node| -> i32 {
@@ -640,7 +640,7 @@ pub fn find_preceding_token_ex(
 // Go: astnav/tokens.go:465 isValidPrecedingNode
 fn is_valid_preceding_node(node: Node, source_file: Node) -> bool {
     if node.kind() == SyntaxKind::EndOfFile {
-        return node.js_doc(source_file).len() > 0;
+        return !node.js_doc(source_file).is_empty();
     }
     let start = get_start_of_node(node, source_file, false /*includeJSDoc*/);
     let width = node.end() - start;
@@ -710,7 +710,7 @@ fn find_rightmost_valid_token(
             node
         };
         let visit_nodes = |node_list: NodeList, _v: &mut NodeVisitor<'_, ()>| -> NodeList {
-            if node_list.is_some() && node_list.nodes().len() > 0 {
+            if node_list.is_some() && !node_list.nodes().is_empty() {
                 has_children.set(true);
                 let nodes: Vec<Node> = node_list.nodes().to_vec();
                 let (index, _) =
@@ -871,7 +871,7 @@ pub fn find_next_token(previous_token: Node, parent: Node, file: Node) -> Node {
             node
         };
         let visit_nodes = |node_list: NodeList, _v: &mut NodeVisitor<'_, ()>| -> NodeList {
-            if node_list.is_some() && node_list.nodes().len() > 0 && found_node.get().is_nil() {
+            if node_list.is_some() && !node_list.nodes().is_empty() && found_node.get().is_nil() {
                 let nodes: Vec<Node> = node_list.nodes().to_vec();
                 let (index, match_) =
                     binary_search_unique_func(&nodes, |_middle: i32, node: Node| -> i32 {

@@ -261,10 +261,9 @@ impl Checker {
             .get(symbol)
             .extended_containers_by_file
             .get(&id)
+            && !existing.is_empty()
         {
-            if !existing.is_empty() {
-                return existing.clone();
-            }
+            return existing.clone();
         }
         let mut results: Vec<SymbolId> = Vec::new();
         let imports = source_file_info(containing_file).imports.clone();
@@ -789,10 +788,8 @@ impl Checker {
             || kind == SymbolTableID::KIND_RESOLVED_EXPORTS;
         // Cache globals and exports tables (which are large and revisited often).
         // Locals tables are small and per-scope, so they are filtered but not cached.
-        if cached_kind {
-            if let Some(aliases) = self.symbol_table_alias_cache.get(&table_id) {
-                return aliases.clone();
-            }
+        if cached_kind && let Some(aliases) = self.symbol_table_alias_cache.get(&table_id) {
+            return aliases.clone();
         }
         let mut aliases = Vec::new();
         for sym in self.symbols.values(symbols) {
@@ -1112,17 +1109,16 @@ impl Checker {
             if can_have_locals(location)
                 && location.locals().is_some()
                 && !is_global_source_file(location)
-            {
-                if callback(
+                && callback(
                     self,
                     location.locals(),
                     SymbolTableID::from_locals(location),
                     false,
                     true,
                     location,
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
             match location.kind() {
                 SyntaxKind::SourceFile | SyntaxKind::ModuleDeclaration => {

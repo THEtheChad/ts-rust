@@ -81,7 +81,7 @@ pub fn get_last_visited_child(node: Node, source_file: Node) -> Node {
         n
     };
     let visit_node_list = |node_list: NodeList, _v: &mut NodeVisitor<'_, ()>| -> NodeList {
-        if node_list.is_some() && node_list.nodes().len() > 0 {
+        if node_list.is_some() && !node_list.nodes().is_empty() {
             let nodes = node_list.nodes();
             for i in (0..nodes.len()).rev() {
                 if !nodes.get(i).flags().intersects(NodeFlags::REPARSED) {

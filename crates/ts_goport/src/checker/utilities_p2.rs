@@ -377,7 +377,7 @@ pub fn is_in_right_side_of_import_or_export_assignment_ref(mut node: NodeRef) ->
 
 // Go: checker/utilities.go:1238 isJsxIntrinsicTagName
 pub fn is_jsx_intrinsic_tag_name(tag_name: Node) -> bool {
-    is_identifier(tag_name) && is_intrinsic_jsx_name(&tag_name.text())
+    is_identifier(tag_name) && is_intrinsic_jsx_name(tag_name.text())
         || is_jsx_namespaced_name(tag_name)
 }
 
@@ -1251,14 +1251,13 @@ impl Checker {
 
 // Go: checker/utilities.go:1736 getAnyImportSyntax
 pub fn get_any_import_syntax(node: Node) -> Node {
-    let import_node = match node.kind() {
+    match node.kind() {
         SyntaxKind::ImportEqualsDeclaration => node,
         SyntaxKind::ImportClause => node.parent(),
         SyntaxKind::NamespaceImport => node.parent().parent(),
         SyntaxKind::ImportSpecifier => node.parent().parent().parent(),
-        _ => return Node::NIL,
-    };
-    import_node
+        _ => Node::NIL,
+    }
 }
 
 // Go: checker/utilities.go:1756 isReservedMemberName
@@ -1406,12 +1405,11 @@ impl Checker {
                 && (info.script_kind == ScriptKind::JS || info.script_kind == ScriptKind::JSX)
             {
                 let mut declaration_file = Node::NIL;
-                if suggestion.is_some() {
-                    if let Some(&first_declaration) = self.sym(suggestion).declarations.first() {
-                        if first_declaration.is_some() {
-                            declaration_file = get_source_file_of_node(first_declaration);
-                        }
-                    }
+                if suggestion.is_some()
+                    && let Some(&first_declaration) = self.sym(suggestion).declarations.first()
+                    && first_declaration.is_some()
+                {
+                    declaration_file = get_source_file_of_node(first_declaration);
                 }
                 let suggestion_has_no_extends_or_decorators = suggestion.is_nil() || {
                     let value_declaration = self.sym(suggestion).value_declaration;

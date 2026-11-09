@@ -1721,7 +1721,7 @@ impl Checker {
         mut diagnostic_output: Option<&mut Vec<Diagnostic>>,
     ) -> bool {
         // Don't elaborate blocks or functions with annotated parameter types
-        if is_block(node.body()) || node.parameters().iter().any(|p| has_type(p)) {
+        if is_block(node.body()) || node.parameters().iter().any(has_type) {
             return false;
         }
         let source_sig = self.get_single_call_signature(source);
@@ -1910,6 +1910,7 @@ impl Checker {
      *    (this means that 'toString', for example, is not usually a known property).
      * 4. In a union or intersection type,
      *    a property is considered known if it is known in any constituent type.
+     *
      * @param targetType a type to search a given name in
      * @param name a property name to search
      * @param isComparingJsxAttributes a boolean flag indicating whether we are searching in JsxAttributesType
@@ -2324,14 +2325,12 @@ impl Checker {
                     {
                         return target;
                     }
-                    if overlap_obj_flags.intersects(ObjectFlags::ANONYMOUS) {
-                        if let (Some(source_alias), Some(target_alias)) =
+                    if overlap_obj_flags.intersects(ObjectFlags::ANONYMOUS)
+                        && let (Some(source_alias), Some(target_alias)) =
                             (&self.ty(source).alias, &self.ty(target).alias)
-                        {
-                            if source_alias.symbol == target_alias.symbol {
-                                return target;
-                            }
-                        }
+                        && source_alias.symbol == target_alias.symbol
+                    {
+                        return target;
                     }
                 }
             }

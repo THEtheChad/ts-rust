@@ -1466,7 +1466,7 @@ const HIGH_CHUNK: usize = 1 << 13;
 
 // A real file id is never `LOCAL_STORE`, and the chunks end at the limit.
 const _: () = assert!(FILE_ID_LIMIT <= LOCAL_STORE);
-const _: () = assert!((FILE_ID_LIMIT - LOW_BLOCKS) % HIGH_CHUNK == 0);
+const _: () = assert!((FILE_ID_LIMIT - LOW_BLOCKS).is_multiple_of(HIGH_CHUNK));
 
 /// The end of the new file ids (`BuildStores::next_id`,
 /// `publish_file_stores`).
@@ -5568,9 +5568,7 @@ pub(crate) fn static_facts_word(n: Node) -> Option<&'static AtomicU32> {
 #[cold]
 #[inline(never)]
 fn new_static_facts_column(b: &'static FileBlock) -> Option<&'static [AtomicU32]> {
-    if b.file.store.is_none() {
-        return None;
-    }
+    b.file.store?;
     let column = b
         .file
         .subtree_facts
@@ -7111,7 +7109,7 @@ fn try_with_build_slot(n: Node, f: impl FnOnce(&mut FileStore, usize)) -> bool {
         s.nodes[index].is_some(),
         "store handle does not name a node slot"
     );
-    f(&mut *s, index);
+    f(&mut s, index);
     true
 }
 
@@ -8361,7 +8359,7 @@ fn new_owned_pending(
 // PERF: astshrink1, as `new_store_node_list`.
 #[must_use]
 pub fn new_store_modifier_list(file: usize, nodes: &[Node], loc: TextRange) -> ModifierList {
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(nodes).0);
     match new_store_list(file, nodes, ts_range(loc), false, Some(flags)) {
         StoreListRef::Static(list) => ModifierList::from_static(file, list),
         StoreListRef::Owned(list) => ModifierList::store(list),
@@ -8483,7 +8481,7 @@ fn other_store_modifiers_value(
         }
     }
     let nodes = modifiers.nodes().to_vec();
-    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0 as u32);
+    let flags = crate::astdata::ModifierFlags(modifiers_to_flags(&nodes).0);
     let index = new_store_list(file, &nodes, ts_range(modifiers.loc()), false, Some(flags)).index();
     Some(crate::astdata::ModifierList {
         list: crate::astdata::NodeList::new(index),
@@ -9041,7 +9039,7 @@ mod tests {
             }
             let mut expected: Vec<NodeRecord> = records.iter().map(copy_record).collect();
             let expected_root = mark_roots_with_state(&mut expected, &kinds);
-            let root = mark_roots(&mut records, &kinds);
+            let root = mark_roots(&records, &kinds);
             assert_eq!(root, expected_root);
             for (i, (a, b)) in records.iter().zip(&expected).enumerate() {
                 assert_eq!(

@@ -70,11 +70,11 @@ impl ResolutionState<'_> {
                 .unwrap_or_default();
             let (original_path, resolved_file_name) =
                 self.get_original_and_resolved_file_name(&path);
-            if !original_path.is_empty() {
-                if let Some(r) = resolved.as_mut() {
-                    r.path = resolved_file_name;
-                    r.original_path = original_path;
-                }
+            if !original_path.is_empty()
+                && let Some(r) = resolved.as_mut()
+            {
+                r.path = resolved_file_name;
+                r.original_path = original_path;
             }
         }
         self.create_resolved_module(resolved, is_external_library_import)
@@ -86,8 +86,10 @@ impl ResolutionState<'_> {
         resolved: Option<Resolved>,
         is_external_library_import: bool,
     ) -> ResolvedModule {
-        let mut resolved_module = ResolvedModule::default();
-        resolved_module.resolution_diagnostics = self.diagnostics.clone();
+        let mut resolved_module = ResolvedModule {
+            resolution_diagnostics: self.diagnostics.clone(),
+            ..Default::default()
+        };
 
         if let Some(resolved) = resolved {
             // ts#64159 (resolver.go:1377): the path of a resolved file.
@@ -112,8 +114,10 @@ impl ResolutionState<'_> {
         resolved: Option<Resolved>,
         primary: bool,
     ) -> ResolvedTypeReferenceDirective {
-        let mut resolved_type_reference_directive = ResolvedTypeReferenceDirective::default();
-        resolved_type_reference_directive.resolution_diagnostics = self.diagnostics.clone();
+        let mut resolved_type_reference_directive = ResolvedTypeReferenceDirective {
+            resolution_diagnostics: self.diagnostics.clone(),
+            ..Default::default()
+        };
 
         if is_resolved(&resolved) {
             let resolved = resolved.unwrap();
@@ -146,7 +150,7 @@ impl ResolutionState<'_> {
     fn path_key(&self, file_name: &str) -> Path {
         to_path(
             file_name,
-            &self.resolver.host.get_current_directory(),
+            self.resolver.host.get_current_directory(),
             self.resolver.host.fs().use_case_sensitive_file_names(),
         )
     }
@@ -204,7 +208,7 @@ impl ResolutionState<'_> {
             return continue_searching();
         }
         let current_directory = self.resolver.host.get_current_directory();
-        let base_directory = compiler_options.get_paths_base_path(&current_directory);
+        let base_directory = compiler_options.get_paths_base_path(current_directory);
         let path_patterns = self.get_parsed_patterns_for_paths();
         let extensions = self.extensions;
         let name = self.name.clone();
@@ -473,7 +477,7 @@ impl ResolutionState<'_> {
                 .resolver
                 .host
                 .fs()
-                .directory_exists(&parent_of_candidate)
+                .directory_exists(parent_of_candidate)
             {
                 trace_write!(
                     self,
@@ -1702,7 +1706,7 @@ pub fn get_automatic_type_directive_names(
     // Walk the primary type lookup locations
     let mut wildcard_matches: Vec<String> = Vec::new();
     let current_directory = host.get_current_directory();
-    let (type_roots, _) = options.get_effective_type_roots(&current_directory);
+    let (type_roots, _) = options.get_effective_type_roots(current_directory);
     for root in &type_roots {
         if host.fs().directory_exists(root) {
             for type_directive_path in &host.fs().get_accessible_entries(root).directories {

@@ -181,14 +181,13 @@ impl Checker {
                 .inferences
                 .iter()
                 .position(|info| info.type_parameter == rest_type);
-            if let Some(info) = info {
-                if !args[arg_count as usize..]
+            if let Some(info) = info
+                && !args[arg_count as usize..]
                     .iter()
                     .any(|&arg| is_spread_argument(arg))
-                {
-                    self.inference_context_mut(context).inferences[info].implied_arity =
-                        args.len() as i32 - arg_count;
-                }
+            {
+                self.inference_context_mut(context).inferences[info].implied_arity =
+                    args.len() as i32 - arg_count;
             }
         }
         let this_type = self.get_this_type_of_signature(signature);
@@ -1351,18 +1350,18 @@ impl Checker {
         let will_transform_es_decorators = !self.legacy_decorators
             && self.language_version
                 < LANGUAGE_FEATURE_MINIMUM_TARGET.class_and_class_element_decorators;
-        let location;
-        if will_transform_es_decorators && class_or_constructor_parameter_is_decorated(false, node)
+        let location = if will_transform_es_decorators
+            && class_or_constructor_parameter_is_decorated(false, node)
         {
             let first_decorator = node_slice_element_or_nil(node.decorators(), 0);
-            location = if first_decorator.is_some() {
+            if first_decorator.is_some() {
                 first_decorator
             } else {
                 node
-            };
+            }
         } else {
-            location = self.get_first_transformable_static_class_element(node);
-        }
+            self.get_first_transformable_static_class_element(node)
+        };
 
         if location.is_some() {
             self.check_external_emit_helpers(location, ExternalEmitHelpers::SET_FUNCTION_NAME);

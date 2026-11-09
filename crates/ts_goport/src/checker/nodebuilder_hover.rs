@@ -311,10 +311,10 @@ impl Checker {
             // Find the symbol for this member by matching the property name
             let mut member_symbol = SymbolId::NIL;
             let member_name = m.name();
-            if member_name.is_some() {
-                if let Some(&sym) = b.borrow().id_to_symbol.get(&member_name) {
-                    member_symbol = sym;
-                }
+            if member_name.is_some()
+                && let Some(&sym) = b.borrow().id_to_symbol.get(&member_name)
+            {
+                member_symbol = sym;
             }
             if member_symbol.is_nil() {
                 continue;
@@ -323,7 +323,7 @@ impl Checker {
                 .get_declaration_modifier_flags_from_symbol(member_symbol)
                 .without(ModifierFlags::ASYNC);
             if is_static {
-                mod_flags = mod_flags | ModifierFlags::STATIC;
+                mod_flags |= ModifierFlags::STATIC;
             }
             if mod_flags != ModifierFlags::NONE && can_have_modifiers(m) {
                 let existing = m.modifier_flags();
@@ -553,9 +553,8 @@ impl Checker {
             for &sig in &signatures {
                 let declaration = self.sig(sig).declaration;
                 if declaration.is_some() {
-                    private_protected = private_protected
-                        | (declaration.modifier_flags()
-                            & (ModifierFlags::PRIVATE | ModifierFlags::PROTECTED));
+                    private_protected |= declaration.modifier_flags()
+                        & (ModifierFlags::PRIVATE | ModifierFlags::PROTECTED);
                 }
             }
             if private_protected != ModifierFlags::NONE {
@@ -634,7 +633,7 @@ impl Checker {
         } else {
             let symbol_type = self.get_type_of_symbol(resolved);
             let t = self.get_widened_type(symbol_type);
-            hv_ctx(b).borrow_mut().approximate_length += go_len(&name) as i32 + 5;
+            hv_ctx(b).borrow_mut().approximate_length += go_len(name) as i32 + 5;
             let type_node = self.serialize_type_for_declaration(b, Node::NIL, t, resolved, true);
             let bb = b.borrow();
             let declaration = bb.f().new_variable_declaration(
@@ -933,7 +932,7 @@ impl Checker {
             c.flags = saved_flags;
             c.internal_flags = saved_internal_flags;
             c.depth = saved_depth;
-            c.approximate_length += 8 + go_len(&name) as i32;
+            c.approximate_length += 8 + go_len(name) as i32;
         }
         let bb = b.borrow();
         bb.f().new_type_alias_declaration(
@@ -968,10 +967,10 @@ impl Checker {
             let base_with_this = self.get_type_with_this_argument(base, this_type, false);
             for prop in self.get_properties_of_type(base_with_this) {
                 let prop_name = &self.sym(prop).name;
-                if let Some(&existing) = props_by_name.get(prop_name.as_str()) {
-                    if self.sym(prop).parent == self.sym(existing).parent {
-                        inherited.insert(prop_name.to_string());
-                    }
+                if let Some(&existing) = props_by_name.get(prop_name.as_str())
+                    && self.sym(prop).parent == self.sym(existing).parent
+                {
+                    inherited.insert(prop_name.to_string());
                 }
             }
         }

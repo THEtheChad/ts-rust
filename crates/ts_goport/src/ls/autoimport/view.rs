@@ -203,7 +203,7 @@ impl View {
         let importing_file_path = tspath::Path(source_file_info(self.importing_file).path.clone());
 
         if let Some(bucket) = self.registry.projects.get(&self.project_id) {
-            let exports = search_fn(&**bucket);
+            let exports = search_fn(bucket);
             results.reserve(exports.len());
             for e in exports {
                 // ts#64159: view.go:114, only a file module is the importing file.
@@ -247,15 +247,15 @@ impl View {
                 ((), false)
             });
         // If we found at least one package.json, also include packages directly imported by the project
-        if let Some(allowed) = &allowed_packages {
-            if let Some(bucket) = self.registry.projects.get(&self.project_id) {
-                // Go: allowedPackages.UnionedWith(bucket.ResolvedPackageNames)
-                let mut result = allowed.clone();
-                if let Some(other) = &bucket.resolved_package_names {
-                    result.extend(other.iter().cloned());
-                }
-                allowed_packages = Some(result);
+        if let Some(allowed) = &allowed_packages
+            && let Some(bucket) = self.registry.projects.get(&self.project_id)
+        {
+            // Go: allowedPackages.UnionedWith(bucket.ResolvedPackageNames)
+            let mut result = allowed.clone();
+            if let Some(other) = &bucket.resolved_package_names {
+                result.extend(other.iter().cloned());
             }
+            allowed_packages = Some(result);
         }
 
         let mut exclude_packages: FxHashSet<String> = FxHashSet::default();
@@ -263,7 +263,7 @@ impl View {
             .get_directory_path()
             .for_each_ancestor_directory(|dir_path: tspath::Path| -> ((), bool) {
                 if let Some(node_modules_bucket) = self.registry.node_modules.get(&dir_path) {
-                    let exports = search_fn(&**node_modules_bucket);
+                    let exports = search_fn(node_modules_bucket);
                     results.reserve(exports.len());
                     for e in exports {
                         // Exclude packages found in lower node_modules (shadowing)
@@ -379,15 +379,14 @@ impl View {
                     e.package_name.clone(),
                 ]),
             };
-            if e.package_name == "@types/node" || e.path.0.contains("/node_modules/@types/node/") {
-                if UNPREFIXED_NODE_CORE_MODULES
+            if (e.package_name == "@types/node" || e.path.0.contains("/node_modules/@types/node/"))
+                && UNPREFIXED_NODE_CORE_MODULES
                     .contains_key(key.ambient_module_or_package_name.as_str())
-                {
-                    // Group URI-style and non-URI style node core modules together so the ranking logic
-                    // is allowed to drop one if an explicit preference is detected.
-                    key.ambient_module_or_package_name =
-                        format!("node:{}", key.ambient_module_or_package_name);
-                }
+            {
+                // Group URI-style and non-URI style node core modules together so the ranking logic
+                // is allowed to drop one if an explicit preference is detected.
+                key.ambient_module_or_package_name =
+                    format!("node:{}", key.ambient_module_or_package_name);
             }
             if let Some(existing) = grouped.get_mut(&key) {
                 for i in 0..existing.len() {
@@ -431,7 +430,7 @@ impl View {
         };
         let groups: Vec<&Vec<Rc<Export>>> = grouped.values().collect();
         let (late, early): (Vec<usize>, Vec<usize>) =
-            (0..groups.len()).partition(|&i| groups[i].iter().all(|e| is_augmentation(&**e)));
+            (0..groups.len()).partition(|&i| groups[i].iter().all(|e| is_augmentation(e)));
         let mut group_fixes: Vec<Vec<FixAndExport>> = vec![Vec::new(); groups.len()];
 
         for i in early.into_iter().chain(late) {

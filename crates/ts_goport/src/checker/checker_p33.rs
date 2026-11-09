@@ -319,9 +319,9 @@ impl Checker {
             kind,
             SyntaxKind::JsxOpeningElement | SyntaxKind::JsxSelfClosingElement
         ) {
-            if node.attributes().properties().len() != 0
+            if !node.attributes().properties().is_empty()
                 || (kind == SyntaxKind::JsxOpeningElement
-                    && node.parent().children().nodes().len() != 0)
+                    && !node.parent().children().nodes().is_empty())
             {
                 return EffectiveArgs::Owned(vec![node.attributes()]);
             }
@@ -501,16 +501,15 @@ impl Checker {
                     go_assert!(index >= 0);
                     // A parameter declaration decorator will have three arguments (see `ParameterDecorator` in
                     // core.d.ts).
-                    let target_type;
-                    let key_type;
-                    if is_constructor_declaration(node.parent()) {
+                    let (target_type, key_type) = if is_constructor_declaration(node.parent()) {
                         let symbol = self.get_symbol_of_declaration(node.parent().parent());
-                        target_type = self.get_type_of_symbol(symbol);
-                        key_type = self.undefined_type;
+                        (self.get_type_of_symbol(symbol), self.undefined_type)
                     } else {
-                        target_type = self.get_parent_type_of_class_element(node.parent());
-                        key_type = self.get_class_element_property_key_type(node.parent());
-                    }
+                        (
+                            self.get_parent_type_of_class_element(node.parent()),
+                            self.get_class_element_property_key_type(node.parent()),
+                        )
+                    };
                     let index_type = self.get_number_literal_type(Number::from(index as f64));
                     let target_param = self.new_parameter("target", target_type);
                     let key_param = self.new_parameter("propertyKey", key_type);
@@ -872,10 +871,10 @@ impl Checker {
             kind,
             type_id: name_type,
         };
-        if let Some(&override_type) = self.cached_types.get(&key) {
-            if override_type.is_some() {
-                return override_type;
-            }
+        if let Some(&override_type) = self.cached_types.get(&key)
+            && override_type.is_some()
+        {
+            return override_type;
         }
         let members = self.symbols.new_table();
         let name_prop = self.new_property("name", name_type);
@@ -1442,10 +1441,10 @@ impl Checker {
             node_id: node,
             type_id: contextual_type,
         };
-        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key) {
-            if discriminated.is_some() {
-                return discriminated;
-            }
+        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key)
+            && discriminated.is_some()
+        {
+            return discriminated;
         }
         let mut discriminated =
             self.get_matching_union_constituent_for_object_literal(contextual_type, node);

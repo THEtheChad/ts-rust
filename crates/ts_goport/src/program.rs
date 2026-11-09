@@ -3546,7 +3546,7 @@ pub fn source_files() -> Vec<Node> {
 
 // Go: compiler/program.go:535 Options
 pub fn options() -> &'static CompilerOptions {
-    &prog().options
+    prog().options
 }
 
 // Go: compiler/program.go:550 ContentMapperExtensions (#4712)
@@ -4207,7 +4207,7 @@ fn checker_count() -> usize {
     if program.single_threaded() {
         checker_count = 1;
     } else if let Some(count) = program.options.checkers {
-        checker_count = i64::from(count);
+        checker_count = count;
     }
     checker_count.min(files as i64).min(256).max(1) as usize
 }
@@ -5346,15 +5346,16 @@ fn get_additional_js_syntactic_diagnostics(
         {
             return false;
         }
-        if node.kind() == SyntaxKind::Parameter && has_decorators(node) {
-            if let Some(decorator) = node.modifier_nodes().into_iter().find(|n| is_decorator(*n)) {
-                diags.push(new_diagnostic(
-                    file,
-                    decorator.loc(),
-                    diag::Decorators_are_not_valid_here,
-                    Vec::new(),
-                ));
-            }
+        if node.kind() == SyntaxKind::Parameter
+            && has_decorators(node)
+            && let Some(decorator) = node.modifier_nodes().into_iter().find(|n| is_decorator(*n))
+        {
+            diags.push(new_diagnostic(
+                file,
+                decorator.loc(),
+                diag::Decorators_are_not_valid_here,
+                Vec::new(),
+            ));
         }
         node.for_each_child(|child| walk(child, file, diags));
         false
@@ -5703,7 +5704,7 @@ fn get_declaration_diagnostics_worker(host: Rc<EmitHost>, file: Node) -> Vec<Dia
         .into_iter()
         .filter(|&f| is_source_file_not_json(f))
         .collect();
-    if !full_files.iter().any(|&f| f == file) {
+    if !full_files.contains(&file) {
         return Vec::new();
     }
     // PORT: Go calls host.Options(), which returns host.program.Options()
@@ -5941,7 +5942,7 @@ pub fn get_semantic_diagnostics_with_checker(
             source_file,
             false, /*includeDeferredGlobals*/
         ),
-        &prog().options,
+        prog().options,
     );
     diags.extend(get_include_processor_diagnostics(source_file));
     diags
@@ -6432,12 +6433,10 @@ pub fn get_diagnostics_of_any_program(
     }
     // Effect-TS/tsgo patch 009: Effect diagnostics ignored for the exit code
     // do not block emit under noEmitOnError.
-    if skip_no_emit_check_for_dts_diagnostics {
-        if let Some(effect) = options.effect.as_deref() {
-            all_diagnostics =
-                crate::effect::filter_diagnostics_for_exit_code(Some(effect), &all_diagnostics)
-                    .into_owned();
-        }
+    if skip_no_emit_check_for_dts_diagnostics && let Some(effect) = options.effect.as_deref() {
+        all_diagnostics =
+            crate::effect::filter_diagnostics_for_exit_code(Some(effect), &all_diagnostics)
+                .into_owned();
     }
     all_diagnostics
 }

@@ -25,8 +25,8 @@ pub(super) fn nb_ctx<R>(
     f: impl FnOnce(&NodeBuilderContext) -> R,
 ) -> R {
     let b = b.borrow();
-    let r = f(&b.ctx.borrow());
-    r
+
+    f(&b.ctx.borrow())
 }
 
 /// Runs `f` with a mutable borrow of `b.ctx`. The rule of `nb_ctx` holds:
@@ -36,8 +36,8 @@ pub(super) fn nb_ctx_mut<R>(
     f: impl FnOnce(&mut NodeBuilderContext) -> R,
 ) -> R {
     let b = b.borrow();
-    let r = f(&mut b.ctx.borrow_mut());
-    r
+
+    f(&mut b.ctx.borrow_mut())
 }
 
 /// Go `b.e`. The node factory is `nb_e(b).factory()` (Go `b.f`).
@@ -225,7 +225,7 @@ impl Checker {
                     .any(|&d| get_source_file_of_node(d) == enclosing_file))
         {
             nb_ctx_mut(b, |c| {
-                c.flags = c.flags | NodeBuilderFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
+                c.flags |= NodeBuilderFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
             });
         }
         let mut result = Node::NIL;
@@ -381,20 +381,20 @@ impl Checker {
             return true;
         }
         // (2)
-        if let Some(&last) = reverse_mapped_stack.last() {
-            if self.reverse_mapped_symbol_links.has(last) {
-                let property_type = self
-                    .reverse_mapped_symbol_links
-                    .try_get(last)
-                    .map_or(TypeId::NIL, |l| l.property_type);
-                if property_type.is_some()
-                    && !self
-                        .ty(property_type)
-                        .object_flags
-                        .intersects(ObjectFlags::ANONYMOUS)
-                {
-                    return true;
-                }
+        if let Some(&last) = reverse_mapped_stack.last()
+            && self.reverse_mapped_symbol_links.has(last)
+        {
+            let property_type = self
+                .reverse_mapped_symbol_links
+                .try_get(last)
+                .map_or(TypeId::NIL, |l| l.property_type);
+            if property_type.is_some()
+                && !self
+                    .ty(property_type)
+                    .object_flags
+                    .intersects(ObjectFlags::ANONYMOUS)
+            {
+                return true;
             }
         }
         // (3) - we only inspect the last MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH elements of the
@@ -1086,7 +1086,7 @@ impl Checker {
 
         let mut i = 0usize;
         for &property_symbol in &properties {
-            if nb_ctx(b, |c| is_expanding(c))
+            if nb_ctx(b, is_expanding)
                 && self
                     .sym(property_symbol)
                     .flags
@@ -1264,9 +1264,7 @@ impl Checker {
         }
 
         let restore_flags = self.save_restore_flags(b);
-        nb_ctx_mut(b, |c| {
-            c.flags = c.flags | NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL
-        });
+        nb_ctx_mut(b, |c| c.flags |= NodeBuilderFlags::IN_OBJECT_TYPE_LITERAL);
         let members = self.create_type_nodes_from_resolved_type(b, t);
         restore_flags();
         let type_literal_node = f.new_type_literal_node(members);
@@ -1936,8 +1934,7 @@ impl Checker {
                         );
                         let restore_flags = self.save_restore_flags(b);
                         nb_ctx_mut(b, |c| {
-                            c.flags =
-                                c.flags | NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
+                            c.flags |= NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
                         });
                         let ref_ = self.symbol_to_type_node(
                             b,
@@ -2017,7 +2014,7 @@ impl Checker {
             }
             let restore_flags = self.save_restore_flags(b);
             nb_ctx_mut(b, |c| {
-                c.flags = c.flags | NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
+                c.flags |= NodeBuilderFlags::FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES
             });
             let symbol = self.ty(t).symbol;
             let final_ref =

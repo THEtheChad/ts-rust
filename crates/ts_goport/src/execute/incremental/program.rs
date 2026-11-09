@@ -822,7 +822,6 @@ impl Program {
     // PORT: Go `program` is the current program.
     fn ensure_has_errors_for_state(&self) {
         let files = source_files();
-        let has_include_processing_diagnostics: Box<dyn Fn() -> bool>;
         let mut has_emit_diagnostics = false;
         let (can_use_incremental_state, is_incremental) = {
             let snapshot = self.snapshot.borrow();
@@ -831,7 +830,8 @@ impl Program {
                 snapshot.options.is_incremental(),
             )
         };
-        if can_use_incremental_state {
+        let has_include_processing_diagnostics: Box<dyn Fn() -> bool> = if can_use_incremental_state
+        {
             let mut found_include_processing_diagnostics: Option<bool> = None;
             {
                 let snapshot = self.snapshot.borrow();
@@ -854,16 +854,16 @@ impl Program {
                 }
             }
             let value = found_include_processing_diagnostics.unwrap_or(false);
-            has_include_processing_diagnostics = Box::new(move || value);
+            Box::new(move || value)
         } else {
             has_emit_diagnostics = self.snapshot.borrow().has_emit_diagnostics;
             let files = files.clone();
-            has_include_processing_diagnostics = Box::new(move || {
+            Box::new(move || {
                 files
                     .iter()
                     .any(|&file| !get_include_processor_diagnostics(file).is_empty())
-            });
-        }
+            })
+        };
 
         if has_emit_diagnostics {
             let mut snapshot = self.snapshot.borrow_mut();

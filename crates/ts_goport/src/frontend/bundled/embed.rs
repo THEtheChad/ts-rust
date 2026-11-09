@@ -535,7 +535,9 @@ mod tests {
         let dom = bundled_text("bundled:///libs/lib.dom.d.ts").expect("lib.dom");
         assert!(dom.len() >= SNAPSHOT_TEXT_MIN);
         assert_eq!(embedded_text_hash(dom), Some(const_hash(dom.as_bytes())));
-        assert_eq!(embedded_text_hash(&dom.to_string()), None);
+        // A copy of the text: the point is a different address.
+        let copy = dom.to_string();
+        assert_eq!(embedded_text_hash(&copy), None);
         let small = bundled_text("bundled:///libs/lib.es2015.d.ts").expect("lib.es2015");
         assert_eq!(embedded_text_hash(small), None);
     }

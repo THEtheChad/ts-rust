@@ -210,7 +210,7 @@ impl ParseTask {
                 let (resolved_ref, processing_diagnostic) = loader
                     .resolve_tripleslash_path_reference(
                         &ref_.file_name,
-                        &file.file_name(),
+                        file.file_name(),
                         index as i32,
                     );
                 if let Some(processing_diagnostic) = processing_diagnostic {
@@ -510,7 +510,7 @@ fn all_roots_cached(
                 refs.fits(|| {
                     get_external_module_indicator_options(
                         file_name,
-                        &options,
+                        options,
                         &SourceFileMetaData::default(),
                     )
                 })
@@ -868,7 +868,7 @@ impl FilesParser {
             // below; a parse that read other options is not used.
             let external_module_indicator_options = get_external_module_indicator_options(
                 file_name,
-                &loader.opts.config.compiler_options(),
+                loader.opts.config.compiler_options(),
                 &SourceFileMetaData::default(),
             );
             return Some(PrefetchRequest::Mapped(
@@ -901,7 +901,7 @@ impl FilesParser {
         // than the loader passes is not used.
         let external_module_indicator_options = get_external_module_indicator_options(
             file_name,
-            &loader.opts.config.compiler_options(),
+            loader.opts.config.compiler_options(),
             &SourceFileMetaData::default(),
         );
         Some(PrefetchRequest::New(

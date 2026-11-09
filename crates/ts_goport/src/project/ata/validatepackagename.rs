@@ -52,32 +52,30 @@ pub fn validate_package_name_worker(
     }
     // check if name is scope package like: starts with @ and has one '/' in the middle
     // scoped packages are not currently supported
-    if support_scoped_package {
-        if let Some(without_scope) = package_name.strip_prefix('@') {
-            // Go: strings.Cut returns (s, "", false) when "/" is missing.
-            let (scope, scoped_package_name, found) = match without_scope.split_once('/') {
-                Some((scope, scoped_package_name)) => (scope, scoped_package_name, true),
-                None => (without_scope, "", false),
-            };
-            if found
-                && !scope.is_empty()
-                && !scoped_package_name.is_empty()
-                && !scoped_package_name.contains('/')
-            {
-                let (scope_result, _, _) =
-                    validate_package_name_worker(scope /*supportScopedPackage*/, false);
-                if scope_result != NAME_OK {
-                    return (scope_result, scope.to_string(), true);
-                }
-                let (package_result, _, _) = validate_package_name_worker(
-                    scoped_package_name, /*supportScopedPackage*/
-                    false,
-                );
-                if package_result != NAME_OK {
-                    return (package_result, scoped_package_name.to_string(), false);
-                }
-                return (NAME_OK, String::new(), false);
+    if support_scoped_package && let Some(without_scope) = package_name.strip_prefix('@') {
+        // Go: strings.Cut returns (s, "", false) when "/" is missing.
+        let (scope, scoped_package_name, found) = match without_scope.split_once('/') {
+            Some((scope, scoped_package_name)) => (scope, scoped_package_name, true),
+            None => (without_scope, "", false),
+        };
+        if found
+            && !scope.is_empty()
+            && !scoped_package_name.is_empty()
+            && !scoped_package_name.contains('/')
+        {
+            let (scope_result, _, _) =
+                validate_package_name_worker(scope /*supportScopedPackage*/, false);
+            if scope_result != NAME_OK {
+                return (scope_result, scope.to_string(), true);
             }
+            let (package_result, _, _) = validate_package_name_worker(
+                scoped_package_name, /*supportScopedPackage*/
+                false,
+            );
+            if package_result != NAME_OK {
+                return (package_result, scoped_package_name.to_string(), false);
+            }
+            return (NAME_OK, String::new(), false);
         }
     }
     if gostd::url::query_escape(package_name) != package_name {

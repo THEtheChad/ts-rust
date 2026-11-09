@@ -612,7 +612,7 @@ fn format_float_v(value: f64) -> String {
         .split_once('e')
         .expect("Rust {:e} output has an exponent");
     let exponent: i32 = exponent.parse().expect("Rust {:e} exponent is an integer");
-    if exponent < -4 || exponent >= 6 {
+    if !(-4..6).contains(&exponent) {
         let sign = if exponent < 0 { '-' } else { '+' };
         format!("{mantissa}e{sign}{:02}", exponent.abs())
     } else {

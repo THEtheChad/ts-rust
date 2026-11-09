@@ -665,21 +665,18 @@ pub fn validate_json_option_value(
 
     let mut errors: Vec<Diagnostic> = Vec::new();
 
-    match opt.extra_validation {
-        ExtraValidation::LOCALE => {
-            let (_, ok) = crate::locale::parse(as_string(&val));
-            if !ok {
-                errors.push(
-                    create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
-                        source_file,
-                        value_expression,
-                        diag::Locale_must_be_an_IETF_BCP_47_language_tag_Examples_Colon_0_1,
-                        args!["en", "ja-jp"],
-                    ),
-                );
-            }
+    if opt.extra_validation == ExtraValidation::LOCALE {
+        let (_, ok) = crate::locale::parse(as_string(&val));
+        if !ok {
+            errors.push(
+                create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
+                    source_file,
+                    value_expression,
+                    diag::Locale_must_be_an_IETF_BCP_47_language_tag_Examples_Colon_0_1,
+                    args!["en", "ja-jp"],
+                ),
+            );
         }
-        _ => {}
     }
 
     if !errors.is_empty() {
@@ -1031,7 +1028,7 @@ pub fn get_extends_config_path(
         if !host.fs().file_exists(&extended_config_path)
             && !extended_config_path.ends_with(EXTENSION_JSON)
         {
-            extended_config_path = extended_config_path + EXTENSION_JSON;
+            extended_config_path += EXTENSION_JSON;
             if !host.fs().file_exists(&extended_config_path) {
                 errors.push(
                     create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(

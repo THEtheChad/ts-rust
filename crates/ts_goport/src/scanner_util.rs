@@ -56,7 +56,7 @@ fn unicode_is(table: &[(u32, u32, u32)], ch: u32) -> bool {
         let middle = low + (high - low) / 2;
         let (lo, hi, stride) = table[middle];
         if lo <= ch && ch <= hi {
-            return stride == 1 || (ch - lo) % stride == 0;
+            return stride == 1 || (ch - lo).is_multiple_of(stride);
         }
         if ch < lo {
             high = middle;
@@ -175,7 +175,7 @@ pub fn is_line_break(ch: char) -> bool {
 
 // Go: stringutil/util.go:71 IsDigit
 pub fn is_digit(ch: char) -> bool {
-    ('0'..='9').contains(&ch)
+    ch.is_ascii_digit()
 }
 
 // Go: stringutil/util.go:75 IsOctalDigit
@@ -185,12 +185,12 @@ pub fn is_octal_digit(ch: char) -> bool {
 
 // Go: stringutil/util.go:79 IsHexDigit
 pub fn is_hex_digit(ch: char) -> bool {
-    ('0'..='9').contains(&ch) || ('A'..='F').contains(&ch) || ('a'..='f').contains(&ch)
+    ch.is_ascii_digit() || ('A'..='F').contains(&ch) || ('a'..='f').contains(&ch)
 }
 
 // Go: stringutil/util.go:83 IsASCIILetter
 pub fn is_ascii_letter(ch: char) -> bool {
-    ('A'..='Z').contains(&ch) || ('a'..='z').contains(&ch)
+    ch.is_ascii_uppercase() || ch.is_ascii_lowercase()
 }
 
 // Go: stringutil/util.go:222 StripQuotes
@@ -217,14 +217,13 @@ pub fn unquote_string(str: &str) -> String {
     let mut result = String::with_capacity(inner.len());
     let mut chars = inner.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                if next != '\n' {
-                    result.push(next);
-                    chars.next();
-                    continue;
-                }
-            }
+        if ch == '\\'
+            && let Some(&next) = chars.peek()
+            && next != '\n'
+        {
+            result.push(next);
+            chars.next();
+            continue;
         }
         result.push(ch);
     }
@@ -386,7 +385,7 @@ fn to_lower_ascii(str: &str) -> Option<String> {
         if ch >= 0x80 {
             return None;
         }
-        needs_mapping = needs_mapping || (b'A' <= ch && ch <= b'Z');
+        needs_mapping = needs_mapping || ch.is_ascii_uppercase();
     }
     if !needs_mapping {
         return Some(str.to_string());
@@ -401,7 +400,7 @@ fn to_upper_ascii(str: &str) -> Option<String> {
         if ch >= 0x80 {
             return None;
         }
-        needs_mapping = needs_mapping || (b'a' <= ch && ch <= b'z');
+        needs_mapping = needs_mapping || ch.is_ascii_lowercase();
     }
     if !needs_mapping {
         return Some(str.to_string());
@@ -1002,7 +1001,7 @@ pub fn is_identifier_part_ex(ch: char, language_variant: LanguageVariant) -> boo
 pub fn token_to_string(token: SyntaxKind) -> &'static str {
     static TOKEN_TO_TEXT: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     let table = TOKEN_TO_TEXT.get_or_init(|| {
-        let mut result = vec![""; SyntaxKind::COUNT as usize];
+        let mut result = vec![""; SyntaxKind::COUNT];
         for &(text, kind) in TEXT_TO_PUNCTUATION.iter().chain(TEXT_TO_KEYWORD.iter()) {
             result[kind as u16 as usize] = text;
         }

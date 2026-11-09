@@ -838,15 +838,15 @@ fn trace_thread_key_from_args(args: &[(&'static str, Arg)]) -> Option<TraceThrea
     }
 
     for key in TRACE_THREAD_ARG_KEYS {
-        if let Some(Arg::Str(path)) = find_arg(args, key) {
-            if !path.is_empty() {
-                return Some(TraceThreadKey {
-                    kind: TraceThreadKind::File,
-                    text: path.to_string(),
-                    index: 0,
-                    has_index: false,
-                });
-            }
+        if let Some(Arg::Str(path)) = find_arg(args, key)
+            && !path.is_empty()
+        {
+            return Some(TraceThreadKey {
+                kind: TraceThreadKind::File,
+                text: path.to_string(),
+                index: 0,
+                has_index: false,
+            });
         }
     }
 
@@ -1207,10 +1207,10 @@ fn build_type_descriptor(
 
     // Intrinsic name
     // Go: checker/tracer.go:111 IntrinsicName
-    if flags.intersects(TypeFlags::INTRINSIC) {
-        if let TypeData::Intrinsic(data) = &checker.ty(t).data {
-            desc.intrinsic_name = data.intrinsic_name.clone();
-        }
+    if flags.intersects(TypeFlags::INTRINSIC)
+        && let TypeData::Intrinsic(data) = &checker.ty(t).data
+    {
+        desc.intrinsic_name = data.intrinsic_name.clone();
     }
 
     // Symbol name - escape the internal symbol name prefix for valid JSON
@@ -1323,10 +1323,10 @@ fn build_type_descriptor(
 
     // Pattern (destructuring)
     // Go: checker/tracer.go:318 Pattern
-    if let Some(&pattern) = checker.pattern_for_type.get(&t) {
-        if pattern.is_some() {
-            desc.destructuring_pattern = get_location(pattern);
-        }
+    if let Some(&pattern) = checker.pattern_for_type.get(&t)
+        && pattern.is_some()
+    {
+        desc.destructuring_pattern = get_location(pattern);
     }
 
     // First declaration - prefer aliasSymbol, matching TypeScript's `aliasSymbol ?? symbol`
@@ -1335,10 +1335,10 @@ fn build_type_descriptor(
     } else {
         symbol
     };
-    if first_decl_symbol.is_some() {
-        if let Some(&declaration) = checker.sym(first_decl_symbol).declarations.first() {
-            desc.first_declaration = get_location(declaration);
-        }
+    if first_decl_symbol.is_some()
+        && let Some(&declaration) = checker.sym(first_decl_symbol).declarations.first()
+    {
+        desc.first_declaration = get_location(declaration);
     }
 
     // Display text
@@ -1497,10 +1497,10 @@ pub fn start_tracing_if_needed(
         return None;
     }
     let mut config_file_path = "";
-    if let Some(config_file) = &config.config_file {
-        if config_file.source_file.is_some() {
-            config_file_path = source_file_file_name(config_file.source_file);
-        }
+    if let Some(config_file) = &config.config_file
+        && config_file.source_file.is_some()
+    {
+        config_file_path = source_file_file_name(config_file.source_file);
     }
     match start_tracing(trace_dir, config_file_path, testing) {
         Ok(_) => None,
@@ -1538,6 +1538,8 @@ fn write_json_string(out: &mut String, s: &str) {
 // exponent, which is Go `strconv.AppendFloat(f, 'f', -1, 64)`.
 fn write_json_float(out: &mut String, value: f64) {
     let abs = value.abs();
+    // A range `contains` would differ for NaN, which takes the plain branch here.
+    #[allow(clippy::manual_range_contains)]
     if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
         // Go 'e' format with the "e-09" to "e-9" clean up.
         let text = format!("{value:e}");

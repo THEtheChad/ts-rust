@@ -250,20 +250,19 @@ impl Checker {
             // If the interface has any members, they may subtype members in the base, so we should do a full structural comparison
             return TypeId::NIL;
         }
-        let instantiated_base: TypeId;
         let type_parameters = self
             .ty(target)
             .as_interface_type()
             .type_parameters()
             .to_vec();
-        if type_parameters.is_empty() {
-            instantiated_base = bases[0];
+        let instantiated_base: TypeId = if type_parameters.is_empty() {
+            bases[0]
         } else {
             let type_arguments = self.get_type_arguments(t);
             let mapper =
                 self.new_type_mapper(&type_parameters, &type_arguments[..type_parameters.len()]);
-            instantiated_base = self.instantiate_type(bases[0], mapper);
-        }
+            self.instantiate_type(bases[0], mapper)
+        };
         let mut instantiated_base = instantiated_base;
         let last = {
             let type_arguments = self.type_arguments_of(t);
@@ -345,10 +344,10 @@ impl Checker {
             kind: CachedTypeKind::REGULAR_OBJECT_LITERAL,
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         self.resolve_structured_type_members(t);
         let members = self.transform_type_of_members(t, &mut |c: &mut Checker, pt: TypeId| {
@@ -538,7 +537,7 @@ impl Checker {
                             let initializer = for_node.initializer();
                             let expression = for_node.expression();
                             if is_variable_declaration_list(initializer)
-                                && initializer.declarations().nodes().len() == 0
+                                && initializer.declarations().nodes().is_empty()
                                 && expression.is_some()
                                 && (location == expression
                                     || is_node_descendant_of(location, expression))
@@ -547,10 +546,10 @@ impl Checker {
                             }
                         }
                         // ts#64674, Go N' checker.go:28798: enum member names are checked now (checkEnumMember).
-                        if computed_name.is_some() {
-                            if is_invalid_computed_property_name(computed_name) {
-                                return;
-                            }
+                        if computed_name.is_some()
+                            && is_invalid_computed_property_name(computed_name)
+                        {
+                            return;
                         }
                         if heritage_clause.is_some() {
                             // extends heritage clauses on interfaces are not expressions and are unchecked if they are
@@ -1558,10 +1557,10 @@ impl Checker {
             kind: CachedTypeKind::PROMISED_TYPE_OF_PROMISE,
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let global_promise_type = self.get_global_promise_type();
         if self.is_reference_to_type(t, global_promise_type) {

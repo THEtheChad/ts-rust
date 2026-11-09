@@ -778,11 +778,10 @@ impl Session {
                         .as_ref()
                         .unwrap_or_else(|| crate::core::go_nil_dereference())
                         .refresh_diagnostics(&s.background_context())
+                        && s.options.logging_enabled
                     {
-                        if s.options.logging_enabled {
-                            s.logger
-                                .logf(&format!("Error refreshing diagnostics: {}", err.error()));
-                        }
+                        s.logger
+                            .logf(&format!("Error refreshing diagnostics: {}", err.error()));
                     }
                 };
                 // Go: the rest of the same wg.Go goroutine (`TaskHold`).
@@ -1503,12 +1502,12 @@ impl Session {
         };
 
         measurements.memory_used_bytes = read_uint64(&samples[S_MEMORY_USED_BYTES]);
-        if let MetricsValue::Uint64(v) = samples[S_GO_MEM_LIMIT].value {
-            if v < i64::MAX as u64 {
-                measurements.go_mem_limit = v as f64;
-            }
-            // else: default (MaxInt64) exceeds MAX_SAFE_INTEGER; leave as 0 to indicate unconfigured
+        if let MetricsValue::Uint64(v) = samples[S_GO_MEM_LIMIT].value
+            && v < i64::MAX as u64
+        {
+            measurements.go_mem_limit = v as f64;
         }
+        // else: default (MaxInt64) exceeds MAX_SAFE_INTEGER; leave as 0 to indicate unconfigured
         measurements.go_gc_percent = read_uint64(&samples[S_GO_GC_PERCENT]);
         measurements.heap_goal_bytes = read_uint64(&samples[S_HEAP_GOAL_BYTES]);
         measurements.heap_live_bytes = read_uint64(&samples[S_HEAP_LIVE_BYTES]);
@@ -1567,13 +1566,12 @@ impl Session {
                     ..Default::default()
                 },
             )
+            && self.options.logging_enabled
         {
-            if self.options.logging_enabled {
-                self.logger.logf(&format!(
-                    "Error sending performance telemetry: {}",
-                    err.error()
-                ));
-            }
+            self.logger.logf(&format!(
+                "Error sending performance telemetry: {}",
+                err.error()
+            ));
         }
     }
 
@@ -2496,13 +2494,11 @@ impl Session {
                     s.log_content_mapper_timings(&content_mapper_timings);
                     s.logger.log("");
                 }
-                if s.options.watch_enabled {
-                    if let Err(err) = s.update_watches(old_snapshot, new_snapshot) {
-                        if s.options.logging_enabled {
+                if s.options.watch_enabled
+                    && let Err(err) = s.update_watches(old_snapshot, new_snapshot)
+                        && s.options.logging_enabled {
                             s.logger.log(&err.error());
                         }
-                    }
-                }
                 let _ = s.update_content_mapper_registrations(ctx, new_snapshot);
                 s.publish_program_diagnostics(old_snapshot, new_snapshot);
                 s.send_project_info_telemetry_for_new_projects(old_snapshot, new_snapshot);
@@ -3277,18 +3273,16 @@ impl Session {
         old_prefs: &lsutil::UserPreferences,
         new_prefs: &lsutil::UserPreferences,
     ) {
-        if old_prefs.inlay_hints != new_prefs.inlay_hints {
-            if let Err(err) = self
+        if old_prefs.inlay_hints != new_prefs.inlay_hints
+            && let Err(err) = self
                 .client
                 .as_ref()
                 .unwrap_or_else(|| crate::core::go_nil_dereference())
                 .refresh_inlay_hints(&self.background_context())
-            {
-                if self.options.logging_enabled {
-                    self.logger
-                        .logf(&format!("Error refreshing inlay hints: {}", err.error()));
-                }
-            }
+            && self.options.logging_enabled
+        {
+            self.logger
+                .logf(&format!("Error refreshing inlay hints: {}", err.error()));
         }
     }
 
@@ -3298,18 +3292,16 @@ impl Session {
         old_prefs: &lsutil::UserPreferences,
         new_prefs: &lsutil::UserPreferences,
     ) {
-        if old_prefs.code_lens != new_prefs.code_lens {
-            if let Err(err) = self
+        if old_prefs.code_lens != new_prefs.code_lens
+            && let Err(err) = self
                 .client
                 .as_ref()
                 .unwrap_or_else(|| crate::core::go_nil_dereference())
                 .refresh_code_lens(&self.background_context())
-            {
-                if self.options.logging_enabled {
-                    self.logger
-                        .logf(&format!("Error refreshing code lens: {}", err.error()));
-                }
-            }
+            && self.options.logging_enabled
+        {
+            self.logger
+                .logf(&format!("Error refreshing code lens: {}", err.error()));
         }
     }
 
@@ -3516,11 +3508,10 @@ impl Session {
                     ..Default::default()
                 },
             )
+            && self.options.logging_enabled
         {
-            if self.options.logging_enabled {
-                self.logger
-                    .logf(&format!("Error publishing diagnostics: {}", err.error()));
-            }
+            self.logger
+                .logf(&format!("Error publishing diagnostics: {}", err.error()));
         }
     }
 

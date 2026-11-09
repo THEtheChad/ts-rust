@@ -223,8 +223,8 @@ jobs:
       # ts_wasm with its wasm-only tests and allocator, and the crates that it builds, without their
       # default features, as ts_wasm builds them. ts_goport's tests/ are native only (they run tsgo),
       # so ts_goport takes its lib, bins and examples, then its unit tests (--profile test). The
-      # goport crates allow clippy::all and pedantic at their roots, so for them this step checks
-      # rustc warnings and the workspace lints; full clippy applies to ts_wasm.
+      # goport crates take the workspace clippy policy (clippy::all, less the exceptions listed in
+      # Cargo.toml) and allow pedantic at their roots; full clippy applies to ts_wasm.
       - name: clippy wasm32
         run: |
           cargo clippy --locked --target wasm32-wasip1 --no-default-features -p ts_wasm -p goport_core -p goport_util -p goport_lsproto --all-targets -- -D warnings

@@ -1501,14 +1501,14 @@ impl Checker {
                     .unwrap_or(TypeId::NIL);
             }
         }
-        if let Some(alias) = self.ty(t).alias.clone() {
-            if is_known_generic_type_name(self.sym(alias.symbol).name.as_str()) {
-                let name = self.sym(alias.symbol).name.as_str();
-                let global_symbol = self.get_global_symbol(name, SymbolFlags::TYPE, None);
-                if global_symbol.is_some() && global_symbol == alias.symbol {
-                    // core.FirstOrNil
-                    return alias.type_arguments.first().copied().unwrap_or(TypeId::NIL);
-                }
+        if let Some(alias) = self.ty(t).alias.clone()
+            && is_known_generic_type_name(self.sym(alias.symbol).name.as_str())
+        {
+            let name = self.sym(alias.symbol).name.as_str();
+            let global_symbol = self.get_global_symbol(name, SymbolFlags::TYPE, None);
+            if global_symbol.is_some() && global_symbol == alias.symbol {
+                // core.FirstOrNil
+                return alias.type_arguments.first().copied().unwrap_or(TypeId::NIL);
             }
         }
         TypeId::NIL

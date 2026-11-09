@@ -291,7 +291,7 @@ impl<'a> Scanner<'a> {
                     break;
                 }
                 if ch == '<' {
-                    if is_conflict_marker_trivia(&self.text, self.scanner_state.pos as usize) {
+                    if is_conflict_marker_trivia(self.text, self.scanner_state.pos as usize) {
                         self.scanner_state.pos = self.scan_conflict_marker_trivia_at_pos();
                         self.scanner_state.token = SyntaxKind::ConflictMarkerTrivia;
                         return self.scanner_state.token;
@@ -412,13 +412,11 @@ impl<'a> Scanner<'a> {
                     break;
                 } else if ch == '@' as i32 && self.scanner_state.pos >= 0 {
                     // @ doesn't start a new tag inside ``, and elsewhere, only after whitespace and before identifier
-                    let (previous, _) = utf8_decode_last_rune_in_string(
-                        &self.text,
-                        self.scanner_state.pos as usize,
-                    );
+                    let (previous, _) =
+                        utf8_decode_last_rune_in_string(self.text, self.scanner_state.pos as usize);
                     if is_white_space_single_line(rune_to_char(previous)) {
                         let (next, _) = utf8_decode_rune_in_string(
-                            &self.text,
+                            self.text,
                             (self.scanner_state.pos + size) as usize,
                         );
                         if is_identifier_start(rune_to_char(next)) {
@@ -449,7 +447,7 @@ impl<'a> Scanner<'a> {
         if self.scanner_state.pos >= self.text.len() as i32 {
             return true;
         }
-        let (ch, _) = utf8_decode_rune_in_string(&self.text, self.scanner_state.pos as usize);
+        let (ch, _) = utf8_decode_rune_in_string(self.text, self.scanner_state.pos as usize);
         let ch = rune_to_char(ch);
         is_identifier_start(ch) || is_white_space_single_line(ch) || is_line_break(ch)
     }
@@ -1039,11 +1037,10 @@ impl<'a> Scanner<'a> {
                     // UTF-16 code units would in a JavaScript string.
                     if !flags.intersects(EscapeSequenceScanningFlags::REGULAR_EXPRESSION)
                         && is_high_surrogate(code_point as u32)
+                        && let Some(combined) = self.scan_low_surrogate_escape(code_point)
                     {
-                        if let Some(combined) = self.scan_low_surrogate_escape(code_point) {
-                            out.push(rune_to_char(combined));
-                            return;
-                        }
+                        out.push(rune_to_char(combined));
+                        return;
                     }
                     push_js_string_rune(out, code_point as u32);
                     return;
@@ -1125,7 +1122,7 @@ impl<'a> Scanner<'a> {
                 if ch >= RUNE_SELF {
                     self.scanner_state.pos -= 1; // back up past the single-byte advance
                     let (r, size) =
-                        utf8_decode_rune_in_string(&self.text, self.scanner_state.pos as usize);
+                        utf8_decode_rune_in_string(self.text, self.scanner_state.pos as usize);
                     c = rune_to_char(r);
                     self.scanner_state.pos += size;
                 }
@@ -1159,14 +1156,13 @@ impl<'a> Scanner<'a> {
         self.scanner_state.pos += 2;
         let start = self.scanner_state.pos;
         let extended = self.char() == '{' as i32;
-        let hex_digits;
-        if extended {
+        let hex_digits = if extended {
             self.scanner_state.pos += 1;
-            hex_digits = self.scan_hex_digits(1, true, false);
+            self.scan_hex_digits(1, true, false)
         } else {
             self.scanner_state.token_flags |= TokenFlags::UNICODE_ESCAPE;
-            hex_digits = self.scan_hex_digits(4, false, false);
-        }
+            self.scan_hex_digits(4, false, false)
+        };
         if hex_digits.is_empty() {
             self.scanner_state.token_flags |= TokenFlags::CONTAINS_INVALID_ESCAPE;
             if should_emit_invalid_escape_error {
@@ -1174,7 +1170,7 @@ impl<'a> Scanner<'a> {
             }
             return -1;
         }
-        let hex_value = go_parse_int(&hex_digits, 16, 32);
+        let hex_value = go_parse_int(hex_digits, 16, 32);
         if extended {
             let mut is_invalid_extended_escape = false;
             if hex_value > 0x10FFFF {
@@ -1337,14 +1333,14 @@ impl<'a> Scanner<'a> {
             .intersects(TokenFlags::CONTAINS_SEPARATOR)
         {
             let mut value = String::new();
-            fixed_part.push_to(&self.text, &mut value);
+            fixed_part.push_to(self.text, &mut value);
             if let Some(part) = fractional_part.filter(|part| !part.is_empty()) {
                 value.push('.');
-                part.push_to(&self.text, &mut value);
+                part.push_to(self.text, &mut value);
             }
             if let Some(part) = exponent_part {
                 value.push_str(&self.text[exponent_preamble.0..exponent_preamble.1]);
-                part.push_to(&self.text, &mut value);
+                part.push_to(self.text, &mut value);
             }
             self.set_token_value(&value);
         } else {
@@ -1364,13 +1360,12 @@ impl<'a> Scanner<'a> {
             self.set_token_value(&js_number_string(self.scanner_state.token_value));
             return SyntaxKind::NumericLiteral;
         }
-        let result;
-        if fixed_part_end == self.scanner_state.pos {
-            result = self.scan_big_int_suffix();
+        let result = if fixed_part_end == self.scanner_state.pos {
+            self.scan_big_int_suffix()
         } else {
             self.set_token_value(&js_number_string(self.scanner_state.token_value));
-            result = SyntaxKind::NumericLiteral;
-        }
+            SyntaxKind::NumericLiteral
+        };
         let (ch, _) = self.char_and_size();
         if is_identifier_start(rune_to_char(ch)) {
             let id_start = self.scanner_state.pos;

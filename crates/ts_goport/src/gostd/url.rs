@@ -704,6 +704,7 @@ impl URL {
     /// For example:
     /// - setPath("/foo/bar")   will set Path="/foo/bar" and RawPath=""
     /// - setPath("/foo%2fbar") will set Path="/foo/bar" and RawPath="/foo%2fbar"
+    ///
     /// setPath will return an error only if the provided path contains an invalid
     /// escaping.
     pub fn set_path(&mut self, p: &str) -> Result<(), GoError> {
@@ -726,12 +727,12 @@ impl URL {
     /// Otherwise EscapedPath ignores u.RawPath and computes an escaped
     /// form on its own.
     pub fn escaped_path(&self) -> String {
-        if !self.raw_path.is_empty() && valid_encoded(&self.raw_path, ENCODE_PATH) {
-            if let Ok(p) = unescape(&self.raw_path, ENCODE_PATH) {
-                if p == self.path {
-                    return self.raw_path.clone();
-                }
-            }
+        if !self.raw_path.is_empty()
+            && valid_encoded(&self.raw_path, ENCODE_PATH)
+            && let Ok(p) = unescape(&self.raw_path, ENCODE_PATH)
+            && p == self.path
+        {
+            return self.raw_path.clone();
         }
         if self.path == "*" {
             return "*".to_string(); // don't escape (Issue 11202)
@@ -757,12 +758,12 @@ impl URL {
     // Go: net/url/url.go:750 EscapedFragment
     /// EscapedFragment returns the escaped form of u.Fragment.
     pub fn escaped_fragment(&self) -> String {
-        if !self.raw_fragment.is_empty() && valid_encoded(&self.raw_fragment, ENCODE_FRAGMENT) {
-            if let Ok(f) = unescape(&self.raw_fragment, ENCODE_FRAGMENT) {
-                if f == self.fragment {
-                    return self.raw_fragment.clone();
-                }
-            }
+        if !self.raw_fragment.is_empty()
+            && valid_encoded(&self.raw_fragment, ENCODE_FRAGMENT)
+            && let Ok(f) = unescape(&self.raw_fragment, ENCODE_FRAGMENT)
+            && f == self.fragment
+        {
+            return self.raw_fragment.clone();
         }
         escape(&self.fragment, ENCODE_FRAGMENT)
     }

@@ -179,12 +179,11 @@ impl Checker {
             let element_type_constraint = self.get_jsx_element_type_type_at(node);
             if element_type_constraint.is_some() {
                 let tag_name = node.tag_name();
-                let tag_type;
-                if is_jsx_intrinsic_tag_name(tag_name) {
-                    tag_type = self.get_string_literal_type(tag_name.text());
+                let tag_type = if is_jsx_intrinsic_tag_name(tag_name) {
+                    self.get_string_literal_type(tag_name.text())
                 } else {
-                    tag_type = self.check_expression(tag_name);
-                }
+                    self.check_expression(tag_name)
+                };
                 let mut diags: Vec<Diagnostic> = Vec::new();
                 let relation = self.assignable_relation.clone();
                 if !self.check_type_related_to_ex(
@@ -435,10 +434,10 @@ impl Checker {
             node_id: node,
             type_id: self.ty(contextual_type).id,
         };
-        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key) {
-            if discriminated.is_some() {
-                return discriminated;
-            }
+        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key)
+            && discriminated.is_some()
+        {
+            return discriminated;
         }
         let jsx_namespace = self.get_jsx_namespace_at(node);
         // PERF (jsxname1): the children name is interned once, so each member
@@ -540,30 +539,30 @@ impl Checker {
                 return reported_error;
             }
             let more_than_one_real_children = valid_children.len() > 1;
-            let array_like_target_parts;
-            let non_array_like_target_parts;
             let iterable_type = (self.get_global_iterable_type.clone())(self);
-            if iterable_type != self.empty_generic_type {
+            let (array_like_target_parts, non_array_like_target_parts) = if iterable_type
+                != self.empty_generic_type
+            {
                 let any_type = self.any_type;
                 let any_iterable = self.create_iterable_type(any_type);
-                array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                (
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_type_assignable_to(t, any_iterable)
-                    });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                    }),
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         !c.is_type_assignable_to(t, any_iterable)
-                    });
+                    }),
+                )
             } else {
-                array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                (
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_array_or_tuple_like_type(t)
-                    });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                    }),
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         !c.is_array_or_tuple_like_type(t)
-                    });
-            }
+                    }),
+                )
+            };
             // PORT: Go `getInvalidTextualChildDiagnostic` is a closure that computes
             // the message and args once, on first call. The cache is shared through
             // `Rc<RefCell<..>>` so the returned `Rc<dyn Fn>` can be stored in
@@ -675,7 +674,7 @@ impl Checker {
                             diag::This_JSX_tag_s_0_prop_expects_type_1_which_requires_multiple_children_but_only_a_single_child_was_provided,
                             args![children_prop_name, children_target_type_string],
                         );
-                        self.report_diagnostic(diag, diagnostic_output.as_deref_mut());
+                        self.report_diagnostic(diag, diagnostic_output);
                         reported_error = true;
                     }
                 }
@@ -1071,8 +1070,7 @@ impl Checker {
         check_mode: CheckMode,
     ) -> SignatureId {
         let is_jsx_open_fragment = is_jsx_opening_fragment(node);
-        let expr_types;
-        if !is_jsx_open_fragment {
+        let expr_types = if !is_jsx_open_fragment {
             if is_jsx_intrinsic_tag_name(node.tag_name()) {
                 let result = self.get_intrinsic_attributes_type_from_jsx_opening_like_element(node);
                 let fake_signature = self.create_signature_for_jsx_intrinsic(node, result);
@@ -1110,10 +1108,10 @@ impl Checker {
                 }
                 return fake_signature;
             }
-            expr_types = self.check_expression(node.tag_name());
+            self.check_expression(node.tag_name())
         } else {
-            expr_types = self.get_jsx_fragment_type(node);
-        }
+            self.get_jsx_fragment_type(node)
+        };
         let apparent_type = self.get_apparent_type(expr_types);
         if self.is_error_type(apparent_type) {
             return self.resolve_error_call(node);
@@ -1172,19 +1170,16 @@ impl Checker {
         // However "context" and "updater" are implicit and can't be specify by users. Only the first parameter, props,
         // can be specified by users through attributes property.
         let param_type = self.get_effective_first_argument_for_jsx_signature(signature, node);
-        let attributes_type;
-        if is_jsx_opening_fragment(node) {
-            attributes_type =
-                self.create_jsx_attributes_type_from_attributes_property(node, CheckMode::NORMAL);
+        let attributes_type = if is_jsx_opening_fragment(node) {
+            self.create_jsx_attributes_type_from_attributes_property(node, CheckMode::NORMAL)
         } else {
-            attributes_type = self.check_expression_with_contextual_type(
+            self.check_expression_with_contextual_type(
                 node.attributes(),
                 param_type,
                 InferenceContextId::NIL, /*inferenceContext*/
                 check_mode,
-            );
-        }
-        let check_attributes_type;
+            )
+        };
         // PORT: Go closure `checkTagNameDoesNotExpectTooManyArguments` captures
         // `c` and `diagnosticOutput`; here it takes both as parameters.
         let check_tag_name_does_not_expect_too_many_arguments = |c: &mut Checker,
@@ -1299,11 +1294,11 @@ impl Checker {
             }
             false
         };
-        if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
-            check_attributes_type = self.get_regular_type_of_object_literal(attributes_type);
+        let check_attributes_type = if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
+            self.get_regular_type_of_object_literal(attributes_type)
         } else {
-            check_attributes_type = attributes_type;
-        }
+            attributes_type
+        };
         if !check_tag_name_does_not_expect_too_many_arguments(
             self,
             diagnostic_output.as_deref_mut(),
@@ -1366,13 +1361,13 @@ impl Checker {
                                           attributes_symbol: SymbolId,
                                           attributes_table: SymbolTable|
          -> TypeId {
-            *object_flags = *object_flags | ObjectFlags::FRESH_LITERAL;
+            *object_flags |= ObjectFlags::FRESH_LITERAL;
             let result = c.new_anonymous_type(attributes_symbol, attributes_table, &[], &[], &[]);
             let flags = *object_flags
                 | ObjectFlags::OBJECT_LITERAL
                 | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             let r = c.ty_mut(result);
-            r.object_flags = r.object_flags | flags;
+            r.object_flags |= flags;
             result
         };
         let jsx_namespace = self.get_jsx_namespace_at(opening_like_element);
@@ -1390,8 +1385,8 @@ impl Checker {
                 let member = attribute_decl.symbol();
                 if is_jsx_attribute(attribute_decl) {
                     let expr_type = self.check_jsx_attribute(attribute_decl, check_mode);
-                    object_flags = object_flags
-                        | (self.ty(expr_type).object_flags & ObjectFlags::PROPAGATING_FLAGS);
+                    object_flags |=
+                        self.ty(expr_type).object_flags & ObjectFlags::PROPAGATING_FLAGS;
                     let member_flags = self.sym(member).flags;
                     let member_name = self.sym(member).name.clone();
                     let attribute_symbol =
@@ -1496,22 +1491,20 @@ impl Checker {
                     }
                 }
             }
-            if !has_spread_any_type {
-                if self.symbols.len(attributes_table) != 0 {
-                    let attrs_type = create_jsx_attributes_type(
-                        self,
-                        &mut object_flags,
-                        attributes_symbol,
-                        attributes_table,
-                    );
-                    spread = self.get_spread_type(
-                        spread,
-                        attrs_type,
-                        attributes_symbol,
-                        object_flags,
-                        false, /*readonly*/
-                    );
-                }
+            if !has_spread_any_type && self.symbols.len(attributes_table) != 0 {
+                let attrs_type = create_jsx_attributes_type(
+                    self,
+                    &mut object_flags,
+                    attributes_symbol,
+                    attributes_table,
+                );
+                spread = self.get_spread_type(
+                    spread,
+                    attrs_type,
+                    attributes_symbol,
+                    object_flags,
+                    false, /*readonly*/
+                );
             }
         }
         let parent_has_semantic_jsx_children = |opening_like_element: Node| -> bool {
@@ -1527,10 +1520,8 @@ impl Checker {
                 if parent.opening_element() == opening_like_element {
                     children = parent.children().nodes().to_vec();
                 }
-            } else if is_jsx_fragment(parent) {
-                if parent.opening_fragment() == opening_like_element {
-                    children = parent.children().nodes().to_vec();
-                }
+            } else if is_jsx_fragment(parent) && parent.opening_fragment() == opening_like_element {
+                children = parent.children().nodes().to_vec();
             }
             !get_semantic_jsx_children(&children).is_empty()
         };
@@ -1570,20 +1561,19 @@ impl Checker {
                 // Go `links := c.valueSymbolLinks.Get(childrenPropSymbol)` gives the id here.
                 self.value_symbol_links
                     .get_by_id(&self.symbols, children_prop_symbol);
-                let resolved_type;
-                if child_types.len() == 1 {
-                    resolved_type = child_types[0];
+                let resolved_type = if child_types.len() == 1 {
+                    child_types[0]
                 } else if children_contextual_type.is_some()
                     && self.some_type(
                         children_contextual_type,
                         &mut |c: &mut Checker, t: TypeId| c.is_tuple_like_type(t),
                     )
                 {
-                    resolved_type = self.create_tuple_type(&child_types);
+                    self.create_tuple_type(&child_types)
                 } else {
                     let union = self.get_union_type(&child_types);
-                    resolved_type = self.create_array_type(union);
-                }
+                    self.create_array_type(union)
+                };
                 self.value_symbol_links
                     .get_by_id(&self.symbols, children_prop_symbol)
                     .resolved_type = resolved_type;

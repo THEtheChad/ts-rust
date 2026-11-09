@@ -222,18 +222,17 @@ impl MessagePackProtocol {
 
         // Read message type - can be positive fixint (0x00-0x7F) or uint8 (0xCC + value)
         let t = read_byte(&mut self.r)?;
-        let raw_type: u8;
-        if t <= 0x7F {
+        let raw_type: u8 = if t <= 0x7F {
             // Positive fixint - the byte IS the value
-            raw_type = t;
+            t
         } else if t == MSGPACK_U8 {
             // uint8 marker - next byte is the value
-            raw_type = read_byte(&mut self.r)?;
+            read_byte(&mut self.r)?
         } else {
             return Err(invalid_request(format!(
                 "expected positive fixint or uint8 marker, received: 0x{t:02x}"
             )));
-        }
+        };
         let msg_type = MessageType(raw_type);
         if !msg_type.is_valid() {
             return Err(invalid_request(format!(
@@ -259,29 +258,28 @@ impl MessagePackProtocol {
     fn read_bin(&mut self) -> Result<Vec<u8>, GoError> {
         let t = read_byte(&mut self.r)?;
 
-        let size: usize;
-        match t {
+        let size: usize = match t {
             MSGPACK_BIN8 => {
                 let mut size8 = [0u8; 1];
                 read_full(&mut self.r, &mut size8)?;
-                size = usize::from(size8[0]);
+                usize::from(size8[0])
             }
             MSGPACK_BIN16 => {
                 let mut size16 = [0u8; 2];
                 read_full(&mut self.r, &mut size16)?;
-                size = usize::from(u16::from_be_bytes(size16));
+                usize::from(u16::from_be_bytes(size16))
             }
             MSGPACK_BIN32 => {
                 let mut size32 = [0u8; 4];
                 read_full(&mut self.r, &mut size32)?;
-                size = u32::from_be_bytes(size32) as usize;
+                u32::from_be_bytes(size32) as usize
             }
             _ => {
                 return Err(invalid_request(format!(
                     "expected binary data (0xc4-0xc6), received: 0x{t:02x}"
                 )));
             }
-        }
+        };
 
         let mut payload = vec![0u8; size];
         read_full(&mut self.r, &mut payload)?;
@@ -469,8 +467,7 @@ mod tests {
         let mut protocol = new_message_pack_protocol(pipe.clone());
         let msg = protocol.read_message().expect("read the request");
         let err = crate::api::proto::unmarshal_payload(&msg.method, b"null")
-            .err()
-            .expect("an unknown method");
+            .expect_err("an unknown method");
         assert_eq!(err.error(), r#"unknown API method "a\ufdd0\ufdd0b\xff""#);
         protocol
             .write_error(

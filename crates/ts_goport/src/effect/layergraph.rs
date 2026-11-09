@@ -271,82 +271,77 @@ pub fn extract_layer_graph(
         let visited = visited_nodes.get(&current).copied().unwrap_or(false);
 
         // Case 1: Pipe detection
-        if !opts.skip_explode {
-            if let Some(pipe_result) = tp.parse_pipe_call(current) {
-                if !visited {
-                    // First pass: push self back, then subject and args.
-                    append_node_to_visit(&mut depth_budget, &mut stack, current, current_depth);
-                    append_node_to_visit(
-                        &mut depth_budget,
-                        &mut stack,
-                        pipe_result.subject,
-                        current_depth,
-                    );
-                    for &arg in &pipe_result.args {
-                        append_node_to_visit(&mut depth_budget, &mut stack, arg, current_depth);
-                        node_in_pipe_context.insert(arg, true);
+        if !opts.skip_explode
+            && let Some(pipe_result) = tp.parse_pipe_call(current)
+        {
+            if !visited {
+                // First pass: push self back, then subject and args.
+                append_node_to_visit(&mut depth_budget, &mut stack, current, current_depth);
+                append_node_to_visit(
+                    &mut depth_budget,
+                    &mut stack,
+                    pipe_result.subject,
+                    current_depth,
+                );
+                for &arg in &pipe_result.args {
+                    append_node_to_visit(&mut depth_budget, &mut stack, arg, current_depth);
+                    node_in_pipe_context.insert(arg, true);
+                }
+                visited_nodes.insert(current, true);
+            } else {
+                // Second pass: collect child graph indices.
+                let mut all_children: Vec<Node> = Vec::with_capacity(1 + pipe_result.args.len());
+                all_children.push(pipe_result.subject);
+                all_children.extend(pipe_result.args.iter().copied());
+
+                let child_indices = collect_child_indices(&all_children, &node_to_graph_index, &g);
+
+                if child_indices.len() == all_children.len() {
+                    // All members are graph nodes — link them sequentially.
+                    let mut last_idx: NodeIndex = 0;
+                    for (i, &child_idx) in child_indices.iter().enumerate() {
+                        if i > 0 {
+                            g.add_edge(
+                                child_idx,
+                                last_idx,
+                                LayerGraphEdgeInfo {
+                                    relationship: EdgeRelationship::Pipe,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        last_idx = child_idx;
                     }
-                    visited_nodes.insert(current, true);
+                    // Add a node for the pipe call itself, linking to the last child.
+                    let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
+                    let pipe_idx = add_node(&mut g, &mut node_to_graph_index, current, info);
+                    g.add_edge(
+                        pipe_idx,
+                        last_idx,
+                        LayerGraphEdgeInfo {
+                            relationship: EdgeRelationship::Pipe,
+                            ..Default::default()
+                        },
+                    );
                 } else {
-                    // Second pass: collect child graph indices.
-                    let mut all_children: Vec<Node> =
-                        Vec::with_capacity(1 + pipe_result.args.len());
-                    all_children.push(pipe_result.subject);
-                    all_children.extend(pipe_result.args.iter().copied());
-
-                    let child_indices =
-                        collect_child_indices(&all_children, &node_to_graph_index, &g);
-
-                    if child_indices.len() == all_children.len() {
-                        // All members are graph nodes — link them sequentially.
-                        let mut last_idx: NodeIndex = 0;
-                        for (i, &child_idx) in child_indices.iter().enumerate() {
-                            if i > 0 {
-                                g.add_edge(
-                                    child_idx,
-                                    last_idx,
-                                    LayerGraphEdgeInfo {
-                                        relationship: EdgeRelationship::Pipe,
-                                        ..Default::default()
-                                    },
-                                );
-                            }
-                            last_idx = child_idx;
-                        }
-                        // Add a node for the pipe call itself, linking to the last child.
-                        let info =
-                            extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                        let pipe_idx = add_node(&mut g, &mut node_to_graph_index, current, info);
-                        g.add_edge(
-                            pipe_idx,
-                            last_idx,
-                            LayerGraphEdgeInfo {
-                                relationship: EdgeRelationship::Pipe,
-                                ..Default::default()
-                            },
-                        );
-                    } else {
-                        // Not all children are graph nodes — remove partial children and try as leaf.
-                        remove_partial_children(&all_children, &mut node_to_graph_index, &mut g);
-                        let info =
-                            extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
-                        if info.layer_type.is_some() {
-                            add_node(&mut g, &mut node_to_graph_index, current, info);
-                        }
+                    // Not all children are graph nodes — remove partial children and try as leaf.
+                    remove_partial_children(&all_children, &mut node_to_graph_index, &mut g);
+                    let info = extract_node_info(tp, current, sf, in_pipe(&node_in_pipe_context));
+                    if info.layer_type.is_some() {
+                        add_node(&mut g, &mut node_to_graph_index, current, info);
                     }
                 }
-                continue;
             }
+            continue;
         }
 
         // Case 2: Call expression
         if !opts.skip_explode && current.kind() == SyntaxKind::CallExpression {
             let call_expr = current;
             let mut should_explode = !opts.explode_only_layer_calls;
-            if opts.explode_only_layer_calls {
-                if is_layer_module_call(call_expr, &layer_module_name) {
-                    should_explode = true;
-                }
+            if opts.explode_only_layer_calls && is_layer_module_call(call_expr, &layer_module_name)
+            {
+                should_explode = true;
             }
             if should_explode {
                 let args: Vec<Node> = call_expr.arguments().to_vec();
@@ -701,10 +696,10 @@ fn collect_child_indices(
 ) -> Vec<NodeIndex> {
     let mut indices = Vec::new();
     for n in nodes {
-        if let Some(&idx) = node_to_graph_index.get(n) {
-            if g.has_node(idx) {
-                indices.push(idx);
-            }
+        if let Some(&idx) = node_to_graph_index.get(n)
+            && g.has_node(idx)
+        {
+            indices.push(idx);
         }
     }
     indices

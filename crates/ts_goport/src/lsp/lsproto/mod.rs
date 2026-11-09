@@ -4,6 +4,17 @@
 pub mod baseproto;
 pub mod jsonrpc;
 pub mod lsp;
+// The generator's output keeps its own shape (a return in each union arm, a
+// match over a single member, the stringer's `0 + index` offsets and paired
+// comparisons, a unit struct's `default()`); change generate.mts, not these
+// allows, to drop them.
+#[allow(
+    clippy::needless_return,
+    clippy::match_single_binding,
+    clippy::identity_op,
+    clippy::manual_range_contains,
+    clippy::default_constructed_unit_structs
+)]
 pub mod lsp_generated;
 pub mod util;
 

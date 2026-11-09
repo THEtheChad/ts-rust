@@ -32,33 +32,33 @@ pub fn filter_import_declarations(statements: &[Node]) -> Vec<Node> {
 pub fn get_detection_lists(
     preferences: &UserPreferences,
 ) -> (Vec<StringComparer>, Vec<OrganizeImportsTypeOrder>) {
-    let comparers_to_test: Vec<StringComparer>;
-    let type_orders_to_test: Vec<OrganizeImportsTypeOrder>;
-    if preferences.organize_imports_sort != OrganizeImportsSort::AUTO {
-        comparers_to_test = vec![get_organize_imports_preset_string_comparer(
-            preferences.organize_imports_sort,
-        )];
-    } else if !preferences.organize_imports_ignore_case.is_unknown() {
-        comparers_to_test = vec![get_organize_imports_string_comparer(
-            preferences,
-            preferences.organize_imports_ignore_case.is_true(),
-        )];
-    } else {
-        comparers_to_test = vec![
-            get_organize_imports_string_comparer(preferences, true),
-            get_organize_imports_string_comparer(preferences, false),
-        ];
-    }
+    let comparers_to_test: Vec<StringComparer> =
+        if preferences.organize_imports_sort != OrganizeImportsSort::AUTO {
+            vec![get_organize_imports_preset_string_comparer(
+                preferences.organize_imports_sort,
+            )]
+        } else if !preferences.organize_imports_ignore_case.is_unknown() {
+            vec![get_organize_imports_string_comparer(
+                preferences,
+                preferences.organize_imports_ignore_case.is_true(),
+            )]
+        } else {
+            vec![
+                get_organize_imports_string_comparer(preferences, true),
+                get_organize_imports_string_comparer(preferences, false),
+            ]
+        };
 
-    if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::AUTO {
-        type_orders_to_test = vec![preferences.organize_imports_type_order];
-    } else {
-        type_orders_to_test = vec![
-            OrganizeImportsTypeOrder::LAST,
-            OrganizeImportsTypeOrder::INLINE,
-            OrganizeImportsTypeOrder::FIRST,
-        ];
-    }
+    let type_orders_to_test: Vec<OrganizeImportsTypeOrder> =
+        if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::AUTO {
+            vec![preferences.organize_imports_type_order]
+        } else {
+            vec![
+                OrganizeImportsTypeOrder::LAST,
+                OrganizeImportsTypeOrder::INLINE,
+                OrganizeImportsTypeOrder::FIRST,
+            ]
+        };
 
     (comparers_to_test, type_orders_to_test)
 }
@@ -315,7 +315,7 @@ fn unicode_is(range_tab: &RangeTable, r: u32) -> bool {
     {
         return r16.iter().any(|&(lo, hi, stride)| {
             let (lo, hi, stride) = (u32::from(lo), u32::from(hi), u32::from(stride));
-            lo <= r && r <= hi && (stride == 1 || (r - lo) % stride == 0)
+            lo <= r && r <= hi && (stride == 1 || (r - lo).is_multiple_of(stride))
         });
     }
     let r32 = range_tab.r32;
@@ -323,7 +323,7 @@ fn unicode_is(range_tab: &RangeTable, r: u32) -> bool {
         && r >= lo
     {
         return r32.iter().any(|&(lo, hi, stride)| {
-            lo <= r && r <= hi && (stride == 1 || (r - lo) % stride == 0)
+            lo <= r && r <= hi && (stride == 1 || (r - lo).is_multiple_of(stride))
         });
     }
     false

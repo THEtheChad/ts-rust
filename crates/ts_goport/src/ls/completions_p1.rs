@@ -209,9 +209,7 @@ pub fn ensure_item_data(
     pos: i32,
     list: Option<lsproto::CompletionList>,
 ) -> Option<lsproto::CompletionList> {
-    let Some(mut list) = list else {
-        return None;
-    };
+    let mut list = list?;
     let text = source_file_text(file);
     let go_pos = go_byte_offset(&text, pos);
     for item in &mut list.items {
@@ -597,9 +595,7 @@ impl CompletionList {
     // PORT: a nil receiver is `None` (the lsproto `resolve` rule). Go shares
     // the item pointers; the items are cloned.
     pub fn to_lsp(l: Option<&CompletionList>) -> Option<lsproto::CompletionList> {
-        let Some(l) = l else {
-            return None;
-        };
+        let l = l?;
         let mut items: Vec<lsproto::CompletionItem> = Vec::with_capacity(l.items.len());
         for entry in &l.items {
             // PORT: Go skips nil entries and nil embedded items; a Rust
@@ -609,7 +605,7 @@ impl CompletionList {
         Some(lsproto::CompletionList {
             is_incomplete: l.is_incomplete,
             item_defaults: l.item_defaults.clone(),
-            apply_kind: l.apply_kind.clone(),
+            apply_kind: l.apply_kind,
             items,
         })
     }
@@ -626,12 +622,11 @@ impl LanguageService {
         include_symbols: bool,
     ) -> Result<Option<CompletionList>, GoError> {
         let (_, previous_token) = get_relevant_tokens(position, file);
-        if let Some(trigger_character) = trigger_character.as_deref() {
-            if !is_in_string(file, position, previous_token)
-                && !is_valid_trigger(file, trigger_character, previous_token, position)
-            {
-                return Ok(None);
-            }
+        if let Some(trigger_character) = trigger_character.as_deref()
+            && !is_in_string(file, position, previous_token)
+            && !is_valid_trigger(file, trigger_character, previous_token, position)
+        {
+            return Ok(None);
         }
 
         if trigger_character.as_deref() == Some(" ") {
@@ -1263,10 +1258,11 @@ impl LanguageService {
             }
             // Go: core.MapNonNil (a nil value is dropped)
             for t in types {
-                if is_literal(s.type_checker, t) && !s.type_checker.ty(t).is_enum_literal() {
-                    if let Some(value) = s.type_checker.ty(t).as_literal_type().value() {
-                        literals.push(value.clone());
-                    }
+                if is_literal(s.type_checker, t)
+                    && !s.type_checker.ty(t).is_enum_literal()
+                    && let Some(value) = s.type_checker.ty(t).as_literal_type().value()
+                {
+                    literals.push(value.clone());
                 }
             }
         }
@@ -1604,30 +1600,23 @@ impl GetCompletionDataState<'_> {
                             // (nil map), which is `None` in p2's set value.
                             symbol_can_be_referenced_at_type_location(s, c, None)
                         };
-                        let is_valid_access;
-                        if is_namespace_name {
+                        let is_valid_access = if is_namespace_name {
                             // At `namespace N.M/**/`, if this is the only declaration of `M`, don't include `M` as a completion.
                             let exported = self.type_checker.sym(exported_symbol);
-                            is_valid_access = exported.flags.intersects(SymbolFlags::NAMESPACE)
+                            exported.flags.intersects(SymbolFlags::NAMESPACE)
                                 && !exported
                                     .declarations
                                     .iter()
-                                    .all(|declaration| declaration.parent() == node.parent());
+                                    .all(|declaration| declaration.parent() == node.parent())
                         } else if is_rhs_of_import_declaration {
                             // Any kind is allowed when dotting off namespace in internal import equals declaration
-                            is_valid_access =
-                                is_valid_type_access(&mut *self.type_checker, exported_symbol)
-                                    || is_valid_value_access(
-                                        &mut *self.type_checker,
-                                        exported_symbol,
-                                    );
+                            is_valid_type_access(&mut *self.type_checker, exported_symbol)
+                                || is_valid_value_access(&mut *self.type_checker, exported_symbol)
                         } else if is_type_location || self.inside_js_doc_tag_type_expression {
-                            is_valid_access =
-                                is_valid_type_access(&mut *self.type_checker, exported_symbol);
+                            is_valid_type_access(&mut *self.type_checker, exported_symbol)
                         } else {
-                            is_valid_access =
-                                is_valid_value_access(&mut *self.type_checker, exported_symbol);
-                        }
+                            is_valid_value_access(&mut *self.type_checker, exported_symbol)
+                        };
                         if is_valid_access {
                             self.symbols.push(exported_symbol);
                         }
@@ -1938,11 +1927,10 @@ impl GetCompletionDataState<'_> {
                     .sym(member)
                     .flags
                     .intersects(SymbolFlags::OPTIONAL)
+                    && !self.symbol_to_sort_text_map.contains_key(&symbol_id)
                 {
-                    if !self.symbol_to_sort_text_map.contains_key(&symbol_id) {
-                        self.symbol_to_sort_text_map
-                            .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
-                    }
+                    self.symbol_to_sort_text_map
+                        .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
                 }
                 if object_like_container.kind() == SyntaxKind::ObjectLiteralExpression
                     && self
@@ -2465,11 +2453,10 @@ impl GetCompletionDataState<'_> {
                 .sym(symbol)
                 .flags
                 .intersects(SymbolFlags::OPTIONAL)
+                && !self.symbol_to_sort_text_map.contains_key(&symbol_id)
             {
-                if !self.symbol_to_sort_text_map.contains_key(&symbol_id) {
-                    self.symbol_to_sort_text_map
-                        .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
-                }
+                self.symbol_to_sort_text_map
+                    .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
             }
         }
 
@@ -2496,13 +2483,11 @@ impl GetCompletionDataState<'_> {
         self.is_new_identifier_location = is_new_identifier_location;
         self.default_commit_characters = Some(default_commit_characters);
 
-        if self.previous_token != self.context_token {
-            if self.previous_token.is_nil() {
-                crate::core::go_panic(
-                    "Expected 'contextToken' to be defined when different from 'previousToken'."
-                        .to_string(),
-                );
-            }
+        if self.previous_token != self.context_token && self.previous_token.is_nil() {
+            crate::core::go_panic(
+                "Expected 'contextToken' to be defined when different from 'previousToken'."
+                    .to_string(),
+            );
         }
 
         // We need to find the node that will give us an appropriate scope to begin

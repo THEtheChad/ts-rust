@@ -328,13 +328,12 @@ pub fn parse_config(
             diag::Circularity_detected_while_resolving_configuration_Colon_0,
             args![],
         ));
-        let result;
-        if json.as_ref().map_or(0, IndexMap::len) == 0 {
+        let result = if json.as_ref().map_or(0, IndexMap::len) == 0 {
             // PORT: Go stores the (maybe nil) map pointer. A nil map is `Nil`.
-            result = ParsedTsconfig {
+            ParsedTsconfig {
                 raw: json.map_or(CompilerOptionsValue::Nil, CompilerOptionsValue::Map),
                 ..Default::default()
-            };
+            }
         } else {
             // PORT: Go reads `sourceFile.SourceFile` here, which panics when
             // `sourceFile` is nil (the `json` path). Kept as Go does.
@@ -345,11 +344,11 @@ pub fn parse_config(
                     .source_file,
             );
             errors.extend(err);
-            result = ParsedTsconfig {
+            ParsedTsconfig {
                 raw: raw_result,
                 ..Default::default()
-            };
-        }
+            }
+        };
         return (result, errors);
     }
 
@@ -503,7 +502,7 @@ pub fn parse_config(
                 CompilerOptionsValue::Bool(result.compile_on_save),
             );
         }
-        if let Some(source_file) = source_file.as_deref_mut() {
+        if let Some(source_file) = source_file {
             // PERF: Go grows the slice in `slices.Insert`. One reserve keeps
             // the list near its final length, with no doubling slack.
             source_file
@@ -1690,14 +1689,14 @@ fn get_content_mappers_key_syntax(source_file: Node) -> Node {
 // mapper at index, falling back to the "extensions" array or the mapper element.
 fn get_content_mapper_extension_syntax(source_file: Node, index: i32, ext: &str) -> Node {
     let node = get_content_mapper_syntax(source_file, index, "extensions");
-    if node.is_some() && is_array_literal_expression(node) {
-        if let Some(element) = node
+    if node.is_some()
+        && is_array_literal_expression(node)
+        && let Some(element) = node
             .elements()
             .iter()
             .find(|element| is_string_literal(*element) && element.text() == ext)
-        {
-            return element;
-        }
+    {
+        return element;
     }
     node
 }

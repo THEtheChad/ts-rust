@@ -154,9 +154,7 @@ impl TypeParser<'_> {
             return None;
         }
         for member in union_members {
-            if self.strict_effect_type(member).is_none() {
-                return None;
-            }
+            self.strict_effect_type(member)?;
         }
 
         // Step 8: Extract name identifier from context
@@ -992,6 +990,7 @@ impl TypeParser<'_> {
     /// 1. Layer service context (ServiceTag.memberName)
     /// 2. Exported function declarations — returns the function name
     /// 3. Exported const variable initializers — returns the variable name
+    ///
     /// Returns "" if no context-aware name can be inferred.
     // Go: typeparser/effect_fn_opportunity.go getInferredTraceName
     fn get_inferred_trace_name(&mut self, node: Node, suggested_trace_name: &str) -> String {
@@ -1007,10 +1006,10 @@ impl TypeParser<'_> {
         }
 
         // Check exported function declaration
-        if node.kind() == SyntaxKind::FunctionDeclaration {
-            if has_syntactic_modifier(node, ModifierFlags::EXPORT) {
-                return suggested_trace_name.to_string();
-            }
+        if node.kind() == SyntaxKind::FunctionDeclaration
+            && has_syntactic_modifier(node, ModifierFlags::EXPORT)
+        {
+            return suggested_trace_name.to_string();
         }
 
         // Check exported const variable initializer
@@ -1024,12 +1023,12 @@ impl TypeParser<'_> {
                 let decl_list = node.parent().parent();
                 if decl_list.is_some() && decl_list.kind() == SyntaxKind::VariableDeclarationList {
                     let var_stmt = decl_list.parent();
-                    if var_stmt.is_some() && var_stmt.kind() == SyntaxKind::VariableStatement {
-                        if has_syntactic_modifier(var_stmt, ModifierFlags::EXPORT)
-                            && decl_list.flags().intersects(NodeFlags::CONST)
-                        {
-                            return suggested_trace_name.to_string();
-                        }
+                    if var_stmt.is_some()
+                        && var_stmt.kind() == SyntaxKind::VariableStatement
+                        && has_syntactic_modifier(var_stmt, ModifierFlags::EXPORT)
+                        && decl_list.flags().intersects(NodeFlags::CONST)
+                    {
+                        return suggested_trace_name.to_string();
                     }
                 }
             }

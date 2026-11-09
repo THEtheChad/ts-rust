@@ -339,15 +339,15 @@ fn find_super_statement_index_path_worker(
         if get_super_call_from_statement(statement).is_some() {
             indices.push(i);
             return Some(indices);
-        } else if is_try_statement(statement) {
-            if let Some(mut result) = find_super_statement_index_path_worker(
+        } else if is_try_statement(statement)
+            && let Some(mut result) = find_super_statement_index_path_worker(
                 &statement.try_block().statements().to_vec(),
                 0,
                 indices.clone(),
-            ) {
-                result.push(i);
-                return Some(result);
-            }
+            )
+        {
+            result.push(i);
+            return Some(result);
         }
     }
     None

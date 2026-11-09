@@ -199,7 +199,7 @@ impl Checker {
         // PORT: Go reads the `Members` field (a `*NodeList`); the Go
         // `Members()` method returns the same nodes for a mapped type.
         let members = node.members();
-        if members.len() > 0 {
+        if !members.is_empty() {
             return self.grammar_error_on_node(
                 members.get(0),
                 diag::A_mapped_type_may_not_declare_properties_or_methods,
@@ -493,14 +493,13 @@ impl Checker {
                 if modifier_kind != SyntaxKind::InKeyword
                     && modifier_kind != SyntaxKind::OutKeyword
                     && modifier_kind != SyntaxKind::ConstKeyword
+                    && node_kind == SyntaxKind::TypeParameter
                 {
-                    if node_kind == SyntaxKind::TypeParameter {
-                        return self.grammar_error_on_node(
-                            modifier,
-                            diag::X_0_modifier_cannot_appear_on_a_type_parameter,
-                            args![token_to_string(modifier_kind)],
-                        );
-                    }
+                    return self.grammar_error_on_node(
+                        modifier,
+                        diag::X_0_modifier_cannot_appear_on_a_type_parameter,
+                        args![token_to_string(modifier_kind)],
+                    );
                 }
                 match modifier_kind {
                     SyntaxKind::ConstKeyword => {
@@ -513,21 +512,20 @@ impl Checker {
                                 args![token_to_string(SyntaxKind::ConstKeyword)],
                             );
                         }
-                        if node_kind == SyntaxKind::TypeParameter {
-                            if !(is_function_like_declaration(parent)
+                        if node_kind == SyntaxKind::TypeParameter
+                            && !(is_function_like_declaration(parent)
                                 || is_class_like(parent)
                                 || is_function_type_node(parent)
                                 || is_constructor_type_node(parent)
                                 || is_call_signature_declaration(parent)
                                 || is_construct_signature_declaration(parent)
                                 || is_method_signature_declaration(parent))
-                            {
-                                return self.grammar_error_on_node(
+                        {
+                            return self.grammar_error_on_node(
                                     modifier,
                                     diag::X_0_modifier_can_only_appear_on_a_type_parameter_of_a_function_method_or_class,
                                     args![token_to_string(modifier_kind)],
                                 );
-                            }
                         }
                     }
                     SyntaxKind::OverrideKeyword => {
@@ -1264,11 +1262,10 @@ impl Checker {
     // PERF: chkport1 item 4. Takes `node.ModifierNodes()`, read once.
     pub fn find_first_illegal_decorator(&self, node: Node, modifiers: NodeSlice) -> Node {
         if can_have_illegal_decorators(node) {
-            let decorator = modifiers
+            modifiers
                 .iter()
                 .find(|&m| is_decorator(m))
-                .unwrap_or(Node::NIL);
-            decorator
+                .unwrap_or(Node::NIL)
         } else {
             Node::NIL
         }
@@ -1318,7 +1315,7 @@ impl Checker {
         type_parameters: NodeList,
         file: Node,
     ) -> bool {
-        if type_parameters.is_some() && type_parameters.nodes().len() == 0 {
+        if type_parameters.is_some() && type_parameters.nodes().is_empty() {
             let start = type_parameters.pos() - "<".len() as i32;
             let end =
                 skip_trivia(&source_file_text(file), type_parameters.end()) + ">".len() as i32;
@@ -1525,19 +1522,18 @@ impl Checker {
         if type_parameters.is_some() {
             let type_param_nodes = type_parameters.nodes();
             let has_constraint =
-                type_param_nodes.len() > 0 && type_param_nodes.get(0).constraint().is_some();
+                !type_param_nodes.is_empty() && type_param_nodes.get(0).constraint().is_some();
             if !(type_param_nodes.len() > 1
                 || type_parameters.has_trailing_comma()
                 || has_constraint)
+                && file_extension_is_one_of_gc1(source_file_file_name(file), &[".mts", ".cts"])
             {
-                if file_extension_is_one_of_gc1(source_file_file_name(file), &[".mts", ".cts"]) {
-                    // TODO(danielr): should we return early here?
-                    self.grammar_error_on_node(
+                // TODO(danielr): should we return early here?
+                self.grammar_error_on_node(
                         type_param_nodes.get(0),
                         diag::This_syntax_is_reserved_in_files_with_the_mts_or_cts_extension_Add_a_trailing_comma_or_explicit_constraint,
                         args![],
                     );
-                }
             }
         }
 
@@ -1557,7 +1553,7 @@ impl Checker {
         let parameters = node.parameter_list();
         let param_nodes = parameters.nodes();
 
-        if param_nodes.len() == 0 {
+        if param_nodes.is_empty() {
             return self.grammar_error_on_node(
                 node,
                 diag::An_index_signature_must_have_exactly_one_parameter,
@@ -1658,7 +1654,7 @@ impl Checker {
         node: Node,
         type_arguments: NodeList,
     ) -> bool {
-        if type_arguments.is_some() && type_arguments.nodes().len() == 0 {
+        if type_arguments.is_some() && type_arguments.nodes().is_empty() {
             let source_file = get_source_file_of_node(node);
             let start = type_arguments.pos() - "<".len() as i32;
             let end = skip_trivia(&source_file_text(source_file), type_arguments.end())
@@ -1702,7 +1698,7 @@ impl Checker {
         {
             return true;
         }
-        if types.is_some() && types.nodes().len() == 0 {
+        if types.is_some() && types.nodes().is_empty() {
             let list_type = token_to_string(node.token());
             // TODO(danielr): why not error on the token?
             return self.grammar_error_at_pos(

@@ -79,13 +79,12 @@ impl Checker {
         }
         if container.parent().is_some() && is_class_like(container.parent()) {
             let symbol = self.get_symbol_of_declaration(container.parent());
-            let t;
-            if is_static(container) {
-                t = self.get_type_of_symbol(symbol);
+            let t = if is_static(container) {
+                self.get_type_of_symbol(symbol)
             } else {
                 let declared = self.get_declared_type_of_symbol(symbol);
-                t = self.ty(declared).as_interface_type().this_type;
-            }
+                self.ty(declared).as_interface_type().this_type
+            };
             return self.get_flow_type_of_reference(node, t);
         }
         if is_source_file(container) {
@@ -512,14 +511,14 @@ impl Checker {
                     diag::The_right_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type,
                     true, /*isAwaitValid*/
                 );
-                let result_type;
                 // If both are any or unknown, allow operation; assume it will resolve to number
-                if self.is_type_assignable_to_kind(left_type, TypeFlags::ANY_OR_UNKNOWN)
+                let result_type = if self
+                    .is_type_assignable_to_kind(left_type, TypeFlags::ANY_OR_UNKNOWN)
                     && self.is_type_assignable_to_kind(right_type, TypeFlags::ANY_OR_UNKNOWN)
                     || !self.maybe_type_of_kind(left_type, TypeFlags::BIG_INT_LIKE)
                         && !self.maybe_type_of_kind(right_type, TypeFlags::BIG_INT_LIKE)
                 {
-                    result_type = self.number_type;
+                    self.number_type
                 } else if self.both_are_big_int_like(left_type, right_type) {
                     match operator {
                         SyntaxKind::GreaterThanGreaterThanGreaterThanToken
@@ -540,7 +539,7 @@ impl Checker {
                         }
                         _ => {}
                     }
-                    result_type = self.bigint_type;
+                    self.bigint_type
                 } else {
                     self.report_operator_error(
                         left_type,
@@ -551,8 +550,8 @@ impl Checker {
                             c.both_are_big_int_like(l, r)
                         }),
                     );
-                    result_type = self.error_type;
-                }
+                    self.error_type
+                };
                 if left_ok && right_ok {
                     self.check_assignment_operator(left, operator, right, left_type, result_type);
                     match operator {
@@ -563,10 +562,11 @@ impl Checker {
                         | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
                         | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken => {
                             let rhs_eval = (self.evaluate.clone())(self, right, right);
-                            if let Some(LiteralValue::Number(num_value)) = rhs_eval.value {
-                                if num_value.abs() >= crate::jsnum::Number::new(32.0) {
-                                    // Elevate from suggestion to error within an enum member
-                                    self.error_or_suggestion(
+                            if let Some(LiteralValue::Number(num_value)) = rhs_eval.value
+                                && num_value.abs() >= crate::jsnum::Number::new(32.0)
+                            {
+                                // Elevate from suggestion to error within an enum member
+                                self.error_or_suggestion(
                                         is_enum_member(walk_up_parenthesized_expressions(right.parent().parent())),
                                         error_node,
                                         diag::This_operation_can_be_simplified_This_shift_is_identical_to_0_1_2,
@@ -576,7 +576,6 @@ impl Checker {
                                             num_value.remainder(crate::jsnum::Number::new(32.0))
                                         ],
                                     );
-                                }
                             }
                         }
                         _ => {}
@@ -891,7 +890,7 @@ impl Checker {
         right_is_this: bool,
     ) -> TypeId {
         let properties = node.property_list();
-        if self.strict_null_checks && properties.nodes().len() == 0 {
+        if self.strict_null_checks && properties.nodes().is_empty() {
             return self.check_non_null_type(source_type, node);
         }
         for i in 0..properties.nodes().len() {
@@ -1133,16 +1132,15 @@ impl Checker {
                         elements,
                         diag::A_rest_parameter_or_binding_pattern_may_not_have_a_trailing_comma,
                     );
-                    let t;
-                    if self.every_type(source_type, &mut |c: &mut Checker, t: TypeId| {
+                    let t = if self.every_type(source_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_tuple_type(t)
                     }) {
-                        t = self.map_type(source_type, &mut |c: &mut Checker, t: TypeId| {
+                        self.map_type(source_type, &mut |c: &mut Checker, t: TypeId| {
                             c.slice_tuple_type(t, element_index, 0)
-                        });
+                        })
                     } else {
-                        t = self.create_array_type(element_type);
-                    }
+                        self.create_array_type(element_type)
+                    };
                     return self.check_destructuring_assignment(
                         rest_expression,
                         t,
@@ -1207,11 +1205,9 @@ impl Checker {
         }
         let mut effective_left = left_type;
         let mut effective_right = right_type;
-        if !would_work_with_await {
-            if let Some(is_related) = is_related.as_deref_mut() {
-                (effective_left, effective_right) =
-                    self.get_base_types_if_unrelated(left_type, right_type, is_related);
-            }
+        if !would_work_with_await && let Some(is_related) = is_related {
+            (effective_left, effective_right) =
+                self.get_base_types_if_unrelated(left_type, right_type, is_related);
         }
         let (left_str, right_str) =
             self.get_type_names_for_error_display(effective_left, effective_right);
@@ -1756,13 +1752,13 @@ impl Checker {
             SyntaxKind::PrefixUnaryExpression => {
                 // Unary operators ~, !, +, and - have no side effects.
                 // The rest do.
-                match node.operator() {
+                matches!(
+                    node.operator(),
                     SyntaxKind::ExclamationToken
-                    | SyntaxKind::PlusToken
-                    | SyntaxKind::MinusToken
-                    | SyntaxKind::TildeToken => true,
-                    _ => false,
-                }
+                        | SyntaxKind::PlusToken
+                        | SyntaxKind::MinusToken
+                        | SyntaxKind::TildeToken
+                )
             }
             _ => false,
         }

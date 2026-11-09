@@ -803,7 +803,7 @@ impl DeclarationTransformer {
             name_expr = f.new_string_literal(name_expr.text(), TokenFlags::NONE);
         }
         if is_string_literal_like(name_expr)
-            && is_identifier_text(&name_expr.text(), LanguageVariant::STANDARD)
+            && is_identifier_text(name_expr.text(), LanguageVariant::STANDARD)
         {
             let result = f.new_identifier(name_expr.text()); // prefer non-string literal names where possible
             let kw_kind = identifier_to_keyword_kind(result);
@@ -944,12 +944,12 @@ impl DeclarationTransformer {
             && !self
                 .resolver
                 .is_name_resolvable(self.enclosing_declaration, &property)
-            && !is_non_contextual_keyword(string_to_token(&export_name.text()))
+            && !is_non_contextual_keyword(string_to_token(export_name.text()))
         {
             // use exportName as localName if there won't be any conflicts or keyword issues
             local_name = export_name;
         }
-        if local_name.is_nil() || is_non_contextual_keyword(string_to_token(&local_name.text())) {
+        if local_name.is_nil() || is_non_contextual_keyword(string_to_token(local_name.text())) {
             // fallback to a generated name if the localName doesn't exist or is a keyword
             local_name = f.new_generated_name_for_node(node);
         }
