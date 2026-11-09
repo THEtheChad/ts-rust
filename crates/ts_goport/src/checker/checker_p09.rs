@@ -836,8 +836,8 @@ impl Checker {
                             && c.ty(t).as_mapped_type().name_type.is_nil()
                             && {
                                 let target = c.ty(t).as_mapped_type().object.target;
-                                let base = if target.is_some() { target } else { t };
-                                c.get_homomorphic_type_variable(base).is_some()
+                                c.get_homomorphic_type_variable(or_else_type(target, t))
+                                    .is_some()
                             }
                 });
         let mut has_omitted_expression = false;
@@ -906,11 +906,11 @@ impl Checker {
                 element_types[i] =
                     self.add_optionality_ex(t, true /*isProperty*/, has_omitted_expression);
                 element_infos[i] = TupleElementInfo {
-                    flags: if has_omitted_expression {
-                        ElementFlags::OPTIONAL
-                    } else {
-                        ElementFlags::REQUIRED
-                    },
+                    flags: if_else(
+                        has_omitted_expression,
+                        ElementFlags::OPTIONAL,
+                        ElementFlags::REQUIRED,
+                    ),
                     ..Default::default()
                 };
                 if in_tuple_context
@@ -952,20 +952,16 @@ impl Checker {
                         Node::NIL,
                         None,
                     );
-                    element_types[i] = if indexed.is_some() {
-                        indexed
-                    } else {
-                        self.any_type
-                    };
+                    element_types[i] = or_else_type(indexed, self.any_type);
                 }
             }
             self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL)
         } else {
-            if self.strict_null_checks {
-                self.implicit_never_type
-            } else {
-                self.undefined_widening_type
-            }
+            if_else(
+                self.strict_null_checks,
+                self.implicit_never_type,
+                self.undefined_widening_type,
+            )
         };
         let array_type = self.create_array_type_ex(element_type, in_const_context);
         self.create_array_literal_type(array_type)
