@@ -5704,7 +5704,7 @@ fn get_declaration_diagnostics_worker(host: Rc<EmitHost>, file: Node) -> Vec<Dia
         .into_iter()
         .filter(|&f| is_source_file_not_json(f))
         .collect();
-    if !full_files.iter().any(|&f| f == file) {
+    if !full_files.contains(&file) {
         return Vec::new();
     }
     // PORT: Go calls host.Options(), which returns host.program.Options()

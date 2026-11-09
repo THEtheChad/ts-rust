@@ -770,8 +770,7 @@ fn run_child_session(spawner: Option<Rc<dyn crate::contentmapper::Spawner>>) -> 
             );
             snapshot.project_collection.configured_project(&path)
         }?;
-        let program = project.borrow().program.clone();
-        program
+        project.borrow().program.clone()
     };
     let candidates: Vec<&str> = std::iter::once(request.changed_file.as_str())
         .filter(|name| {
@@ -856,7 +855,7 @@ impl Fs for SnapshotTextFs {
         for name in self.texts.keys() {
             if tspath::get_directory_path(name) == path {
                 let base = tspath::get_base_file_name(name);
-                if !entries.files.iter().any(|file| *file == base) {
+                if !entries.files.contains(&base) {
                     entries.files.push(base);
                     entries.files.sort();
                 }

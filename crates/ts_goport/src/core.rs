@@ -4056,9 +4056,9 @@ fn link_flat_ids<V: Default, P: LinkPage<V>>() -> usize {
 const LINK_BLOCK_SHIFT: usize = 16;
 
 const _: () = assert!(
-    LINK_FLAT_IDS % LINK_PAGE_SIZE == 0
-        && LINK_SESSION_FLAT_IDS % LINK_PAGE_SIZE == 0
-        && (1 << LINK_BLOCK_SHIFT) % LINK_PAGE_SIZE == 0,
+    LINK_FLAT_IDS.is_multiple_of(LINK_PAGE_SIZE)
+        && LINK_SESSION_FLAT_IDS.is_multiple_of(LINK_PAGE_SIZE)
+        && (1_usize << LINK_BLOCK_SHIFT).is_multiple_of(LINK_PAGE_SIZE),
     "a block page holds the keys of one flat page (`LinkSlot::index`)"
 );
 
