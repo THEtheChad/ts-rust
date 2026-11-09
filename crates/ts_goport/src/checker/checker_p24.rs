@@ -1810,18 +1810,15 @@ impl Checker {
             if order == NO_SORT_ORDER {
                 return None;
             }
-            match previous {
+            if let Some((was_contained, previous_order)) = previous {
                 // A new part starts where the contained members end.
-                Some((was_contained, previous_order)) => {
-                    if was_contained == contained {
-                        if previous_order >= order {
-                            return None;
-                        }
-                    } else if !(was_contained && !contained) {
+                if was_contained == contained {
+                    if previous_order >= order {
                         return None;
                     }
+                } else if !(was_contained && !contained) {
+                    return None;
                 }
-                None => {}
             }
             previous = Some((contained, order));
             positions.push(*positions_of.get(&symbol)?);

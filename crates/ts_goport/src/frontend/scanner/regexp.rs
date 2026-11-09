@@ -1294,38 +1294,33 @@ impl<'a, 't> RegExpParser<'a, 't> {
                     return self.scan_character_escape(false /*atomEscape*/);
                 }
             }
-        } else if self.pos() + 1 < self.end && ch == self.char_at(self.pos() + 1) {
-            match rune(ch) {
-                Some(
-                    '&' | '!' | '#' | '%' | '*' | '+' | ',' | '.' | ':' | ';' | '<' | '=' | '>'
-                    | '?' | '@' | '`' | '~',
-                ) => {
-                    let pos = self.pos();
-                    self.error(
-                        diag::A_character_class_must_not_contain_a_reserved_double_punctuator_Did_you_mean_to_escape_it_with_backslash,
-                        pos,
-                        2,
-                        vec![],
-                    );
-                    self.inc_pos(2);
-                    return self.text_bytes(self.pos() - 2, self.pos());
-                }
-                _ => {}
-            }
+        } else if self.pos() + 1 < self.end
+            && ch == self.char_at(self.pos() + 1)
+            && let Some(
+                '&' | '!' | '#' | '%' | '*' | '+' | ',' | '.' | ':' | ';' | '<' | '=' | '>' | '?'
+                | '@' | '`' | '~',
+            ) = rune(ch)
+        {
+            let pos = self.pos();
+            self.error(
+                diag::A_character_class_must_not_contain_a_reserved_double_punctuator_Did_you_mean_to_escape_it_with_backslash,
+                pos,
+                2,
+                vec![],
+            );
+            self.inc_pos(2);
+            return self.text_bytes(self.pos() - 2, self.pos());
         }
-        match rune(ch) {
-            Some('/' | '(' | ')' | '[' | ']' | '{' | '}' | '-' | '|') => {
-                let pos = self.pos();
-                self.error(
-                    diag::Unexpected_0_Did_you_mean_to_escape_it_with_backslash,
-                    pos,
-                    1,
-                    args![rune_to_string(ch)],
-                );
-                self.inc_pos(1);
-                return rune_to_bytes(ch);
-            }
-            _ => {}
+        if let Some('/' | '(' | ')' | '[' | ']' | '{' | '}' | '-' | '|') = rune(ch) {
+            let pos = self.pos();
+            self.error(
+                diag::Unexpected_0_Did_you_mean_to_escape_it_with_backslash,
+                pos,
+                1,
+                args![rune_to_string(ch)],
+            );
+            self.inc_pos(1);
+            return rune_to_bytes(ch);
         }
         self.scan_source_character()
     }
