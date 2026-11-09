@@ -1502,11 +1502,11 @@ impl Checker {
         // export assignment is misplaced (grammar error), keeping diagnostics stable
         // regardless of traversal order.
         let expr_type = self.check_expression_cached(node.expression());
-        let illegal_context_message = if is_export_equals {
-            diag::An_export_assignment_must_be_at_the_top_level_of_a_file_or_module_declaration
-        } else {
-            diag::A_default_export_must_be_at_the_top_level_of_a_file_or_module_declaration
-        };
+        let illegal_context_message = if_else(
+            is_export_equals,
+            diag::An_export_assignment_must_be_at_the_top_level_of_a_file_or_module_declaration,
+            diag::A_default_export_must_be_at_the_top_level_of_a_file_or_module_declaration,
+        );
         if self.check_grammar_module_element_context(node, illegal_context_message) {
             return; // If we hit an export assignment in an illegal context, just bail out to avoid cascading errors.
         }
@@ -1579,22 +1579,22 @@ impl Checker {
                         && self.compiler_options.verbatim_module_syntax.is_true()
                         && type_only_declaration.is_some()
                     {
-                        let message = if is_export_equals {
-                            diag::An_export_declaration_must_reference_a_real_value_when_verbatimModuleSyntax_is_enabled_but_0_resolves_to_a_type_only_declaration
-                        } else {
-                            diag::An_export_default_must_reference_a_real_value_when_verbatimModuleSyntax_is_enabled_but_0_resolves_to_a_type_only_declaration
-                        };
+                        let message = if_else(
+                            is_export_equals,
+                            diag::An_export_declaration_must_reference_a_real_value_when_verbatimModuleSyntax_is_enabled_but_0_resolves_to_a_type_only_declaration,
+                            diag::An_export_default_must_reference_a_real_value_when_verbatimModuleSyntax_is_enabled_but_0_resolves_to_a_type_only_declaration,
+                        );
                         self.error(id, message, args![id.text()]);
                     }
                 } else if !is_illegal_export_default_in_cjs
                     && !node.flags().intersects(NodeFlags::AMBIENT)
                     && self.compiler_options.verbatim_module_syntax.is_true()
                 {
-                    let message = if is_export_equals {
-                        diag::An_export_declaration_must_reference_a_value_when_verbatimModuleSyntax_is_enabled_but_0_only_refers_to_a_type
-                    } else {
-                        diag::An_export_default_must_reference_a_value_when_verbatimModuleSyntax_is_enabled_but_0_only_refers_to_a_type
-                    };
+                    let message = if_else(
+                        is_export_equals,
+                        diag::An_export_declaration_must_reference_a_value_when_verbatimModuleSyntax_is_enabled_but_0_only_refers_to_a_type,
+                        diag::An_export_default_must_reference_a_value_when_verbatimModuleSyntax_is_enabled_but_0_only_refers_to_a_type,
+                    );
                     self.error(id, message, args![id.text()]);
                 }
                 if !is_illegal_export_default_in_cjs
@@ -1616,11 +1616,11 @@ impl Checker {
                         // import { SomeType } from "./someModule";
                         // export default SomeType; OR
                         // export = SomeType;
-                        let message = if is_export_equals {
-                            diag::X_0_resolves_to_a_type_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_import_type_where_0_is_imported
-                        } else {
-                            diag::X_0_resolves_to_a_type_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_export_type_0_as_default
-                        };
+                        let message = if_else(
+                            is_export_equals,
+                            diag::X_0_resolves_to_a_type_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_import_type_where_0_is_imported,
+                            diag::X_0_resolves_to_a_type_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_export_type_0_as_default,
+                        );
                         let flag_name = self.get_isolated_modules_like_flag_name();
                         self.error(id, message, args![id.text(), flag_name]);
                     } else if type_only_declaration.is_some()
@@ -1630,11 +1630,11 @@ impl Checker {
                         // import { SomeTypeOnlyValue } from "./someModule";
                         // export default SomeTypeOnlyValue; OR
                         // export = SomeTypeOnlyValue;
-                        let message = if is_export_equals {
-                            diag::X_0_resolves_to_a_type_only_declaration_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_import_type_where_0_is_imported
-                        } else {
-                            diag::X_0_resolves_to_a_type_only_declaration_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_export_type_0_as_default
-                        };
+                        let message = if_else(
+                            is_export_equals,
+                            diag::X_0_resolves_to_a_type_only_declaration_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_import_type_where_0_is_imported,
+                            diag::X_0_resolves_to_a_type_only_declaration_and_must_be_marked_type_only_in_this_file_before_re_exporting_when_1_is_enabled_Consider_using_export_type_0_as_default,
+                        );
                         let flag_name = self.get_isolated_modules_like_flag_name();
                         // PORT: Go adds related info to the diagnostic returned by
                         // `c.error`. Build, annotate, then add (same steps as `c.error`).
