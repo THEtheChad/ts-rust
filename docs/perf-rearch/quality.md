@@ -413,7 +413,7 @@ on the Go AST.
   it. On the 12,516 rows placed by a `// Go:` marker:
   - Rust cog equals Go cog in 76%, and is within 2 in 90%;
   - Σ Rust is 66,383 against Σ Go 65,356;
-  - the median difference is 0 at every size (Go cog ≥ 10, ≥ 25, ≥ 50).
+  - the median difference is 0 at Go cog ≥ 10 and ≥ 25, and 1 at ≥ 50.
 
 ### Closures and the fairness rule
 
@@ -594,7 +594,7 @@ plugin. Their markers name that code; the own-code table shows the marker.
 - **Run time** (MS-A2, load 20 to 27 from other agents):
   - a new `crates/` tree: about 2 to 3 s (git cat-file of the sources,
     mapping);
-  - a new Go tree: plus about 1 s (gocog parses 15k functions in 0.9 s);
+  - a new Go tree: plus under 1 s (gocog parses 15k functions in 0.4 to 0.9 s);
   - a cold gocog build with an empty Go build cache: plus about 4 s;
   - cached: 0.1 s.
 
