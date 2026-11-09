@@ -1005,16 +1005,11 @@ impl Checker {
                 if ty1.object_flags.intersects(ObjectFlags::MAPPED) {
                     // instantiateAnonymousType prepends a fresh type parameter mapping.
                     // Compare the effective instantiation, not the identity of that fresh parameter.
-                    // PORT: Go `m.data.(*CompositeTypeMapper).m2` panics for any other mapper.
-                    let composite_m2 = |m: MapperId| match self.mapper(m) {
-                        TypeMapper::Composite(d) => d.m2,
-                        _ => panic!("interface conversion: not *checker.CompositeTypeMapper"),
-                    };
                     if m1.is_some() {
-                        m1 = composite_m2(m1);
+                        m1 = self.mapper(m1).as_composite_type_mapper().m2;
                     }
                     if m2.is_some() {
-                        m2 = composite_m2(m2);
+                        m2 = self.mapper(m2).as_composite_type_mapper().m2;
                     }
                 }
                 let c = self.compare_type_mappers(m1, m2);
