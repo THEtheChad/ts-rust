@@ -1347,7 +1347,9 @@ impl<'a> Parser<'a> {
 
     // Go: parser.go:5119 parseSimpleUnaryExpression
     pub fn parse_simple_unary_expression(&mut self) -> Node {
-        match { self.token } {
+        // A copy: the await guard advances the parser.
+        let token = self.token;
+        match token {
             SyntaxKind::PlusToken
             | SyntaxKind::MinusToken
             | SyntaxKind::TildeToken

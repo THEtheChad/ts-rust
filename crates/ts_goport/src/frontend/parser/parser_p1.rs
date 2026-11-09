@@ -484,7 +484,9 @@ impl<'a> Parser<'a> {
             let mut expressions: Vec<Node> = Vec::new();
 
             while self.token != SyntaxKind::EndOfFile {
-                let expression = match { self.token } {
+                // A copy: the guards below advance the parser.
+                let token = self.token;
+                let expression = match token {
                     SyntaxKind::OpenBracketToken => self.parse_array_literal_expression(),
                     SyntaxKind::TrueKeyword
                     | SyntaxKind::FalseKeyword

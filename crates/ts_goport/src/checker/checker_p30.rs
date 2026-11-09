@@ -321,11 +321,10 @@ impl Checker {
                             diag::Property_0_does_not_exist_on_type_1_Did_you_mean_to_access_the_static_member_2_instead,
                             args![prop_name /* as string */, type_name, suggestion],
                         );
-                    } else if {
-                        let number_type = self.number_type;
-                        self.get_index_type_of_type(object_type, number_type)
-                            .is_some()
-                    } {
+                    } else if self
+                        .get_index_type_of_type(object_type, self.number_type)
+                        .is_some()
+                    {
                         self.error(
                             access_expression.argument_expression(),
                             diag::Element_implicitly_has_an_any_type_because_index_expression_is_not_of_type_number,
