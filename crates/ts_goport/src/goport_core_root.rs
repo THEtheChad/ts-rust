@@ -27,14 +27,6 @@ pub mod binder;
 pub mod checker;
 // Go `internal/contentmapper` and `internal/spanmap` (tsgo#4712).
 pub mod contentmapper;
-// Lane Q3 owns this file and its cleanup; these locked-in lints still fire
-// in it. Drop the allow when Q3's work lands.
-#[allow(
-    clippy::collapsible_if,
-    clippy::derivable_impls,
-    clippy::explicit_auto_deref,
-    clippy::manual_is_multiple_of
-)]
 // Without the bundled libs (the wasm build) `lib_names::COUNT` is 0, so the
 // lib-name range checks compare with 0 and a test loops over 0..0.
 #[cfg_attr(
@@ -73,14 +65,6 @@ pub mod options_json;
 pub mod pprof;
 pub mod prelude;
 pub mod printer;
-// Lane Q3 owns this file and its cleanup; these locked-in lints still fire
-// in it. Drop the allow when Q3's work lands.
-#[allow(
-    clippy::collapsible_if,
-    clippy::manual_contains,
-    clippy::needless_borrow,
-    clippy::useless_conversion
-)]
 pub mod program;
 pub mod pseudochecker;
 pub mod scanner_util;
