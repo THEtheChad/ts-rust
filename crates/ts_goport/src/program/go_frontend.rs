@@ -1077,8 +1077,13 @@ fn build_program(
                 file.file_name()
             );
         };
+        // `check_version_tables()`, not `check`: a captured `check` stays a
+        // stack flag, and the checks stayed in a build where it is a const
+        // false.
         match &replaced {
-            Some(replaced) if !check => replaced.iter().for_each(|r| assert_published(r.file)),
+            Some(replaced) if !check_version_tables() => {
+                replaced.iter().for_each(|r| assert_published(r.file))
+            }
             _ => files.iter().for_each(assert_published),
         }
     };
