@@ -559,6 +559,19 @@ impl TypeParser<'_> {
         Some(Rc::new(result))
     }
 
+    /// The symbol of the declaration of `sig` (through its target), or nil
+    /// when it has no declaration.
+    fn signature_declaration_symbol(&mut self, sig: SignatureId) -> SymbolId {
+        let declaration = {
+            let raw = raw_signature(self.checker, sig);
+            self.checker.sig(raw).declaration()
+        };
+        if declaration.is_nil() {
+            return SymbolId::NIL;
+        }
+        self.checker.get_symbol_of_declaration(declaration)
+    }
+
     // Go: typeparser/piping_flow.go TypeParser.decomposeCurriedPipeable
     /// decomposeCurriedPipeable exposes the factory arguments only when the inner
     /// call is the pipeable counterpart of a data-first overload of the same symbol.
@@ -585,14 +598,7 @@ impl TypeParser<'_> {
         if pipeable.is_nil() {
             return;
         }
-        let pipeable_declaration = {
-            let raw = raw_signature(self.checker, pipeable);
-            self.checker.sig(raw).declaration()
-        };
-        if pipeable_declaration.is_nil() {
-            return;
-        }
-        let pipeable_symbol = self.checker.get_symbol_of_declaration(pipeable_declaration);
+        let pipeable_symbol = self.signature_declaration_symbol(pipeable);
         if pipeable_symbol.is_nil() {
             return;
         }
@@ -619,14 +625,7 @@ impl TypeParser<'_> {
             if data_first.is_nil() || data_first == pipeable {
                 continue;
             }
-            let declaration = {
-                let raw = raw_signature(self.checker, data_first);
-                self.checker.sig(raw).declaration()
-            };
-            if declaration.is_nil() {
-                continue;
-            }
-            let symbol = self.checker.get_symbol_of_declaration(declaration);
+            let symbol = self.signature_declaration_symbol(data_first);
             if symbol.is_nil()
                 || self
                     .checker
@@ -652,6 +651,20 @@ impl TypeParser<'_> {
             }
         }
     }
+}
+
+/// The callee and arguments of a trailing `Effect.fn` argument: a call
+/// gives its callee and its arguments, anything else is the callee itself.
+fn effect_fn_transformation_callee_and_args(arg: Node) -> (Node, Vec<Node>) {
+    if arg.kind() != SyntaxKind::CallExpression {
+        return (arg, Vec::new());
+    }
+    let call_expr = arg;
+    let mut args: Vec<Node> = Vec::new();
+    if !call_expr.argument_list().is_nil() && !call_expr.arguments().is_empty() {
+        args = call_expr.arguments().to_vec();
+    }
+    (call_expr.expression(), args)
 }
 
 /// Go `parsedEffectFnCallResult`.
@@ -1215,29 +1228,16 @@ impl TypeParser<'_> {
                 let call_sigs = self
                     .checker
                     .get_signatures_of_type_exported(contextual_type, SignatureKind::CALL);
-                if !call_sigs.is_empty() {
-                    // For the first transformation, extract the subject type from the first parameter
-                    if i == 0 {
-                        let params = self.checker.sig(call_sigs[0]).parameters().to_vec();
-                        if !params.is_empty() {
-                            subject_type = self.checker.get_type_of_symbol_exported(params[0]);
-                        }
+                // For the first transformation, extract the subject type from the first parameter
+                if !call_sigs.is_empty() && i == 0 {
+                    let params = self.checker.sig(call_sigs[0]).parameters().to_vec();
+                    if !params.is_empty() {
+                        subject_type = self.checker.get_type_of_symbol_exported(params[0]);
                     }
                 }
             }
 
-            let callee: Node;
-            let mut args: Vec<Node> = Vec::new();
-
-            if arg.kind() == SyntaxKind::CallExpression {
-                let call_expr = arg;
-                callee = call_expr.expression();
-                if !call_expr.argument_list().is_nil() && !call_expr.arguments().is_empty() {
-                    args = call_expr.arguments().to_vec();
-                }
-            } else {
-                callee = arg;
-            }
+            let (callee, args) = effect_fn_transformation_callee_and_args(arg);
 
             transformations.push(PipingFlowTransformation {
                 kind: result.kind,
