@@ -784,26 +784,18 @@ impl Checker {
     pub fn check_js_doc_type_is_in_js_file(&mut self, node: Node) {
         if !is_in_js_file(node) {
             if is_js_doc_non_nullable_type(node) || is_js_doc_nullable_type(node) {
-                let token = if is_js_doc_non_nullable_type(node) {
-                    "!"
-                } else {
-                    "?"
-                };
+                let token = if_else(is_js_doc_non_nullable_type(node), "!", "?");
                 let postfix = node.pos() == node.type_().pos();
-                let message = if postfix {
-                    diag::X_0_at_the_end_of_a_type_is_not_valid_TypeScript_syntax_Did_you_mean_to_write_1
-                } else {
-                    diag::X_0_at_the_start_of_a_type_is_not_valid_TypeScript_syntax_Did_you_mean_to_write_1
-                };
+                let message = if_else(
+                    postfix,
+                    diag::X_0_at_the_end_of_a_type_is_not_valid_TypeScript_syntax_Did_you_mean_to_write_1,
+                    diag::X_0_at_the_start_of_a_type_is_not_valid_TypeScript_syntax_Did_you_mean_to_write_1,
+                );
                 let mut t = self.get_type_from_type_node(node.type_());
                 if is_js_doc_nullable_type(node) && t != self.never_type && t != self.void_type {
                     t = self.get_nullable_type(
                         t,
-                        if postfix {
-                            TypeFlags::UNDEFINED
-                        } else {
-                            TypeFlags::NULLABLE
-                        },
+                        if_else(postfix, TypeFlags::UNDEFINED, TypeFlags::NULLABLE),
                     );
                 }
                 let type_string = self.type_to_string_exported(t);
