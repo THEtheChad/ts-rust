@@ -7,116 +7,14 @@ use crate::prelude::*;
 /// It checks both namespace imports (import * as X from "effect/Effect") and
 /// named imports (import { Effect } from "effect"), falling back to "Effect".
 pub fn find_effect_module_identifier(sf: Node) -> String {
-    if sf.is_nil() {
-        return "Effect".to_string();
-    }
-    for stmt in sf.statements().iter() {
-        if stmt.kind() != SyntaxKind::ImportDeclaration {
-            continue;
-        }
-        let import_decl = stmt;
-        if import_decl.module_specifier().is_nil() || import_decl.import_clause().is_nil() {
-            continue;
-        }
-        let mut module_name = get_text_of_node(import_decl.module_specifier());
-        if module_name.len() >= 2
-            && (module_name.as_bytes()[0] == b'"' || module_name.as_bytes()[0] == b'\'')
-        {
-            module_name = module_name[1..module_name.len() - 1].to_string();
-        }
-
-        let clause = import_decl.import_clause();
-        let named_bindings = clause.named_bindings();
-        if named_bindings.is_nil() {
-            continue;
-        }
-
-        // Check namespace import: import * as X from "effect/Effect"
-        if module_name == "effect/Effect" && named_bindings.kind() == SyntaxKind::NamespaceImport {
-            let ns_import = named_bindings;
-            if ns_import.name().is_some() {
-                return get_text_of_node(ns_import.name());
-            }
-        }
-
-        // Check named imports: import { Effect } from "effect"
-        if module_name == "effect" && named_bindings.kind() == SyntaxKind::NamedImports {
-            let named_imports = named_bindings;
-            // PORT: Go skips a nil Elements list; a nil list has no elements here.
-            for elem in named_imports.elements().iter() {
-                let spec = elem;
-                let imported_name = if spec.property_name().is_some() {
-                    get_text_of_node(spec.property_name())
-                } else {
-                    get_text_of_node(spec.name())
-                };
-                if imported_name == "Effect" {
-                    return get_text_of_node(spec.name());
-                }
-            }
-        }
-    }
-    "Effect".to_string()
+    find_module_identifier_for_package(sf, "effect", "Effect")
 }
 
 /// FindModuleIdentifier resolves the imported identifier name for the given export
 /// from the "effect" package. Falls back to the provided exportName if not found.
 /// It checks named imports: import { ExportName as Alias } from "effect".
 pub fn find_module_identifier(sf: Node, export_name: &str) -> String {
-    if sf.is_nil() {
-        return export_name.to_string();
-    }
-    for stmt in sf.statements().iter() {
-        if stmt.kind() != SyntaxKind::ImportDeclaration {
-            continue;
-        }
-        let import_decl = stmt;
-        if import_decl.module_specifier().is_nil() {
-            continue;
-        }
-        let mut module_name = get_text_of_node(import_decl.module_specifier());
-        if module_name.len() >= 2
-            && (module_name.as_bytes()[0] == b'"' || module_name.as_bytes()[0] == b'\'')
-        {
-            module_name = module_name[1..module_name.len() - 1].to_string();
-        }
-
-        if import_decl.import_clause().is_nil() {
-            continue;
-        }
-        let clause = import_decl.import_clause();
-        let named_bindings = clause.named_bindings();
-        if named_bindings.is_nil() {
-            continue;
-        }
-
-        // Check namespace import: import * as X from "effect/<exportName>"
-        if module_name == format!("effect/{export_name}")
-            && named_bindings.kind() == SyntaxKind::NamespaceImport
-        {
-            let ns_import = named_bindings;
-            if ns_import.name().is_some() {
-                return get_text_of_node(ns_import.name());
-            }
-        }
-
-        // Check named imports: import { ExportName as Alias } from "effect"
-        if module_name == "effect" && named_bindings.kind() == SyntaxKind::NamedImports {
-            let named_imports = named_bindings;
-            for elem in named_imports.elements().iter() {
-                let spec = elem;
-                let imported_name = if spec.property_name().is_some() {
-                    get_text_of_node(spec.property_name())
-                } else {
-                    get_text_of_node(spec.name())
-                };
-                if imported_name == export_name {
-                    return get_text_of_node(spec.name());
-                }
-            }
-        }
-    }
-    export_name.to_string()
+    find_module_identifier_for_package(sf, "effect", export_name)
 }
 
 /// FindModuleIdentifierForPackage resolves the imported identifier name for the given
@@ -133,55 +31,64 @@ pub fn find_module_identifier_for_package(
     if sf.is_nil() {
         return module_name.to_string();
     }
-    for stmt in sf.statements().iter() {
-        if stmt.kind() != SyntaxKind::ImportDeclaration {
-            continue;
-        }
-        let import_decl = stmt;
-        if import_decl.module_specifier().is_nil() {
-            continue;
-        }
-        let mut specifier = get_text_of_node(import_decl.module_specifier());
-        if specifier.len() >= 2
-            && (specifier.as_bytes()[0] == b'"' || specifier.as_bytes()[0] == b'\'')
-        {
-            specifier = specifier[1..specifier.len() - 1].to_string();
-        }
+    sf.statements()
+        .iter()
+        .find_map(|stmt| import_local_name(stmt, package_name, module_name))
+        .unwrap_or_else(|| module_name.to_string())
+}
 
-        if import_decl.import_clause().is_nil() {
-            continue;
-        }
-        let clause = import_decl.import_clause();
-        let named_bindings = clause.named_bindings();
-        if named_bindings.is_nil() {
-            continue;
-        }
-
-        // Check namespace import: import * as X from "<packageName>/<moduleName>"
-        if specifier == format!("{package_name}/{module_name}")
-            && named_bindings.kind() == SyntaxKind::NamespaceImport
-        {
-            let ns_import = named_bindings;
-            if ns_import.name().is_some() {
-                return get_text_of_node(ns_import.name());
-            }
-        }
-
-        // Check named imports: import { <moduleName> as X } from "<packageName>"
-        if specifier == package_name && named_bindings.kind() == SyntaxKind::NamedImports {
-            let named_imports = named_bindings;
-            for elem in named_imports.elements().iter() {
-                let spec = elem;
-                let imported_name = if spec.property_name().is_some() {
-                    get_text_of_node(spec.property_name())
-                } else {
-                    get_text_of_node(spec.name())
-                };
-                if imported_name == module_name {
-                    return get_text_of_node(spec.name());
-                }
-            }
-        }
+/// The local name that the import declaration `stmt` gives `module_name` of
+/// `package_name`, as a namespace import of `<package>/<module>` or a named
+/// import from `<package>`.
+fn import_local_name(stmt: Node, package_name: &str, module_name: &str) -> Option<String> {
+    if stmt.kind() != SyntaxKind::ImportDeclaration
+        || stmt.module_specifier().is_nil()
+        || stmt.import_clause().is_nil()
+    {
+        return None;
     }
-    module_name.to_string()
+    let specifier = unquoted_module_specifier(stmt);
+    let named_bindings = stmt.import_clause().named_bindings();
+    if named_bindings.is_nil() {
+        return None;
+    }
+    // Check namespace import: import * as X from "<packageName>/<moduleName>"
+    if named_bindings.kind() == SyntaxKind::NamespaceImport
+        && specifier == format!("{package_name}/{module_name}")
+        && named_bindings.name().is_some()
+    {
+        return Some(get_text_of_node(named_bindings.name()));
+    }
+    // Check named imports: import { <moduleName> as X } from "<packageName>"
+    if named_bindings.kind() == SyntaxKind::NamedImports && specifier == package_name {
+        return named_import_local_name(named_bindings, module_name);
+    }
+    None
+}
+
+/// The module specifier text of `import_decl` without its quotes.
+pub(crate) fn unquoted_module_specifier(import_decl: Node) -> String {
+    let specifier = get_text_of_node(import_decl.module_specifier());
+    let bytes = specifier.as_bytes();
+    if bytes.len() >= 2 && (bytes[0] == b'"' || bytes[0] == b'\'') {
+        // PORT: Go slices bytes; the result is only compared with names.
+        return String::from_utf8_lossy(&bytes[1..bytes.len() - 1]).into_owned();
+    }
+    specifier
+}
+
+/// The local name of `export_name` in the `NamedImports` node
+/// `named_imports`: the name of the first specifier whose imported name
+/// (its property name if set, as in `import { Layer as X }`, otherwise its
+/// name) is `export_name`.
+pub(crate) fn named_import_local_name(named_imports: Node, export_name: &str) -> Option<String> {
+    // PORT: Go skips a nil Elements list; a nil list has no elements here.
+    named_imports.elements().iter().find_map(|spec| {
+        let imported = if spec.property_name().is_some() {
+            spec.property_name()
+        } else {
+            spec.name()
+        };
+        (get_text_of_node(imported) == export_name).then(|| get_text_of_node(spec.name()))
+    })
 }

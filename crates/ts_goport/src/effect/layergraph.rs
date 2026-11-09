@@ -678,50 +678,26 @@ fn find_layer_module_name(sf: Node) -> String {
     if sf.is_nil() {
         return "Layer".to_string();
     }
-    for stmt in sf.statements() {
-        if stmt.kind() != SyntaxKind::ImportDeclaration {
-            continue;
-        }
-        let import_decl = stmt;
-        if import_decl.module_specifier().is_nil() {
-            continue;
-        }
-        let mut module_name = get_text_of_node(import_decl.module_specifier());
-        // Strip quotes from module specifier.
-        let bytes = module_name.as_bytes();
-        if bytes.len() >= 2 && (bytes[0] == b'"' || bytes[0] == b'\'') {
-            // PORT: Go slices bytes; the result is only compared with "effect".
-            module_name = String::from_utf8_lossy(&bytes[1..bytes.len() - 1]).into_owned();
-        }
-        if module_name != "effect" {
-            continue;
-        }
-        // Look for named imports.
-        if import_decl.import_clause().is_nil() {
-            continue;
-        }
-        let clause = import_decl.import_clause();
-        if clause.named_bindings().is_nil()
-            || clause.named_bindings().kind() != SyntaxKind::NamedImports
-        {
-            continue;
-        }
-        let named_imports = clause.named_bindings();
-        for elem in named_imports.elements() {
-            let spec = elem;
-            // The "real" name is PropertyName if set (import { Layer as X }),
-            // otherwise Name.
-            let imported_name = if spec.property_name().is_some() {
-                get_text_of_node(spec.property_name())
-            } else {
-                get_text_of_node(spec.name())
-            };
-            if imported_name == "Layer" {
-                return get_text_of_node(spec.name());
-            }
-        }
+    sf.statements()
+        .iter()
+        .find_map(layer_named_import_local_name)
+        .unwrap_or_else(|| "Layer".to_string())
+}
+
+/// The local name that `stmt` gives `Layer` when it is a named import from
+/// "effect" (`import { Layer as X } from "effect"`).
+fn layer_named_import_local_name(stmt: Node) -> Option<String> {
+    if stmt.kind() != SyntaxKind::ImportDeclaration || stmt.module_specifier().is_nil() {
+        return None;
     }
-    "Layer".to_string()
+    if unquoted_module_specifier(stmt) != "effect" || stmt.import_clause().is_nil() {
+        return None;
+    }
+    let named_imports = stmt.import_clause().named_bindings();
+    if named_imports.is_nil() || named_imports.kind() != SyntaxKind::NamedImports {
+        return None;
+    }
+    named_import_local_name(named_imports, "Layer")
 }
 
 // Go: collectChildIndices
