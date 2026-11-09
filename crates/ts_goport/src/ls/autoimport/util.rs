@@ -354,7 +354,6 @@ pub fn create_checker_pool(
     };
 
     let close_pool: Box<dyn Fn()> = {
-        let closed = closed;
         Box::new(move || {
             // Go: close(pool)
             if closed.get() {
@@ -364,10 +363,7 @@ pub fn create_checker_pool(
         })
     };
 
-    let get_created_count: Box<dyn Fn() -> i32> = {
-        let created = created;
-        Box::new(move || created.get())
-    };
+    let get_created_count: Box<dyn Fn() -> i32> = { Box::new(move || created.get()) };
 
     (get_checker, close_pool, get_created_count)
 }
@@ -431,7 +427,6 @@ pub fn get_package_realpath_funcs(
         let fs = fs.clone();
         let package_dir = package_dir.to_string();
         let real_package_dir = real_package_dir.clone();
-        let dir_cache = dir_cache;
         Rc::new(move |file_name: &str| -> String {
             // Fast path: files within the package use prefix substitution.
             if is_symlinked {
