@@ -1169,40 +1169,82 @@ fn is_candidate(flags: FlowFlags) -> bool {
         || flags.intersects(FlowFlags::CONDITION | FlowFlags::SWITCH_CLAUSE)
 }
 
-impl FileIndex {
-    fn build(file: usize, flows: &'static [FlowNode], strict: bool) -> FileIndex {
+impl Cand {
+    /// A candidate for flow node `node` with no events yet: `scan_candidates`
+    /// fills its call, pools and blocks.
+    fn new(node: u32) -> Cand {
+        Cand {
+            node,
+            call: Node::NIL,
+            res_start: 0,
+            res_end: 0,
+            blocked: 0,
+            alias_start: 0,
+            alias_end: 0,
+        }
+    }
+}
+
+/// The next-pointer forest of a file's flow nodes (pi in go-model.md 2.2),
+/// the first stage of `FileIndex::build`: each node's next pointer or root
+/// kind, and the candidates (the nodes whose events can stop a walk).
+struct Forest {
+    parent: Vec<u32>,
+    root_kind: Vec<u8>,
+    /// Whether the step from each node to its parent nests (1) or not (0).
+    nest_self: Vec<u32>,
+    cand_of: Vec<u32>,
+    cands: Vec<Cand>,
+}
+
+/// The Euler tour of a `Forest`, the second stage of `FileIndex::build`:
+/// entry and exit numbers of each reached node, and what the path from it
+/// to its root adds up to (nesting, steps, the nearest candidate, the
+/// root). Unreached nodes keep `NONE` entry numbers.
+struct Tour {
+    tin: Vec<u32>,
+    tout: Vec<u32>,
+    nest: Vec<u32>,
+    steps: Vec<u32>,
+    stop: Vec<u32>,
+    root_of: Vec<u32>,
+}
+
+impl Forest {
+    /// The next pointer (or root kind) of every flow node of `file`, and
+    /// its candidates in flow node order.
+    fn new(file: usize, flows: &[FlowNode]) -> Forest {
         let n = flows.len();
-        let mut parent = vec![NONE; n];
-        let mut root_kind = vec![0u8; n];
-        let mut nest_self = vec![0u32; n];
-        let mut cand_of = vec![NONE; n];
-        let mut cands: Vec<Cand> = Vec::new();
+        let mut forest = Forest {
+            parent: vec![NONE; n],
+            root_kind: vec![0u8; n],
+            nest_self: vec![0u32; n],
+            cand_of: vec![NONE; n],
+            cands: Vec::new(),
+        };
         for (i, flow) in flows.iter().enumerate() {
             match next_of(flows, file, flow) {
                 Ok((p, nest)) => {
-                    parent[i] = p;
-                    nest_self[i] = nest;
+                    forest.parent[i] = p;
+                    forest.nest_self[i] = nest;
                     if is_candidate(flow.flags) {
-                        cand_of[i] = cands.len() as u32;
-                        cands.push(Cand {
-                            node: i as u32,
-                            call: Node::NIL,
-                            res_start: 0,
-                            res_end: 0,
-                            blocked: 0,
-                            alias_start: 0,
-                            alias_end: 0,
-                        });
+                        forest.cand_of[i] = forest.cands.len() as u32;
+                        forest.cands.push(Cand::new(i as u32));
                     }
                 }
-                Err(kind) => root_kind[i] = kind,
+                Err(kind) => forest.root_kind[i] = kind,
             }
         }
-        // Children lists (CSR), then a DFS from the roots. Nodes on a cycle
-        // (a loop label whose only antecedent is a back edge) stay
-        // unreached: no skip there.
+        forest
+    }
+
+    /// The children lists of the forest in CSR form: the children of node
+    /// `x` are `children[child_start[x]..child_start[x + 1]]`, in node
+    /// order.
+    fn children(&self) -> (Vec<u32>, Vec<u32>) {
+        let n = self.parent.len();
         let mut child_start = vec![0u32; n + 1];
-        for &p in &parent {
+        for &p in &self.parent {
             if p != NONE {
                 child_start[p as usize + 1] += 1;
             }
@@ -1212,148 +1254,200 @@ impl FileIndex {
         }
         let mut fill = child_start.clone();
         let mut children = vec![0u32; child_start[n] as usize];
-        for (i, &p) in parent.iter().enumerate() {
+        for (i, &p) in self.parent.iter().enumerate() {
             if p != NONE {
                 children[fill[p as usize] as usize] = i as u32;
                 fill[p as usize] += 1;
             }
         }
-        drop(fill);
-        let mut tin = vec![NONE; n];
-        let mut tout = vec![NONE; n];
-        let mut nest = vec![0u32; n];
-        let mut steps = vec![0u32; n];
-        let mut stop = vec![NONE; n];
-        let mut root_of = vec![NONE; n];
+        (child_start, children)
+    }
+
+    /// A DFS from the roots in node order. Nodes on a cycle (a loop label
+    /// whose only antecedent is a back edge) stay unreached: no skip there.
+    fn tour(&self) -> Tour {
+        let n = self.parent.len();
+        let (child_start, children) = self.children();
+        let mut t = Tour {
+            tin: vec![NONE; n],
+            tout: vec![NONE; n],
+            nest: vec![0u32; n],
+            steps: vec![0u32; n],
+            stop: vec![NONE; n],
+            root_of: vec![NONE; n],
+        };
         let mut counter = 0u32;
         let mut stack: Vec<(u32, u32)> = Vec::new();
         for r in 0..n {
-            if root_kind[r] == 0 {
+            if self.root_kind[r] == 0 {
                 continue;
             }
-            tin[r] = counter;
+            t.tin[r] = counter;
             counter += 1;
-            steps[r] = 1;
-            stop[r] = r as u32;
-            root_of[r] = r as u32;
+            t.steps[r] = 1;
+            t.stop[r] = r as u32;
+            t.root_of[r] = r as u32;
             stack.push((r as u32, child_start[r]));
             while let Some(top) = stack.last_mut() {
                 let (x, ci) = *top;
                 if ci < child_start[x as usize + 1] {
                     top.1 += 1;
                     let c = children[ci as usize] as usize;
-                    tin[c] = counter;
+                    t.tin[c] = counter;
                     counter += 1;
-                    nest[c] = nest_self[c] + nest[x as usize];
-                    steps[c] = steps[x as usize] + 1;
-                    stop[c] = if cand_of[c] != NONE {
+                    t.nest[c] = self.nest_self[c] + t.nest[x as usize];
+                    t.steps[c] = t.steps[x as usize] + 1;
+                    t.stop[c] = if self.cand_of[c] != NONE {
                         c as u32
                     } else {
-                        stop[x as usize]
+                        t.stop[x as usize]
                     };
-                    root_of[c] = root_of[x as usize];
+                    t.root_of[c] = t.root_of[x as usize];
                     stack.push((c as u32, child_start[c]));
                 } else {
-                    tout[x as usize] = counter;
+                    t.tout[x as usize] = counter;
                     stack.pop();
                 }
             }
         }
-        drop(children);
-        drop(child_start);
-        // Events of the reached candidates.
-        let mut res_pool = Vec::new();
-        let mut alias_pool = Vec::new();
-        let mut mention_in = Vec::new();
-        let mut mention_out = Vec::new();
-        let mut chain_sites = Vec::new();
-        let mut scan = Scan {
-            strict,
-            out: Vec::new(),
-        };
-        let mut out = Out::default();
-        for cand in &mut cands {
-            let i = cand.node as usize;
-            if tin[i] == NONE {
-                continue;
-            }
-            let flow = &flows[i];
-            scan.out.clear();
-            let flags = flow.flags;
-            if flags.intersects(FlowFlags::ASSIGNMENT) {
-                scan.assignment(flow.node);
-            } else if flags.intersects(FlowFlags::CALL) {
-                cand.call = flow.node;
-                continue;
-            } else if flags.intersects(FlowFlags::CONDITION) {
-                scan.n(flow.node, flags.intersects(FlowFlags::TRUE_CONDITION), 0);
-            } else {
-                scan.switch(flow.node);
-            }
-            out.clear();
-            for &ev in &scan.out {
-                out.event(ev);
-            }
-            cand.blocked = out.blocked;
-            out.resolves.sort_unstable_by_key(|r| r.0);
-            cand.res_start = res_pool.len() as u32;
-            for &(x, bits) in &out.resolves {
-                let merge = res_pool.len() as u32 > cand.res_start;
-                match res_pool.last_mut() {
-                    Some((last, last_bits)) if merge && *last == x => *last_bits |= bits,
-                    _ => res_pool.push((x, bits)),
-                }
-            }
-            cand.res_end = res_pool.len() as u32;
-            cand.alias_start = alias_pool.len() as u32;
-            alias_pool.extend_from_slice(&out.aliases);
-            cand.alias_end = alias_pool.len() as u32;
-            out.mentions.sort_unstable();
-            out.mentions.dedup();
-            for &key in &out.mentions {
-                mention_in.push((key, tin[i]));
-                mention_out.push((key, tout[i]));
-            }
-            out.chains.sort_unstable();
-            out.chains.dedup();
-            for &(key, root) in &out.chains {
-                chain_sites.push((key, tin[i], tout[i], root));
+        t
+    }
+}
+
+impl Scan {
+    /// The events of candidate flow node `flow` into `self.out`, or false
+    /// for a call node, which has no events: its call goes to `cand.call`
+    /// and is judged by its effects signature per class.
+    fn candidate(&mut self, flow: &FlowNode, cand: &mut Cand) -> bool {
+        self.out.clear();
+        let flags = flow.flags;
+        if flags.intersects(FlowFlags::ASSIGNMENT) {
+            self.assignment(flow.node);
+        } else if flags.intersects(FlowFlags::CALL) {
+            cand.call = flow.node;
+            return false;
+        } else if flags.intersects(FlowFlags::CONDITION) {
+            self.n(flow.node, flags.intersects(FlowFlags::TRUE_CONDITION), 0);
+        } else {
+            self.switch(flow.node);
+        }
+        true
+    }
+}
+
+/// The pools and unsorted key lists of a file's candidates, the third
+/// stage of `FileIndex::build`.
+#[derive(Default)]
+struct Pools {
+    res_pool: Vec<(Node, u8)>,
+    alias_pool: Vec<Alias>,
+    mention_in: Vec<(u64, u32)>,
+    mention_out: Vec<(u64, u32)>,
+    chain_sites: Vec<(u64, u32, u32, Node)>,
+}
+
+impl Pools {
+    /// Adds what the events of `cand` mean (`out`) to the pools: its
+    /// resolves (one entry per identifier, bits merged), aliases, mentions
+    /// and chain sites at the node's entry and exit numbers.
+    fn add(&mut self, cand: &mut Cand, out: &mut Out, tin: u32, tout: u32) {
+        cand.blocked = out.blocked;
+        out.resolves.sort_unstable_by_key(|r| r.0);
+        cand.res_start = self.res_pool.len() as u32;
+        for &(x, bits) in &out.resolves {
+            let merge = self.res_pool.len() as u32 > cand.res_start;
+            match self.res_pool.last_mut() {
+                Some((last, last_bits)) if merge && *last == x => *last_bits |= bits,
+                _ => self.res_pool.push((x, bits)),
             }
         }
-        mention_in.sort_unstable();
-        mention_out.sort_unstable();
-        let mut mention_range = FxHashMap::default();
-        let mut start = 0;
-        while start < mention_in.len() {
-            let key = mention_in[start].0;
-            let mut end = start + 1;
-            while end < mention_in.len() && mention_in[end].0 == key {
-                end += 1;
-            }
-            mention_range.insert(key, (start as u32, end as u32));
-            start = end;
+        cand.res_end = self.res_pool.len() as u32;
+        cand.alias_start = self.alias_pool.len() as u32;
+        self.alias_pool.extend_from_slice(&out.aliases);
+        cand.alias_end = self.alias_pool.len() as u32;
+        out.mentions.sort_unstable();
+        out.mentions.dedup();
+        for &key in &out.mentions {
+            self.mention_in.push((key, tin));
+            self.mention_out.push((key, tout));
         }
-        let mention_in = mention_in.into_iter().map(|e| e.1).collect();
-        let mention_out = mention_out.into_iter().map(|e| e.1).collect();
-        chain_sites.sort_unstable_by_key(|s| (s.0, s.1));
+        out.chains.sort_unstable();
+        out.chains.dedup();
+        for &(key, root) in &out.chains {
+            self.chain_sites.push((key, tin, tout, root));
+        }
+    }
+}
+
+/// The events of the reached candidates, in candidate order, gathered into
+/// pools.
+fn scan_candidates(flows: &[FlowNode], strict: bool, cands: &mut [Cand], tour: &Tour) -> Pools {
+    let mut pools = Pools::default();
+    let mut scan = Scan {
+        strict,
+        out: Vec::new(),
+    };
+    let mut out = Out::default();
+    for cand in cands {
+        let i = cand.node as usize;
+        if tour.tin[i] == NONE || !scan.candidate(&flows[i], cand) {
+            continue;
+        }
+        out.clear();
+        for &ev in &scan.out {
+            out.event(ev);
+        }
+        pools.add(cand, &mut out, tour.tin[i], tour.tout[i]);
+    }
+    pools
+}
+
+/// The range of each key in `mention_in`, sorted by key: the part of the
+/// mention lists that `FileIndex::mentions_on_path` searches.
+fn mention_ranges(mention_in: &[(u64, u32)]) -> FxHashMap<u64, (u32, u32)> {
+    let mut mention_range = FxHashMap::default();
+    let mut start = 0;
+    while start < mention_in.len() {
+        let key = mention_in[start].0;
+        let mut end = start + 1;
+        while end < mention_in.len() && mention_in[end].0 == key {
+            end += 1;
+        }
+        mention_range.insert(key, (start as u32, end as u32));
+        start = end;
+    }
+    mention_range
+}
+
+impl FileIndex {
+    /// The index of one static file: its forest, the tour of it, and the
+    /// events of the reached candidates as sorted lookup lists.
+    fn build(file: usize, flows: &'static [FlowNode], strict: bool) -> FileIndex {
+        let mut forest = Forest::new(file, flows);
+        let tour = forest.tour();
+        let mut pools = scan_candidates(flows, strict, &mut forest.cands, &tour);
+        pools.mention_in.sort_unstable();
+        pools.mention_out.sort_unstable();
+        let mention_range = mention_ranges(&pools.mention_in);
+        pools.chain_sites.sort_unstable_by_key(|s| (s.0, s.1));
         FileIndex {
             flows,
             file,
-            parent,
-            root_kind,
-            nest,
-            steps,
-            tin,
-            stop,
-            root_of,
-            cand_of,
-            cands,
-            res_pool,
-            alias_pool,
-            mention_in,
-            mention_out,
+            parent: forest.parent,
+            root_kind: forest.root_kind,
+            nest: tour.nest,
+            steps: tour.steps,
+            tin: tour.tin,
+            stop: tour.stop,
+            root_of: tour.root_of,
+            cand_of: forest.cand_of,
+            cands: forest.cands,
+            res_pool: pools.res_pool,
+            alias_pool: pools.alias_pool,
+            mention_in: pools.mention_in.into_iter().map(|e| e.1).collect(),
+            mention_out: pools.mention_out.into_iter().map(|e| e.1).collect(),
             mention_range,
-            chain_sites,
+            chain_sites: pools.chain_sites,
             classes: (0..CLASSES).map(|_| None).collect(),
         }
     }
