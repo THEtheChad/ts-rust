@@ -1433,7 +1433,8 @@ def cmd_report(args) -> None:
             md += gorel.md_delta(out["go_relative_delta"], args.top)
     md += md_snapshot(snap, args.top)
     if g is not None:
-        out["go_relative"] = g
+        # the per-function mapping stays in the gorel cache file (`go_relative.cache`)
+        out["go_relative"] = {k: v for k, v in g.items() if k != "mapping"}
         md += gorel.md_go_relative(g, args.top)
     elif note:
         md += [note, ""]

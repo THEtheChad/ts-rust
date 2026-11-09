@@ -42,7 +42,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 5  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 6  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -868,6 +868,7 @@ def go_relative(snap: dict, repo: Path, cache: Path, go_root: Path = GO_ROOT) ->
         # every Rust function: confidence, Go function id, the row it is summed into or folded into
         "mapping": {rf["key"]: [rf["conf"], rf["go"]["id"] if rf["go"] else None, rf["part_of"] or rf["parent"]] for rf in rfs},
     }
+    out["cache"] = str(cf)
     cf.parent.mkdir(parents=True, exist_ok=True)
     cf.with_suffix(".tmp").write_text(json.dumps(out))
     cf.with_suffix(".tmp").replace(cf)
@@ -947,8 +948,8 @@ def md_go_relative(g: dict, top: int = 20) -> list[str]:
     o += ["", f"Port bloat, top {top} by Δcog (Rust − Go; both include their closures; splits and lifted Go closures summed into their row):", ""]
     o += md_port_rows(g["port_bloat"], top)
     ratio = sorted((r for r in g["port_bloat"] if r["cog"] > OWN_LIMIT), key=lambda r: (-r["ratio"], -r["diff"]))
-    o += ["", f"Port bloat, top {top} by ratio (Rust cog >{OWN_LIMIT}):", ""]
-    o += md_port_rows(ratio, top)
+    o += ["", f"Port bloat, top {top // 2} by ratio (Rust cog >{OWN_LIMIT}):", ""]
+    o += md_port_rows(ratio, top // 2)
     o += ["", f"Own code over {OWN_LIMIT}, top {top}:", ""]
     o += md_own_rows(g["own"], top)
     if g["ambiguous"]:
