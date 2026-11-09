@@ -150,7 +150,9 @@ mod debug {
 }
 
 /// `debug::say` of `format_args!(...)` in a `diagnostics` feature build;
-/// nothing otherwise (the arguments are not evaluated).
+/// nothing otherwise (the arguments are not evaluated). Its callers are
+/// Linux x86-64 only.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 macro_rules! say {
     ($($arg:tt)*) => {{
         #[cfg(feature = "diagnostics")]
