@@ -545,7 +545,8 @@ plugin. Their markers name that code; the own-code table shows the marker.
   - Of the 20 random functions, 11 are ported and right. 9 are own code and
     right: Effect, `gostd`, x/text, and perf code such as `flow_skip` and the
     load views.
-  - An earlier draw (before the `low` change) was also 20/20.
+  - Two more draws of 20 (the same seed over the row sets of earlier and
+    later versions) were also 20/20, so 100 distinct functions in all.
 - **Top 60 by Δ, audited:** one partial counterpart (`build_all_tasks`,
   +46) led to compound markers (+32 now). The rest are real differences
   against the named Go function. Some are perf code inside a port:
