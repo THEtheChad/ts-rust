@@ -1094,3 +1094,17 @@ once a **reconciliation step** is built and tested.
     names and the known 0018 environmental item.
   - **Timing window 2 is now ≤ Go in every cell.**
   - Merged without an Astra round: small, measured, and no output change.
+- **2026-11-09, H5 merged.** Every LSP server now runs with:
+  - a private `HOME`/XDG/`TMPDIR` and no inherited environment;
+  - no network;
+  - an offline stand-in npm installing from a frozen typings store
+    (`ata-typings.json`, hash `d339a2b67e79850a`), with the hash in each
+    key;
+  - tripwires on `~/.cache/typescript`, `~/.npm` and `~/.config`;
+  - node and ancestor dirs keyed.
+  
+  The old variant records are never read again.
+  - **Gate** (`runs/h5-head-0bf6ff2a7-full`): 0 lost, every LSP item good,
+    and only the 13 intentional not-run names. It is now `base-current`.
+  - Merged without an Astra round: it only makes the keys stricter, and its
+    negative controls fail as expected.
