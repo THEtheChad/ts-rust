@@ -1398,12 +1398,28 @@ def md_delta(d: dict, label: str = "") -> list[str]:
 # commands
 
 
+def load_gorel():
+    """gorel.py (the Go-relative ranking), or a note saying why it cannot run."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import gorel
+
+    for p, what in ((gorel.GO_ROOT, "Go tree (PERF_QUALITY_GO_ROOT)"), (gorel.GO_BIN, "go (PERF_QUALITY_GO)")):
+        if not p.exists():
+            return None, f"_go-relative skipped: no {what} at {p}_"
+    return gorel, None
+
+
 def cmd_report(args) -> None:
     t0 = time.time()
     rev = rev_sha(args.rev)
     snap = build_snapshot(rev, not args.no_clippy)
     out = {"rev": rev, "snapshot": snap}
     md = [f"## Quality report {args.rev} ({rev[:9]})", ""]
+    g = gorel = note = None
+    if not args.no_go_relative:
+        gorel, note = load_gorel()
+        if gorel:
+            g = gorel.go_relative(snap, REPO, CACHE)
     if args.base:
         base = build_snapshot(rev_sha(args.base), not args.no_clippy)
         d = delta(base, snap)
@@ -1411,7 +1427,17 @@ def cmd_report(args) -> None:
         out["base_snapshot"] = base
         out["delta"] = d
         md += md_delta(d, f"(base {args.base})")
+        if g is not None:
+            gb = gorel.go_relative(base, REPO, CACHE)
+            out["go_relative_delta"] = gorel.delta(gb, g)
+            md += gorel.md_delta(out["go_relative_delta"], args.top)
     md += md_snapshot(snap, args.top)
+    if g is not None:
+        # the per-function mapping stays in the gorel cache file (`go_relative.cache`)
+        out["go_relative"] = {k: v for k, v in g.items() if k != "mapping"}
+        md += gorel.md_go_relative(g, args.top)
+    elif note:
+        md += [note, ""]
     if args.hatches:
         md += md_hatches(snap)
     out["seconds"] = round(time.time() - t0, 1)
@@ -1422,6 +1448,20 @@ def cmd_report(args) -> None:
     text = "\n".join(md).replace("{json}", str(outdir / "report.json"))
     (outdir / "report.md").write_text(text + "\n")
     print(text)
+
+
+def cmd_ranking(args) -> None:
+    """The Go-relative planning page (rankings, per-area and per-file totals) for one revision."""
+    rev = rev_sha(args.rev)
+    gorel, note = load_gorel()
+    if not gorel:
+        sys.exit(note)
+    g = gorel.go_relative(build_snapshot(rev, False), REPO, CACHE)
+    text = "\n".join(gorel.md_planning(g, args.rev, rev, args.top))
+    if args.out:
+        Path(args.out).write_text(text)
+    else:
+        print(text)
 
 
 def first_parent_merges(base: str, branch: str) -> list[tuple[str, str]]:
@@ -1502,14 +1542,19 @@ def main() -> None:
     r.add_argument("--base")
     r.add_argument("--no-clippy", action="store_true")
     r.add_argument("--hatches", action="store_true", help="print the full escape-hatch inventory")
+    r.add_argument("--no-go-relative", action="store_true", help="skip the Go-relative complexity ranking (gorel.py)")
     r.add_argument("--top", type=int, default=20)
     r.add_argument("--out")
+    k = sub.add_parser("ranking")
+    k.add_argument("rev")
+    k.add_argument("--top", type=int, default=60)
+    k.add_argument("--out")
     h = sub.add_parser("history")
     h.add_argument("--base", default="main")
     h.add_argument("--branch", default="perf/first-principles")
     h.add_argument("--out")
     args = ap.parse_args()
-    {"report": cmd_report, "history": cmd_history}[args.cmd](args)
+    {"report": cmd_report, "history": cmd_history, "ranking": cmd_ranking}[args.cmd](args)
 
 
 if __name__ == "__main__":

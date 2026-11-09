@@ -10,8 +10,12 @@ one-off patches, escape hatches, and the deltas per merge.
 scripts/perf-rearch/quality.sh report HEAD --base perf/first-principles   # lanes, before reporting
 scripts/perf-rearch/quality.sh report <rev> [--base <rev>] [--hatches] [--no-clippy]
 scripts/perf-rearch/quality.sh history      # main and every first-parent merge of the branch since main
+scripts/perf-rearch/quality.sh ranking <rev> [--top 60] [--out FILE]   # Go-relative planning page (section 7)
 scripts/perf-rearch/quality.sh help
 ```
+
+`report` includes the Go-relative complexity ranking of section 7 by default
+(`--no-go-relative` skips it).
 
 Measured 2026-11-04: `main` = `91f3d021c`, branch head = `502c808aa`.
 
@@ -234,7 +238,8 @@ The duplication hot spots are upstream too:
 ## 5. What each metric means, and its weaknesses
 
 - **Cognitive complexity** (rust-code-analysis): a nesting-weighted count of
-  breaks in linear flow (SonarSource's definition).
+  breaks in linear flow (SonarSource's definition). Section 7 gives rca's
+  exact rules and their Go mirror.
   - Per function, including the closures inside it. Closures are not listed
     as functions of their own.
   - Weakness: a flat 40-arm `match` that mirrors a Go `switch` scores lower
@@ -336,3 +341,275 @@ Measured on MS-A2 under a load of about 12 to 38 from other agents.
    - It is cheap and the new warnings are real.
    - The forced `clippy::all` count only reports, until upstream's 2,120 are
      dealt with.
+
+## 7. Go-relative complexity (lane Q0, 2026-11-09)
+
+The code-quality phase judges complexity against Go (`brief.md`,
+"Code-quality phase"):
+
+- **Ported code:** the target is *port bloat*, a Rust function much more
+  complex than its Go counterpart at the pin.
+- **Own code** (no Go counterpart): the limit is cognitive complexity 25.
+
+`quality.sh report` maps every Rust production function to its Go
+counterpart and ranks both cases. `quality.sh ranking <rev>` prints the
+planning page (`docs/perf-rearch/cleanup/q0-ranking.md` is the one for
+`e658d4d29`).
+
+- **Code:**
+  - `scripts/perf-rearch/gocog/` (Go, standard library `go/ast` only) scores
+    the Go side.
+  - `scripts/perf-rearch/gorel.py` maps and ranks.
+  - `scripts/perf-rearch/gorel_test.py` tests both.
+- **Go tree:** `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`,
+  `internal/` and `cmd/`, read only. Override with `PERF_QUALITY_GO_ROOT`,
+  and the toolchain with `PERF_QUALITY_GO` (default `~/.local/go/bin/go`).
+  gocog is built with `GOTOOLCHAIN=local GOPROXY=off`, so nothing is
+  downloaded.
+
+### Metric definitions
+
+Both sides use one definition: rust-code-analysis 0.0.25's Rust rules
+(`src/metrics/cognitive.rs` and `cyclomatic.rs`, `impl … for RustCode` in
+`~/.cargo/registry/src/*/rust-code-analysis-0.0.25`). gocog mirrors each rule
+on the Go AST.
+
+| Rule | Rust (rca) | Go (gocog) |
+|---|---|---|
+| +1 + nesting, and nesting +1 for the whole subtree (condition included) | `if` (not an else-if), `for`, `while`, `match` | `if` (not an else-if), `for` with a condition, init or post, `range`, `switch`, type switch, `select` |
+| not counted, no nesting | `loop` | bare `for {}` (Rust's `loop`) |
+| +1 flat | each `else` (else-if included), `let … else` | each `else` (else-if included) |
+| +1 flat | labeled `break`/`continue` | labeled `break`/`continue`, `goto` |
+| boolean sequence (below) | `&&`, `\|\|` | `&&`, `\|\|` |
+| nesting +1 inside, figure counted in the enclosing function | closure | function literal |
+| nesting reset, depth +1, figure counted in the enclosing function | nested `fn` | (none in Go) |
+
+- **Boolean sequences** follow rca exactly, quirks included, so both sides
+  agree:
+  - The first `&&`/`||` of a sequence counts +1 and is remembered. A later
+    operator counts +1 when it differs from the remembered one, which it
+    does not replace.
+  - The state is one value per function (a closure or function literal has
+    its own) in source order. Only a nesting increment resets it.
+  - A unary operator sets the state to "unary", so every later `&&`/`||`
+    counts until the next reset. Rust's unary operators are `!`, `-` and
+    deref `*`; gocog uses `!`, `-`, `+`, `^` and deref `*`, and skips type
+    positions (`var x *T`, `.(*T)`).
+- **Cyclomatic:** 1 per function and per closure or function literal, plus 1
+  per `if`, loop, match arm or case clause (default included), select clause,
+  `&&` and `||`. Rust's `?` counts too and has no Go equivalent, so Rust
+  cyclomatic runs a little higher. The rankings use cognitive complexity.
+- **Lines:** from `fn` to `}` and from `func` to `}`.
+- **Known differences:**
+  - rca does not look inside macro calls (`matches!`, `assert!`), so a
+    condition there costs nothing on the Rust side.
+  - Go `goto` and `select` have no Rust form.
+  - gocog keeps generated Go files (`ast_generated.go` and others, flagged
+    `generated`), because Rust ports some of that code by hand. rca's Rust
+    side excludes generated Rust files (section 5).
+- **Check:** `gorel_test.py` scores the same functions written in Go and in
+  Rust (an else-if chain, the boolean quirks, a closure with a labeled loop
+  exit) and requires gocog = rca for both metrics. The ported tree confirms
+  it. On the 12,516 rows placed by a `// Go:` marker:
+  - Rust cog equals Go cog in 76%, and is within 2 in 90%;
+  - Σ Rust is 66,451 against Σ Go 65,356;
+  - the median difference is 0 at Go cog ≥ 10 and ≥ 25, and 1 at ≥ 50.
+
+### Closures and the fairness rule
+
+Go often writes a helper as a closure inside a function; the Rust port may
+lift it into its own function, or split a function for its own reasons. A
+row compares like with like:
+
+1. **Both figures include their closures.** A Go function's figure includes
+   its function literals, one nesting deeper, as rca does for Rust closures.
+   gocog also lists each named literal (`name := func`, `name = func`,
+   `var name = func`) with two figures: its standalone figure, and its
+   in-place contribution to the parent.
+2. **A lifted Go closure is summed into the parent's row.** When a Rust
+   function is a named closure of Go function G and G's own Rust function is
+   in the same file family, it adds to that row. The family is the
+   directory plus the file stem without `_pN`. The Rust function is a closure
+   of G when its marker names the closure or, with no marker, its name does.
+   - The Rust side adds the lifted function's figure.
+   - The Go side swaps the closure's in-place contribution for its standalone
+     figure, so neither side pays the closure's extra nesting.
+   - Example: `get_completion_data` (599, with 18 lifted closures) against
+     Go `getCompletionData` (529).
+3. **Splits are summed.** Rust functions in one file family that map to the
+   same Go function form one row. The head is the one named like the Go
+   function. A split is found three ways:
+   - a `// Go:` marker naming the Go function;
+   - prose such as "body of Go `typeToTypeNode`";
+   - a Go line range inside the Go function.
+
+   Two functions of the same name (a `#[cfg(unix)]`/`#[cfg(windows)]` pair,
+   or a trait method that calls the inherent one) are *variants*: one of
+   them runs, so the row takes the larger.
+4. **Nested Rust `fn`s** stay in their parent, as rca sums them, unless one
+   maps to a Go function of its own (by marker or a high-confidence name).
+   Then it gets its own row and its parent's figure leaves it out.
+5. **Compound markers.** `// Go: a.go:1 A and a.go:9 B` (references joined
+   by "and", "with" or a comma, outside parentheses) compares the Rust
+   function with A + B. Example: `build_all_tasks` against `rangeTasks` +
+   `buildOrCleanProject` + `buildOrCleanOrder`.
+6. **Method families.** A marker naming one method that several Go types
+   have, with no receiver, compares with the family's sum. Example:
+   `Node::for_each_child` against every `ForEachChild` in `ast_generated.go`.
+   A Rust enum dispatch ports a set of Go interface methods as one fn.
+
+Not handled: a Rust closure that ports a Go top-level function (rca does not
+name closures). It makes the Rust parent look larger. It is rare.
+
+### Mapping
+
+Each Rust production function (rca's list) is placed by the first of these
+that succeeds:
+
+1. **`// Go:` marker** (confidence `marker`): the `// Go: [<path>.go[:<line>]] <sym>`
+   comment in the comment and attribute block right above the `fn`.
+   - `<sym>` is `name`, `Type.name`, `(*Type).name` or `(r *Type) name`.
+   - A marker naming the Rust function wins over the nearest one.
+   - The Go file named must exist at the pin. Then the name is looked up in
+     it: a function, then a named closure, then a method family. The marker's
+     line number only breaks ties within ±2, because lines drift between
+     pins.
+   - When the first reference names nothing at the pin, the paragraph's
+     other references are tried (`(at 673a5f17d713; ts#64554 generates it:
+     …_generated.go:193 parsePreferenceIndentStyle)`).
+2. **Prose** (`prose`), when no marker resolves:
+   - "body/part/rest/arms/cases of Go `X`" and "split out of `X`";
+   - a Go line range `checker.go:12579-12785` inside one function;
+   - "Go `X`" or "Go fooBar".
+
+   The last two count only when one name is a prefix of the other
+   (`is_simple_type_related_to_kind` and `isSimpleTypeRelatedTo`).
+3. **Name matcher** (`high`, `medium`, `low`, `ambiguous`).
+   - **Names:** snake_case is normalized to lowercase without `_`. Rust
+     names Go's exported twin `foo_exported`; otherwise the unexported Go
+     function of a `Foo`/`foo` pair is taken. `T::new` is `NewT`.
+   - **Candidates** come from the Go packages the Rust path names:
+     `checker_p17.rs` maps to `internal/checker`, `frontend/x/` to
+     `internal/x`. The `DIR_PKGS` and `STEM_PKGS` tables cover the rest
+     (`emitter/`, `program/`, `declarations/`, root files). Then come the
+     file's *affinity* packages, which hold ≥ 3 and ≥ 25% of the file's
+     uniquely named matches.
+   - **Filters,** in order: receiver (impl type), then Go file stem (the Rust
+     stem without `_pN`). A different receiver is allowed only for pairs the
+     markers show ≥ 3 times (`Checker` holding `Relater` and
+     `NodeBuilderImpl` methods). A free function and a method match only
+     when receiver or file agree.
+   - **Confidence:**
+     - `high`: one candidate in the path's packages, agreeing on receiver or
+       file;
+     - `medium`: one candidate there agreeing on neither (a name of 8+
+       characters), or one in an affinity package that agrees;
+     - `low`: one in an affinity package that agrees on neither (10+
+       characters);
+     - `ambiguous`: more than one left.
+   - **Low and ambiguous matches are ranked as own code,** with a note. The
+     report lists the ambiguous ones (12 at `e658d4d29`, all cog ≤ 1:
+     unix/windows Go files, `incremental.Program` against
+     `compiler.Program`).
+   - **No name matching** in directories of our own (`effect/`, `gostd/`,
+     `frontend/vfs/loadview/`, `load_view_scope/`). The same holds in files
+     where most markers name Go outside the pin (`locale.rs` ports x/text).
+
+Everything left is **own code**. That includes ports of Go outside the pin:
+Go's standard library in `gostd/`, x/text in `locale.rs`, and Effect's Go
+plugin. Their markers name that code; the own-code table shows the marker.
+
+### Accuracy (at `e658d4d29`)
+
+- **Coverage:** of 21,871 Rust prod functions, 12,737 are placed by marker,
+  99 by prose, 240 by name (225 high, 15 medium) and 7 as lifted closures by
+  name. 3 are low and 12 ambiguous; both are ranked as own code. 8,773 have
+  no counterpart.
+- **Name matcher against the markers:** where both place a function
+  (11,560), they agree on 99.6%: high 10,711/10,750, medium 743/756, low
+  54/54.
+  - This is partly circular: the receiver pairs come from the markers.
+  - Before the matcher was confined to the path and affinity packages, a
+    whole-tree tier matched about 3 in 10 sampled functions right. That tier
+    is gone.
+  - The 15 medium name-only matches left were all checked by hand and are
+    right.
+- **Hand check, 60 functions:** the 40 largest by Rust cog, plus 20 drawn at
+  random (seed 9, `gorel.sample_for_check`). **60/60 right.**
+  - All 40 top functions are placed by marker. Each was checked against the
+    Go signature, including the summed parts: `resolve` + `resolve_name`,
+    `type_to_type_node` + `_body`, `check_binary_like_expression` +
+    `_worker`, and the lifted closures of `get_completion_data`,
+    `get_quick_info_and_declaration_at_location`, `verify_compiler_options`
+    and `get_existing_node_tree_visitor`.
+  - Of the 20 random functions, 11 are ported and right. 9 are own code and
+    right: Effect, `gostd`, x/text, and perf code such as `flow_skip` and the
+    load views.
+  - Two more draws of 20 (the same seed over the row sets of earlier and
+    later versions) were also 20/20, so 100 distinct functions in all.
+- **Top 60 by Δ, audited:** one partial counterpart (`build_all_tasks`,
+  +46) led to compound markers (+32 now). The rest are real differences
+  against the named Go function. Some are perf code inside a port:
+  - `get_normalized_absolute_path` (76 against 3) has fast paths;
+  - `FilesParser::parse` (30 against 0) holds the parallel scheduler.
+- **Markers naming nothing at the pin: 2,099.** Most are in `effect/` 1,095,
+  `gostd/` 403, `locale.rs` 122, `frontend` (the JSON and filepath ports)
+  135 and `ast` 87 (functions removed or renamed upstream).
+
+### Output
+
+- **`report`** shows:
+  - the summary;
+  - the top N rows by Δ and the top N/2 by ratio (Rust cog > 25);
+  - the top N own-code functions over 25;
+  - the ambiguous matches;
+  - the per-area table.
+
+  With `--base` it adds the Go-relative counts at both points, and the rows
+  whose Δ (ported) or cog (own > 25) moved. That is the line a wave-2 lane
+  quotes.
+- **`report.json`:** `go_relative` holds `summary`, `areas`, every row of
+  `port_bloat` and `own`, and `ambiguous`. `go_relative_delta` holds the
+  delta. The full per-function `mapping` (confidence, Go id, the row it is
+  summed into) stays in the cache file that `go_relative.cache` names.
+- **A port-bloat row** has:
+  - Rust `cog`/`cyc`/`sloc` (parts included) and `go_cog`/`go_cyc`/`go_lines`;
+  - `diff` = Rust cog − Go cog, and `ratio` = Rust cog / max(1, Go cog);
+  - the Go file and line, `conf`, and `parts` (closure, split or variant).
+
+  Targets are Δ ≥ 10. The ratio ranking only lists Rust cog > 25, because
+  small functions give noisy ratios.
+- **Areas** (the wave-2 lanes, by path under `crates/ts_goport/src/`):
+
+  | Area | Paths |
+  |---|---|
+  | checker | `checker/` |
+  | frontend | `frontend/`, `program/`, `program.rs`, `scanner_util*` |
+  | ls | `ls/`, with autoimport |
+  | execute/build/emit | `execute/`, `emitter/`, `bin/`, `cmd/` |
+  | effect | `effect/` |
+  | other | everything else |
+
+  `ranking` also gives subarea and per-file totals, so lanes can take
+  disjoint file sets.
+- **Run time** (MS-A2, load 20 to 27 from other agents):
+  - a new `crates/` tree: about 2 to 3 s (git cat-file of the sources,
+    mapping);
+  - a new Go tree: plus under 1 s (gocog parses 15k functions in 0.4 to 0.9 s);
+  - a cold gocog build with an empty Go build cache: plus about 4 s;
+  - cached: 0.1 s.
+
+  Caches live in `~/.cache/perf-rearch/quality/`: `go/` (Go tree + gocog
+  source), `gorel/` (crates tree + Go tree + `GOREL_VERSION`) and `tools/`.
+  It is cheap, so it is on by default.
+
+### For wave-2 lanes
+
+- **Split toward Go's helpers first.** A Rust helper with a `// Go:` marker
+  that names a Go function becomes its own row against that function, and
+  the parent's Δ falls by what moved.
+- **A helper with no Go counterpart is own code** (limit 25), unless it is
+  still a piece of one Go function. Then say so in its doc comment ("body of
+  Go `X`", "part of Go `X`") and it is summed back into X's row.
+- **Keep `// Go:` markers on ported functions.** They are what makes this
+  ranking reliable: 99% of placements.
