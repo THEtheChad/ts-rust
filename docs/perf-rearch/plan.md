@@ -1212,3 +1212,23 @@ once a **reconciliation step** is built and tested.
   of false-good paths) were the same pattern earlier. Each ended with a
   redesign: the ordinary-layout rule (go serial when anything is unusual)
   and the H4 gate.
+- **Q4 finished** (`t3/mechanical-clippy-cleanup`, head `6dae1c547`, not merged).
+  - Forced `clippy::all` count 2,120 → 1,162; 61 lints locked in.
+  - Parity quick OK, icount flat.
+  - Clippy's own auto-fixes were wrong in 6 places, and the lane caught each
+    one: the NaN branch of the float formatters, a wrong `manual_swap`, a
+    test broken by `unnecessary_to_owned`, a comment dropped by
+    `manual_find`, `blocks_in_conditions` not compiling in the parser, and
+    code deleted by `while_let_loop`/`single_match`.
+  - **Found a gate brittleness.** The 9 grandfathered Go-crash pins hash
+    tsc-rs stderr, and that includes the Rust `file:line` of the panic site.
+    Q4 kept the old lines with two commits and two module allows.
+    - Root's fix is lane H6: normalize only that site line's number,
+      re-pin, add negative controls.
+    - After H6, Q4 round 2 reverts the line-keeping commits.
+  - **Astra review running:** semantic equivalence of the rewrites, and
+    whether the lock-in should live in one place (the list is copied into
+    4 crate roots, so duplication went up). CI clippy runs on 1.95.0 and
+    `quality.sh` on 1.99.1; Q5 aligns them.
+  - **Merge order:** H6, then Q4 round 2, then Q3 (rebased on Q4; it
+    removes Q4's allows on Q3's files), then Q5, then wave 2.
