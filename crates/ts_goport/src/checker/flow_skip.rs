@@ -803,13 +803,10 @@ impl Scan {
     }
 
     /// Go `narrowTypeByTypeof` (flow.go:614) when the operand does not match.
+    /// Its events are those of `t` with `at` true: the optional chain test
+    /// (flow.go:621) counts for either value of `assumeTrue`.
     fn typeof_(&mut self, type_of_expr: Node) {
-        let target = reference_candidate(type_of_expr.expression());
-        self.out.push(Ev::M(target, false));
-        if self.strict {
-            self.out.push(Ev::Oc(target));
-        }
-        self.d(target);
+        self.t(reference_candidate(type_of_expr.expression()), true);
     }
 
     /// Go `getTypeAtSwitchClause` (flow.go:1059) after the walk of the
@@ -1087,6 +1084,35 @@ impl Class {
     fn index(self) -> usize {
         usize::from(self.kind) * 6 + usize::from(self.union) * 3 + usize::from(self.cr)
     }
+
+    /// The bits (`slot`) of the resolves and blocks that Go evaluates for
+    /// this class: the base part of its kind, and the union part when the
+    /// declared type is a union.
+    #[inline]
+    fn bits(self) -> u8 {
+        slot(self.kind, false) | if self.union { slot(self.kind, true) } else { 0 }
+    }
+}
+
+/// The flow nodes of `file` when it is a static file (the CLI case), whose
+/// flow nodes live for the process: only such a file is indexed.
+#[inline]
+fn static_flow_nodes(file: usize) -> Option<&'static [FlowNode]> {
+    static_go_file(file)
+        .and_then(|g| g.flow_nodes.get())
+        .map(Vec::as_slice)
+}
+
+/// The local index of flow node `id` in `flows`, the flow nodes of `file`,
+/// or `None` when `id` is nil or lies outside them (another file or a
+/// synthetic node): the index only follows pointers inside its file.
+#[inline]
+fn local_flow(flows: &[FlowNode], file: usize, id: FlowNodeId) -> Option<u32> {
+    if id.is_nil() || id.file_index() != file || id.local_index() >= flows.len() {
+        None
+    } else {
+        Some(id.local_index() as u32)
+    }
 }
 
 const CLASSES: usize = KINDS * 6;
@@ -1096,13 +1122,7 @@ const CLASSES: usize = KINDS * 6;
 /// nests. A root has kind `ROOT_*`.
 fn next_of(flows: &[FlowNode], file: usize, flow: &FlowNode) -> Result<(u32, u32), u8> {
     let flags = flow.flags;
-    let local = |id: FlowNodeId| -> Result<u32, u8> {
-        if id.is_nil() || id.file_index() != file || id.local_index() >= flows.len() {
-            Err(ROOT_BLOCKED)
-        } else {
-            Ok(id.local_index() as u32)
-        }
-    };
+    let local = |id: FlowNodeId| local_flow(flows, file, id).ok_or(ROOT_BLOCKED);
     if flags.intersects(FlowFlags::ASSIGNMENT | FlowFlags::CALL) {
         Ok((local(flow.antecedent)?, 0))
     } else if flags.intersects(FlowFlags::CONDITION | FlowFlags::SWITCH_CLAUSE) {
@@ -1411,6 +1431,16 @@ struct Snapshot {
 }
 
 impl Checker {
+    /// The symbol that the checker has resolved for identifier `node` so
+    /// far, or nil. The flow skip only reads the node links: resolving
+    /// would be a lasting write that a skipped walk must not make.
+    #[inline]
+    fn flow_skip_resolved_symbol(&self, node: Node) -> SymbolId {
+        self.symbol_node_links
+            .try_get(node)
+            .map_or(SymbolId::NIL, |links| links.resolved_symbol)
+    }
+
     fn flow_skip_resolved(&self, node: Node) -> bool {
         self.symbol_node_links
             .try_get(node)
@@ -1532,7 +1562,7 @@ impl Checker {
         match node.kind() {
             SyntaxKind::ThisKeyword => Some(true),
             SyntaxKind::Identifier => {
-                let symbol = self.symbol_node_links.try_get(node)?.resolved_symbol;
+                let symbol = self.flow_skip_resolved_symbol(node);
                 if symbol.is_nil() {
                     return None;
                 }
@@ -1568,10 +1598,7 @@ impl Checker {
                 if !self.flow_skip_constant_reference_cached(node.expression())? {
                     return Some(false);
                 }
-                let symbol = self
-                    .symbol_node_links
-                    .try_get(node)
-                    .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+                let symbol = self.flow_skip_resolved_symbol(node);
                 if symbol.is_nil() {
                     return Some(false);
                 }
@@ -1672,10 +1699,7 @@ impl Checker {
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     // Only a static file (the CLI case) is indexed: its flow
                     // nodes live for the process.
-                    if static_go_file(file)
-                        .and_then(|g| g.flow_nodes.get())
-                        .is_none()
-                    {
+                    if static_flow_nodes(file).is_none() {
                         entry.insert(FileState::Unsupported);
                         return Err(Refusal::File);
                     }
@@ -1713,9 +1737,7 @@ impl Checker {
                 let weight = hot.gap;
                 hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
                 hot.countdown = hot.gap;
-                let flows = static_go_file(file)
-                    .and_then(|g| g.flow_nodes.get())
-                    .expect("a counted file is static");
+                let flows = static_flow_nodes(file).expect("a counted file is static");
                 let u = flow.local_index();
                 let n = flows.len() as u64;
                 let confirm_steps = u64::from(CONFIRM_STEPS);
@@ -1739,12 +1761,10 @@ impl Checker {
                     return Err(Refusal::Counting);
                 }
             }
-            let flows = static_go_file(file)
-                .and_then(|g| g.flow_nodes.get())
-                .expect("a counted file is static");
+            let flows = static_flow_nodes(file).expect("a counted file is static");
             #[cfg(feature = "diagnostics")]
             let start = std::time::Instant::now();
-            let index = FileIndex::build(file, flows.as_slice(), self.strict_null_checks);
+            let index = FileIndex::build(file, flows, self.strict_null_checks);
             self.flow_skip
                 .files
                 .insert(file as u32, FileState::Built(Box::new(index)));
@@ -1911,14 +1931,11 @@ impl Checker {
                     if !crosses {
                         break;
                     }
-                    let outer = container.flow_node();
-                    if outer.is_nil()
-                        || outer.file_index() != index.file
-                        || outer.local_index() >= index.flows.len()
-                    {
+                    let Some(outer) = local_flow(index.flows, index.file, container.flow_node())
+                    else {
                         return Err(Refusal::Cross);
-                    }
-                    seg = outer.local_index();
+                    };
+                    seg = outer as usize;
                 }
                 _ => return Err(Refusal::Root),
             }
@@ -1989,10 +2006,7 @@ impl Checker {
         if reference.kind() != SyntaxKind::Identifier {
             return self.flow_skip_constant_reference(reference);
         }
-        let symbol = self
-            .symbol_node_links
-            .try_get(reference)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(reference);
         if let Some(&known) = self.flow_skip.constant_references.get(&symbol) {
             return Some(known);
         }
@@ -2017,10 +2031,8 @@ impl Checker {
     /// extras pass (go-model.md 4.3).
     fn flow_skip_settle(&mut self, index: &FileIndex, ci: u32, class: Class) -> Settle {
         let cand = &index.cands[ci as usize];
-        let k = usize::from(class.kind);
-        if cand.blocked & (1 << (k * 2)) != 0
-            || class.union && cand.blocked & (1 << (k * 2 + 1)) != 0
-        {
+        let bits = class.bits();
+        if cand.blocked & bits != 0 {
             return Settle::Blocked;
         }
         if cand.call.is_some() {
@@ -2037,12 +2049,6 @@ impl Checker {
                 return Settle::Blocked;
             }
         }
-        let bits = slot(class.kind, false)
-            | if class.union {
-                slot(class.kind, true)
-            } else {
-                0
-            };
         if !index.res_pool[cand.res_start as usize..cand.res_end as usize]
             .iter()
             .all(|&(x, b)| b & bits == 0 || self.flow_skip_resolved(x))
@@ -2083,10 +2089,7 @@ impl Checker {
         class: Class,
         extras: &mut Extras,
     ) -> Result<(), Settle> {
-        let symbol = self
-            .symbol_node_links
-            .try_get(x)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(x);
         if symbol.is_nil() {
             return Err(Settle::Unsettled);
         }
@@ -2125,10 +2128,7 @@ impl Checker {
         class: Class,
         extras: &mut Extras,
     ) -> Result<(), Settle> {
-        let symbol = self
-            .symbol_node_links
-            .try_get(x)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(x);
         if symbol.is_nil() {
             return Err(Settle::Unsettled);
         }
@@ -2170,12 +2170,7 @@ impl Checker {
                 out.event(ev);
             }
         }
-        let bits = slot(class.kind, false)
-            | if class.union {
-                slot(class.kind, true)
-            } else {
-                0
-            };
+        let bits = class.bits();
         if out.blocked & bits != 0 {
             return Err(Settle::Blocked);
         }
