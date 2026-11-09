@@ -772,11 +772,11 @@ impl SyntheticArena {
             self.free_dead_aliases();
         }
         let file = n.file_index() as u32;
-        if !self.alias_files.contains_key(&file) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.alias_files.entry(file) {
             if super::file_version::file_version_probe(n).is_none() {
                 return OwnerKey::Base;
             }
-            self.alias_files.insert(file, OwnerChunks::default());
+            e.insert(OwnerChunks::default());
         }
         OwnerKey::File(file)
     }

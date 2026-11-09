@@ -535,9 +535,7 @@ impl Watcher {
         for cfg_path in &self.config_file_paths {
             let real_path = self.sys.fs().realpath(cfg_path);
             let dir = get_directory_path(&real_path);
-            if !desired_dirs.contains_key(&dir) {
-                desired_dirs.insert(dir, false);
-            }
+            desired_dirs.entry(dir).or_insert(false);
         }
 
         // For no-config CLI mode, also watch the CLI-specified files' directories
@@ -546,9 +544,7 @@ impl Watcher {
                 let abs_path = get_normalized_absolute_path(file_name, &cwd);
                 let real_path = self.sys.fs().realpath(&abs_path);
                 let dir = get_directory_path(&real_path);
-                if !desired_dirs.contains_key(&dir) {
-                    desired_dirs.insert(dir, false);
-                }
+                desired_dirs.entry(dir).or_insert(false);
             }
         }
 
