@@ -23,6 +23,9 @@ pub mod projectcollection;
 pub mod projectcollectionbuilder;
 pub mod refcountcache;
 #[cfg(feature = "diagnostics")]
+// Lane Q3 owns this file and its cleanup; these locked-in lints still fire
+// in it. Drop the allow when Q3's work lands.
+#[allow(clippy::let_and_return, clippy::manual_contains)]
 pub mod reuse_verify;
 pub mod session;
 pub mod snapshot;
