@@ -944,19 +944,17 @@ impl Checker {
                         self.report_diagnostic(diag, diagnostic_output.as_deref_mut());
                     } else {
                         let target_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
-                            let mut p = self
+                            let p = self
                                 .get_property_of_type(tuple_or_array_like_target_parts, &prop_name);
-                            if p.is_nil() {
-                                p = self.unknown_symbol;
-                            }
-                            self.sym(p).flags.intersects(SymbolFlags::OPTIONAL)
+                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                                .flags
+                                .intersects(SymbolFlags::OPTIONAL)
                         };
                         let source_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
-                            let mut p = self.get_property_of_type(source, &prop_name);
-                            if p.is_nil() {
-                                p = self.unknown_symbol;
-                            }
-                            self.sym(p).flags.intersects(SymbolFlags::OPTIONAL)
+                            let p = self.get_property_of_type(source, &prop_name);
+                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                                .flags
+                                .intersects(SymbolFlags::OPTIONAL)
                         };
                         target_prop_type =
                             self.remove_missing_type(target_prop_type, target_is_optional);
