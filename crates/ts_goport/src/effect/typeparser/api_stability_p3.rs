@@ -2329,86 +2329,129 @@ impl ApiStabilityAnalysis {
                     );
                 }
                 SyntaxKind::MethodSignature => {
-                    let property =
-                        api_stability_member_symbol_for_declaration(tp.checker, members, member);
-                    if property.is_nil() {
-                        continue;
-                    }
-                    let property_type = self.type_of_symbol_safely(tp, property);
-                    if property_type.is_some() {
-                        let (signatures, ok) =
-                            checker_integration::get_resolved_signatures_of_type_if_materialized(
-                                tp.checker,
-                                property_type,
-                                SignatureKind::CALL,
-                            );
-                        if ok && !signatures.is_empty() {
-                            let raw = raw_signature(tp.checker, signatures[0]);
-                            self.collect_function_signature_provenance(
-                                tp, surface, member, raw, subst,
-                            );
-                            continue;
-                        }
-                    }
-                    // A method's function type exists but its structured signatures have
-                    // not been materialized. The raw declaration signature is created
-                    // through the same guarded signature accessor an ordinary method
-                    // member uses.
-                    if !self.signature_member_resolution_is_safe(tp, property, subst) {
-                        continue;
-                    }
-                    let signatures = self.materialized_signatures_of_symbol(tp.checker, property);
-                    if !signatures.is_empty() {
-                        let raw = raw_signature(tp.checker, signatures[0]);
-                        self.collect_function_signature_provenance(tp, surface, member, raw, subst);
-                    }
+                    self.collect_method_signature_provenance(tp, surface, members, member, subst);
                 }
                 SyntaxKind::CallSignature | SyntaxKind::ConstructSignature => {
-                    let kind = if member.kind() == SyntaxKind::ConstructSignature {
-                        SignatureKind::CONSTRUCT
-                    } else {
-                        SignatureKind::CALL
-                    };
-                    let (signatures, ok) =
-                        checker_integration::get_resolved_signatures_of_type_if_materialized(
-                            tp.checker,
-                            represented,
-                            kind,
-                        );
-                    if ok && !signatures.is_empty() {
-                        let raw = raw_signature(tp.checker, signatures[0]);
-                        self.collect_function_signature_provenance(tp, surface, member, raw, subst);
-                    }
+                    self.collect_call_or_construct_signature_provenance(
+                        tp,
+                        surface,
+                        member,
+                        represented,
+                        subst,
+                    );
                 }
                 SyntaxKind::IndexSignature => {
-                    let (infos, ok) =
-                        checker_integration::get_resolved_index_infos_of_type_if_materialized(
-                            tp.checker,
-                            represented,
-                        );
-                    if ok {
-                        for info in infos {
-                            if info.is_nil() {
-                                continue;
-                            }
-                            let (declaration, value_type) = {
-                                let data = tp.checker.index_info(info);
-                                (data.declaration, data.value_type)
-                            };
-                            if declaration == member {
-                                self.collect_type_node_provenance(
-                                    tp,
-                                    surface,
-                                    member.type_(),
-                                    value_type,
-                                    subst,
-                                );
-                                break;
-                            }
-                        }
-                    }
+                    self.collect_index_signature_provenance(
+                        tp,
+                        surface,
+                        member,
+                        represented,
+                        subst,
+                    );
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// The method signature `member` of [`Self::collect_type_literal_provenance`]:
+    /// its first resolved call signature, or else the raw declaration
+    /// signature when the guard allows resolving it.
+    fn collect_method_signature_provenance(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        members: SymbolTable,
+        member: Node,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        let property = api_stability_member_symbol_for_declaration(tp.checker, members, member);
+        if property.is_nil() {
+            return;
+        }
+        let property_type = self.type_of_symbol_safely(tp, property);
+        if property_type.is_some() {
+            let (signatures, ok) =
+                checker_integration::get_resolved_signatures_of_type_if_materialized(
+                    tp.checker,
+                    property_type,
+                    SignatureKind::CALL,
+                );
+            if ok && !signatures.is_empty() {
+                let raw = raw_signature(tp.checker, signatures[0]);
+                self.collect_function_signature_provenance(tp, surface, member, raw, subst);
+                return;
+            }
+        }
+        // A method's function type exists but its structured signatures have
+        // not been materialized. The raw declaration signature is created
+        // through the same guarded signature accessor an ordinary method
+        // member uses.
+        if !self.signature_member_resolution_is_safe(tp, property, subst) {
+            return;
+        }
+        let signatures = self.materialized_signatures_of_symbol(tp.checker, property);
+        if !signatures.is_empty() {
+            let raw = raw_signature(tp.checker, signatures[0]);
+            self.collect_function_signature_provenance(tp, surface, member, raw, subst);
+        }
+    }
+
+    /// The call or construct signature `member` of
+    /// [`Self::collect_type_literal_provenance`]: the first materialized
+    /// signature of that kind of `represented`.
+    fn collect_call_or_construct_signature_provenance(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        member: Node,
+        represented: TypeId,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        let kind = if member.kind() == SyntaxKind::ConstructSignature {
+            SignatureKind::CONSTRUCT
+        } else {
+            SignatureKind::CALL
+        };
+        let (signatures, ok) = checker_integration::get_resolved_signatures_of_type_if_materialized(
+            tp.checker,
+            represented,
+            kind,
+        );
+        if ok && !signatures.is_empty() {
+            let raw = raw_signature(tp.checker, signatures[0]);
+            self.collect_function_signature_provenance(tp, surface, member, raw, subst);
+        }
+    }
+
+    /// The index signature `member` of [`Self::collect_type_literal_provenance`]:
+    /// the value type of the materialized index info that `member` declares.
+    fn collect_index_signature_provenance(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        member: Node,
+        represented: TypeId,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        let (infos, ok) = checker_integration::get_resolved_index_infos_of_type_if_materialized(
+            tp.checker,
+            represented,
+        );
+        if !ok {
+            return;
+        }
+        for info in infos {
+            if info.is_nil() {
+                continue;
+            }
+            let (declaration, value_type) = {
+                let data = tp.checker.index_info(info);
+                (data.declaration, data.value_type)
+            };
+            if declaration == member {
+                self.collect_type_node_provenance(tp, surface, member.type_(), value_type, subst);
+                break;
             }
         }
     }
