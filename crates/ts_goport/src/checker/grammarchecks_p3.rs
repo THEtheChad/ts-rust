@@ -294,10 +294,10 @@ impl Checker {
         file: Node,
     ) -> bool {
         for decl in file.statements().iter() {
-            if is_declaration_node(decl) || decl.kind() == SyntaxKind::VariableStatement {
-                if self.check_grammar_top_level_element_for_required_declare_modifier(decl) {
-                    return true;
-                }
+            if (is_declaration_node(decl) || decl.kind() == SyntaxKind::VariableStatement)
+                && self.check_grammar_top_level_element_for_required_declare_modifier(decl)
+            {
+                return true;
             }
         }
         false
@@ -409,14 +409,13 @@ impl Checker {
             // Don't error on BigInt literals in ambient contexts
             if !node.flags().intersects(NodeFlags::AMBIENT)
                 && self.language_version < ScriptTarget::ES2020
-            {
-                if self.grammar_error_on_node(
+                && self.grammar_error_on_node(
                     node,
                     diag::BigInt_literals_are_not_available_when_targeting_lower_than_ES2020,
                     args![],
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
         }
         false

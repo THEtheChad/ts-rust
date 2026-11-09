@@ -872,10 +872,10 @@ impl Checker {
             kind,
             type_id: name_type,
         };
-        if let Some(&override_type) = self.cached_types.get(&key) {
-            if override_type.is_some() {
-                return override_type;
-            }
+        if let Some(&override_type) = self.cached_types.get(&key)
+            && override_type.is_some()
+        {
+            return override_type;
         }
         let members = self.symbols.new_table();
         let name_prop = self.new_property("name", name_type);
@@ -1442,10 +1442,10 @@ impl Checker {
             node_id: node,
             type_id: contextual_type,
         };
-        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key) {
-            if discriminated.is_some() {
-                return discriminated;
-            }
+        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key)
+            && discriminated.is_some()
+        {
+            return discriminated;
         }
         let mut discriminated =
             self.get_matching_union_constituent_for_object_literal(contextual_type, node);

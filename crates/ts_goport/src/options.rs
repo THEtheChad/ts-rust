@@ -791,10 +791,10 @@ fn tspath_get_declaration_file_extension(file_name: &str) -> String {
             return ext.to_string();
         }
     }
-    if base.ends_with(".ts") {
-        if let Some(index) = base.find(".d.") {
-            return base[index..].to_string();
-        }
+    if base.ends_with(".ts")
+        && let Some(index) = base.find(".d.")
+    {
+        return base[index..].to_string();
     }
     String::new()
 }

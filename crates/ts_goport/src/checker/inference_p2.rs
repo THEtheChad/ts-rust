@@ -44,10 +44,10 @@ impl Checker {
             target_id: target,
             constraint_id: constraint,
         };
-        if let Some(&cached) = self.reverse_homomorphic_mapped_cache.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.reverse_homomorphic_mapped_cache.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let t = self.create_reverse_mapped_type(source, target, constraint);
         self.reverse_homomorphic_mapped_cache.insert(key, t);

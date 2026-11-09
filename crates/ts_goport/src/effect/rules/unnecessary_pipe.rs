@@ -50,16 +50,15 @@ pub struct UnnecessaryPipeMatch {
 /// arguments, returning matches with both the diagnostic and the parsed result.
 pub fn analyze_unnecessary_pipe(tp: &mut TypeParser<'_>, sf: Node) -> Vec<UnnecessaryPipeMatch> {
     fn visit(tp: &mut TypeParser<'_>, sf: Node, matches: &mut Vec<UnnecessaryPipeMatch>, n: Node) {
-        if n.kind() == SyntaxKind::CallExpression {
-            if let Some(result) = tp.parse_pipe_call(n) {
-                if result.args.is_empty() {
-                    matches.push(UnnecessaryPipeMatch {
-                        source_file: sf,
-                        location: get_error_range_for_node(sf, result.node),
-                        result,
-                    });
-                }
-            }
+        if n.kind() == SyntaxKind::CallExpression
+            && let Some(result) = tp.parse_pipe_call(n)
+            && result.args.is_empty()
+        {
+            matches.push(UnnecessaryPipeMatch {
+                source_file: sf,
+                location: get_error_range_for_node(sf, result.node),
+                result,
+            });
         }
     }
 

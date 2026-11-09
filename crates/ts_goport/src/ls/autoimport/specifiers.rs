@@ -59,40 +59,39 @@ impl View {
             return (specifier.to_string(), modulespecifiers::ResultKind::Ambient);
         }
 
-        if !export.package_name.is_empty() {
-            if let Some(entrypoints) = self.registry.entrypoints.get(&export.path) {
-                for entrypoint in entrypoints {
-                    // Go: entrypoint.IncludeConditions.IsSubsetOf(v.conditions)
-                    let is_subset = match &entrypoint.include_conditions {
-                        None => true,
-                        Some(include) => include.iter().all(|key| self.conditions.contains(key)),
-                    };
-                    // Go: v.conditions.Intersects(entrypoint.ExcludeConditions)
-                    let intersects = match &entrypoint.exclude_conditions {
-                        None => false,
-                        Some(exclude) => self.conditions.iter().any(|key| exclude.contains(key)),
-                    };
-                    if is_subset && !intersects {
-                        let specifier =
-                            modulespecifiers::entrypoint_ending::process_entrypoint_ending(
-                                entrypoint,
-                                user_preferences,
-                                &modulespecifiers::ProgramHost,
-                                self.program.options(),
-                                &self.importing_file,
-                                &self.get_allowed_endings(),
-                            );
+        if !export.package_name.is_empty()
+            && let Some(entrypoints) = self.registry.entrypoints.get(&export.path)
+        {
+            for entrypoint in entrypoints {
+                // Go: entrypoint.IncludeConditions.IsSubsetOf(v.conditions)
+                let is_subset = match &entrypoint.include_conditions {
+                    None => true,
+                    Some(include) => include.iter().all(|key| self.conditions.contains(key)),
+                };
+                // Go: v.conditions.Intersects(entrypoint.ExcludeConditions)
+                let intersects = match &entrypoint.exclude_conditions {
+                    None => false,
+                    Some(exclude) => self.conditions.iter().any(|key| exclude.contains(key)),
+                };
+                if is_subset && !intersects {
+                    let specifier = modulespecifiers::entrypoint_ending::process_entrypoint_ending(
+                        entrypoint,
+                        user_preferences,
+                        &modulespecifiers::ProgramHost,
+                        self.program.options(),
+                        &self.importing_file,
+                        &self.get_allowed_endings(),
+                    );
 
-                        if !modulespecifiers::is_excluded_by_regex(
-                            &specifier,
-                            &user_preferences.auto_import_specifier_exclude_regexes,
-                        ) {
-                            return (specifier, modulespecifiers::ResultKind::NodeModules);
-                        }
+                    if !modulespecifiers::is_excluded_by_regex(
+                        &specifier,
+                        &user_preferences.auto_import_specifier_exclude_regexes,
+                    ) {
+                        return (specifier, modulespecifiers::ResultKind::NodeModules);
                     }
                 }
-                return (String::new(), modulespecifiers::ResultKind::None);
             }
+            return (String::new(), modulespecifiers::ResultKind::None);
         }
 
         let cache = self

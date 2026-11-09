@@ -237,10 +237,10 @@ impl Checker {
         let result = writer.borrow_mut().take_string();
 
         let mut max_length = DEFAULT_MAXIMUM_TRUNCATION_LENGTH * 2;
-        if let Some(vc) = vc {
-            if vc.max_truncation_length > 0 {
-                max_length = vc.max_truncation_length * 10; // hard cutoff matching Strada's absoluteMaximumLength
-            }
+        if let Some(vc) = vc
+            && vc.max_truncation_length > 0
+        {
+            max_length = vc.max_truncation_length * 10; // hard cutoff matching Strada's absoluteMaximumLength
         }
         if no_truncation {
             max_length = NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH * 2;

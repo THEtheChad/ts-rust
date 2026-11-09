@@ -280,10 +280,11 @@ pub fn get_localized_messages(loc: &language::Tag) -> Option<&'static LocaleMess
     let mut messages = None;
 
     let (index, confidence) = MATCHER.match_(std::slice::from_ref(loc));
-    if confidence >= language::Confidence::Low && index < LOCALE_FUNCS.len() {
-        if let Some(f) = LOCALE_FUNCS[index] {
-            messages = Some(f());
-        }
+    if confidence >= language::Confidence::Low
+        && index < LOCALE_FUNCS.len()
+        && let Some(f) = LOCALE_FUNCS[index]
+    {
+        messages = Some(f());
     }
 
     LOCALIZED_MESSAGES_CACHE

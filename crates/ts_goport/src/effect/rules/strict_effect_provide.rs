@@ -30,10 +30,10 @@ fn run_strict_effect_provide(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic> {
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::CallExpression {
-            if let Some(d) = check_effect_provide_with_layer(ctx, node) {
-                diags.push(d);
-            }
+        if node.kind() == SyntaxKind::CallExpression
+            && let Some(d) = check_effect_provide_with_layer(ctx, node)
+        {
+            diags.push(d);
         }
 
         // Enqueue children

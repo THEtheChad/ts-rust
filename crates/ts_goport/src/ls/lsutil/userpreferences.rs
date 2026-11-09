@@ -1994,15 +1994,15 @@ pub fn parse_user_preferences(items: &IndexMap<String, LspAny>) -> UserPreferenc
         && let LspAny::Object(editor_settings) = editor_item
     {
         let mut normalized_settings = editor_settings.clone();
-        if let Some(tab_size) = normalized_settings.get("tabSize").cloned() {
-            if !normalized_settings.contains_key("indentSize") {
-                normalized_settings.insert("indentSize".to_string(), tab_size);
-            }
+        if let Some(tab_size) = normalized_settings.get("tabSize").cloned()
+            && !normalized_settings.contains_key("indentSize")
+        {
+            normalized_settings.insert("indentSize".to_string(), tab_size);
         }
-        if let Some(insert_spaces) = normalized_settings.get("insertSpaces").cloned() {
-            if !normalized_settings.contains_key("convertTabsToSpaces") {
-                normalized_settings.insert("convertTabsToSpaces".to_string(), insert_spaces);
-            }
+        if let Some(insert_spaces) = normalized_settings.get("insertSpaces").cloned()
+            && !normalized_settings.contains_key("convertTabsToSpaces")
+        {
+            normalized_settings.insert("convertTabsToSpaces".to_string(), insert_spaces);
         }
         let mut config: IndexMap<String, LspAny> = IndexMap::new();
         config.insert("unstable".to_string(), LspAny::Object(normalized_settings));

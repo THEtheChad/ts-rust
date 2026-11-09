@@ -70,11 +70,11 @@ impl ResolutionState<'_> {
                 .unwrap_or_default();
             let (original_path, resolved_file_name) =
                 self.get_original_and_resolved_file_name(&path);
-            if !original_path.is_empty() {
-                if let Some(r) = resolved.as_mut() {
-                    r.path = resolved_file_name;
-                    r.original_path = original_path;
-                }
+            if !original_path.is_empty()
+                && let Some(r) = resolved.as_mut()
+            {
+                r.path = resolved_file_name;
+                r.original_path = original_path;
             }
         }
         self.create_resolved_module(resolved, is_external_library_import)

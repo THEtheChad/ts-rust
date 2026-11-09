@@ -651,16 +651,16 @@ impl Checker {
         if !accessor.flags().intersects(NodeFlags::AMBIENT)
             && (accessor.parent().kind() != SyntaxKind::TypeLiteral)
             && (accessor.parent().kind() != SyntaxKind::InterfaceDeclaration)
+            && body.is_nil()
+            && !has_syntactic_modifier(accessor, ModifierFlags::ABSTRACT)
         {
-            if body.is_nil() && !has_syntactic_modifier(accessor, ModifierFlags::ABSTRACT) {
-                return self.grammar_error_at_pos(
-                    accessor,
-                    accessor.end() - 1,
-                    ";".len() as i32,
-                    diag::X_0_expected,
-                    args!["{"],
-                );
-            }
+            return self.grammar_error_at_pos(
+                accessor,
+                accessor.end() - 1,
+                ";".len() as i32,
+                diag::X_0_expected,
+                args!["{"],
+            );
         }
         if body.is_some() {
             if has_syntactic_modifier(accessor, ModifierFlags::ABSTRACT) {

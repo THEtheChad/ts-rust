@@ -627,13 +627,13 @@ impl Checker {
         };
         // If we have previously computed the control flow type for the reference at
         // this flow loop junction, return the cached type.
-        if let Some(&cached) = self.flow_loop_cache.get(&key) {
-            if cached.is_some() {
-                return FlowType {
-                    t: cached,
-                    incomplete: false,
-                };
-            }
+        if let Some(&cached) = self.flow_loop_cache.get(&key)
+            && cached.is_some()
+        {
+            return FlowType {
+                t: cached,
+                incomplete: false,
+            };
         }
         // If this flow loop junction and reference are already being processed, return
         // the union of the types computed for each branch so far, marked as incomplete.
@@ -690,13 +690,13 @@ impl Checker {
                 // If we see a value appear in the cache it is a sign that control flow analysis
                 // was restarted and completed by checkExpressionCached. We can simply pick up
                 // the resulting type and bail out.
-                if let Some(&cached) = self.flow_loop_cache.get(&key) {
-                    if cached.is_some() {
-                        return FlowType {
-                            t: cached,
-                            incomplete: false,
-                        };
-                    }
+                if let Some(&cached) = self.flow_loop_cache.get(&key)
+                    && cached.is_some()
+                {
+                    return FlowType {
+                        t: cached,
+                        incomplete: false,
+                    };
                 }
             }
             if !antecedent_types.contains(&flow_type.t) {
@@ -1367,16 +1367,12 @@ impl Checker {
             }
             SyntaxKind::PropertyAccessExpression | SyntaxKind::ElementAccessExpression => {
                 let (source_property_name, ok) = self.get_accessed_property_name(source);
-                if ok {
-                    if is_access_expression(target) {
-                        let (target_property_name, ok) = self.get_accessed_property_name(target);
-                        if ok {
-                            return target_property_name == source_property_name
-                                && self.is_matching_reference(
-                                    source.expression(),
-                                    target.expression(),
-                                );
-                        }
+                if ok && is_access_expression(target) {
+                    let (target_property_name, ok) = self.get_accessed_property_name(target);
+                    if ok {
+                        return target_property_name == source_property_name
+                            && self
+                                .is_matching_reference(source.expression(), target.expression());
                     }
                 }
                 if is_element_access_expression(source) && is_element_access_expression(target) {

@@ -181,14 +181,13 @@ impl Checker {
                 .inferences
                 .iter()
                 .position(|info| info.type_parameter == rest_type);
-            if let Some(info) = info {
-                if !args[arg_count as usize..]
+            if let Some(info) = info
+                && !args[arg_count as usize..]
                     .iter()
                     .any(|&arg| is_spread_argument(arg))
-                {
-                    self.inference_context_mut(context).inferences[info].implied_arity =
-                        args.len() as i32 - arg_count;
-                }
+            {
+                self.inference_context_mut(context).inferences[info].implied_arity =
+                    args.len() as i32 - arg_count;
             }
         }
         let this_type = self.get_this_type_of_signature(signature);

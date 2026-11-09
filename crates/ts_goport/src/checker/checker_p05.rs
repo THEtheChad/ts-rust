@@ -486,14 +486,14 @@ impl Checker {
 
     // Go: checker/checker.go:4209 checkWithStatement
     pub fn check_with_statement(&mut self, node: Node) {
-        if !self.check_grammar_statement_in_ambient_context(node) {
-            if node.flags().intersects(NodeFlags::AWAIT_CONTEXT) {
-                self.grammar_error_on_first_token(
-                    node,
-                    diag::X_with_statements_are_not_allowed_in_an_async_function_block,
-                    args![],
-                );
-            }
+        if !self.check_grammar_statement_in_ambient_context(node)
+            && node.flags().intersects(NodeFlags::AWAIT_CONTEXT)
+        {
+            self.grammar_error_on_first_token(
+                node,
+                diag::X_with_statements_are_not_allowed_in_an_async_function_block,
+                args![],
+            );
         }
         self.check_expression(node.expression());
         let source_file = get_source_file_of_node(node);
@@ -591,16 +591,17 @@ impl Checker {
     // Go: checker/checker.go:4278 checkThrowStatement
     pub fn check_throw_statement(&mut self, node: Node) {
         let throw_expr = node.expression();
-        if !self.check_grammar_statement_in_ambient_context(node) {
-            if is_identifier(throw_expr) && throw_expr.text().is_empty() {
-                self.grammar_error_at_pos(
-                    node,
-                    throw_expr.pos(),
-                    0, /*length*/
-                    diag::Line_break_not_permitted_here,
-                    args![],
-                );
-            }
+        if !self.check_grammar_statement_in_ambient_context(node)
+            && is_identifier(throw_expr)
+            && throw_expr.text().is_empty()
+        {
+            self.grammar_error_at_pos(
+                node,
+                throw_expr.pos(),
+                0, /*length*/
+                diag::Line_break_not_permitted_here,
+                args![],
+            );
         }
         self.check_expression(throw_expr);
     }

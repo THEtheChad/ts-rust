@@ -22,10 +22,10 @@ fn run_global_error_in_effect_failure(ctx: &mut RuleContext<'_, '_>) -> Vec<Diag
     let mut diags = Vec::new();
 
     fn visit(ctx: &mut RuleContext<'_, '_>, diags: &mut Vec<Diagnostic>, n: Node) {
-        if n.kind() == SyntaxKind::NewExpression {
-            if let Some(diag) = check_global_error_in_effect_failure(ctx, n) {
-                diags.push(diag);
-            }
+        if n.kind() == SyntaxKind::NewExpression
+            && let Some(diag) = check_global_error_in_effect_failure(ctx, n)
+        {
+            diags.push(diag);
         }
     }
 

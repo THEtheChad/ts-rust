@@ -1406,12 +1406,11 @@ impl Checker {
                 && (info.script_kind == ScriptKind::JS || info.script_kind == ScriptKind::JSX)
             {
                 let mut declaration_file = Node::NIL;
-                if suggestion.is_some() {
-                    if let Some(&first_declaration) = self.sym(suggestion).declarations.first() {
-                        if first_declaration.is_some() {
-                            declaration_file = get_source_file_of_node(first_declaration);
-                        }
-                    }
+                if suggestion.is_some()
+                    && let Some(&first_declaration) = self.sym(suggestion).declarations.first()
+                    && first_declaration.is_some()
+                {
+                    declaration_file = get_source_file_of_node(first_declaration);
                 }
                 let suggestion_has_no_extends_or_decorators = suggestion.is_nil() || {
                     let value_declaration = self.sym(suggestion).value_declaration;

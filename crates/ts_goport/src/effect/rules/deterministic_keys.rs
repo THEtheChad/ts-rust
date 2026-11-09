@@ -76,17 +76,18 @@ pub fn analyze_deterministic_keys(
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::ClassDeclaration && node.name().is_some() {
-            if let Some(m) = check_deterministic_key_match(
+        if node.kind() == SyntaxKind::ClassDeclaration
+            && node.name().is_some()
+            && let Some(m) = check_deterministic_key_match(
                 tp,
                 program,
                 sf,
                 node,
                 &key_patterns,
                 extended_key_detection,
-            ) {
-                matches.push(m);
-            }
+            )
+        {
+            matches.push(m);
         }
 
         node_to_visit.extend(order.children(i));
@@ -223,10 +224,9 @@ fn match_class_pattern(
     }
 
     // Custom target (only if extendedKeyDetection is enabled)
-    if extended_key_detection {
-        if let Some(result) = match_custom_pattern(tp.checker, sf, class_node) {
-            return Some(result);
-        }
+    if extended_key_detection && let Some(result) = match_custom_pattern(tp.checker, sf, class_node)
+    {
+        return Some(result);
     }
 
     None

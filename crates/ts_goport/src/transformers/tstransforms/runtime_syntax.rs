@@ -263,10 +263,10 @@ impl RuntimeSyntaxTransformer {
         let name = node.name();
         if name.is_some() && is_identifier(name) {
             let text = name.text();
-            if let Some(map) = &self.current_scope_first_declarations_of_name {
-                if let Some(&first_declaration) = map.borrow().get(text) {
-                    return first_declaration == node;
-                }
+            if let Some(map) = &self.current_scope_first_declarations_of_name
+                && let Some(&first_declaration) = map.borrow().get(text)
+            {
+                return first_declaration == node;
             }
         }
         false

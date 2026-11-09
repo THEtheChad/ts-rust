@@ -147,19 +147,18 @@ impl LanguageService {
             let names = get_candidate_source_declaration_names(node, Node::NIL);
             let module_results =
                 resolver.search_implementation_file(node, &resolved_impl_file, &names);
-            if !module_results.is_empty() {
-                if !is_part_of_type_node(node)
+            if !module_results.is_empty()
+                && (!is_part_of_type_node(node)
                     && !is_part_of_type_only_import_or_export_declaration(node)
-                    || has_concrete_source_declarations(&module_results)
-                {
-                    return Ok(self.create_definition_locations(
-                        origin_selection_range,
-                        client_supports_link,
-                        &unique_declaration_nodes(&module_results),
-                        None,
-                        Feature::DEFINITION,
-                    ));
-                }
+                    || has_concrete_source_declarations(&module_results))
+            {
+                return Ok(self.create_definition_locations(
+                    origin_selection_range,
+                    client_supports_link,
+                    &unique_declaration_nodes(&module_results),
+                    None,
+                    Feature::DEFINITION,
+                ));
             }
         }
 
@@ -653,10 +652,10 @@ impl SourceDefResolver<'_> {
         if source_file.is_some() {
             return source_file;
         }
-        if let Some(parsed_files) = &self.parsed_files {
-            if let Some(&source_file) = parsed_files.get(file_name) {
-                return source_file;
-            }
+        if let Some(parsed_files) = &self.parsed_files
+            && let Some(&source_file) = parsed_files.get(file_name)
+        {
+            return source_file;
         }
         let mut source_file = Node::NIL;
         let (text, ok) = self.ls.read_file(file_name);
@@ -698,16 +697,15 @@ impl SourceDefResolver<'_> {
         if let Some(scope) = self
             .resolver
             .get_package_scope_for_path(&tspath::get_directory_path(file_name))
+            && scope.exists()
         {
-            if scope.exists() {
-                let contents = scope
-                    .contents
-                    .as_ref()
-                    .unwrap_or_else(|| crate::core::go_nil_dereference());
-                let (value, ok) = contents.header_fields.type_.get_value();
-                if ok {
-                    package_json_type = value;
-                }
+            let contents = scope
+                .contents
+                .as_ref()
+                .unwrap_or_else(|| crate::core::go_nil_dereference());
+            let (value, ok) = contents.header_fields.type_.get_value();
+            if ok {
+                package_json_type = value;
             }
         }
         get_implied_node_format_for_file(file_name, &package_json_type)
@@ -833,14 +831,13 @@ pub fn get_candidate_source_declaration_names(
         if is_default_import_name(original_node) {
             names.push("default".to_string());
         }
-        if original_node.parent().is_some() {
-            if is_import_specifier(original_node.parent())
-                || is_export_specifier(original_node.parent())
-            {
-                let prop_name = original_node.parent().property_name();
-                if prop_name.is_some() {
-                    names.push(prop_name.text().to_string());
-                }
+        if original_node.parent().is_some()
+            && (is_import_specifier(original_node.parent())
+                || is_export_specifier(original_node.parent()))
+        {
+            let prop_name = original_node.parent().property_name();
+            if prop_name.is_some() {
+                names.push(prop_name.text().to_string());
             }
         }
     }

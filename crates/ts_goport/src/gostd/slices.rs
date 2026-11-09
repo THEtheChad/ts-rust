@@ -390,10 +390,12 @@ pub fn pdqsort_cmp_func<T, F: FnMut(&T, &T) -> i32>(
         }
 
         // The slice is likely already sorted.
-        if was_balanced && was_partitioned && hint == SortedHint::IncreasingHint {
-            if partial_insertion_sort_cmp_func(data, a, b, cmp) {
-                return;
-            }
+        if was_balanced
+            && was_partitioned
+            && hint == SortedHint::IncreasingHint
+            && partial_insertion_sort_cmp_func(data, a, b, cmp)
+        {
+            return;
         }
 
         // Probably the slice contains many duplicate elements, partition the slice into
@@ -1030,10 +1032,12 @@ pub fn pdqsort_func<T, F: FnMut(&T, &T) -> bool>(
         }
 
         // The slice is likely already sorted.
-        if was_balanced && was_partitioned && hint == SortedHint::IncreasingHint {
-            if partial_insertion_sort_func(data, a, b) {
-                return;
-            }
+        if was_balanced
+            && was_partitioned
+            && hint == SortedHint::IncreasingHint
+            && partial_insertion_sort_func(data, a, b)
+        {
+            return;
         }
 
         // Probably the slice contains many duplicate elements, partition the slice into

@@ -479,14 +479,14 @@ impl Watcher for FallbackWatcher {
                 request.callback.clone(),
                 request.options,
             );
-            if let Err(err) = &result {
-                if errors::is(err, &ERR_FILESYSTEM_UNSUPPORTED) {
-                    result = self.secondary.watch_directory(
-                        &request.dir,
-                        request.callback.clone(),
-                        request.options,
-                    );
-                }
+            if let Err(err) = &result
+                && errors::is(err, &ERR_FILESYSTEM_UNSUPPORTED)
+            {
+                result = self.secondary.watch_directory(
+                    &request.dir,
+                    request.callback.clone(),
+                    request.options,
+                );
             }
             match result {
                 Ok(watch) => watches.push(watch),
@@ -509,10 +509,10 @@ impl Watcher for FallbackWatcher {
     // Go: watcher.go:307 fallbackWatcher.WatchFile
     fn watch_file(&self, path: &str, fn_: WatchCallback) -> Result<Box<dyn Watch>, GoError> {
         let result = self.primary.watch_file(path, fn_.clone());
-        if let Err(err) = &result {
-            if errors::is(err, &ERR_FILESYSTEM_UNSUPPORTED) {
-                return self.secondary.watch_file(path, fn_);
-            }
+        if let Err(err) = &result
+            && errors::is(err, &ERR_FILESYSTEM_UNSUPPORTED)
+        {
+            return self.secondary.watch_file(path, fn_);
         }
         result
     }
@@ -840,11 +840,11 @@ impl Watcher for WatcherStruct {
                 return Err(ERR_NOT_ABSOLUTE.clone());
             }
             dir = canonicalize_path(&dir);
-            if self.can_share_recursive_dir_watches() {
-                if let Err(err) = validate_watch_directory(&dir) {
-                    rollback(&prepared);
-                    return Err(err);
-                }
+            if self.can_share_recursive_dir_watches()
+                && let Err(err) = validate_watch_directory(&dir)
+            {
+                rollback(&prepared);
+                return Err(err);
             }
             let physical_dir = physical_dir_for(&dir);
 
@@ -1584,10 +1584,11 @@ impl DirWatch {
             )
         };
 
-        if has_pending_cbs && (has_events || has_error || has_terminal) {
-            if let Some(db) = db {
-                db.trigger();
-            }
+        if has_pending_cbs
+            && (has_events || has_error || has_terminal)
+            && let Some(db) = db
+        {
+            db.trigger();
         }
     }
 
@@ -1669,10 +1670,10 @@ impl DirWatch {
                     }
                     e.path = cb.file_comparison.path.clone();
                 }
-                if let Some(ignore) = &cb.ignore {
-                    if ignore(&e.path) {
-                        continue;
-                    }
+                if let Some(ignore) = &cb.ignore
+                    && ignore(&e.path)
+                {
+                    continue;
                 }
                 if cb.dir != self.dir
                     && !included_watch_root

@@ -74,16 +74,16 @@ impl LanguageService {
         }
 
         let (origin_selection_range, _) = self.create_lsp_range_from_node(node, file);
-        if let Some(reference) = &reference {
-            if reference.file.is_some() {
-                return self.create_definition_locations(
-                    origin_selection_range,
-                    client_supports_link,
-                    &[],
-                    Some(reference),
-                    Feature::DEFINITION,
-                );
-            }
+        if let Some(reference) = &reference
+            && reference.file.is_some()
+        {
+            return self.create_definition_locations(
+                origin_selection_range,
+                client_supports_link,
+                &[],
+                Some(reference),
+                Feature::DEFINITION,
+            );
         }
 
         // Go: `defer done()`; `_done` releases the lease at the end of the scope.
@@ -307,16 +307,16 @@ pub fn combine_definition_responses(
                 }
             }
         }
-        if let Some(location) = result.location {
-            if seen.insert(location.clone()) {
-                definition_links.push(lsproto::LocationLink {
-                    origin_selection_range: None,
-                    target_uri: location.uri.clone(),
-                    target_range: location.range,
-                    target_selection_range: location.range,
-                });
-                locations.push(location);
-            }
+        if let Some(location) = result.location
+            && seen.insert(location.clone())
+        {
+            definition_links.push(lsproto::LocationLink {
+                origin_selection_range: None,
+                target_uri: location.uri.clone(),
+                target_range: location.range,
+                target_selection_range: location.range,
+            });
+            locations.push(location);
         }
         if let Some(result_locations) = result.locations {
             for location in result_locations {
@@ -350,10 +350,10 @@ pub fn get_declaration_name_for_keyword(node: Node) -> Node {
         && (node.kind() as u16) <= (SyntaxKind::LAST_KEYWORD as u16)
     {
         if is_variable_declaration_list(node.parent()) {
-            if let Some(decl) = node.parent().declarations().nodes().first() {
-                if decl.name().is_some() {
-                    return decl.name();
-                }
+            if let Some(decl) = node.parent().declarations().nodes().first()
+                && decl.name().is_some()
+            {
+                return decl.name();
             }
         } else if is_declaration_node(node.parent())
             && node.parent().name().is_some()

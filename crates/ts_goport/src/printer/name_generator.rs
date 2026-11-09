@@ -71,10 +71,8 @@ impl NameGenerator {
         if let Some(scope) = self.private_name_generation_scope.take() {
             self.private_name_generation_scope = scope.next;
         }
-        if !reuse_temp_variable_scope {
-            if let Some(scope) = self.name_generation_scope.take() {
-                self.name_generation_scope = scope.next;
-            }
+        if !reuse_temp_variable_scope && let Some(scope) = self.name_generation_scope.take() {
+            self.name_generation_scope = scope.next;
         }
     }
 
@@ -119,10 +117,10 @@ impl NameGenerator {
         private_name: bool,
         formatted_name_key: &str,
     ) -> TempFlags {
-        if let Some(scope) = self.get_scope_ref(private_name) {
-            if let Some(flags) = scope.formatted_name_temp_flags.get(formatted_name_key) {
-                return *flags;
-            }
+        if let Some(scope) = self.get_scope_ref(private_name)
+            && let Some(flags) = scope.formatted_name_temp_flags.get(formatted_name_key)
+        {
+            return *flags;
         }
         TEMP_FLAGS_AUTO
     }

@@ -392,18 +392,18 @@ pub fn get_document_position_mapper(
     if !map_file_name.is_empty() {
         let (base64_object, matched) = try_parse_base64_url(&map_file_name);
         if matched {
-            if !base64_object.is_empty() {
-                if let Ok(decoded) = base64_std_encoding_decode_string(base64_object) {
-                    // PORT: Go `string(decoded)` keeps any bytes. Invalid UTF-8
-                    // always fails the JSON decode in Go (no AllowInvalidUTF8),
-                    // so the mapper is nil; a Rust `String` cannot hold it.
-                    return match String::from_utf8(decoded) {
-                        Ok(contents) => {
-                            convert_document_to_source_mapper(host, &contents, generated_file_name)
-                        }
-                        Err(_) => None,
-                    };
-                }
+            if !base64_object.is_empty()
+                && let Ok(decoded) = base64_std_encoding_decode_string(base64_object)
+            {
+                // PORT: Go `string(decoded)` keeps any bytes. Invalid UTF-8
+                // always fails the JSON decode in Go (no AllowInvalidUTF8),
+                // so the mapper is nil; a Rust `String` cannot hold it.
+                return match String::from_utf8(decoded) {
+                    Ok(contents) => {
+                        convert_document_to_source_mapper(host, &contents, generated_file_name)
+                    }
+                    Err(_) => None,
+                };
             }
             // Not a data URL we can parse, skip it
             map_file_name = String::new();

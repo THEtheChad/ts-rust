@@ -72,10 +72,10 @@ pub fn analyze_outdated_api(tp: &mut TypeParser<'_>, sf: Node) -> Vec<OutdatedAp
     let mut matches = Vec::new();
 
     fn visit(tp: &mut TypeParser<'_>, sf: Node, matches: &mut Vec<OutdatedApiMatch>, n: Node) {
-        if n.kind() == SyntaxKind::PropertyAccessExpression {
-            if let Some(m) = check_outdated_api_property_access(tp, sf, n) {
-                matches.push(m);
-            }
+        if n.kind() == SyntaxKind::PropertyAccessExpression
+            && let Some(m) = check_outdated_api_property_access(tp, sf, n)
+        {
+            matches.push(m);
         }
     }
 

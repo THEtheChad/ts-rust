@@ -409,17 +409,17 @@ impl SemanticTokenCollector<'_> {
                         if modifiers.intersects(ModifierFlags::ASYNC) {
                             token_modifier |= TokenModifier::ASYNC;
                         }
-                        if token_type != TokenType::CLASS && token_type != TokenType::INTERFACE {
-                            if modifiers.intersects(ModifierFlags::READONLY)
+                        if token_type != TokenType::CLASS
+                            && token_type != TokenType::INTERFACE
+                            && (modifiers.intersects(ModifierFlags::READONLY)
                                 || node_flags.intersects(NodeFlags::CONST)
                                 || self
                                     .c
                                     .sym(symbol)
                                     .flags
-                                    .intersects(SymbolFlags::ENUM_MEMBER)
-                            {
-                                token_modifier |= TokenModifier::READONLY;
-                            }
+                                    .intersects(SymbolFlags::ENUM_MEMBER))
+                        {
+                            token_modifier |= TokenModifier::READONLY;
                         }
                         if (token_type == TokenType::VARIABLE || token_type == TokenType::FUNCTION)
                             && is_local_declaration(decl, self.file)
@@ -485,10 +485,8 @@ fn classify_symbol(
     if flags.intersects(SymbolFlags::TYPE_ALIAS) {
         return (TokenType::TYPE, true);
     }
-    if flags.intersects(SymbolFlags::INTERFACE) {
-        if meaning.intersects(SemanticMeaning::TYPE) {
-            return (TokenType::INTERFACE, true);
-        }
+    if flags.intersects(SymbolFlags::INTERFACE) && meaning.intersects(SemanticMeaning::TYPE) {
+        return (TokenType::INTERFACE, true);
     }
     if flags.intersects(SymbolFlags::TYPE_PARAMETER) {
         return (TokenType::TYPE_PARAMETER, true);
@@ -725,10 +723,10 @@ fn encode_semantic_tokens(
         // Map modifiers to client-supported bit mask
         let mut client_modifier_mask: u32 = 0;
         for (i, server_modifier) in TOKEN_MODIFIERS.iter().enumerate() {
-            if token.token_modifier.0 & (1 << i) != 0 {
-                if let Some(&client_bit) = modifier_mapping.get(server_modifier) {
-                    client_modifier_mask |= 1 << client_bit;
-                }
+            if token.token_modifier.0 & (1 << i) != 0
+                && let Some(&client_bit) = modifier_mapping.get(server_modifier)
+            {
+                client_modifier_mask |= 1 << client_bit;
             }
         }
 

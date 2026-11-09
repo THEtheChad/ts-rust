@@ -223,10 +223,10 @@ pub fn get_declaration_file_extension(file_name: &str) -> String {
             return ext.to_string();
         }
     }
-    if base.ends_with(EXTENSION_TS) {
-        if let Some(index) = base.find(".d.") {
-            return base[index..].to_string();
-        }
+    if base.ends_with(EXTENSION_TS)
+        && let Some(index) = base.find(".d.")
+    {
+        return base[index..].to_string();
     }
     String::new()
 }

@@ -25,10 +25,10 @@ fn run_prefer_schema_over_json(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic>
     let is_v4 = ctx.tp.supported_effect_version() == EffectMajorVersion::V4;
 
     fn visit(ctx: &mut RuleContext<'_, '_>, diags: &mut Vec<Diagnostic>, is_v4: bool, n: Node) {
-        if n.kind() == SyntaxKind::CallExpression {
-            if let Some(d) = check_prefer_schema_over_json(ctx, n, is_v4) {
-                diags.push(d);
-            }
+        if n.kind() == SyntaxKind::CallExpression
+            && let Some(d) = check_prefer_schema_over_json(ctx, n, is_v4)
+        {
+            diags.push(d);
         }
     }
 

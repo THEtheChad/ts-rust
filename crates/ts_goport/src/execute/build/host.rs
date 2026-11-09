@@ -762,11 +762,11 @@ impl BuildHost {
         }
         let mut found = false;
         let mut m_time = None;
-        if let Some(old_cache) = old_cache {
-            if let Some(old) = old_cache.get(&path) {
-                m_time = *old;
-                found = true;
-            }
+        if let Some(old_cache) = old_cache
+            && let Some(old) = old_cache.get(&path)
+        {
+            m_time = *old;
+            found = true;
         }
         if !found {
             m_time = match prefetched {

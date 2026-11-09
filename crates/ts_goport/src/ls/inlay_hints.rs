@@ -167,10 +167,10 @@ impl InlayHintState<'_> {
     // Go: ls/inlay_hints.go:117 inlayHintState.visitFunctionDeclarationLikeForReturnType
     // FunctionDeclaration | MethodDeclaration | GetAccessor | FunctionExpression | ArrowFunction
     fn visit_function_declaration_like_for_return_type(&mut self, decl: Node) {
-        if is_arrow_function(decl) {
-            if astnav::find_child_of_kind(decl, SyntaxKind::OpenParenToken, self.file).is_nil() {
-                return;
-            }
+        if is_arrow_function(decl)
+            && astnav::find_child_of_kind(decl, SyntaxKind::OpenParenToken, self.file).is_nil()
+        {
+            return;
         }
 
         let type_annotation = decl.type_();

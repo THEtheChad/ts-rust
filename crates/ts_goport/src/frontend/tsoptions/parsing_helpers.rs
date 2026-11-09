@@ -988,13 +988,13 @@ pub fn convert_option_to_absolute_path(
                 return (CompilerOptionsValue::NilList, true);
             }
         }
-    } else if option.is_file_path {
-        if let CompilerOptionsValue::String(value) = v {
-            return (
-                CompilerOptionsValue::String(get_normalized_absolute_path(value, cwd)),
-                true,
-            );
-        }
+    } else if option.is_file_path
+        && let CompilerOptionsValue::String(value) = v
+    {
+        return (
+            CompilerOptionsValue::String(get_normalized_absolute_path(value, cwd)),
+            true,
+        );
     }
     (CompilerOptionsValue::Nil, false)
 }

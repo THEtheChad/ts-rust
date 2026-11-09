@@ -104,15 +104,14 @@ impl LanguageService {
                 {
                     let end_offset = position.position;
                     let fold_end_char = source_text.as_bytes()[(end_offset - 1) as usize];
-                    if fold_end_char == b'}'
+                    if (fold_end_char == b'}'
                         || fold_end_char == b']'
                         || fold_end_char == b')'
                         || fold_end_char == b'`'
-                        || fold_end_char == b'>'
+                        || fold_end_char == b'>')
+                        && r.end_line > r.start_line
                     {
-                        if r.end_line > r.start_line {
-                            r.end_line -= 1;
-                        }
+                        r.end_line -= 1;
                     }
                 }
             }
@@ -631,17 +630,17 @@ fn get_outlining_span_for_node(
                             source_file,
                             l,
                         );
-                    } else if try_statement.finally_block() == n {
-                        if let Some(span) = span_for_node(
+                    } else if try_statement.finally_block() == n
+                        && let Some(span) = span_for_node(
                             ctx,
                             n,
                             SyntaxKind::OpenBraceToken,
                             true, /*useFullStart*/
                             source_file,
                             l,
-                        ) {
-                            return Some(span);
-                        }
+                        )
+                    {
+                        return Some(span);
                     }
                     // PORT: Go `fallthrough` into the default case.
                     // Block was a standalone block.  In this case we want to only collapse

@@ -367,19 +367,19 @@ fn get_token_at_position_unexported(
                         flags,
                     );
                 }
-                if let Some(include) = include_preceding_token_at_end_position {
-                    if token_end == position {
-                        let prev_token = source_file_get_or_create_token(
-                            source_file,
-                            token,
-                            token_full_start,
-                            token_end,
-                            current,
-                            flags,
-                        );
-                        if include(prev_token) {
-                            return prev_token;
-                        }
+                if let Some(include) = include_preceding_token_at_end_position
+                    && token_end == position
+                {
+                    let prev_token = source_file_get_or_create_token(
+                        source_file,
+                        token,
+                        token_full_start,
+                        token_end,
+                        current,
+                        flags,
+                    );
+                    if include(prev_token) {
+                        return prev_token;
                     }
                 }
                 left.set(token_end);

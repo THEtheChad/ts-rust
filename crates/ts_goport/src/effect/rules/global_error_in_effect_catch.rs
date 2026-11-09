@@ -41,10 +41,10 @@ fn run_global_error_in_effect_catch(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagno
 }
 
 fn visit(ctx: &mut RuleContext<'_, '_>, diags: &mut Vec<Diagnostic>, n: Node) {
-    if n.kind() == SyntaxKind::CallExpression {
-        if let Some(diag) = check_global_error_in_effect_catch(ctx, n) {
-            diags.push(diag);
-        }
+    if n.kind() == SyntaxKind::CallExpression
+        && let Some(diag) = check_global_error_in_effect_catch(ctx, n)
+    {
+        diags.push(diag);
     }
 }
 

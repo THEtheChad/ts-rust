@@ -52,10 +52,10 @@ fn run_toggle_return_type_annotation(ctx: &mut RefactorContext<'_, '_>) -> Vec<C
     let mut end_node = Node::NIL;
     if close_paren.is_some() {
         end_node = close_paren;
-    } else if matched_node.kind() == SyntaxKind::ArrowFunction {
-        if let Some(last) = matched_node.parameters().last() {
-            end_node = last;
-        }
+    } else if matched_node.kind() == SyntaxKind::ArrowFunction
+        && let Some(last) = matched_node.parameters().last()
+    {
+        end_node = last;
     }
 
     if end_node.is_nil() {

@@ -34,16 +34,16 @@ fn diagnostics_len(p: &Parser<'_>) -> usize {
 // Rust changes the stored diagnostic in place.
 fn add_related_brace_info_to_last_diagnostic(p: &Parser<'_>, open_brace_position: i32) {
     let mut sink = p.diagnostics.borrow_mut();
-    if let Some(last_diagnostic) = sink.diagnostics.last_mut() {
-        if last_diagnostic.code == diag::X_0_expected.code() as i32 {
-            let related = new_diagnostic(
-                Node::NIL,
-                TextRange::new(open_brace_position, open_brace_position),
-                diag::The_parser_expected_to_find_a_1_to_match_the_0_token_here,
-                args!["{", "}"],
-            );
-            last_diagnostic.add_related_info(Some(related));
-        }
+    if let Some(last_diagnostic) = sink.diagnostics.last_mut()
+        && last_diagnostic.code == diag::X_0_expected.code() as i32
+    {
+        let related = new_diagnostic(
+            Node::NIL,
+            TextRange::new(open_brace_position, open_brace_position),
+            diag::The_parser_expected_to_find_a_1_to_match_the_0_token_here,
+            args!["{", "}"],
+        );
+        last_diagnostic.add_related_info(Some(related));
     }
 }
 

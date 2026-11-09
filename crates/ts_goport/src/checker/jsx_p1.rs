@@ -435,10 +435,10 @@ impl Checker {
             node_id: node,
             type_id: self.ty(contextual_type).id,
         };
-        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key) {
-            if discriminated.is_some() {
-                return discriminated;
-            }
+        if let Some(&discriminated) = self.discriminated_contextual_types.get(&key)
+            && discriminated.is_some()
+        {
+            return discriminated;
         }
         let jsx_namespace = self.get_jsx_namespace_at(node);
         // PERF (jsxname1): the children name is interned once, so each member
@@ -1496,22 +1496,20 @@ impl Checker {
                     }
                 }
             }
-            if !has_spread_any_type {
-                if self.symbols.len(attributes_table) != 0 {
-                    let attrs_type = create_jsx_attributes_type(
-                        self,
-                        &mut object_flags,
-                        attributes_symbol,
-                        attributes_table,
-                    );
-                    spread = self.get_spread_type(
-                        spread,
-                        attrs_type,
-                        attributes_symbol,
-                        object_flags,
-                        false, /*readonly*/
-                    );
-                }
+            if !has_spread_any_type && self.symbols.len(attributes_table) != 0 {
+                let attrs_type = create_jsx_attributes_type(
+                    self,
+                    &mut object_flags,
+                    attributes_symbol,
+                    attributes_table,
+                );
+                spread = self.get_spread_type(
+                    spread,
+                    attrs_type,
+                    attributes_symbol,
+                    object_flags,
+                    false, /*readonly*/
+                );
             }
         }
         let parent_has_semantic_jsx_children = |opening_like_element: Node| -> bool {
@@ -1527,10 +1525,8 @@ impl Checker {
                 if parent.opening_element() == opening_like_element {
                     children = parent.children().nodes().to_vec();
                 }
-            } else if is_jsx_fragment(parent) {
-                if parent.opening_fragment() == opening_like_element {
-                    children = parent.children().nodes().to_vec();
-                }
+            } else if is_jsx_fragment(parent) && parent.opening_fragment() == opening_like_element {
+                children = parent.children().nodes().to_vec();
             }
             !get_semantic_jsx_children(&children).is_empty()
         };

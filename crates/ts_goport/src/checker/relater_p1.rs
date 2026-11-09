@@ -2324,14 +2324,12 @@ impl Checker {
                     {
                         return target;
                     }
-                    if overlap_obj_flags.intersects(ObjectFlags::ANONYMOUS) {
-                        if let (Some(source_alias), Some(target_alias)) =
+                    if overlap_obj_flags.intersects(ObjectFlags::ANONYMOUS)
+                        && let (Some(source_alias), Some(target_alias)) =
                             (&self.ty(source).alias, &self.ty(target).alias)
-                        {
-                            if source_alias.symbol == target_alias.symbol {
-                                return target;
-                            }
-                        }
+                        && source_alias.symbol == target_alias.symbol
+                    {
+                        return target;
                     }
                 }
             }

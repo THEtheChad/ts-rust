@@ -868,11 +868,11 @@ pub fn with_deadline_cause(
     d: Instant,
     cause: Option<GoError>,
 ) -> (Context, CancelFunc) {
-    if let Some(cur) = parent.deadline() {
-        if cur < d {
-            // The current deadline is already sooner than the new one.
-            return with_cancel(parent);
-        }
+    if let Some(cur) = parent.deadline()
+        && cur < d
+    {
+        // The current deadline is already sooner than the new one.
+        return with_cancel(parent);
     }
     let c = Arc::new(TimerCtx {
         cancel_ctx: CancelCtx::new(parent.clone()),
@@ -1036,10 +1036,10 @@ fn value(c: &Context, key: &KeyRef) -> Option<ValueRef> {
     loop {
         let next = match &c.0 {
             Ctx::Value(ctx) => {
-                if let KeyRef::User(k) = key {
-                    if *k == ctx.key {
-                        return Some(ValueRef::User(ctx.val.clone()));
-                    }
+                if let KeyRef::User(k) = key
+                    && *k == ctx.key
+                {
+                    return Some(ValueRef::User(ctx.val.clone()));
                 }
                 ctx.context.clone()
             }

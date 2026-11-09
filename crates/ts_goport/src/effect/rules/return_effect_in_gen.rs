@@ -62,14 +62,12 @@ pub fn analyze_return_effect_in_gen(
         matches: &mut Vec<ReturnEffectInGenMatch>,
         n: Node,
     ) {
-        if n.kind() == SyntaxKind::ReturnStatement {
-            if check_return_effect_in_gen_scope(tp, sf, n) {
-                matches.push(ReturnEffectInGenMatch {
-                    source_file: sf,
-                    location: get_error_range_for_node(sf, n),
-                    return_node: n,
-                });
-            }
+        if n.kind() == SyntaxKind::ReturnStatement && check_return_effect_in_gen_scope(tp, sf, n) {
+            matches.push(ReturnEffectInGenMatch {
+                source_file: sf,
+                location: get_error_range_for_node(sf, n),
+                return_node: n,
+            });
         }
     }
 

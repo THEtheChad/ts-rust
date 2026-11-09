@@ -691,13 +691,13 @@ impl Checker {
             let type_node = self.type_to_type_node(b, t);
             if type_node.is_some() {
                 result.push(type_node);
-                if let Some(seen_names) = seen_names.as_mut() {
-                    if is_identifier_type_reference(type_node) {
-                        seen_names
-                            .entry(type_node.type_name().text().to_string())
-                            .or_default()
-                            .push((t, result.len() - 1));
-                    }
+                if let Some(seen_names) = seen_names.as_mut()
+                    && is_identifier_type_reference(type_node)
+                {
+                    seen_names
+                        .entry(type_node.type_name().text().to_string())
+                        .or_default()
+                        .push((t, result.len() - 1));
                 }
             }
         }
@@ -1619,22 +1619,21 @@ impl Checker {
                 // }
                 if is_computed_property_name(name)
                     && !self.sym(symbol).check_flags.intersects(CheckFlags::LATE)
+                    && self.value_symbol_links.has_by_id(&self.symbols, symbol)
                 {
-                    if self.value_symbol_links.has_by_id(&self.symbols, symbol) {
-                        let name_type = self
-                            .value_symbol_links
-                            .get_by_id(&self.symbols, symbol)
-                            .name_type;
-                        if name_type.is_some()
-                            && self
-                                .ty(name_type)
-                                .flags
-                                .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL)
-                        {
-                            let result = self.get_name_of_symbol_from_name_type(b, symbol);
-                            if !result.is_empty() {
-                                return result;
-                            }
+                    let name_type = self
+                        .value_symbol_links
+                        .get_by_id(&self.symbols, symbol)
+                        .name_type;
+                    if name_type.is_some()
+                        && self
+                            .ty(name_type)
+                            .flags
+                            .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL)
+                    {
+                        let result = self.get_name_of_symbol_from_name_type(b, symbol);
+                        if !result.is_empty() {
+                            return result;
                         }
                     }
                 }

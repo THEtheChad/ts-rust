@@ -378,23 +378,24 @@ fn get_smart_selection_range(
                     found_comment = Some(comment);
                     break;
                 }
-                if let Some(found_comment) = found_comment {
-                    if found_comment.kind == SyntaxKind::SingleLineCommentTrivia {
-                        push_selection_comment_range(found_comment.pos(), found_comment.end());
-                    }
+                if let Some(found_comment) = found_comment
+                    && found_comment.kind == SyntaxKind::SingleLineCommentTrivia
+                {
+                    push_selection_comment_range(found_comment.pos(), found_comment.end());
                 }
 
                 if node_contains_position(node) {
                     // Add range for multi-line function bodies before skipping the block
-                    if is_block(node) && is_function_like_declaration(parent) {
-                        if !positions_are_on_same_line(
+                    if is_block(node)
+                        && is_function_like_declaration(parent)
+                        && !positions_are_on_same_line(
                             astnav::get_start_of_node(node, source_file, false),
                             node.end(),
-                        ) {
-                            let start = astnav::get_start_of_node(node, source_file, false);
-                            let end = node.end();
-                            push_selection_range(start, end);
-                        }
+                        )
+                    {
+                        let start = astnav::get_start_of_node(node, source_file, false);
+                        let end = node.end();
+                        push_selection_range(start, end);
                     }
 
                     // Synthesize a stop for '${ ... }' since '${' and '}' actually belong to siblings.

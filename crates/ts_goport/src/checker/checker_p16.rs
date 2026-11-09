@@ -657,12 +657,11 @@ impl Checker {
 
     // Go: checker/checker.go:14625 getMergedSymbol
     pub fn get_merged_symbol(&self, symbol: SymbolId) -> SymbolId {
-        if symbol.is_some() {
-            if let Some(&merged) = self.merged_symbols.get(&symbol) {
-                if merged.is_some() {
-                    return merged;
-                }
-            }
+        if symbol.is_some()
+            && let Some(&merged) = self.merged_symbols.get(&symbol)
+            && merged.is_some()
+        {
+            return merged;
         }
         symbol
     }

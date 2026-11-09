@@ -586,10 +586,10 @@ impl Checker {
             // so a name that the filters of their member names reject
             // gives nil and changes no state. The filters return that nil
             // with no lookups. A text key takes the lookups.
-            if let TableKey::Name(key) = name {
-                if self.augment_lookups_miss(t, key) {
-                    return SymbolId::NIL;
-                }
+            if let TableKey::Name(key) = name
+                && self.augment_lookups_miss(t, key)
+            {
+                return SymbolId::NIL;
             }
             let resolved = self.ty(t).as_structured_type();
             let call_count = resolved.call_signatures().len();
@@ -1877,10 +1877,10 @@ impl Checker {
             sig: signature,
             key: *SIGNATURE_KEY_BASE,
         };
-        if let Some(&cached) = self.cached_signatures.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_signatures.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         // PORT: copied only on a cache miss, like `get_erased_signature`.
         // PERF: the type parameters, the constraints and the passes use

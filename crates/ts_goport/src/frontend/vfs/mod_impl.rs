@@ -444,10 +444,8 @@ impl Common {
                 return false;
             };
 
-            if is_link {
-                if let Some(symlinks) = result.symlinks.as_mut() {
-                    symlinks.insert(name.clone());
-                }
+            if is_link && let Some(symlinks) = result.symlinks.as_mut() {
+                symlinks.insert(name.clone());
             }
             list.push(name);
             true
@@ -471,18 +469,18 @@ impl Common {
                 continue;
             }
 
-            if entry_type.intersects(FileMode::IRREGULAR) {
-                if let Some(is_reparse_point) = self.is_reparse_point {
-                    // Could be a Windows junction or other reparse point.
-                    // Check using the OS-specific helper.
-                    let full_path = format!("{}/{}", path, entry.name());
-                    if is_reparse_point(&full_path) {
-                        if let Some(stat) = self.stat(&full_path) {
-                            add_to_result(&mut result, entry.name, stat.mode(), true);
-                        }
-                    }
-                    continue;
+            if entry_type.intersects(FileMode::IRREGULAR)
+                && let Some(is_reparse_point) = self.is_reparse_point
+            {
+                // Could be a Windows junction or other reparse point.
+                // Check using the OS-specific helper.
+                let full_path = format!("{}/{}", path, entry.name());
+                if is_reparse_point(&full_path)
+                    && let Some(stat) = self.stat(&full_path)
+                {
+                    add_to_result(&mut result, entry.name, stat.mode(), true);
                 }
+                continue;
             }
         }
 
@@ -696,13 +694,12 @@ pub fn basename(name: &str) -> &str {
     }
     // Remove leading directory name
     // PORT: Go starts the search one byte before the last byte.
-    if name.len() > 1 {
-        if let Some(i) = name.as_bytes()[..name.len() - 1]
+    if name.len() > 1
+        && let Some(i) = name.as_bytes()[..name.len() - 1]
             .iter()
             .rposition(|&b| b == b'/')
-        {
-            name = &name[i + 1..];
-        }
+    {
+        name = &name[i + 1..];
     }
     name
 }

@@ -104,15 +104,15 @@ pub fn for_each_comment_range(
                         pos = len;
                     }
                     if collecting {
-                        if has_pending_comment_range {
-                            if !yield_(f.new_comment_range(
+                        if has_pending_comment_range
+                            && !yield_(f.new_comment_range(
                                 pending_kind,
                                 pending_pos,
                                 pending_end,
                                 pending_has_trailing_new_line,
-                            )) {
-                                return;
-                            }
+                            ))
+                        {
+                            return;
                         }
                         pending_pos = start_pos;
                         pending_end = pos;

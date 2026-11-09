@@ -98,10 +98,10 @@ pub fn get_pragma_from_source_file(file: Node, name: &str) -> Option<FileRef<Pra
 
 // Go: ast/utilities.go:2942 GetPragmaArgument
 pub fn get_pragma_argument(pragma: Option<&Pragma>, name: &str) -> String {
-    if let Some(pragma) = pragma {
-        if let Some(arg) = pragma.args.get(name) {
-            return arg.value.clone();
-        }
+    if let Some(pragma) = pragma
+        && let Some(arg) = pragma.args.get(name)
+    {
+        return arg.value.clone();
     }
     String::new()
 }

@@ -85,21 +85,21 @@ pub fn analyze_effect_succeed_with_void(
             let call = n;
             if call.expression().is_some()
                 && tp.is_node_reference_to_effect_module_api(call.expression(), member!("succeed"))
+                && call.argument_list().is_some()
+                && !call.arguments().is_empty()
             {
-                if call.argument_list().is_some() && !call.arguments().is_empty() {
-                    let arg = call.arguments().get(0);
-                    if is_void_expression(arg) {
-                        let mut effect_module = Node::NIL;
-                        if call.expression().kind() == SyntaxKind::PropertyAccessExpression {
-                            effect_module = call.expression().expression();
-                        }
-                        matches.push(EffectSucceedWithVoidMatch {
-                            source_file: sf,
-                            location: get_error_range_for_node(sf, n),
-                            call_node: n,
-                            effect_module_node: effect_module,
-                        });
+                let arg = call.arguments().get(0);
+                if is_void_expression(arg) {
+                    let mut effect_module = Node::NIL;
+                    if call.expression().kind() == SyntaxKind::PropertyAccessExpression {
+                        effect_module = call.expression().expression();
                     }
+                    matches.push(EffectSucceedWithVoidMatch {
+                        source_file: sf,
+                        location: get_error_range_for_node(sf, n),
+                        call_node: n,
+                        effect_module_node: effect_module,
+                    });
                 }
             }
         }

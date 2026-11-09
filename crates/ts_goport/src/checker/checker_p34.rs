@@ -777,10 +777,10 @@ impl Checker {
             kind: CachedTypeKind::AWAITED_TYPE,
             type_id: t,
         };
-        if let Some(&awaited_type) = self.cached_types.get(&key) {
-            if awaited_type.is_some() {
-                return awaited_type;
-            }
+        if let Some(&awaited_type) = self.cached_types.get(&key)
+            && awaited_type.is_some()
+        {
+            return awaited_type;
         }
         // For a union, get a union of the awaited types of each constituent.
         if self.ty(t).flags.intersects(TypeFlags::UNION) {

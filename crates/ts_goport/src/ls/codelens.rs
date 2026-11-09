@@ -95,30 +95,28 @@ impl CodeLensVisitor<'_> {
 
             if self.user_prefs.references_code_lens_enabled.is_true()
                 && is_valid_reference_lens_node(node, self.user_prefs)
-            {
-                if let Some(code_lens) = self.ls.new_code_lens_for_node(
+                && let Some(code_lens) = self.ls.new_code_lens_for_node(
                     self.document_uri,
                     self.file,
                     node,
                     lsproto::CodeLensKind::REFERENCES,
-                ) && self.seen.insert(key_for_code_lens(&code_lens))
-                {
-                    self.result.push(code_lens);
-                }
+                )
+                && self.seen.insert(key_for_code_lens(&code_lens))
+            {
+                self.result.push(code_lens);
             }
 
             if self.user_prefs.implementations_code_lens_enabled.is_true()
                 && is_valid_implementations_code_lens_node(node, self.user_prefs)
-            {
-                if let Some(code_lens) = self.ls.new_code_lens_for_node(
+                && let Some(code_lens) = self.ls.new_code_lens_for_node(
                     self.document_uri,
                     self.file,
                     node,
                     lsproto::CodeLensKind::IMPLEMENTATIONS,
-                ) && self.seen.insert(key_for_code_lens(&code_lens))
-                {
-                    self.result.push(code_lens);
-                }
+                )
+                && self.seen.insert(key_for_code_lens(&code_lens))
+            {
+                self.result.push(code_lens);
             }
         }
 
@@ -271,15 +269,15 @@ impl LanguageService {
             title: lens_title,
             ..Default::default()
         };
-        if !locs.is_empty() {
-            if let Some(show_locations_command_name) = show_locations_command_name {
-                cmd.command = show_locations_command_name;
-                cmd.arguments = Some(vec![
-                    to_lsp_any(&uri),
-                    to_lsp_any(&code_lens.range.start),
-                    to_lsp_any(&locs),
-                ]);
-            }
+        if !locs.is_empty()
+            && let Some(show_locations_command_name) = show_locations_command_name
+        {
+            cmd.command = show_locations_command_name;
+            cmd.arguments = Some(vec![
+                to_lsp_any(&uri),
+                to_lsp_any(&code_lens.range.start),
+                to_lsp_any(&locs),
+            ]);
         }
 
         code_lens.command = Some(cmd);

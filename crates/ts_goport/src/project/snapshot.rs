@@ -1098,10 +1098,10 @@ impl Snapshot {
                 fs.cache_files.range(&mut |entry| {
                     for project in project_collection.projects() {
                         let project = project.borrow();
-                        if let Some(host) = &project.host {
-                            if host.source_fs.seen_file(&entry.key()) {
-                                return true;
-                            }
+                        if let Some(host) = &project.host
+                            && host.source_fs.seen_file(&entry.key())
+                        {
+                            return true;
                         }
                     }
                     entry.delete();
@@ -1284,13 +1284,13 @@ impl Snapshot {
         // owner adds do not depend on the order).
         for config in new_snapshot.config_file_registry.configs.values() {
             let config = config.borrow();
-            if let Some(command_line) = &config.command_line {
-                if let Some(config_file) = &command_line.config_file {
-                    for file in &config_file.extended_source_files {
-                        store
-                            .extended_config_cache
-                            .add_owner(&(store.to_path)(file), new_snapshot.id);
-                    }
+            if let Some(command_line) = &config.command_line
+                && let Some(config_file) = &command_line.config_file
+            {
+                for file in &config_file.extended_source_files {
+                    store
+                        .extended_config_cache
+                        .add_owner(&(store.to_path)(file), new_snapshot.id);
                 }
             }
         }
@@ -1360,57 +1360,57 @@ impl Snapshot {
         for project in self.project_collection.projects() {
             let project = project.borrow();
             // PORT: Go `project.Program` (the field).
-            if let Some(program) = &project.program {
-                if store.program_counter.deref(program) {
-                    if let Some(content_mapper_project) = program.content_mapper_project() {
-                        let _ = content_mapper_project.close();
-                    }
-                    // This program is no longer referenced by any snapshot.
-                    // Mark its checker pool as discarded so its idle-cleanup timer stops
-                    // keeping the pool alive, allowing the pool and any idle checkers it
-                    // still references to be reclaimed when the pool is garbage-collected.
-                    if let Some(checker_pool) = &project.checker_pool {
-                        checker_pool.discard();
-                    }
-                    // PORT: through the entries the program holds a count on
-                    // (`ProgramFileRefs`), so no file builds a key unless its
-                    // entry goes.
-                    project
-                        .program_file_refs
-                        .as_ref()
-                        .expect("a project program has its file refs")
-                        .release(
-                            &store.parse_cache,
-                            &store.content_mapped_parse_cache,
-                            program.source_files(),
-                        );
-                    for file in program.duplicate_source_files() {
-                        if !file.is_content_mapper_failure_stub {
-                            if !file.content_mapper.is_empty() {
-                                deref_content_mapped_file(
-                                    &store.content_mapped_parse_cache,
-                                    &content_mapped_parse_cache_key_for_duplicate(file),
-                                );
-                            } else {
-                                deref_program_file(
-                                    &store.parse_cache,
-                                    &file.parse_options,
-                                    file.source_hash(),
-                                    file.script_kind,
-                                );
-                            }
+            if let Some(program) = &project.program
+                && store.program_counter.deref(program)
+            {
+                if let Some(content_mapper_project) = program.content_mapper_project() {
+                    let _ = content_mapper_project.close();
+                }
+                // This program is no longer referenced by any snapshot.
+                // Mark its checker pool as discarded so its idle-cleanup timer stops
+                // keeping the pool alive, allowing the pool and any idle checkers it
+                // still references to be reclaimed when the pool is garbage-collected.
+                if let Some(checker_pool) = &project.checker_pool {
+                    checker_pool.discard();
+                }
+                // PORT: through the entries the program holds a count on
+                // (`ProgramFileRefs`), so no file builds a key unless its
+                // entry goes.
+                project
+                    .program_file_refs
+                    .as_ref()
+                    .expect("a project program has its file refs")
+                    .release(
+                        &store.parse_cache,
+                        &store.content_mapped_parse_cache,
+                        program.source_files(),
+                    );
+                for file in program.duplicate_source_files() {
+                    if !file.is_content_mapper_failure_stub {
+                        if !file.content_mapper.is_empty() {
+                            deref_content_mapped_file(
+                                &store.content_mapped_parse_cache,
+                                &content_mapped_parse_cache_key_for_duplicate(file),
+                            );
+                        } else {
+                            deref_program_file(
+                                &store.parse_cache,
+                                &file.parse_options,
+                                file.source_hash(),
+                                file.script_kind,
+                            );
                         }
                     }
-                    // PORT: Go frees the program when nothing references it.
-                    // The port frees its checkers and its program version
-                    // now, or when the last request on it ends; the program
-                    // goes with its last `Rc` holder. Its cross-project
-                    // search thread ends after its queued jobs. The search
-                    // thread is found by the program version, so it is
-                    // released first.
-                    crate::ls::release_search_thread(program);
-                    crate::program::ls_program::release_program(program);
                 }
+                // PORT: Go frees the program when nothing references it.
+                // The port frees its checkers and its program version
+                // now, or when the last request on it ends; the program
+                // goes with its last `Rc` holder. Its cross-project
+                // search thread ends after its queued jobs. The search
+                // thread is found by the program version, so it is
+                // released first.
+                crate::ls::release_search_thread(program);
+                crate::program::ls_program::release_program(program);
             }
         }
         // PORT: Go map order is random; the registry map's order here (the

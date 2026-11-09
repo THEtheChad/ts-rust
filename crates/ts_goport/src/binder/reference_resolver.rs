@@ -57,10 +57,10 @@ pub fn new_reference_resolver(
 impl ReferenceResolver {
     // Go: binder/referenceresolver.go:44 getResolvedSymbol
     fn get_resolved_symbol<H: NameResolverHost>(&self, c: &mut H, node: Node) -> SymbolId {
-        if node.is_some() {
-            if let Some(get_resolved_symbol) = self.hooks.get_resolved_symbol {
-                return get_resolved_symbol(c.hook_checker(), node);
-            }
+        if node.is_some()
+            && let Some(get_resolved_symbol) = self.hooks.get_resolved_symbol
+        {
+            return get_resolved_symbol(c.hook_checker(), node);
         }
         SymbolId::NIL
     }
@@ -397,14 +397,13 @@ impl ReferenceResolver {
         c: &mut H,
         expression: Node,
     ) -> String {
-        if expression.is_some() {
-            if let Some(get_element_access_expression_name) =
+        if expression.is_some()
+            && let Some(get_element_access_expression_name) =
                 self.hooks.get_element_access_expression_name
-            {
-                let (name, ok) = get_element_access_expression_name(c.hook_checker(), expression);
-                if ok {
-                    return name;
-                }
+        {
+            let (name, ok) = get_element_access_expression_name(c.hook_checker(), expression);
+            if ok {
+                return name;
             }
         }
         String::new()

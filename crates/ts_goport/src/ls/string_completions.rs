@@ -1280,14 +1280,13 @@ fn get_pattern_from_first_matching_condition(
     if target.type_ == packagejson::JSONValueType::OBJECT {
         let obj = target.as_object();
         for condition in obj.keys() {
-            if condition == "default"
+            if (condition == "default"
                 || conditions.iter().any(|c| c == condition)
                 || (conditions.iter().any(|c| c == "types")
-                    && module::is_applicable_versioned_types_key(condition))
+                    && module::is_applicable_versioned_types_key(condition)))
+                && let Some(pattern) = obj.get(condition)
             {
-                if let Some(pattern) = obj.get(condition) {
-                    return get_pattern_from_first_matching_condition(pattern, conditions);
-                }
+                return get_pattern_from_first_matching_condition(pattern, conditions);
             }
         }
     }

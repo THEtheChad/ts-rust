@@ -362,12 +362,10 @@ pub fn get_call_hierarchy_item_container_name(
         SyntaxKind::FunctionDeclaration
         | SyntaxKind::ClassDeclaration
         | SyntaxKind::ModuleDeclaration => {
-            if is_module_block(node.parent()) {
-                if is_module_declaration(node.parent().parent()) {
-                    let name = node.parent().parent().name();
-                    if name.is_some() && is_identifier(name) {
-                        return name.text().to_string();
-                    }
+            if is_module_block(node.parent()) && is_module_declaration(node.parent().parent()) {
+                let name = node.parent().parent().name();
+                if name.is_some() && is_identifier(name) {
+                    return name.text().to_string();
                 }
             }
         }

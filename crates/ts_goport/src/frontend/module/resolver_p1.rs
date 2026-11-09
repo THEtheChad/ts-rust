@@ -549,13 +549,13 @@ impl Tracer {
         &mut self,
         redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
     ) {
-        if let Some(redirected_reference) = redirected_reference {
-            if redirected_reference.compiler_options().is_some() {
-                self.write(
-                    diag::Using_compiler_options_of_project_reference_redirect_0,
-                    args![redirected_reference.config_name()],
-                );
-            }
+        if let Some(redirected_reference) = redirected_reference
+            && redirected_reference.compiler_options().is_some()
+        {
+            self.write(
+                diag::Using_compiler_options_of_project_reference_redirect_0,
+                args![redirected_reference.config_name()],
+            );
         }
     }
 }
@@ -1536,19 +1536,20 @@ impl ResolutionState<'_> {
         scope: &Rc<InfoCacheEntry>,
         is_imports: bool,
     ) -> Option<Resolved> {
-        if !module_name.ends_with('/') && !module_name.contains('*') {
-            if let Some(target) = lookup_table.get(module_name) {
-                return self.load_module_from_target_export_or_import(
-                    extensions,
-                    module_name,
-                    scope,
-                    is_imports,
-                    target,
-                    "",
-                    false, /*isPattern*/
-                    module_name,
-                );
-            }
+        if !module_name.ends_with('/')
+            && !module_name.contains('*')
+            && let Some(target) = lookup_table.get(module_name)
+        {
+            return self.load_module_from_target_export_or_import(
+                extensions,
+                module_name,
+                scope,
+                is_imports,
+                target,
+                "",
+                false, /*isPattern*/
+                module_name,
+            );
         }
 
         let mut expanding_keys: Vec<&String> = Vec::with_capacity(lookup_table.len());

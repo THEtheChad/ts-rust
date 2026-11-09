@@ -255,10 +255,10 @@ impl DeclarationTransformer {
             let params = parse_tree_node.parent().parameters();
             let param_idx = params.iter().position(|p| p == parse_tree_node);
             let mut previous_sibling = Node::NIL;
-            if let Some(idx) = param_idx {
-                if idx > 0 {
-                    previous_sibling = params.get(idx - 1);
-                }
+            if let Some(idx) = param_idx
+                && idx > 0
+            {
+                previous_sibling = params.get(idx - 1);
             }
 
             let text = source_file_text(source_file);

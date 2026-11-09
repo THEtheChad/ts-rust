@@ -217,14 +217,13 @@ pub fn unquote_string(str: &str) -> String {
     let mut result = String::with_capacity(inner.len());
     let mut chars = inner.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                if next != '\n' {
-                    result.push(next);
-                    chars.next();
-                    continue;
-                }
-            }
+        if ch == '\\'
+            && let Some(&next) = chars.peek()
+            && next != '\n'
+        {
+            result.push(next);
+            chars.next();
+            continue;
         }
         result.push(ch);
     }

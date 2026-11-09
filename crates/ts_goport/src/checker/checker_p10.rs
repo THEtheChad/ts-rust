@@ -439,18 +439,17 @@ impl Checker {
             let members = self.ty(first_base).types_list();
             for (i, intersection_member) in members.into_iter().enumerate() {
                 // We want to ignore mixin ctors
-                if !mixin_flags[i] {
-                    if self
+                if !mixin_flags[i]
+                    && self
                         .ty(intersection_member)
                         .object_flags
                         .intersects(ObjectFlags::CLASS | ObjectFlags::INTERFACE)
-                    {
-                        if self.ty(intersection_member).symbol == target {
-                            return true;
-                        }
-                        if self.type_has_protected_accessible_base(target, intersection_member) {
-                            return true;
-                        }
+                {
+                    if self.ty(intersection_member).symbol == target {
+                        return true;
+                    }
+                    if self.type_has_protected_accessible_base(target, intersection_member) {
+                        return true;
                     }
                 }
             }
@@ -978,10 +977,10 @@ impl Checker {
                 *SIGNATURE_KEY_OUTER
             },
         };
-        if let Some(&cached) = self.cached_signatures.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_signatures.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let result = self.clone_signature(signature);
         self.sig_mut(result).flags |= call_chain_flags;
@@ -1568,22 +1567,24 @@ impl Checker {
         report_errors: bool,
         diagnostic_output: Option<&mut Vec<Diagnostic>>,
     ) {
-        if let Some(diagnostic_output) = diagnostic_output {
-            if error_node.is_some() && report_errors && !diagnostic_output.is_empty() {
-                // Bail if target is Promise-like---something else is wrong
-                if self.get_awaited_type_of_promise(target).is_some() {
-                    return;
-                }
-                let awaited_type_of_source = self.get_awaited_type_of_promise(source);
-                if awaited_type_of_source.is_some()
-                    && self.is_type_related_to(awaited_type_of_source, target, relation)
-                {
-                    diagnostic_output[0].add_related_info(Some(new_diagnostic_for_node(
-                        error_node,
-                        diag::Did_you_forget_to_use_await,
-                        args![],
-                    )));
-                }
+        if let Some(diagnostic_output) = diagnostic_output
+            && error_node.is_some()
+            && report_errors
+            && !diagnostic_output.is_empty()
+        {
+            // Bail if target is Promise-like---something else is wrong
+            if self.get_awaited_type_of_promise(target).is_some() {
+                return;
+            }
+            let awaited_type_of_source = self.get_awaited_type_of_promise(source);
+            if awaited_type_of_source.is_some()
+                && self.is_type_related_to(awaited_type_of_source, target, relation)
+            {
+                diagnostic_output[0].add_related_info(Some(new_diagnostic_for_node(
+                    error_node,
+                    diag::Did_you_forget_to_use_await,
+                    args![],
+                )));
             }
         }
     }

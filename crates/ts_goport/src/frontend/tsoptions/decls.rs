@@ -1701,10 +1701,11 @@ pub fn for_each_compiler_option_value(
         .into_iter()
         .enumerate()
     {
-        if let Some(option_declaration) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(field_name) {
-            if decl_filter(option_declaration) && f(option_declaration, value, i) {
-                return true;
-            }
+        if let Some(option_declaration) = COMMAND_LINE_COMPILER_OPTIONS_MAP.get(field_name)
+            && decl_filter(option_declaration)
+            && f(option_declaration, value, i)
+        {
+            return true;
         }
     }
     false
@@ -1819,12 +1820,11 @@ impl NameMap {
     ) -> Option<&'static CommandLineOption> {
         let mut option_name = strings_to_lower(option_name);
         // Try to translate short option names to their full equivalents.
-        if allow_short {
-            if let Some(short) = self.short_option_names.get(&option_name) {
-                if !short.is_empty() {
-                    option_name = short.clone();
-                }
-            }
+        if allow_short
+            && let Some(short) = self.short_option_names.get(&option_name)
+            && !short.is_empty()
+        {
+            option_name = short.clone();
         }
         self.get(&option_name)
     }

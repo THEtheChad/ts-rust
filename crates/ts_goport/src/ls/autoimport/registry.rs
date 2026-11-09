@@ -577,14 +577,13 @@ impl Registry {
 
         let mut dir_path = path.get_directory_path();
         loop {
-            if let Some(dir_bucket) = r.node_modules.get(&dir_path) {
-                if dir_bucket
+            if let Some(dir_bucket) = r.node_modules.get(&dir_path)
+                && dir_bucket
                     .state
                     .borrow()
                     .possibly_needs_rebuild_for_file(&path, preferences)
-                {
-                    return false;
-                }
+            {
+                return false;
             }
             let parent = dir_path.get_directory_path();
             if parent == dir_path {
@@ -1519,31 +1518,30 @@ impl RegistryBuilder {
                     if !pkg.types_realpath.is_empty() {
                         types_fallback_candidates.push(pkg.clone());
                     }
-                } else if !pkg.types_realpath.is_empty() {
-                    if !seen.get(&pkg.types_realpath).copied().unwrap_or(false) {
-                        seen.insert(pkg.types_realpath.clone(), true);
-                        // @types packages always get directory search
-                        if let Some(target_recursive_packages) = target_recursive_packages.as_mut()
-                        {
-                            target_recursive_packages.insert(pkg.package_name.clone());
-                        }
-                        // Go: wg.Go(func() {...})
-                        go_wait_group_goroutine(|| {
-                            if ctx.err().is_none() {
-                                let result = self.extract_package(
-                                    ctx,
-                                    &pkg.types_package_json,
-                                    &pkg.package_name,
-                                    &project_reference_outputs,
-                                    file_exclude_patterns.as_ref(),
-                                    true, /*enableDirectorySearch*/
-                                );
-                                if let Some(result) = result {
-                                    extraction_cache.insert(pkg.types_realpath.clone(), result);
-                                }
-                            }
-                        });
+                } else if !pkg.types_realpath.is_empty()
+                    && !seen.get(&pkg.types_realpath).copied().unwrap_or(false)
+                {
+                    seen.insert(pkg.types_realpath.clone(), true);
+                    // @types packages always get directory search
+                    if let Some(target_recursive_packages) = target_recursive_packages.as_mut() {
+                        target_recursive_packages.insert(pkg.package_name.clone());
                     }
+                    // Go: wg.Go(func() {...})
+                    go_wait_group_goroutine(|| {
+                        if ctx.err().is_none() {
+                            let result = self.extract_package(
+                                ctx,
+                                &pkg.types_package_json,
+                                &pkg.package_name,
+                                &project_reference_outputs,
+                                file_exclude_patterns.as_ref(),
+                                true, /*enableDirectorySearch*/
+                            );
+                            if let Some(result) = result {
+                                extraction_cache.insert(pkg.types_realpath.clone(), result);
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -2048,11 +2046,11 @@ impl RegistryBuilder {
             if file.is_content_mapper_supplemental() || is_ignored_file(program, file) {
                 continue;
             }
-            if let Some(file_exclude_patterns) = &file_exclude_patterns {
-                if file_exclude_patterns.match_string(file.file_name()) {
-                    skipped_file_count += 1;
-                    continue;
-                }
+            if let Some(file_exclude_patterns) = &file_exclude_patterns
+                && file_exclude_patterns.match_string(file.file_name())
+            {
+                skipped_file_count += 1;
+                continue;
             }
             // Ordinary node_modules files are owned by node_modules buckets. Content-mapped files are not
             // discovered by those buckets, but files already transformed in the Program can be indexed here.
@@ -2857,10 +2855,10 @@ impl RegistryBuilder {
             let mut filtered: Vec<String> = Vec::new();
             for file_name in file_names {
                 let path = (self.base.to_path)(file_name);
-                if let Some(pkg_name) = existing_bucket.paths.get(&path) {
-                    if set_has(dirty_packages, pkg_name) {
-                        continue;
-                    }
+                if let Some(pkg_name) = existing_bucket.paths.get(&path)
+                    && set_has(dirty_packages, pkg_name)
+                {
+                    continue;
                 }
                 filtered.push(file_name.clone());
             }
@@ -2880,10 +2878,10 @@ impl RegistryBuilder {
         // (paths belonging to dirty packages)
         let mut removed_entrypoint_paths: Vec<tspath::Path> = Vec::new();
         for path in self.base.entrypoints.keys() {
-            if let Some(pkg_name) = existing_bucket.paths.get(path) {
-                if set_has(dirty_packages, pkg_name) {
-                    removed_entrypoint_paths.push(path.clone());
-                }
+            if let Some(pkg_name) = existing_bucket.paths.get(path)
+                && set_has(dirty_packages, pkg_name)
+            {
+                removed_entrypoint_paths.push(path.clone());
             }
         }
         // Build new entrypoints from extraction
@@ -2992,15 +2990,14 @@ impl RegistryBuilder {
     ) -> Vec<String> {
         from_path
             .for_each_ancestor_directory(|dir_path: tspath::Path| -> (Vec<String>, bool) {
-                if let (Some(bucket), true) = self.node_modules.get(&dir_path) {
-                    if let Some(file_names) = bucket
+                if let (Some(bucket), true) = self.node_modules.get(&dir_path)
+                    && let Some(file_names) = bucket
                         .value()
                         .unwrap_or_else(|| crate::core::go_nil_dereference())
                         .ambient_module_names
                         .get(module_name)
-                    {
-                        return (file_names.clone(), true);
-                    }
+                {
+                    return (file_names.clone(), true);
                 }
                 (Vec::new(), false)
             })

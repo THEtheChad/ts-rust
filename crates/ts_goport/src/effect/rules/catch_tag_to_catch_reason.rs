@@ -86,10 +86,9 @@ pub fn analyze_catch_tag_to_catch_reason(
                 }
             } else if tp
                 .is_node_reference_to_effect_module_api(transformation.callee, member!("catchTags"))
+                && let Some(m) = analyze_catch_tags_transformation(tp, sf, Some(transformation))
             {
-                if let Some(m) = analyze_catch_tags_transformation(tp, sf, Some(transformation)) {
-                    matches.push(m);
-                }
+                matches.push(m);
             }
         }
     }

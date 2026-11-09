@@ -72,10 +72,10 @@ pub fn analyze_unnecessary_effect_gen(
 }
 
 fn visit(tp: &mut TypeParser<'_>, sf: Node, matches: &mut Vec<UnnecessaryEffectGenMatch>, n: Node) {
-    if n.kind() == SyntaxKind::CallExpression {
-        if let Some(m) = analyze_unnecessary_effect_gen_node(tp, sf, n) {
-            matches.push(m);
-        }
+    if n.kind() == SyntaxKind::CallExpression
+        && let Some(m) = analyze_unnecessary_effect_gen_node(tp, sf, n)
+    {
+        matches.push(m);
     }
 }
 
@@ -139,16 +139,15 @@ fn analyze_unnecessary_effect_gen_node(
     // Determine if the success type is void-like
     let mut success_is_void = false;
     let t = tp.get_type_at_location(yielded_expr);
-    if t.is_some() {
-        if let Some(effect) = tp.effect_type(t)
-            && effect.a.is_some()
-        {
-            success_is_void = tp
-                .checker
-                .ty(effect.a)
-                .flags()
-                .intersects(TypeFlags::VOID_LIKE);
-        }
+    if t.is_some()
+        && let Some(effect) = tp.effect_type(t)
+        && effect.a.is_some()
+    {
+        success_is_void = tp
+            .checker
+            .ty(effect.a)
+            .flags()
+            .intersects(TypeFlags::VOID_LIKE);
     }
 
     Some(UnnecessaryEffectGenMatch {

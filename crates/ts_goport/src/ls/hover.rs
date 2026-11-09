@@ -592,26 +592,23 @@ pub fn get_documentation_from_declaration(
                         && tag.tag_name().text() == "example"
                     {
                         let mut comment_text = get_text_of_js_doc_comment(tag.comment_list());
-                        if comment_text.starts_with("<caption>") {
-                            if let Some(caption_end) = comment_text.find("</caption>") {
-                                if caption_end > 0 {
-                                    b.push_str(" — ");
-                                    b.push_str(&comment_text["<caption>".len()..caption_end]);
-                                    comment_text = comment_text[caption_end + "</caption>".len()..]
-                                        .to_string();
-                                    // Trim leading blank lines from commentText
-                                    loop {
-                                        let s1 = comment_text
-                                            .trim_start_matches(|ch: char| ch == ' ' || ch == '\t');
-                                        let s2 = s1.trim_start_matches(|ch: char| {
-                                            ch == '\r' || ch == '\n'
-                                        });
-                                        if s1.len() == s2.len() {
-                                            break;
-                                        }
-                                        comment_text = s2.to_string();
-                                    }
+                        if comment_text.starts_with("<caption>")
+                            && let Some(caption_end) = comment_text.find("</caption>")
+                            && caption_end > 0
+                        {
+                            b.push_str(" — ");
+                            b.push_str(&comment_text["<caption>".len()..caption_end]);
+                            comment_text =
+                                comment_text[caption_end + "</caption>".len()..].to_string();
+                            // Trim leading blank lines from commentText
+                            loop {
+                                let s1 = comment_text
+                                    .trim_start_matches(|ch: char| ch == ' ' || ch == '\t');
+                                let s2 = s1.trim_start_matches(|ch: char| ch == '\r' || ch == '\n');
+                                if s1.len() == s2.len() {
+                                    break;
                                 }
+                                comment_text = s2.to_string();
                             }
                         }
                         b.push('\n');

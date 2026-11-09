@@ -311,10 +311,10 @@ impl Checker {
             // Find the symbol for this member by matching the property name
             let mut member_symbol = SymbolId::NIL;
             let member_name = m.name();
-            if member_name.is_some() {
-                if let Some(&sym) = b.borrow().id_to_symbol.get(&member_name) {
-                    member_symbol = sym;
-                }
+            if member_name.is_some()
+                && let Some(&sym) = b.borrow().id_to_symbol.get(&member_name)
+            {
+                member_symbol = sym;
             }
             if member_symbol.is_nil() {
                 continue;
@@ -968,10 +968,10 @@ impl Checker {
             let base_with_this = self.get_type_with_this_argument(base, this_type, false);
             for prop in self.get_properties_of_type(base_with_this) {
                 let prop_name = &self.sym(prop).name;
-                if let Some(&existing) = props_by_name.get(prop_name.as_str()) {
-                    if self.sym(prop).parent == self.sym(existing).parent {
-                        inherited.insert(prop_name.to_string());
-                    }
+                if let Some(&existing) = props_by_name.get(prop_name.as_str())
+                    && self.sym(prop).parent == self.sym(existing).parent
+                {
+                    inherited.insert(prop_name.to_string());
                 }
             }
         }

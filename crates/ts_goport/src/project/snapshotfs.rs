@@ -1087,12 +1087,12 @@ impl SnapshotFSBuilder {
             None => Vec::new(),
         };
         for child_path in &child_paths {
-            if let (Some(entry), true) = self.cache_files.load(child_path) {
-                if let Some(file) = entry.value() {
-                    files.insert(lsconv::file_name_to_document_uri(
-                        &file.borrow().file_base.file_name(),
-                    ));
-                }
+            if let (Some(entry), true) = self.cache_files.load(child_path)
+                && let Some(file) = entry.value()
+            {
+                files.insert(lsconv::file_name_to_document_uri(
+                    &file.borrow().file_base.file_name(),
+                ));
             }
             self.collect_files_recursive(child_path, files, previous_open_files, open_files);
         }
@@ -1117,10 +1117,10 @@ impl SnapshotFSBuilder {
                 // didOpen may differ from what was originally read from the source (e.g. the
                 // editor normalizes line endings, or the source file changed since the
                 // project was loaded). Mark it as Changed so the project rebuilds.
-                if let Some(cached_file) = original {
-                    if open_file.hash() != cached_file.borrow().file_base.hash() {
-                        change.changed.insert(change.opened.clone());
-                    }
+                if let Some(cached_file) = original
+                    && open_file.hash() != cached_file.borrow().file_base.hash()
+                {
+                    change.changed.insert(change.opened.clone());
                 }
                 self.delete_cache_entry(entry.as_ref().expect("loaded above"));
             }
@@ -1441,10 +1441,10 @@ impl SourceFS {
 
     // Go: project/snapshotfs.go:817 sourceFS.SeenFileOrMissingParentDirectory
     pub fn seen_file_or_missing_parent_directory(&self, path: &tspath::Path) -> bool {
-        if let Some(seen_files) = self.seen_files.borrow().as_ref() {
-            if seen_files.borrow().contains_key(path) {
-                return true;
-            }
+        if let Some(seen_files) = self.seen_files.borrow().as_ref()
+            && seen_files.borrow().contains_key(path)
+        {
+            return true;
         }
         if let Some(missing_directories) = &self.missing_directories {
             let missing_directories = missing_directories.borrow();

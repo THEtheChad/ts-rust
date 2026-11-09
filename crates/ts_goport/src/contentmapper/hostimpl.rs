@@ -2311,13 +2311,12 @@ impl ProjectLease {
         }
         {
             let mut leases = host.project_leases.borrow_mut();
-            if let Some(leases) = leases.as_mut() {
-                if leases
+            if let Some(leases) = leases.as_mut()
+                && leases
                     .get(&self.key)
                     .is_some_and(|lease| std::ptr::eq(Rc::as_ptr(lease), self))
-                {
-                    leases.shift_remove(&self.key);
-                }
+            {
+                leases.shift_remove(&self.key);
             }
         }
         for key in self.entries.values() {
@@ -2332,13 +2331,11 @@ impl ProjectLease {
                     entry.project_handle.clone(),
                 )
             };
-            if opened {
-                if let Some(conn) = host.live_conn(&mapper.identity()) {
-                    result = errors::join([
-                        result,
-                        host.close_project(&mapper, &conn, &project_handle).err(),
-                    ]);
-                }
+            if opened && let Some(conn) = host.live_conn(&mapper.identity()) {
+                result = errors::join([
+                    result,
+                    host.close_project(&mapper, &conn, &project_handle).err(),
+                ]);
             }
             if let Some(projects) = host.projects.borrow_mut().as_mut() {
                 projects.shift_remove(key);

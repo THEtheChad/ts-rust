@@ -1823,10 +1823,11 @@ impl Server {
         let dispatch_result = self.dispatch_loop(&ctx);
         g.go(move || dispatch_result);
 
-        if let Err(err) = g.wait() {
-            if !errors::is(&err, &errors::EOF) && ctx.err().is_some() {
-                return Err(err);
-            }
+        if let Err(err) = g.wait()
+            && !errors::is(&err, &errors::EOF)
+            && ctx.err().is_some()
+        {
+            return Err(err);
         }
         Ok(())
     }
@@ -1914,12 +1915,11 @@ impl ServerShared {
                     || errors::is(&err, &errors::from_value(ErrorCode::INVALID_PARAMS))
                 {
                     let mut id: Option<crate::jsonrpc::ID> = None;
-                    if errors::is(&err, &errors::from_value(ErrorCode::INVALID_PARAMS)) {
-                        if let Some(msg) = &msg {
-                            if msg.kind == crate::jsonrpc::MessageKind::REQUEST {
-                                id = msg.as_request().id.clone();
-                            }
-                        }
+                    if errors::is(&err, &errors::from_value(ErrorCode::INVALID_PARAMS))
+                        && let Some(msg) = &msg
+                        && msg.kind == crate::jsonrpc::MessageKind::REQUEST
+                    {
+                        id = msg.as_request().id.clone();
                     }
                     self.send_error(id, err)?;
                     continue;
@@ -3139,8 +3139,8 @@ pub fn register_language_service_with_auto_imports_request_handler<
                             || {
                                 let mut language_service = language_service;
                                 let mut result = fn_(&s, &ctx, &language_service, &params);
-                                if let Err(ls_err) = &result {
-                                    if errors::is(ls_err, &ls::ERR_NEEDS_AUTO_IMPORTS) {
+                                if let Err(ls_err) = &result
+                                    && errors::is(ls_err, &ls::ERR_NEEDS_AUTO_IMPORTS) {
                                         language_service = s
                                             .session_ref()
                                             .get_language_service_with_auto_imports(
@@ -3150,16 +3150,14 @@ pub fn register_language_service_with_auto_imports_request_handler<
                                             return Err(err);
                                         }
                                         result = fn_(&s, &ctx, &language_service, &params);
-                                        if let Err(ls_err) = &result {
-                                            if errors::is(ls_err, &ls::ERR_NEEDS_AUTO_IMPORTS) {
+                                        if let Err(ls_err) = &result
+                                            && errors::is(ls_err, &ls::ERR_NEEDS_AUTO_IMPORTS) {
                                                 crate::core::go_panic(format!(
                                                     "{} returned ErrNeedsAutoImports even after enabling auto imports",
                                                     method
                                                 ));
                                             }
-                                        }
                                     }
-                                }
                                 let resp = result?;
                                 if let Some(err) = ctx.err() {
                                     return Err(err);
@@ -3421,10 +3419,10 @@ impl ServerShared {
             _ => lsproto::InitializationOptions::default(),
         };
         let _ = self.initialization_options.set(initialization_options);
-        if let Some(v) = self.initialization_options().log_verbosity {
-            if is_valid_log_verbosity(v) {
-                self.logger.set_verbosity(v);
-            }
+        if let Some(v) = self.initialization_options().log_verbosity
+            && is_valid_log_verbosity(v)
+        {
+            self.logger.set_verbosity(v);
         }
         if let Some(level) = self.initialization_options().track_flaky_diagnostics {
             let _ = self.flake_logging.set(level);
@@ -3466,10 +3464,10 @@ impl ServerShared {
         }
         let _ = self.init_locale.set(self.locale());
 
-        if let Some(start_watchdog) = &self.start_watchdog {
-            if let Some(process_id) = params.process_id.integer {
-                start_watchdog(process_id);
-            }
+        if let Some(start_watchdog) = &self.start_watchdog
+            && let Some(process_id) = params.process_id.integer
+        {
+            start_watchdog(process_id);
         }
 
         let response = lsproto::InitializeResult {
@@ -3770,10 +3768,9 @@ impl Server {
             .root_path
             .as_ref()
             .and_then(|root_path| root_path.string.as_ref())
+            && tspath::path_is_absolute(root_path)
         {
-            if tspath::path_is_absolute(root_path) {
-                cwd = lsproto::rooted_path_from_absolute(root_path);
-            }
+            cwd = lsproto::rooted_path_from_absolute(root_path);
         }
 
         self.telemetry_enabled.set(enable_telemetry);

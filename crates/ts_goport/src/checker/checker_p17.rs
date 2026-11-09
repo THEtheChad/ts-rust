@@ -364,15 +364,13 @@ impl Checker {
         &mut self,
         module_name: Node,
     ) -> Option<&'static Message> {
-        if is_string_literal(module_name) {
-            if core_p17::is_node_core_module(module_name.text()) {
-                if self.compiler_options.uses_wildcard_types() {
-                    return Some(diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode);
-                }
-                return Some(
+        if is_string_literal(module_name) && core_p17::is_node_core_module(module_name.text()) {
+            if self.compiler_options.uses_wildcard_types() {
+                return Some(diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode);
+            }
+            return Some(
                     diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode_and_then_add_node_to_the_types_field_in_your_tsconfig,
                 );
-            }
         }
         None
     }
@@ -713,46 +711,47 @@ impl Checker {
                             diag::This_import_uses_a_0_extension_to_resolve_to_an_input_TypeScript_file_but_will_not_be_rewritten_during_emit_because_it_is_not_a_relative_path,
                             args![extension],
                         );
-                    } else if resolved_using_rewritable_extension && should_rewrite {
-                        if let Some(redirect) = get_redirect_for_resolution(source_file) {
-                            let own_root_dir = common_source_directory().to_string();
-                            let other_root_dir = redirect.common_source_directory().to_string();
+                    } else if resolved_using_rewritable_extension
+                        && should_rewrite
+                        && let Some(redirect) = get_redirect_for_resolution(source_file)
+                    {
+                        let own_root_dir = common_source_directory().to_string();
+                        let other_root_dir = redirect.common_source_directory().to_string();
 
-                            let case_sensitive = use_case_sensitive_file_names();
+                        let case_sensitive = use_case_sensitive_file_names();
 
-                            // ts#64159 (checker.go:15631): `None` is Go `rootsCompatible == false`.
-                            let root_dir_path = tspath_p17::relative_path_from_directory(
-                                &own_root_dir,
-                                &other_root_dir,
-                                case_sensitive,
-                            );
+                        // ts#64159 (checker.go:15631): `None` is Go `rootsCompatible == false`.
+                        let root_dir_path = tspath_p17::relative_path_from_directory(
+                            &own_root_dir,
+                            &other_root_dir,
+                            case_sensitive,
+                        );
 
-                            // Get outDir paths, defaulting to root directories if not specified
-                            let mut own_out_dir = self.compiler_options.out_dir.clone();
-                            if own_out_dir.is_empty() {
-                                own_out_dir = own_root_dir;
-                            }
-                            let mut other_out_dir = redirect.compiler_options().out_dir.clone();
-                            if other_out_dir.is_empty() {
-                                other_out_dir = other_root_dir;
-                            }
-                            let out_dir_path = tspath_p17::relative_path_from_directory(
-                                &own_out_dir,
-                                &other_out_dir,
-                                case_sensitive,
-                            );
+                        // Get outDir paths, defaulting to root directories if not specified
+                        let mut own_out_dir = self.compiler_options.out_dir.clone();
+                        if own_out_dir.is_empty() {
+                            own_out_dir = own_root_dir;
+                        }
+                        let mut other_out_dir = redirect.compiler_options().out_dir.clone();
+                        if other_out_dir.is_empty() {
+                            other_out_dir = other_root_dir;
+                        }
+                        let out_dir_path = tspath_p17::relative_path_from_directory(
+                            &own_out_dir,
+                            &other_out_dir,
+                            case_sensitive,
+                        );
 
-                            // ts#64159 (checker.go:15650): other roots (R4) are a mismatch.
-                            if root_dir_path.is_none()
-                                || out_dir_path.is_none()
-                                || root_dir_path != out_dir_path
-                            {
-                                self.error(
+                        // ts#64159 (checker.go:15650): other roots (R4) are a mismatch.
+                        if root_dir_path.is_none()
+                            || out_dir_path.is_none()
+                            || root_dir_path != out_dir_path
+                        {
+                            self.error(
                                     error_node,
                                     diag::This_import_path_is_unsafe_to_rewrite_because_it_resolves_to_another_project_and_the_relative_path_between_the_projects_output_files_is_not_the_same_as_the_relative_path_between_its_input_files,
                                     args![],
                                 );
-                            }
                         }
                     }
                 }
@@ -1492,10 +1491,10 @@ impl Checker {
                 kind: CachedTypeKind::DEFAULT_ONLY_TYPE,
                 type_id: t,
             };
-            if let Some(&cached) = self.cached_types.get(&key) {
-                if cached.is_some() {
-                    return cached;
-                }
+            if let Some(&cached) = self.cached_types.get(&key)
+                && cached.is_some()
+            {
+                return cached;
             }
             let result = self.create_default_property_wrapper_for_module(
                 symbol,
@@ -1521,10 +1520,10 @@ impl Checker {
                 kind: CachedTypeKind::SYNTHETIC_TYPE,
                 type_id: t,
             };
-            if let Some(&cached) = self.cached_types.get(&key) {
-                if cached.is_some() {
-                    return cached;
-                }
+            if let Some(&cached) = self.cached_types.get(&key)
+                && cached.is_some()
+            {
+                return cached;
             }
             let file = self
                 .sym(original_symbol)
@@ -1951,10 +1950,10 @@ pub(crate) mod tspath_p17 {
                 return ext;
             }
         }
-        if base.ends_with(EXTENSION_TS) {
-            if let Some(index) = base.find(".d.") {
-                return &base[index..];
-            }
+        if base.ends_with(EXTENSION_TS)
+            && let Some(index) = base.find(".d.")
+        {
+            return &base[index..];
         }
         ""
     }

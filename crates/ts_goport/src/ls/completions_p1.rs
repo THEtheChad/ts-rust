@@ -626,12 +626,11 @@ impl LanguageService {
         include_symbols: bool,
     ) -> Result<Option<CompletionList>, GoError> {
         let (_, previous_token) = get_relevant_tokens(position, file);
-        if let Some(trigger_character) = trigger_character.as_deref() {
-            if !is_in_string(file, position, previous_token)
-                && !is_valid_trigger(file, trigger_character, previous_token, position)
-            {
-                return Ok(None);
-            }
+        if let Some(trigger_character) = trigger_character.as_deref()
+            && !is_in_string(file, position, previous_token)
+            && !is_valid_trigger(file, trigger_character, previous_token, position)
+        {
+            return Ok(None);
         }
 
         if trigger_character.as_deref() == Some(" ") {
@@ -1263,10 +1262,11 @@ impl LanguageService {
             }
             // Go: core.MapNonNil (a nil value is dropped)
             for t in types {
-                if is_literal(s.type_checker, t) && !s.type_checker.ty(t).is_enum_literal() {
-                    if let Some(value) = s.type_checker.ty(t).as_literal_type().value() {
-                        literals.push(value.clone());
-                    }
+                if is_literal(s.type_checker, t)
+                    && !s.type_checker.ty(t).is_enum_literal()
+                    && let Some(value) = s.type_checker.ty(t).as_literal_type().value()
+                {
+                    literals.push(value.clone());
                 }
             }
         }
@@ -1938,11 +1938,10 @@ impl GetCompletionDataState<'_> {
                     .sym(member)
                     .flags
                     .intersects(SymbolFlags::OPTIONAL)
+                    && !self.symbol_to_sort_text_map.contains_key(&symbol_id)
                 {
-                    if !self.symbol_to_sort_text_map.contains_key(&symbol_id) {
-                        self.symbol_to_sort_text_map
-                            .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
-                    }
+                    self.symbol_to_sort_text_map
+                        .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
                 }
                 if object_like_container.kind() == SyntaxKind::ObjectLiteralExpression
                     && self
@@ -2465,11 +2464,10 @@ impl GetCompletionDataState<'_> {
                 .sym(symbol)
                 .flags
                 .intersects(SymbolFlags::OPTIONAL)
+                && !self.symbol_to_sort_text_map.contains_key(&symbol_id)
             {
-                if !self.symbol_to_sort_text_map.contains_key(&symbol_id) {
-                    self.symbol_to_sort_text_map
-                        .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
-                }
+                self.symbol_to_sort_text_map
+                    .insert(symbol_id, SORT_TEXT_OPTIONAL_MEMBER.to_string());
             }
         }
 
@@ -2496,13 +2494,11 @@ impl GetCompletionDataState<'_> {
         self.is_new_identifier_location = is_new_identifier_location;
         self.default_commit_characters = Some(default_commit_characters);
 
-        if self.previous_token != self.context_token {
-            if self.previous_token.is_nil() {
-                crate::core::go_panic(
-                    "Expected 'contextToken' to be defined when different from 'previousToken'."
-                        .to_string(),
-                );
-            }
+        if self.previous_token != self.context_token && self.previous_token.is_nil() {
+            crate::core::go_panic(
+                "Expected 'contextToken' to be defined when different from 'previousToken'."
+                    .to_string(),
+            );
         }
 
         // We need to find the node that will give us an appropriate scope to begin

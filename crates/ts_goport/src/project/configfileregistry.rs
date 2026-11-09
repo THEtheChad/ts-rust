@@ -247,16 +247,16 @@ impl ConfigFileRegistry {
         c: Option<&ConfigFileRegistry>,
         path: &tspath::Path,
     ) -> Option<TestConfigEntry> {
-        if let Some(c) = c {
-            if let Some(entry) = c.configs.get(path) {
-                let entry = entry.borrow();
-                return Some(TestConfigEntry {
-                    file_name: entry.file_name.clone(),
-                    retaining_projects: entry.retaining_projects.iter().cloned().collect(),
-                    retaining_open_files: entry.retaining_open_files.iter().cloned().collect(),
-                    retaining_configs: entry.retaining_configs.iter().cloned().collect(),
-                });
-            }
+        if let Some(c) = c
+            && let Some(entry) = c.configs.get(path)
+        {
+            let entry = entry.borrow();
+            return Some(TestConfigEntry {
+                file_name: entry.file_name.clone(),
+                retaining_projects: entry.retaining_projects.iter().cloned().collect(),
+                retaining_open_files: entry.retaining_open_files.iter().cloned().collect(),
+                retaining_configs: entry.retaining_configs.iter().cloned().collect(),
+            });
         }
         None
     }
@@ -289,14 +289,14 @@ impl ConfigFileRegistry {
         c: Option<&ConfigFileRegistry>,
         path: &tspath::Path,
     ) -> Option<TestConfigFileNamesEntry> {
-        if let Some(c) = c {
-            if let Some(entry) = c.config_file_names.get(path) {
-                let entry = entry.borrow();
-                return Some(TestConfigFileNamesEntry {
-                    nearest_config_file_name: entry.nearest_config_file_name.clone(),
-                    ancestors: entry.ancestors.clone(),
-                });
-            }
+        if let Some(c) = c
+            && let Some(entry) = c.config_file_names.get(path)
+        {
+            let entry = entry.borrow();
+            return Some(TestConfigFileNamesEntry {
+                nearest_config_file_name: entry.nearest_config_file_name.clone(),
+                ancestors: entry.ancestors.clone(),
+            });
         }
         None
     }

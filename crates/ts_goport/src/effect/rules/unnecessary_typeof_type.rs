@@ -51,10 +51,10 @@ pub fn analyze_unnecessary_typeof_type(
         matches: &mut Vec<UnnecessaryTypeofTypeMatch>,
         node: Node,
     ) {
-        if node.kind() == SyntaxKind::TypeQuery {
-            if let Some(m) = analyze_unnecessary_typeof_type_node(tp, sf, node) {
-                matches.push(m);
-            }
+        if node.kind() == SyntaxKind::TypeQuery
+            && let Some(m) = analyze_unnecessary_typeof_type_node(tp, sf, node)
+        {
+            matches.push(m);
         }
     }
 

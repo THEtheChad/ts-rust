@@ -98,10 +98,10 @@ pub fn analyze_run_effect_inside_effect(
         matches: &mut Vec<RunEffectInsideEffectMatch>,
         n: Node,
     ) {
-        if n.kind() == SyntaxKind::CallExpression {
-            if let (m, true) = analyze_run_effect_inside_effect_node(tp, sf, n) {
-                matches.push(m);
-            }
+        if n.kind() == SyntaxKind::CallExpression
+            && let (m, true) = analyze_run_effect_inside_effect_node(tp, sf, n)
+        {
+            matches.push(m);
         }
     }
 

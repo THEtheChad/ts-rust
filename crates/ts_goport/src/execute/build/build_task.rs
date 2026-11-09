@@ -1641,17 +1641,15 @@ impl BuildTask {
                     let reader = reader_of(&prefetched, &owned_reader);
                     let (build_info_file_info, resolved_input_path) =
                         reader.get_build_info_file_info(input_path);
-                    if let Some(file_info) = build_info_file_info.map(|b| b.get_file_info()) {
-                        if !file_info.version().is_empty() {
-                            version = file_info.version().to_string();
-                            let (text, ok) =
-                                orchestrator.fs().read_file(resolved_input_path.as_str());
-                            if ok {
-                                current_version =
-                                    compute_hash(&text, orchestrator.testing().is_some());
-                                if version == current_version {
-                                    input_text_unchanged = true;
-                                }
+                    if let Some(file_info) = build_info_file_info.map(|b| b.get_file_info())
+                        && !file_info.version().is_empty()
+                    {
+                        version = file_info.version().to_string();
+                        let (text, ok) = orchestrator.fs().read_file(resolved_input_path.as_str());
+                        if ok {
+                            current_version = compute_hash(&text, orchestrator.testing().is_some());
+                            if version == current_version {
+                                input_text_unchanged = true;
                             }
                         }
                     }
@@ -2235,10 +2233,10 @@ impl BuildTask {
         build_info_file_name: &str,
     ) -> (Option<Rc<BuildInfo>>, Option<SystemTime>) {
         let path = orchestrator.to_path(build_info_file_name);
-        if let Some(entry) = &self.build_info_entry {
-            if entry.path == path {
-                return (entry.build_info.clone(), entry.m_time);
-            }
+        if let Some(entry) = &self.build_info_entry
+            && entry.path == path
+        {
+            return (entry.build_info.clone(), entry.m_time);
         }
         let build_info = orchestrator.read_build_info_file(self.resolved());
         let status_prefetch = orchestrator

@@ -801,17 +801,16 @@ impl Checker {
     // Go: checker/nodebuilderimpl.go:1490 typeParameterToName
     // PORT: `typeParameterNames` is keyed by `TypeId` for Go `typeParameter.id`.
     pub fn type_parameter_to_name(&mut self, b: &Nb, type_parameter: TypeId) -> Node {
-        if nb_flags(b).intersects(NodeBuilderFlags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS) {
-            if let Some(cached) = b
+        if nb_flags(b).intersects(NodeBuilderFlags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS)
+            && let Some(cached) = b
                 .borrow()
                 .ctx
                 .borrow()
                 .type_parameter_names
                 .get(&type_parameter)
                 .copied()
-            {
-                return cached;
-            }
+        {
+            return cached;
         }
         let tp_symbol = self.ty(type_parameter).symbol;
         let mut result = self.symbol_to_name(

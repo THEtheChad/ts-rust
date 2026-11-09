@@ -130,10 +130,10 @@ pub fn flatten_document_symbols(
             result.push(info);
 
             // Recursively flatten children with this symbol as container
-            if let Some(children) = &symbol.children {
-                if !children.is_empty() {
-                    flatten(result, document_uri, children, Some(&symbol.name));
-                }
+            if let Some(children) = &symbol.children
+                && !children.is_empty()
+            {
+                flatten(result, document_uri, children, Some(&symbol.name));
             }
         }
     }
@@ -641,17 +641,16 @@ fn merge_expandos(symbols: Vec<DocSymbol>) -> Vec<DocSymbol> {
             }
         }
         // Merge namespaces.
-        if symbol_kind == lsproto::SymbolKind::NAMESPACE {
-            if let Some(&target_index) = name_to_namespace_index.get(&symbol_name) {
-                if target_index != i as i32 {
-                    let target_symbol = symbols[target_index as usize]
-                        .clone()
-                        .unwrap_or_else(|| crate::core::go_nil_dereference());
-                    merge_children(&target_symbol, &symbol);
-                    // Mark this symbol as merged.
-                    symbols[i] = None;
-                }
-            }
+        if symbol_kind == lsproto::SymbolKind::NAMESPACE
+            && let Some(&target_index) = name_to_namespace_index.get(&symbol_name)
+            && target_index != i as i32
+        {
+            let target_symbol = symbols[target_index as usize]
+                .clone()
+                .unwrap_or_else(|| crate::core::go_nil_dereference());
+            merge_children(&target_symbol, &symbol);
+            // Mark this symbol as merged.
+            symbols[i] = None;
         }
     }
     for symbol in symbols.into_iter().flatten() {

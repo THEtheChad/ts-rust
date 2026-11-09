@@ -452,10 +452,10 @@ fn parse_plugin(plugin: Getter<'_>) -> Option<EffectPluginOptions> {
         }
         result.diagnostic_severity = Some(parse_diagnostic_severity_map(diag));
     }
-    if let Some(val) = get("overrides") {
-        if let Some(overrides) = parse_overrides(val) {
-            result.overrides = overrides;
-        }
+    if let Some(val) = get("overrides")
+        && let Some(overrides) = parse_overrides(val)
+    {
+        result.overrides = overrides;
     }
     set_bool(
         "includeSuggestionsInTsc",

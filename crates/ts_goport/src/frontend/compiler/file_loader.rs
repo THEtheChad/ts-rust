@@ -2936,10 +2936,10 @@ pub(crate) fn mode_for_import_usage(
     if let ImportUsage::Override(mode) = usage {
         return mode;
     }
-    if let Some(options) = options {
-        if import_syntax_affects_module_resolution(options) {
-            return emit_syntax_for_usage(usage, file_name, meta, options, file_emit_mode);
-        }
+    if let Some(options) = options
+        && import_syntax_affects_module_resolution(options)
+    {
+        return emit_syntax_for_usage(usage, file_name, meta, options, file_emit_mode);
     }
 
     RESOLUTION_MODE_NONE

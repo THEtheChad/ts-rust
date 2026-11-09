@@ -869,10 +869,10 @@ impl Checker {
             base_id: base_type,
             constraint_id: constraint,
         };
-        if let Some(&cached) = self.substitution_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.substitution_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let result = self.new_substitution_type(base_type, constraint);
         self.substitution_types.insert(key, result);
@@ -1650,14 +1650,14 @@ impl Checker {
             },
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return if cached == self.circular_constraint_type {
-                    t
-                } else {
-                    cached
-                };
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return if cached == self.circular_constraint_type {
+                t
+            } else {
+                cached
+            };
         }
         self.cached_types.insert(key, t);
         let mut result = self.get_simplified_indexed_access_type_worker(t, writing);
@@ -1730,14 +1730,13 @@ impl Checker {
         // If the object type is a mapped type { [P in K]: E }, where K is generic, or { [P in K as N]: E }, where
         // K is generic and N is assignable to P, instantiate E using a mapper that substitutes the index type for P.
         // For example, for an index access { [P in K]: Box<T[P]> }[X], we construct the type Box<T[X]>.
-        if self.is_generic_mapped_type(object_type) {
-            if self.get_mapped_type_name_type_kind(object_type) != MappedTypeNameTypeKind::REMAPPING
-            {
-                let substituted = self.substitute_indexed_mapped_type(object_type, t_index_type);
-                return self.map_type(substituted, &mut |c: &mut Checker, t: TypeId| {
-                    c.get_simplified_type(t, writing)
-                });
-            }
+        if self.is_generic_mapped_type(object_type)
+            && self.get_mapped_type_name_type_kind(object_type) != MappedTypeNameTypeKind::REMAPPING
+        {
+            let substituted = self.substitute_indexed_mapped_type(object_type, t_index_type);
+            return self.map_type(substituted, &mut |c: &mut Checker, t: TypeId| {
+                c.get_simplified_type(t, writing)
+            });
         }
         t
     }

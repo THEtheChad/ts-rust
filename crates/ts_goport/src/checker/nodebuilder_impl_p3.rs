@@ -381,20 +381,20 @@ impl Checker {
             return true;
         }
         // (2)
-        if let Some(&last) = reverse_mapped_stack.last() {
-            if self.reverse_mapped_symbol_links.has(last) {
-                let property_type = self
-                    .reverse_mapped_symbol_links
-                    .try_get(last)
-                    .map_or(TypeId::NIL, |l| l.property_type);
-                if property_type.is_some()
-                    && !self
-                        .ty(property_type)
-                        .object_flags
-                        .intersects(ObjectFlags::ANONYMOUS)
-                {
-                    return true;
-                }
+        if let Some(&last) = reverse_mapped_stack.last()
+            && self.reverse_mapped_symbol_links.has(last)
+        {
+            let property_type = self
+                .reverse_mapped_symbol_links
+                .try_get(last)
+                .map_or(TypeId::NIL, |l| l.property_type);
+            if property_type.is_some()
+                && !self
+                    .ty(property_type)
+                    .object_flags
+                    .intersects(ObjectFlags::ANONYMOUS)
+            {
+                return true;
             }
         }
         // (3) - we only inspect the last MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH elements of the

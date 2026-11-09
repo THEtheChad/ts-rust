@@ -654,18 +654,16 @@ pub fn decode_go_js_string_rune(s: &str) -> (u32, usize, usize) {
         GoUnit::InvalidByte(b) => {
             // Go checks for the WTF-8 bytes of a surrogate first. They are 3
             // invalid byte units here when they came from source text.
-            if b == 0xED && size < s.len() {
-                if let (GoUnit::InvalidByte(b1), size1) = go_unit_at(s, size) {
-                    if (0xA0..=0xBF).contains(&b1) && size + size1 < s.len() {
-                        if let (GoUnit::InvalidByte(b2), size2) = go_unit_at(s, size + size1) {
-                            if (0x80..=0xBF).contains(&b2) {
-                                let cp =
-                                    0xD000 | (u32::from(b1) & 0x3F) << 6 | (u32::from(b2) & 0x3F);
-                                return (cp, size + size1 + size2, 3);
-                            }
-                        }
-                    }
-                }
+            if b == 0xED
+                && size < s.len()
+                && let (GoUnit::InvalidByte(b1), size1) = go_unit_at(s, size)
+                && (0xA0..=0xBF).contains(&b1)
+                && size + size1 < s.len()
+                && let (GoUnit::InvalidByte(b2), size2) = go_unit_at(s, size + size1)
+                && (0x80..=0xBF).contains(&b2)
+            {
+                let cp = 0xD000 | (u32::from(b1) & 0x3F) << 6 | (u32::from(b2) & 0x3F);
+                return (cp, size + size1 + size2, 3);
             }
             (char::REPLACEMENT_CHARACTER as u32, size, 1)
         }

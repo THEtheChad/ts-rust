@@ -345,10 +345,10 @@ impl Checker {
             kind: CachedTypeKind::REGULAR_OBJECT_LITERAL,
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         self.resolve_structured_type_members(t);
         let members = self.transform_type_of_members(t, &mut |c: &mut Checker, pt: TypeId| {
@@ -547,10 +547,10 @@ impl Checker {
                             }
                         }
                         // ts#64674, Go N' checker.go:28798: enum member names are checked now (checkEnumMember).
-                        if computed_name.is_some() {
-                            if is_invalid_computed_property_name(computed_name) {
-                                return;
-                            }
+                        if computed_name.is_some()
+                            && is_invalid_computed_property_name(computed_name)
+                        {
+                            return;
                         }
                         if heritage_clause.is_some() {
                             // extends heritage clauses on interfaces are not expressions and are unchecked if they are
@@ -1558,10 +1558,10 @@ impl Checker {
             kind: CachedTypeKind::PROMISED_TYPE_OF_PROMISE,
             type_id: t,
         };
-        if let Some(&cached) = self.cached_types.get(&key) {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(&cached) = self.cached_types.get(&key)
+            && cached.is_some()
+        {
+            return cached;
         }
         let global_promise_type = self.get_global_promise_type();
         if self.is_reference_to_type(t, global_promise_type) {

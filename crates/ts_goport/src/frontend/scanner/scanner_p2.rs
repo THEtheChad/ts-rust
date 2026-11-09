@@ -1039,11 +1039,10 @@ impl<'a> Scanner<'a> {
                     // UTF-16 code units would in a JavaScript string.
                     if !flags.intersects(EscapeSequenceScanningFlags::REGULAR_EXPRESSION)
                         && is_high_surrogate(code_point as u32)
+                        && let Some(combined) = self.scan_low_surrogate_escape(code_point)
                     {
-                        if let Some(combined) = self.scan_low_surrogate_escape(code_point) {
-                            out.push(rune_to_char(combined));
-                            return;
-                        }
+                        out.push(rune_to_char(combined));
+                        return;
                     }
                     push_js_string_rune(out, code_point as u32);
                     return;

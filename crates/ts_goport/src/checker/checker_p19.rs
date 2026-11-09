@@ -600,42 +600,41 @@ impl Checker {
                             self.get_type_parameters_for_type_reference_or_import(parent);
                         if !type_parameters.is_empty() {
                             let index = parent.type_arguments().iter().position(|n| n == child);
-                            if let Some(index) = index {
-                                if index < type_parameters.len() {
-                                    let declared_constraint = self
-                                        .get_constraint_of_type_parameter(type_parameters[index]);
-                                    if declared_constraint.is_some() {
-                                        // Type parameter constraints can reference other type parameters so
-                                        // constraints need to be instantiated. If instantiation produces the
-                                        // type parameter itself, we discard that inference. For example, in
-                                        //   type Foo<T extends string, U extends T> = [T, U];
-                                        //   type Bar<T> = T extends Foo<infer X, infer X> ? Foo<X, X> : T;
-                                        // the instantiated constraint for U is X, so we discard that inference.
-                                        let shared_type_parameters: Rc<Vec<TypeId>> =
-                                            Rc::new(type_parameters.clone());
-                                        let targets: Vec<DeferredTypeFn> = (0..type_parameters
-                                            .len())
-                                            .map(|index| {
-                                                let type_parameters =
-                                                    Rc::clone(&shared_type_parameters);
-                                                let f: DeferredTypeFn =
-                                                    Rc::new(move |c: &mut Checker| {
-                                                        c.get_effective_type_argument_at_index(
-                                                            parent,
-                                                            &type_parameters,
-                                                            index as i32,
-                                                        )
-                                                    });
-                                                f
-                                            })
-                                            .collect();
-                                        let mapper = self
-                                            .new_deferred_type_mapper(&type_parameters, targets);
-                                        let constraint =
-                                            self.instantiate_type(declared_constraint, mapper);
-                                        if constraint != t {
-                                            inferences.push(constraint);
-                                        }
+                            if let Some(index) = index
+                                && index < type_parameters.len()
+                            {
+                                let declared_constraint =
+                                    self.get_constraint_of_type_parameter(type_parameters[index]);
+                                if declared_constraint.is_some() {
+                                    // Type parameter constraints can reference other type parameters so
+                                    // constraints need to be instantiated. If instantiation produces the
+                                    // type parameter itself, we discard that inference. For example, in
+                                    //   type Foo<T extends string, U extends T> = [T, U];
+                                    //   type Bar<T> = T extends Foo<infer X, infer X> ? Foo<X, X> : T;
+                                    // the instantiated constraint for U is X, so we discard that inference.
+                                    let shared_type_parameters: Rc<Vec<TypeId>> =
+                                        Rc::new(type_parameters.clone());
+                                    let targets: Vec<DeferredTypeFn> = (0..type_parameters.len())
+                                        .map(|index| {
+                                            let type_parameters =
+                                                Rc::clone(&shared_type_parameters);
+                                            let f: DeferredTypeFn =
+                                                Rc::new(move |c: &mut Checker| {
+                                                    c.get_effective_type_argument_at_index(
+                                                        parent,
+                                                        &type_parameters,
+                                                        index as i32,
+                                                    )
+                                                });
+                                            f
+                                        })
+                                        .collect();
+                                    let mapper =
+                                        self.new_deferred_type_mapper(&type_parameters, targets);
+                                    let constraint =
+                                        self.instantiate_type(declared_constraint, mapper);
+                                    if constraint != t {
+                                        inferences.push(constraint);
                                     }
                                 }
                             }

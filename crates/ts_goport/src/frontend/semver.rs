@@ -86,11 +86,11 @@ fn match_version_pattern(text: &str, wildcards: bool) -> Option<[&str; 5]> {
             pos += 1 + n;
         }
     }
-    if let Some(rest) = text[pos..].strip_prefix('+') {
-        if let Some(n) = match_part_run(rest) {
-            groups[4] = &text[pos + 1..pos + 1 + n];
-            pos += 1 + n;
-        }
+    if let Some(rest) = text[pos..].strip_prefix('+')
+        && let Some(n) = match_part_run(rest)
+    {
+        groups[4] = &text[pos + 1..pos + 1 + n];
+        pos += 1 + n;
     }
     if pos == text.len() {
         Some(groups)

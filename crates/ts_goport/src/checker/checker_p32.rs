@@ -1101,15 +1101,13 @@ impl Checker {
         let parent = declaration.parent().parent();
         let mut parent_type =
             self.get_contextual_type_for_variable_like_declaration(parent, context_flags);
-        if parent_type.is_nil() {
-            if !is_binding_element(parent) && parent.initializer().is_some() {
-                let check_mode = if has_dot_dot_dot_token(declaration) {
-                    CheckMode::REST_BINDING_ELEMENT
-                } else {
-                    CheckMode::NORMAL
-                };
-                parent_type = self.check_declaration_initializer(parent, check_mode, TypeId::NIL);
-            }
+        if parent_type.is_nil() && !is_binding_element(parent) && parent.initializer().is_some() {
+            let check_mode = if has_dot_dot_dot_token(declaration) {
+                CheckMode::REST_BINDING_ELEMENT
+            } else {
+                CheckMode::NORMAL
+            };
+            parent_type = self.check_declaration_initializer(parent, check_mode, TypeId::NIL);
         }
         if parent_type.is_nil() {
             return TypeId::NIL;

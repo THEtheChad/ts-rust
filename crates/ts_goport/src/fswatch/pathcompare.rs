@@ -55,12 +55,12 @@ impl ComparisonPath<'_> {
     // Go: pathcompare.go:33 comparisonPath.fold
     pub fn fold(&mut self) -> String {
         if !self.ready {
-            if let Some(cache) = self.cache {
-                if let Some(folded) = cache.lock().unwrap().get(&self.path) {
-                    self.folded = folded.clone();
-                    self.ready = true;
-                    return self.folded.clone();
-                }
+            if let Some(cache) = self.cache
+                && let Some(folded) = cache.lock().unwrap().get(&self.path)
+            {
+                self.folded = folded.clone();
+                self.ready = true;
+                return self.folded.clone();
             }
             self.folded = fold_native_path(&self.path);
             self.ready = true;

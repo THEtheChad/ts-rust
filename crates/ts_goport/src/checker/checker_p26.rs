@@ -686,15 +686,15 @@ impl Checker {
         let t = self.get_declared_type_of_symbol(symbol);
         if t == self.intrinsic_marker_type {
             let name = self.sym(symbol).name.clone();
-            if let Some(&type_kind) = INTRINSIC_TYPE_KINDS.get(name.as_str()) {
-                if type_arguments.len() == 1 {
-                    match type_kind {
-                        IntrinsicTypeKind::NO_INFER => {
-                            return self.get_no_infer_type(type_arguments[0]);
-                        }
-                        _ => {
-                            return self.get_string_mapping_type(symbol, type_arguments[0]);
-                        }
+            if let Some(&type_kind) = INTRINSIC_TYPE_KINDS.get(name.as_str())
+                && type_arguments.len() == 1
+            {
+                match type_kind {
+                    IntrinsicTypeKind::NO_INFER => {
+                        return self.get_no_infer_type(type_arguments[0]);
+                    }
+                    _ => {
+                        return self.get_string_mapping_type(symbol, type_arguments[0]);
                     }
                 }
             }
@@ -1291,11 +1291,10 @@ impl Checker {
         let ev = self.evaluate.clone();
         let result = ev(self, initializer, member);
         if result.value.is_some() {
-            if is_const_enum {
-                if let Some(LiteralValue::Number(num_value)) = &result.value {
-                    let num_value = *num_value;
-                    if num_value.is_infinite() || num_value.is_nan() {
-                        self.error(
+            if is_const_enum && let Some(LiteralValue::Number(num_value)) = &result.value {
+                let num_value = *num_value;
+                if num_value.is_infinite() || num_value.is_nan() {
+                    self.error(
                             initializer,
                             if num_value.is_nan() {
                                 diag::X_const_enum_member_initializer_was_evaluated_to_disallowed_value_NaN
@@ -1304,21 +1303,19 @@ impl Checker {
                             },
                             vec![],
                         );
-                    }
                 }
             }
-            if self.compiler_options.get_isolated_modules() {
-                if matches!(result.value, Some(LiteralValue::String(_)))
-                    && !result.is_syntactically_string
-                {
-                    let member_name =
-                        format!("{}.{}", member.parent().name().text(), member.name().text());
-                    self.error(
+            if self.compiler_options.get_isolated_modules()
+                && matches!(result.value, Some(LiteralValue::String(_)))
+                && !result.is_syntactically_string
+            {
+                let member_name =
+                    format!("{}.{}", member.parent().name().text(), member.name().text());
+                self.error(
                         initializer,
                         diag::X_0_has_a_string_type_but_must_have_syntactically_recognizable_string_syntax_when_isolatedModules_is_enabled,
                         args![member_name],
                     );
-                }
             }
         } else if is_const_enum {
             self.error(
@@ -1359,25 +1356,24 @@ impl Checker {
                 if symbol.is_nil() {
                     return new_result(None, false, false, false);
                 }
-                if expr.kind() == SyntaxKind::Identifier {
-                    if is_infinity_or_nan_string(expr.text())
-                        && (symbol
-                            == self.get_global_symbol(
-                                expr.text(),
-                                SymbolFlags::VALUE,
-                                None, /*diagnostic*/
-                            ))
-                    {
-                        // Technically we resolved a global lib file here, but the decision to treat this as numeric
-                        // is more predicated on the fact that the single-file resolution *didn't* resolve to a
-                        // different meaning of `Infinity` or `NaN`. Transpilers handle this no problem.
-                        return new_result(
-                            Some(LiteralValue::Number(crate::jsnum::from_string(expr.text()))),
-                            false,
-                            false,
-                            false,
-                        );
-                    }
+                if expr.kind() == SyntaxKind::Identifier
+                    && is_infinity_or_nan_string(expr.text())
+                    && (symbol
+                        == self.get_global_symbol(
+                            expr.text(),
+                            SymbolFlags::VALUE,
+                            None, /*diagnostic*/
+                        ))
+                {
+                    // Technically we resolved a global lib file here, but the decision to treat this as numeric
+                    // is more predicated on the fact that the single-file resolution *didn't* resolve to a
+                    // different meaning of `Infinity` or `NaN`. Transpilers handle this no problem.
+                    return new_result(
+                        Some(LiteralValue::Number(crate::jsnum::from_string(expr.text()))),
+                        false,
+                        false,
+                        false,
+                    );
                 }
                 if self.sym(symbol).flags.intersects(SymbolFlags::ENUM_MEMBER) {
                     if location.is_some() {

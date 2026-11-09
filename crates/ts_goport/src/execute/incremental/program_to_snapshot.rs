@@ -21,13 +21,12 @@ pub fn program_to_snapshot(
     hash_with_text: bool,
 ) -> Rc<RefCell<Snapshot>> {
     let program = prog();
-    if let Some(old_program) = old_program {
-        if old_program
+    if let Some(old_program) = old_program
+        && old_program
             .program
             .is_some_and(|old| std::ptr::eq(old, program))
-        {
-            return old_program.snapshot.clone();
-        }
+    {
+        return old_program.snapshot.clone();
     }
     let mut snapshot = Snapshot::new(options());
     snapshot.hash_with_text = hash_with_text;
@@ -248,16 +247,14 @@ impl ToProgramSnapshot<'_> {
                         }
                     }
                 }
-                if can_copy_emit_signatures {
-                    if let Some(old_emit_signature) = old_snapshot.emit_signatures.get(&file_path) {
-                        self.snapshot.emit_signatures.insert(
-                            file_path.clone(),
-                            old_emit_signature.get_new_emit_signature(
-                                old_snapshot.options,
-                                self.snapshot.options,
-                            ),
-                        );
-                    }
+                if can_copy_emit_signatures
+                    && let Some(old_emit_signature) = old_snapshot.emit_signatures.get(&file_path)
+                {
+                    self.snapshot.emit_signatures.insert(
+                        file_path.clone(),
+                        old_emit_signature
+                            .get_new_emit_signature(old_snapshot.options, self.snapshot.options),
+                    );
                 }
             } else {
                 let emit_kind = get_file_emit_kind(self.snapshot.options);
@@ -370,11 +367,11 @@ impl ToProgramSnapshot<'_> {
             if !old_info.affects_global_scope {
                 continue;
             }
-            if let Some(new_info) = self.snapshot.file_infos.get(file_path) {
-                if !new_info.affects_global_scope {
-                    global_scope_lost = true;
-                    break;
-                }
+            if let Some(new_info) = self.snapshot.file_infos.get(file_path)
+                && !new_info.affects_global_scope
+            {
+                global_scope_lost = true;
+                break;
             }
         }
         if global_scope_lost {
@@ -414,12 +411,11 @@ impl ToProgramSnapshot<'_> {
 
     // Go: incremental/programtosnapshot.go:253 handlePendingCheck
     fn handle_pending_check(&mut self) {
-        if let Some(old_program) = self.old_program {
-            if self.snapshot.semantic_diagnostics_per_file.len() != source_files().len()
-                && old_program.snapshot.borrow().check_pending != self.snapshot.check_pending
-            {
-                self.snapshot.build_info_emit_pending = true;
-            }
+        if let Some(old_program) = self.old_program
+            && self.snapshot.semantic_diagnostics_per_file.len() != source_files().len()
+            && old_program.snapshot.borrow().check_pending != self.snapshot.check_pending
+        {
+            self.snapshot.build_info_emit_pending = true;
         }
     }
 }

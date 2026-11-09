@@ -1721,10 +1721,11 @@ pub fn for_each_dynamic_import_or_require_call(
             if cb(node, node.arguments().get(0)) {
                 return true;
             }
-        } else if include_type_space_imports && is_literal_import_type_node(node) {
-            if cb(node, node.argument().literal()) {
-                return true;
-            }
+        } else if include_type_space_imports
+            && is_literal_import_type_node(node)
+            && cb(node, node.argument().literal())
+        {
+            return true;
         }
         // skip past import/require
         last_index += size;

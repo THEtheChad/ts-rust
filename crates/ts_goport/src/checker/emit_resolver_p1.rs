@@ -335,13 +335,12 @@ impl Checker {
             | SyntaxKind::FunctionDeclaration
             | SyntaxKind::EnumDeclaration
             | SyntaxKind::ImportEqualsDeclaration => {
-                if is_variable_declaration(node) {
-                    if is_binding_pattern(node.name()) && node.name().elements().is_empty() {
+                if is_variable_declaration(node)
+                    && is_binding_pattern(node.name()) && node.name().elements().is_empty() {
                         // If the binding pattern is empty, this variable declaration is not visible
                         return false;
                     }
                     // falls through
-                }
                 // External module augmentation is always visible
                 // A @typedef at top-level in an external module is always visible
                 if is_external_module_augmentation(node) || is_implicitly_exported_js_doc_declaration(node) {

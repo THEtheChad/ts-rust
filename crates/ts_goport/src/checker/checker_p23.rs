@@ -17,18 +17,16 @@ impl Checker {
                 .ty(t)
                 .object_flags
                 .intersects(ObjectFlags::CONTAINS_WIDENING_TYPE)
-        {
-            if widening_kind == WideningKind::NORMAL
+            && (widening_kind == WideningKind::NORMAL
                 || is_function_like_declaration(declaration)
                     && self.should_report_errors_from_widening_with_contextual_signature(
                         declaration,
                         widening_kind,
-                    )
-            {
-                // Report implicit any error within type if possible, otherwise report error on declaration
-                if !self.report_widening_errors_in_type(t) {
-                    self.report_implicit_any(declaration, t, widening_kind);
-                }
+                    ))
+        {
+            // Report implicit any error within type if possible, otherwise report error on declaration
+            if !self.report_widening_errors_in_type(t) {
+                self.report_implicit_any(declaration, t, widening_kind);
             }
         }
     }

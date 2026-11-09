@@ -247,15 +247,15 @@ impl View {
                 ((), false)
             });
         // If we found at least one package.json, also include packages directly imported by the project
-        if let Some(allowed) = &allowed_packages {
-            if let Some(bucket) = self.registry.projects.get(&self.project_id) {
-                // Go: allowedPackages.UnionedWith(bucket.ResolvedPackageNames)
-                let mut result = allowed.clone();
-                if let Some(other) = &bucket.resolved_package_names {
-                    result.extend(other.iter().cloned());
-                }
-                allowed_packages = Some(result);
+        if let Some(allowed) = &allowed_packages
+            && let Some(bucket) = self.registry.projects.get(&self.project_id)
+        {
+            // Go: allowedPackages.UnionedWith(bucket.ResolvedPackageNames)
+            let mut result = allowed.clone();
+            if let Some(other) = &bucket.resolved_package_names {
+                result.extend(other.iter().cloned());
             }
+            allowed_packages = Some(result);
         }
 
         let mut exclude_packages: FxHashSet<String> = FxHashSet::default();
@@ -379,15 +379,14 @@ impl View {
                     e.package_name.clone(),
                 ]),
             };
-            if e.package_name == "@types/node" || e.path.0.contains("/node_modules/@types/node/") {
-                if UNPREFIXED_NODE_CORE_MODULES
+            if (e.package_name == "@types/node" || e.path.0.contains("/node_modules/@types/node/"))
+                && UNPREFIXED_NODE_CORE_MODULES
                     .contains_key(key.ambient_module_or_package_name.as_str())
-                {
-                    // Group URI-style and non-URI style node core modules together so the ranking logic
-                    // is allowed to drop one if an explicit preference is detected.
-                    key.ambient_module_or_package_name =
-                        format!("node:{}", key.ambient_module_or_package_name);
-                }
+            {
+                // Group URI-style and non-URI style node core modules together so the ranking logic
+                // is allowed to drop one if an explicit preference is detected.
+                key.ambient_module_or_package_name =
+                    format!("node:{}", key.ambient_module_or_package_name);
             }
             if let Some(existing) = grouped.get_mut(&key) {
                 for i in 0..existing.len() {

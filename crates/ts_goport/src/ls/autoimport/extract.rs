@@ -633,19 +633,16 @@ impl SymbolExtractor<'_> {
             if is_unusable_name(&export.local_name) {
                 export.local_name = export.target.export_name.clone();
             }
-            if is_unusable_name(&export.local_name) {
-                if target_symbol.is_some() {
-                    named_symbol = target_symbol;
-                    let s =
-                        get_local_symbol_for_export_default(&self.checker.symbols, target_symbol);
-                    if s.is_some() {
-                        named_symbol = s;
-                    }
-                    export.local_name = get_default_like_export_name_from_declaration(
-                        &self.checker.symbols,
-                        named_symbol,
-                    );
+            if is_unusable_name(&export.local_name) && target_symbol.is_some() {
+                named_symbol = target_symbol;
+                let s = get_local_symbol_for_export_default(&self.checker.symbols, target_symbol);
+                if s.is_some() {
+                    named_symbol = s;
                 }
+                export.local_name = get_default_like_export_name_from_declaration(
+                    &self.checker.symbols,
+                    named_symbol,
+                );
             }
             if is_unusable_name(&export.local_name) {
                 // Last resort: derive identifier from the file name. Use FileName() (original

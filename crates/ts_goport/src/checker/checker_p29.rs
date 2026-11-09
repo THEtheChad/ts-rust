@@ -89,7 +89,7 @@ impl Checker {
             }
             return self.null_type;
         }
-        if includes.intersects(TypeFlags::STRING)
+        if (includes.intersects(TypeFlags::STRING)
             && includes.intersects(
                 TypeFlags::STRING_LITERAL | TypeFlags::TEMPLATE_LITERAL | TypeFlags::STRING_MAPPING,
             )
@@ -101,11 +101,10 @@ impl Checker {
                 && includes.intersects(TypeFlags::UNIQUE_ES_SYMBOL)
             || includes.intersects(TypeFlags::VOID) && includes.intersects(TypeFlags::UNDEFINED)
             || includes.intersects(TypeFlags::INCLUDES_EMPTY_OBJECT)
-                && includes.intersects(TypeFlags::DEFINITELY_NON_NULLABLE)
+                && includes.intersects(TypeFlags::DEFINITELY_NON_NULLABLE))
+            && !flags.intersects(IntersectionFlags::NO_SUPERTYPE_REDUCTION)
         {
-            if !flags.intersects(IntersectionFlags::NO_SUPERTYPE_REDUCTION) {
-                self.remove_redundant_supertypes(&mut type_set, includes);
-            }
+            self.remove_redundant_supertypes(&mut type_set, includes);
         }
         if includes.intersects(TypeFlags::INCLUDES_MISSING_TYPE) {
             let undefined_type = self.undefined_type;
@@ -537,24 +536,22 @@ impl Checker {
                 let t = self.type_at(u, i);
                 let (new_checked, inserted) = self.insert_type(&checked, t);
                 checked = new_checked;
-                if inserted {
-                    if self.each_union_contains(&union_types, t) {
-                        // undefinedType/missingType are always sorted first so we leverage that here
-                        if t == self.undefined_type
-                            && !result.is_empty()
-                            && result[0] == self.missing_type
-                        {
-                            continue;
-                        }
-                        if t == self.missing_type
-                            && !result.is_empty()
-                            && result[0] == self.undefined_type
-                        {
-                            result[0] = self.missing_type;
-                            continue;
-                        }
-                        result = self.insert_type(&result, t).0;
+                if inserted && self.each_union_contains(&union_types, t) {
+                    // undefinedType/missingType are always sorted first so we leverage that here
+                    if t == self.undefined_type
+                        && !result.is_empty()
+                        && result[0] == self.missing_type
+                    {
+                        continue;
                     }
+                    if t == self.missing_type
+                        && !result.is_empty()
+                        && result[0] == self.undefined_type
+                    {
+                        result[0] = self.missing_type;
+                        continue;
+                    }
+                    result = self.insert_type(&result, t).0;
                 }
             }
         }
@@ -1413,10 +1410,10 @@ impl Checker {
             },
             type_id: t,
         };
-        if let Some(&index_type) = self.cached_types.get(&key) {
-            if index_type.is_some() {
-                return index_type;
-            }
+        if let Some(&index_type) = self.cached_types.get(&key)
+            && index_type.is_some()
+        {
+            return index_type;
         }
         let index_type = self.new_index_type(t, index_flags & IndexFlags::STRINGS_ONLY);
         self.cached_types.insert(key, index_type);

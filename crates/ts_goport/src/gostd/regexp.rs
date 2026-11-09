@@ -917,10 +917,8 @@ pub mod syntax {
 
         // Go: regexp/syntax/parse.go:212 calcSize
         fn calc_size(&mut self, re: usize, force: bool) -> i64 {
-            if !force {
-                if let Some(&size) = self.size.as_ref().and_then(|m| m.get(&re)) {
-                    return size;
-                }
+            if !force && let Some(&size) = self.size.as_ref().and_then(|m| m.get(&re)) {
+                return size;
             }
 
             let mut size: i64 = 0;
@@ -988,10 +986,8 @@ pub mod syntax {
 
         // Go: regexp/syntax/parse.go:273 calcHeight
         fn calc_height(&mut self, re: usize, force: bool) -> usize {
-            if !force {
-                if let Some(&h) = self.height.as_ref().and_then(|m| m.get(&re)) {
-                    return h;
-                }
+            if !force && let Some(&h) = self.height.as_ref().and_then(|m| m.get(&re)) {
+                return h;
             }
             let mut h = 1;
             for sub in self.nodes[re].sub.clone() {
@@ -2146,11 +2142,13 @@ pub mod syntax {
                 first = false;
 
                 // Look for POSIX [:alnum:] etc.
-                if t.len() > 2 && tb[0] == b'[' && tb[1] == b':' {
-                    if let Some(nt) = self.parse_named_class(t, &mut class)? {
-                        t = nt;
-                        continue;
-                    }
+                if t.len() > 2
+                    && tb[0] == b'['
+                    && tb[1] == b':'
+                    && let Some(nt) = self.parse_named_class(t, &mut class)?
+                {
+                    t = nt;
+                    continue;
                 }
 
                 // Look for Unicode character group like \p{Han}.
@@ -3267,13 +3265,12 @@ pub mod syntax {
         if op == nodes[sub].op && flags & NON_GREEDY == nodes[sub].flags & NON_GREEDY {
             return sub;
         }
-        if let Some(re) = re {
-            if nodes[re].op == op
-                && nodes[re].flags & NON_GREEDY == flags & NON_GREEDY
-                && sub == nodes[re].sub[0]
-            {
-                return re;
-            }
+        if let Some(re) = re
+            && nodes[re].op == op
+            && nodes[re].flags & NON_GREEDY == flags & NON_GREEDY
+            && sub == nodes[re].sub[0]
+        {
+            return re;
         }
 
         new_node(

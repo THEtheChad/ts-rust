@@ -1690,14 +1690,14 @@ fn get_content_mappers_key_syntax(source_file: Node) -> Node {
 // mapper at index, falling back to the "extensions" array or the mapper element.
 fn get_content_mapper_extension_syntax(source_file: Node, index: i32, ext: &str) -> Node {
     let node = get_content_mapper_syntax(source_file, index, "extensions");
-    if node.is_some() && is_array_literal_expression(node) {
-        if let Some(element) = node
+    if node.is_some()
+        && is_array_literal_expression(node)
+        && let Some(element) = node
             .elements()
             .iter()
             .find(|element| is_string_literal(*element) && element.text() == ext)
-        {
-            return element;
-        }
+    {
+        return element;
     }
     node
 }

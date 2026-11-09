@@ -106,14 +106,13 @@ impl LegacyDecoratorsTransformer {
         // takes the place of `substituteIdentifier` in the strada transform
         let ec = &self.emit_context;
         for &d in &self.enclosing_classes {
-            if let Some(alias) = self.class_alias_of(d) {
-                if self
+            if let Some(alias) = self.class_alias_of(d)
+                && self
                     .reference_resolver
                     .get_referenced_value_declaration(ec.most_original(node))
                     == ec.most_original(d)
-                {
-                    return alias;
-                }
+            {
+                return alias;
             }
         }
         node

@@ -1186,10 +1186,10 @@ impl ProjectCollectionBuilder {
             if let (Some(entry), true) = self.synthetic_projects.load(&synthetic_id) {
                 self.update_program(&*entry, logger.clone());
             }
-        } else if let (configured_id, true) = project_id.configured() {
-            if let (Some(entry), true) = self.configured_projects.load(&configured_id) {
-                self.update_program(&*entry, logger.clone());
-            }
+        } else if let (configured_id, true) = project_id.configured()
+            && let (Some(entry), true) = self.configured_projects.load(&configured_id)
+        {
+            self.update_program(&*entry, logger.clone());
         }
 
         if logger.is_some() {
@@ -1235,14 +1235,13 @@ impl ProjectCollectionBuilder {
                 if let (Some(entry), true) = b.configured_projects.load(&project_id) {
                     // If this project has potential project reference for any of the project we are loading ancestor tree for
                     // load this project first
-                    if let Some(project) = entry.value() {
-                        if project_tree_request.is_all_projects()
+                    if let Some(project) = entry.value()
+                        && (project_tree_request.is_all_projects()
                             || project
                                 .borrow()
-                                .has_potential_project_reference(project_tree_request)
-                        {
-                            b.update_program(&*entry, logger.clone());
-                        }
+                                .has_potential_project_reference(project_tree_request))
+                    {
+                        b.update_program(&*entry, logger.clone());
                     }
                     b.ensure_project_tree(
                         &wg_inner,
@@ -1421,13 +1420,13 @@ impl ProjectCollectionBuilder {
                         &**ata_change,
                     );
                 }
-            } else if let (configured_id, true) = project_id.configured() {
-                if let (Some(project), true) = self.configured_projects.load(&configured_id) {
-                    update_project(
-                        &*project as &dyn dirty::Value<Rc<RefCell<Project>>>,
-                        &**ata_change,
-                    );
-                }
+            } else if let (configured_id, true) = project_id.configured()
+                && let (Some(project), true) = self.configured_projects.load(&configured_id)
+            {
+                update_project(
+                    &*project as &dyn dirty::Value<Rc<RefCell<Project>>>,
+                    &**ata_change,
+                );
             }
 
             if logger.is_some() {
@@ -1508,19 +1507,19 @@ impl ProjectCollectionBuilder {
                             .map(|entry| entry as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>);
                     }
                 }
-                if project.is_none() {
-                    if let (configured_id, true) = project_id.configured() {
-                        // PORT: Go stores the nil `*SyncMapEntry` of a missed
-                        // `Load` in the interface, so `project == nil` is
-                        // false and `project.Value()` reads the nil entry.
-                        project = Some(
-                            self.configured_projects
-                                .load(&configured_id)
-                                .0
-                                .map(|entry| entry as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>)
-                                .unwrap_or_else(|| crate::core::go_nil_dereference()),
-                        );
-                    }
+                if project.is_none()
+                    && let (configured_id, true) = project_id.configured()
+                {
+                    // PORT: Go stores the nil `*SyncMapEntry` of a missed
+                    // `Load` in the interface, so `project == nil` is
+                    // false and `project.Value()` reads the nil entry.
+                    project = Some(
+                        self.configured_projects
+                            .load(&configured_id)
+                            .0
+                            .map(|entry| entry as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>)
+                            .unwrap_or_else(|| crate::core::go_nil_dereference()),
+                    );
                 }
             }
             let Some(project) = project.filter(|project| project.value().is_some()) else {
@@ -1588,16 +1587,16 @@ impl ProjectCollectionBuilder {
                 self.inferred_project.clone() as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>
             );
         }
-        if let Some(inferred_project) = self.inferred_project.value() {
-            if inferred_project.borrow().contains_file(path) {
-                // Go: `if b.fileDefaultProjects == nil { make(...) }` (the port map always exists).
-                self.file_default_projects
-                    .borrow_mut()
-                    .insert(path.clone(), inferred_project_id().as_id());
-                return Some(
-                    self.inferred_project.clone() as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>
-                );
-            }
+        if let Some(inferred_project) = self.inferred_project.value()
+            && inferred_project.borrow().contains_file(path)
+        {
+            // Go: `if b.fileDefaultProjects == nil { make(...) }` (the port map always exists).
+            self.file_default_projects
+                .borrow_mut()
+                .insert(path.clone(), inferred_project_id().as_id());
+            return Some(
+                self.inferred_project.clone() as Rc<dyn dirty::Value<Rc<RefCell<Project>>>>
+            );
         }
         None
     }
@@ -1609,12 +1608,11 @@ impl ProjectCollectionBuilder {
         path: &tspath::Path,
     ) -> Option<Rc<dirty::SyncMapEntry<ConfiguredProjectID, Rc<RefCell<Project>>>>> {
         let key = self.file_default_projects.borrow().get(path).cloned();
-        if let Some(key) = key {
-            if let (configured_id, true) = key.configured() {
-                if let (Some(entry), true) = self.configured_projects.load(&configured_id) {
-                    return Some(entry);
-                }
-            }
+        if let Some(key) = key
+            && let (configured_id, true) = key.configured()
+            && let (Some(entry), true) = self.configured_projects.load(&configured_id)
+        {
+            return Some(entry);
         }
         // Sort configured projects so we can use a deterministic "first" as a last resort.
         let mut configured_project_paths: Vec<tspath::Path> = Vec::new();
@@ -1642,8 +1640,8 @@ impl ProjectCollectionBuilder {
             },
         );
 
-        if multiple_candidates {
-            if let Some(p) = self
+        if multiple_candidates
+            && let Some(p) = self
                 .find_or_create_default_configured_project_for_file(
                     file_name,
                     path,
@@ -1651,9 +1649,8 @@ impl ProjectCollectionBuilder {
                     None,
                 )
                 .project
-            {
-                return Some(p);
-            }
+        {
+            return Some(p);
         }
 
         configured_projects.get(&project).cloned()
@@ -1702,15 +1699,14 @@ impl ProjectCollectionBuilder {
                     p.command_line.clone(),
                 )
             };
-            if let Some(command_line) = &command_line {
-                if !command_line.compiler_options().composite.is_true()
+            if let Some(command_line) = &command_line
+                && (!command_line.compiler_options().composite.is_true()
                     || command_line
                         .compiler_options()
                         .disable_solution_searching
-                        .is_true()
-                {
-                    return;
-                }
+                        .is_true())
+            {
+                return;
             }
 
             // Get config file name
@@ -1798,38 +1794,36 @@ impl ProjectCollectionBuilder {
                     .borrow()
                     .get(&(self.to_path)(&node.config_file_name))
                     .cloned();
-                if let Some(config) = config {
-                    if !config.project_references().is_empty() {
-                        let mut reference_load_kind = node.load_kind;
-                        if config
-                            .compiler_options()
-                            .disable_referenced_project_load
-                            .is_true()
-                        {
-                            reference_load_kind = ProjectLoadKind::FIND;
-                        }
-
-                        let mut ref_logger: Option<Rc<logging::LogTree>> = None;
-                        let references = config.resolved_project_reference_paths();
-                        if !references.is_empty() && node.logger.is_some() {
-                            ref_logger = node.logger.fork(&format!(
-                                "Searching {} project references of {}",
-                                references.len(),
-                                node.config_file_name
-                            ));
-                        }
-                        return references
-                            .iter()
-                            .map(|config_file_name| SearchNode {
-                                config_file_name: config_file_name.clone(),
-                                load_kind: reference_load_kind,
-                                logger: ref_logger.fork(&format!(
-                                    "Searching project reference {}",
-                                    config_file_name
-                                )),
-                            })
-                            .collect();
+                if let Some(config) = config
+                    && !config.project_references().is_empty()
+                {
+                    let mut reference_load_kind = node.load_kind;
+                    if config
+                        .compiler_options()
+                        .disable_referenced_project_load
+                        .is_true()
+                    {
+                        reference_load_kind = ProjectLoadKind::FIND;
                     }
+
+                    let mut ref_logger: Option<Rc<logging::LogTree>> = None;
+                    let references = config.resolved_project_reference_paths();
+                    if !references.is_empty() && node.logger.is_some() {
+                        ref_logger = node.logger.fork(&format!(
+                            "Searching {} project references of {}",
+                            references.len(),
+                            node.config_file_name
+                        ));
+                    }
+                    return references
+                        .iter()
+                        .map(|config_file_name| SearchNode {
+                            config_file_name: config_file_name.clone(),
+                            load_kind: reference_load_kind,
+                            logger: ref_logger
+                                .fork(&format!("Searching project reference {}", config_file_name)),
+                        })
+                        .collect();
                 }
                 Vec::new()
             },
@@ -1978,10 +1972,8 @@ impl ProjectCollectionBuilder {
             configs.borrow().get(&(self.to_path)(config_file_name)),
             Some(config) if config.compiler_options().disable_solution_searching.is_true()
         );
-        if disable_solution_searching {
-            if let Some(fallback) = fallback {
-                return fallback;
-            }
+        if disable_solution_searching && let Some(fallback) = fallback {
+            return fallback;
         }
         let ancestor_config_name = self
             .config_file_registry_builder
@@ -2537,10 +2529,8 @@ impl ProjectCollectionBuilder {
                 notified_loading = true;
             }
         });
-        if notified_loading {
-            if let Some(client) = &self.client {
-                client.progress_start(diag::Project_0, args![display_name]);
-            }
+        if notified_loading && let Some(client) = &self.client {
+            client.progress_start(diag::Project_0, args![display_name]);
         }
         if delete_project {
             self.delete_project(entry, logger.clone());
@@ -2695,10 +2685,8 @@ impl ProjectCollectionBuilder {
                 });
             });
         }
-        if notified_loading {
-            if let Some(client) = &self.client {
-                client.progress_finish(diag::Project_0, args![display_name]);
-            }
+        if notified_loading && let Some(client) = &self.client {
+            client.progress_finish(diag::Project_0, args![display_name]);
         }
         if update_program && logger.is_some() {
             let elapsed = start_time.elapsed();
@@ -2753,16 +2741,15 @@ impl ProjectCollectionBuilder {
                             *dirty_file_path.borrow_mut() = tspath::Path::default();
                             break;
                         }
-                    } else if let Some(host) = &p.host {
-                        if change_type == lsproto::FileChangeType::CREATED
+                    } else if let Some(host) = &p.host
+                        && (change_type == lsproto::FileChangeType::CREATED
                             && host.source_fs.seen_file_or_missing_parent_directory(path)
                             || change_type != lsproto::FileChangeType::CREATED
-                                && host.source_fs.seen_file(path)
-                        {
-                            dirty.set(true);
-                            *dirty_file_path.borrow_mut() = tspath::Path::default();
-                            break;
-                        }
+                                && host.source_fs.seen_file(path))
+                    {
+                        dirty.set(true);
+                        *dirty_file_path.borrow_mut() = tspath::Path::default();
+                        break;
                     }
                 }
                 dirty.get() || p.dirty_file_path != *dirty_file_path.borrow()
@@ -2938,17 +2925,16 @@ fn is_referenced_by(
             if let (Some(ref_project), true) = b
                 .configured_projects
                 .load(&ConfiguredProjectID(potential_ref.clone()))
-            {
-                if is_referenced_by(
+                && is_referenced_by(
                     b,
                     &ref_project
                         .value()
                         .unwrap_or_else(|| crate::core::go_nil_dereference()),
                     ref_path,
                     seen_projects,
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
         }
     } else if let Some(program) = &project.program {

@@ -407,19 +407,18 @@ impl Checker {
     // Go: checker/checker.go:10755 setNodeLinksForPrivateIdentifierScope
     pub fn set_node_links_for_private_identifier_scope(&mut self, node: Node) {
         let name = node.name();
-        if is_private_identifier(name) {
-            if self.language_version
+        if is_private_identifier(name)
+            && (self.language_version
                 < LANGUAGE_FEATURE_MINIMUM_TARGET.private_names_and_class_static_blocks
                 || self.language_version
                     < LANGUAGE_FEATURE_MINIMUM_TARGET.class_and_class_element_decorators
-                || !self.compiler_options.get_use_define_for_class_fields()
-            {
-                let mut lexical_scope = get_enclosing_block_scope_container(node);
-                while lexical_scope.is_some() {
-                    self.node_links.get(lexical_scope).flags |=
-                        NodeCheckFlags::CONTAINS_CLASS_WITH_PRIVATE_IDENTIFIERS;
-                    lexical_scope = get_enclosing_block_scope_container(lexical_scope);
-                }
+                || !self.compiler_options.get_use_define_for_class_fields())
+        {
+            let mut lexical_scope = get_enclosing_block_scope_container(node);
+            while lexical_scope.is_some() {
+                self.node_links.get(lexical_scope).flags |=
+                    NodeCheckFlags::CONTAINS_CLASS_WITH_PRIVATE_IDENTIFIERS;
+                lexical_scope = get_enclosing_block_scope_container(lexical_scope);
             }
         }
     }
@@ -642,10 +641,10 @@ impl Checker {
             node_id: node,
             type_id: expr_type,
         };
-        if let Some(cached) = self.instantiation_expression_types.get(&key).copied() {
-            if cached.is_some() {
-                return cached;
-            }
+        if let Some(cached) = self.instantiation_expression_types.get(&key).copied()
+            && cached.is_some()
+        {
+            return cached;
         }
         let mut state = InstantiationExpressionTypeState {
             node,
@@ -733,10 +732,8 @@ impl Checker {
         );
         state.has_some_applicable_signature =
             state.has_some_applicable_signature || has_applicable_signature;
-        if has_signatures && !has_applicable_signature {
-            if state.non_applicable_type.is_nil() {
-                state.non_applicable_type = t;
-            }
+        if has_signatures && !has_applicable_signature && state.non_applicable_type.is_nil() {
+            state.non_applicable_type = t;
         }
         result
     }

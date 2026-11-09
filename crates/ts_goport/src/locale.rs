@@ -245,11 +245,9 @@ pub mod language {
             return (t, false);
         }
         let mut changed = false;
-        if c & SUPPRESS_SCRIPT != 0 {
-            if t.lang_id.suppress_script() == t.script_id {
-                t.script_id = Script(0);
-                changed = true;
-            }
+        if c & SUPPRESS_SCRIPT != 0 && t.lang_id.suppress_script() == t.script_id {
+            t.script_id = Script(0);
+            changed = true;
         }
         if c & CANON_LANG != 0 {
             loop {
@@ -302,11 +300,9 @@ pub mod language {
                 break;
             }
         }
-        if c & DEPRECATED_SCRIPT != 0 {
-            if t.script_id.0 == _QAAI {
-                changed = true;
-                t.script_id = Script(_ZINH);
-            }
+        if c & DEPRECATED_SCRIPT != 0 && t.script_id.0 == _QAAI {
+            changed = true;
+            t.script_id = Script(_ZINH);
         }
         if c & DEPRECATED_REGION != 0 {
             let r = t.region_id.canonicalize();
@@ -851,11 +847,9 @@ pub mod language {
                     return;
                 }
                 c = Confidence::Low;
-            } else if have.max_region != max_region {
-                if Confidence::High < c {
-                    // There is usually a small difference between languages across regions.
-                    c = Confidence::High;
-                }
+            } else if have.max_region != max_region && Confidence::High < c {
+                // There is usually a small difference between languages across regions.
+                c = Confidence::High;
             }
 
             // We store the results of the computations of the tie-breaker rules along

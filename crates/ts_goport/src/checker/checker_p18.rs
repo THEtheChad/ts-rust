@@ -108,68 +108,61 @@ impl Checker {
             let s = self.get_symbol_key(exports, TableKey::Name(&right_name), meaning);
             symbol = self.get_merged_symbol(s);
         }
-        if symbol.is_nil() {
-            if !ignore_errors {
-                let namespace_name =
-                    self.get_fully_qualified_name(namespace, Node::NIL /*containingLocation*/);
-                let declaration_name = declaration_name_to_string(right);
-                let suggestion_for_nonexistent_module =
-                    self.get_suggested_symbol_for_nonexistent_module(right, namespace);
-                if suggestion_for_nonexistent_module.is_some() {
-                    let suggestion = self.symbol_to_string(suggestion_for_nonexistent_module);
-                    self.error(
-                        right,
-                        diag::X_0_has_no_exported_member_named_1_Did_you_mean_2,
-                        args![namespace_name, declaration_name, suggestion],
-                    );
-                    return SymbolId::NIL;
-                }
-                let mut containing_qualified_name = Node::NIL;
-                if is_qualified_name(name) {
-                    containing_qualified_name = get_containing_qualified_name_node(name);
-                }
-                let can_suggest_typeof = self.global_object_type.is_some()
-                    && meaning.intersects(SymbolFlags::TYPE)
-                    && containing_qualified_name.is_some()
-                    && !is_type_of_expression(containing_qualified_name.parent())
-                    && self
-                        .try_get_qualified_name_as_value(containing_qualified_name)
-                        .is_some();
-                if can_suggest_typeof {
-                    self.error(
+        if symbol.is_nil() && !ignore_errors {
+            let namespace_name =
+                self.get_fully_qualified_name(namespace, Node::NIL /*containingLocation*/);
+            let declaration_name = declaration_name_to_string(right);
+            let suggestion_for_nonexistent_module =
+                self.get_suggested_symbol_for_nonexistent_module(right, namespace);
+            if suggestion_for_nonexistent_module.is_some() {
+                let suggestion = self.symbol_to_string(suggestion_for_nonexistent_module);
+                self.error(
+                    right,
+                    diag::X_0_has_no_exported_member_named_1_Did_you_mean_2,
+                    args![namespace_name, declaration_name, suggestion],
+                );
+                return SymbolId::NIL;
+            }
+            let mut containing_qualified_name = Node::NIL;
+            if is_qualified_name(name) {
+                containing_qualified_name = get_containing_qualified_name_node(name);
+            }
+            let can_suggest_typeof = self.global_object_type.is_some()
+                && meaning.intersects(SymbolFlags::TYPE)
+                && containing_qualified_name.is_some()
+                && !is_type_of_expression(containing_qualified_name.parent())
+                && self
+                    .try_get_qualified_name_as_value(containing_qualified_name)
+                    .is_some();
+            if can_suggest_typeof {
+                self.error(
                         containing_qualified_name,
                         diag::X_0_refers_to_a_value_but_is_being_used_as_a_type_here_Did_you_mean_typeof_0,
                         args![checker_entity_name_to_string(containing_qualified_name)],
                     );
-                    return SymbolId::NIL;
-                }
-                if meaning.intersects(SymbolFlags::NAMESPACE) {
-                    if is_qualified_name(name.parent()) {
-                        let exports = self.get_exports_of_symbol(namespace);
-                        let s = self.get_symbol_key(
-                            exports,
-                            TableKey::Name(&right_name),
-                            SymbolFlags::TYPE,
-                        );
-                        let exported_type_symbol = self.get_merged_symbol(s);
-                        if exported_type_symbol.is_some() {
-                            let qualified_right = name.parent().right();
-                            let type_symbol_text = self.symbol_to_string(exported_type_symbol);
-                            self.error(
+                return SymbolId::NIL;
+            }
+            if meaning.intersects(SymbolFlags::NAMESPACE) && is_qualified_name(name.parent()) {
+                let exports = self.get_exports_of_symbol(namespace);
+                let s =
+                    self.get_symbol_key(exports, TableKey::Name(&right_name), SymbolFlags::TYPE);
+                let exported_type_symbol = self.get_merged_symbol(s);
+                if exported_type_symbol.is_some() {
+                    let qualified_right = name.parent().right();
+                    let type_symbol_text = self.symbol_to_string(exported_type_symbol);
+                    self.error(
                                 qualified_right,
                                 diag::Cannot_access_0_1_because_0_is_a_type_but_not_a_namespace_Did_you_mean_to_retrieve_the_type_of_the_property_1_in_0_with_0_1,
                                 args![type_symbol_text, qualified_right.text()],
                             );
-                            return SymbolId::NIL;
-                        }
-                    }
+                    return SymbolId::NIL;
                 }
-                self.error(
-                    right,
-                    diag::Namespace_0_has_no_exported_member_1,
-                    args![namespace_name, declaration_name],
-                );
             }
+            self.error(
+                right,
+                diag::Namespace_0_has_no_exported_member_1,
+                args![namespace_name, declaration_name],
+            );
         }
         symbol
     }
@@ -749,16 +742,16 @@ impl Checker {
             let (target_symbol, slot) = self.symbols.get_slot(target, &id);
             if target_symbol.is_nil() {
                 self.symbols.set_slot(slot, source_symbol);
-                if let Some(table) = lookup_table.as_deref_mut() {
-                    if export_node.is_some() {
-                        table.insert(
-                            id,
-                            ExportCollision {
-                                export_node,
-                                exports_with_duplicate: Vec::new(),
-                            },
-                        );
-                    }
+                if let Some(table) = lookup_table.as_deref_mut()
+                    && export_node.is_some()
+                {
+                    table.insert(
+                        id,
+                        ExportCollision {
+                            export_node,
+                            exports_with_duplicate: Vec::new(),
+                        },
+                    );
                 }
             } else if lookup_table.is_some()
                 && export_node.is_some()

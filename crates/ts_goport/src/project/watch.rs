@@ -479,23 +479,22 @@ pub fn create_resolution_lookup_glob_mapper(
                 } else {
                     let canonical_components = tspath::get_path_components(path, "");
                     let file_name_components = tspath::get_path_components(file_name, "");
-                    if canonical_components.len() == file_name_components.len() {
-                        if let Some(i) = canonical_components
+                    if canonical_components.len() == file_name_components.len()
+                        && let Some(i) = canonical_components
                             .iter()
                             .position(|component| component == "node_modules")
-                        {
-                            let node_modules_directory =
-                                tspath::get_path_from_path_components(&file_name_components[..=i]);
-                            node_modules_directories.insert(
-                                tspath::to_path(
-                                    &node_modules_directory,
-                                    &current_directory,
-                                    use_case_sensitive_file_names,
-                                ),
-                                node_modules_directory,
-                            );
-                            continue;
-                        }
+                    {
+                        let node_modules_directory =
+                            tspath::get_path_from_path_components(&file_name_components[..=i]);
+                        node_modules_directories.insert(
+                            tspath::to_path(
+                                &node_modules_directory,
+                                &current_directory,
+                                use_case_sensitive_file_names,
+                            ),
+                            node_modules_directory,
+                        );
+                        continue;
                     }
                     external_directories.insert(
                         path.get_directory_path(),

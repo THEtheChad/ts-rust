@@ -218,10 +218,10 @@ pub fn diff_maps_func<K, V1, V2>(
     }
     m1.go_range(&mut |k, v1| {
         if let Some(v2) = m2.go_get(k) {
-            if let Some(on_changed) = on_changed.as_mut() {
-                if !equal_values(v1, v2) {
-                    on_changed(k, v1, v2);
-                }
+            if let Some(on_changed) = on_changed.as_mut()
+                && !equal_values(v1, v2)
+            {
+                on_changed(k, v1, v2);
             }
         } else {
             // PORT: Go calls onRemoved here even when it is nil, which panics.

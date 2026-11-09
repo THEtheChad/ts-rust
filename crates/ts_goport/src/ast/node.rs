@@ -4014,10 +4014,10 @@ struct NodeChildVisit<'a, 'b> {
 impl NodeChildVisit<'_, '_> {
     #[inline(always)]
     fn report(&mut self, l: NodeList, is_mod: bool) {
-        if let Some(h) = self.lists.as_mut() {
-            if l.is_some() {
-                h(l, is_mod);
-            }
+        if let Some(h) = self.lists.as_mut()
+            && l.is_some()
+        {
+            h(l, is_mod);
         }
     }
 

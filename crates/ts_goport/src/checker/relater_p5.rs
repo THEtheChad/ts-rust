@@ -2078,10 +2078,10 @@ impl Checker {
         let rb = r.borrow();
         let chain = rb.error_chain.as_ref().unwrap();
         for (i, a) in args.iter().enumerate() {
-            if let Some(a) = a {
-                if *a != chain.args[i] {
-                    return false;
-                }
+            if let Some(a) = a
+                && *a != chain.args[i]
+            {
+                return false;
             }
         }
         true

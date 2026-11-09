@@ -499,10 +499,9 @@ pub fn contains_object_rest_or_spread(node: Node) -> bool {
                 if target
                     .subtree_facts()
                     .intersects(SubtreeFacts::SUBTREE_CONTAINS_ES_OBJECT_REST_OR_SPREAD)
+                    && contains_object_rest_or_spread(target)
                 {
-                    if contains_object_rest_or_spread(target) {
-                        return true;
-                    }
+                    return true;
                 }
             }
         }

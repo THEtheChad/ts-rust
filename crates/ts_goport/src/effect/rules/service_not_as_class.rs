@@ -77,10 +77,10 @@ pub fn analyze_service_not_as_class(
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        if node.kind() == SyntaxKind::VariableDeclaration {
-            if let Some(m) = check_service_not_as_class(tp, sf, node) {
-                matches.push(m);
-            }
+        if node.kind() == SyntaxKind::VariableDeclaration
+            && let Some(m) = check_service_not_as_class(tp, sf, node)
+        {
+            matches.push(m);
         }
 
         node_to_visit.extend(order.children(i));

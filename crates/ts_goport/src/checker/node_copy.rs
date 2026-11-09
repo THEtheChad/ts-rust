@@ -773,16 +773,14 @@ impl<'a> ExistingNodeTreeVisitor<'a> {
             };
             if sym_flags.intersects(SymbolFlags::FUNCTION_SCOPED_VARIABLE)
                 && value_declaration.is_some()
+                && (is_part_of_parameter_declaration(value_declaration)
+                    || is_js_doc_parameter_tag(value_declaration))
             {
-                if is_part_of_parameter_declaration(value_declaration)
-                    || is_js_doc_parameter_tag(value_declaration)
-                {
-                    return (
-                        introduces_error,
-                        self.attach_symbol_to_leftmost_identifier(leftmost, node, sym),
-                        SymbolId::NIL,
-                    );
-                }
+                return (
+                    introduces_error,
+                    self.attach_symbol_to_leftmost_identifier(leftmost, node, sym),
+                    SymbolId::NIL,
+                );
             }
             if !sym_flags.intersects(SymbolFlags::TYPE_PARAMETER) /* Type parameters are visible in the current context if they are are resolvable */
                 && !is_declaration_name(node)

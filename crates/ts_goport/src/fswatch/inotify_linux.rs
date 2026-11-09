@@ -317,19 +317,19 @@ impl WatcherImpl for InotifyBackend {
                 return true;
             }
             if list.is_empty() {
-                if let Err(err) = unix::inotify_rm_watch(inotify, *wd as u32) {
-                    if first_err.is_none() {
-                        first_err = Some(
-                            DirWatchError {
-                                err: errors::errorf(
-                                    format!("unable to remove dirWatch: {}", err.error()),
-                                    vec![err],
-                                ),
-                                dir_watch: w.clone(),
-                            }
-                            .to_go_error(),
-                        );
-                    }
+                if let Err(err) = unix::inotify_rm_watch(inotify, *wd as u32)
+                    && first_err.is_none()
+                {
+                    first_err = Some(
+                        DirWatchError {
+                            err: errors::errorf(
+                                format!("unable to remove dirWatch: {}", err.error()),
+                                vec![err],
+                            ),
+                            dir_watch: w.clone(),
+                        }
+                        .to_go_error(),
+                    );
                 }
                 return false;
             }

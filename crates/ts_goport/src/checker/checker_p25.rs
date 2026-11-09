@@ -429,11 +429,11 @@ impl Checker {
             alias = self.instantiate_type_alias(t_alias, m);
         }
         self.ty_mut(result).alias = alias.clone();
-        if let Some(a) = &alias {
-            if !a.type_arguments.is_empty() {
-                let flags = self.get_propagating_flags_of_types(&a.type_arguments, TypeFlags::NONE);
-                self.ty_mut(result).object_flags |= flags;
-            }
+        if let Some(a) = &alias
+            && !a.type_arguments.is_empty()
+        {
+            let flags = self.get_propagating_flags_of_types(&a.type_arguments, TypeFlags::NONE);
+            self.ty_mut(result).object_flags |= flags;
         }
         let d = self.ty_mut(result).as_object_type_mut();
         d.target = t;
@@ -745,10 +745,10 @@ impl Checker {
                 if flags.intersects(ElementFlags::REQUIRED) {
                     new_element_infos[i].flags = ElementFlags::OPTIONAL;
                 }
-            } else if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL) {
-                if flags.intersects(ElementFlags::OPTIONAL) {
-                    new_element_infos[i].flags = ElementFlags::REQUIRED;
-                }
+            } else if modifiers.intersects(MappedTypeModifiers::EXCLUDE_OPTIONAL)
+                && flags.intersects(ElementFlags::OPTIONAL)
+            {
+                new_element_infos[i].flags = ElementFlags::REQUIRED;
             }
             new_element_types[i] = mapped;
         }
@@ -1189,20 +1189,20 @@ impl Checker {
         );
         if container.is_some() {
             let parent = container.parent();
-            if parent.is_some() && (is_class_like(parent) || is_interface_declaration(parent)) {
-                if !is_static(container)
-                    && (!is_constructor_declaration(container)
-                        || is_node_descendant_of(node, container.body()))
-                {
-                    let symbol = self.get_symbol_of_declaration(parent);
-                    let declared = self.get_declared_type_of_class_or_interface(symbol);
-                    let this_type = self.ty(declared).as_interface_type().this_type;
-                    return if this_type.is_some() {
-                        this_type
-                    } else {
-                        self.error_type
-                    };
-                }
+            if parent.is_some()
+                && (is_class_like(parent) || is_interface_declaration(parent))
+                && !is_static(container)
+                && (!is_constructor_declaration(container)
+                    || is_node_descendant_of(node, container.body()))
+            {
+                let symbol = self.get_symbol_of_declaration(parent);
+                let declared = self.get_declared_type_of_class_or_interface(symbol);
+                let this_type = self.ty(declared).as_interface_type().this_type;
+                return if this_type.is_some() {
+                    this_type
+                } else {
+                    self.error_type
+                };
             }
         }
         self.error(

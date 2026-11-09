@@ -1007,10 +1007,10 @@ impl TypeParser<'_> {
         }
 
         // Check exported function declaration
-        if node.kind() == SyntaxKind::FunctionDeclaration {
-            if has_syntactic_modifier(node, ModifierFlags::EXPORT) {
-                return suggested_trace_name.to_string();
-            }
+        if node.kind() == SyntaxKind::FunctionDeclaration
+            && has_syntactic_modifier(node, ModifierFlags::EXPORT)
+        {
+            return suggested_trace_name.to_string();
         }
 
         // Check exported const variable initializer
@@ -1024,12 +1024,12 @@ impl TypeParser<'_> {
                 let decl_list = node.parent().parent();
                 if decl_list.is_some() && decl_list.kind() == SyntaxKind::VariableDeclarationList {
                     let var_stmt = decl_list.parent();
-                    if var_stmt.is_some() && var_stmt.kind() == SyntaxKind::VariableStatement {
-                        if has_syntactic_modifier(var_stmt, ModifierFlags::EXPORT)
-                            && decl_list.flags().intersects(NodeFlags::CONST)
-                        {
-                            return suggested_trace_name.to_string();
-                        }
+                    if var_stmt.is_some()
+                        && var_stmt.kind() == SyntaxKind::VariableStatement
+                        && has_syntactic_modifier(var_stmt, ModifierFlags::EXPORT)
+                        && decl_list.flags().intersects(NodeFlags::CONST)
+                    {
+                        return suggested_trace_name.to_string();
                     }
                 }
             }

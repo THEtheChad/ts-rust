@@ -1870,15 +1870,14 @@ pub fn get_reference_at_position(
                 type_reference_directive,
                 &origin,
             )
+            && let Some(file) = program.get_source_file(&reference.resolved_file_name)
         {
-            if let Some(file) = program.get_source_file(&reference.resolved_file_name) {
-                return Some(RefInfo {
-                    reference: Some(type_reference_directive.clone()),
-                    file_name: source_file_file_name(file.root).to_string(),
-                    file: file.root,
-                    unverified: false,
-                });
-            }
+            return Some(RefInfo {
+                reference: Some(type_reference_directive.clone()),
+                file_name: source_file_file_name(file.root).to_string(),
+                file: file.root,
+                unverified: false,
+            });
         }
         return None;
     }

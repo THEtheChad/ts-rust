@@ -1339,27 +1339,26 @@ impl Checker {
             }
             return Ternary::FALSE;
         }
-        if source_pred.kind == TypePredicateKind::IDENTIFIER
-            || source_pred.kind == TypePredicateKind::ASSERTS_IDENTIFIER
+        if (source_pred.kind == TypePredicateKind::IDENTIFIER
+            || source_pred.kind == TypePredicateKind::ASSERTS_IDENTIFIER)
+            && source_pred.parameter_index != target_pred.parameter_index
         {
-            if source_pred.parameter_index != target_pred.parameter_index {
-                if report_errors {
-                    let reporter = error_reporter.as_deref_mut().expect("call of nil func");
-                    reporter(
-                        self,
-                        diag::Parameter_0_is_not_in_the_same_position_as_parameter_1,
-                        args![source_pred.parameter_name, target_pred.parameter_name],
-                    );
-                    let source_str = self.type_predicate_to_string(source);
-                    let target_str = self.type_predicate_to_string(target);
-                    reporter(
-                        self,
-                        diag::Type_predicate_0_is_not_assignable_to_1,
-                        args![source_str, target_str],
-                    );
-                }
-                return Ternary::FALSE;
+            if report_errors {
+                let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+                reporter(
+                    self,
+                    diag::Parameter_0_is_not_in_the_same_position_as_parameter_1,
+                    args![source_pred.parameter_name, target_pred.parameter_name],
+                );
+                let source_str = self.type_predicate_to_string(source);
+                let target_str = self.type_predicate_to_string(target);
+                reporter(
+                    self,
+                    diag::Type_predicate_0_is_not_assignable_to_1,
+                    args![source_str, target_str],
+                );
             }
+            return Ternary::FALSE;
         }
         let related: Ternary = if source_pred.t == target_pred.t {
             Ternary::TRUE

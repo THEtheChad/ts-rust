@@ -563,10 +563,11 @@ impl Checker {
                         | SyntaxKind::GreaterThanGreaterThanGreaterThanToken
                         | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken => {
                             let rhs_eval = (self.evaluate.clone())(self, right, right);
-                            if let Some(LiteralValue::Number(num_value)) = rhs_eval.value {
-                                if num_value.abs() >= crate::jsnum::Number::new(32.0) {
-                                    // Elevate from suggestion to error within an enum member
-                                    self.error_or_suggestion(
+                            if let Some(LiteralValue::Number(num_value)) = rhs_eval.value
+                                && num_value.abs() >= crate::jsnum::Number::new(32.0)
+                            {
+                                // Elevate from suggestion to error within an enum member
+                                self.error_or_suggestion(
                                         is_enum_member(walk_up_parenthesized_expressions(right.parent().parent())),
                                         error_node,
                                         diag::This_operation_can_be_simplified_This_shift_is_identical_to_0_1_2,
@@ -576,7 +577,6 @@ impl Checker {
                                             num_value.remainder(crate::jsnum::Number::new(32.0))
                                         ],
                                     );
-                                }
                             }
                         }
                         _ => {}
@@ -1207,11 +1207,9 @@ impl Checker {
         }
         let mut effective_left = left_type;
         let mut effective_right = right_type;
-        if !would_work_with_await {
-            if let Some(is_related) = is_related.as_deref_mut() {
-                (effective_left, effective_right) =
-                    self.get_base_types_if_unrelated(left_type, right_type, is_related);
-            }
+        if !would_work_with_await && let Some(is_related) = is_related.as_deref_mut() {
+            (effective_left, effective_right) =
+                self.get_base_types_if_unrelated(left_type, right_type, is_related);
         }
         let (left_str, right_str) =
             self.get_type_names_for_error_display(effective_left, effective_right);
