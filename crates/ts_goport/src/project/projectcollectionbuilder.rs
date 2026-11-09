@@ -1411,13 +1411,13 @@ impl ProjectCollectionBuilder {
             if project_id.inferred().1 {
                 update_project(
                     &*self.inferred_project as &dyn dirty::Value<Rc<RefCell<Project>>>,
-                    &**ata_change,
+                    ata_change,
                 );
             } else if let (synthetic_project_id, true) = project_id.synthetic() {
                 if let (Some(project), true) = self.synthetic_projects.load(&synthetic_project_id) {
                     update_project(
                         &*project as &dyn dirty::Value<Rc<RefCell<Project>>>,
-                        &**ata_change,
+                        ata_change,
                     );
                 }
             } else if let (configured_id, true) = project_id.configured()
@@ -1425,7 +1425,7 @@ impl ProjectCollectionBuilder {
             {
                 update_project(
                     &*project as &dyn dirty::Value<Rc<RefCell<Project>>>,
-                    &**ata_change,
+                    ata_change,
                 );
             }
 

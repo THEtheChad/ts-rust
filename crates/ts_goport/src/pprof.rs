@@ -635,7 +635,7 @@ fn parse_proc_self_maps(
     // next removes and returns the next field in the line.
     // It also removes from line any spaces following the field.
     fn next<'a>(line: &mut &'a [u8]) -> &'a [u8] {
-        let (f, rest) = cut(*line, b' ');
+        let (f, rest) = cut(line, b' ');
         *line = trim_left_spaces(rest);
         f
     }

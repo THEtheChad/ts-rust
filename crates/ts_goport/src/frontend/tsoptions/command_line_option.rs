@@ -264,7 +264,7 @@ impl DefaultValue {
             DefaultValue::Bool(b) => CompilerOptionsValue::Bool(b),
             DefaultValue::Int(i) => CompilerOptionsValue::Int(i),
             DefaultValue::String(s) => CompilerOptionsValue::String(s.to_string()),
-            DefaultValue::Message(m) => CompilerOptionsValue::Message(*m),
+            DefaultValue::Message(m) => CompilerOptionsValue::Message(m),
             DefaultValue::Tristate(t) => CompilerOptionsValue::Tristate(t),
             DefaultValue::ScriptTarget(t) => CompilerOptionsValue::ScriptTarget(t),
         }

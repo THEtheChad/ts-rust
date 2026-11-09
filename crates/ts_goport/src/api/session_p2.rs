@@ -2749,7 +2749,7 @@ impl Session {
             return Ok(Node::NIL);
         };
         let source_file = program
-            .get_source_file(&file.to_file_name(&program_base_directory(&program)))
+            .get_source_file(&file.to_file_name(&program_base_directory(program)))
             .map_or(Node::NIL, |f| f.root);
         if source_file.is_nil() {
             return Err(errors::errorf(
@@ -2871,7 +2871,7 @@ impl Session {
                    program: &Rc<compiler::NewProgram>|
          -> Result<(Option<ls::CompletionList>, Node), GoError> {
             let source_file = program
-                .get_source_file(&params.file.to_file_name(&program_base_directory(&program)))
+                .get_source_file(&params.file.to_file_name(&program_base_directory(program)))
                 .map_or(Node::NIL, |f| f.root);
             if source_file.is_nil() {
                 return Ok((None, source_file));

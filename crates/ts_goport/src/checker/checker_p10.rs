@@ -890,7 +890,7 @@ impl Checker {
                     diag::The_left_hand_side_of_an_instanceof_expression_must_be_assignable_to_the_first_argument_of_the_right_hand_side_s_Symbol_hasInstance_method,
                 );
             }
-            self.report_call_resolution_errors(node, &mut s, signatures, head_message);
+            self.report_call_resolution_errors(node, &s, signatures, head_message);
         }
         result
     }

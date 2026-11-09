@@ -175,7 +175,7 @@ fn get_all_isolated_declarations_code_actions(
     let mut fixer = IsolatedDeclarationsFixer {
         source_file: fix_context.source_file,
         program: fix_context.program,
-        checker: &mut *checker_ref,
+        checker: &mut checker_ref,
         change_tracker: &mut change_tracker,
         import_adder: None,
         locale: locale::from_context(ctx),

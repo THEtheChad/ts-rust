@@ -458,7 +458,7 @@ thread_local! {
 pub(crate) fn with_file_version<R>(file: usize, read: impl FnOnce(&FileVersion) -> R) -> Option<R> {
     let version = pinned_file_version(file)?;
     make_hot(&version);
-    Some(read(&**version))
+    Some(read(&version))
 }
 
 /// The live version `file`, pinned on this thread, as a pin that a
@@ -870,7 +870,7 @@ impl<T: ?Sized + 'static> Deref for FileRef<T> {
     fn deref(&self) -> &T {
         match self {
             FileRef::Static(value) => value,
-            FileRef::Pinned { version, key, get } => get(&**version, *key),
+            FileRef::Pinned { version, key, get } => get(version, *key),
         }
     }
 }

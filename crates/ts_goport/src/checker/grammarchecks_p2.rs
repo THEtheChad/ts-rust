@@ -437,7 +437,7 @@ impl Checker {
 
         if is_jsx_namespaced_name(node)
             && self.compiler_options.get_jsx_transform_enabled()
-            && !is_intrinsic_jsx_name(&node.namespace().text())
+            && !is_intrinsic_jsx_name(node.namespace().text())
         {
             return self.grammar_error_on_node(
                 node,

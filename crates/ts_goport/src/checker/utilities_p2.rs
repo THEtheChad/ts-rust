@@ -377,7 +377,7 @@ pub fn is_in_right_side_of_import_or_export_assignment_ref(mut node: NodeRef) ->
 
 // Go: checker/utilities.go:1238 isJsxIntrinsicTagName
 pub fn is_jsx_intrinsic_tag_name(tag_name: Node) -> bool {
-    is_identifier(tag_name) && is_intrinsic_jsx_name(&tag_name.text())
+    is_identifier(tag_name) && is_intrinsic_jsx_name(tag_name.text())
         || is_jsx_namespaced_name(tag_name)
 }
 

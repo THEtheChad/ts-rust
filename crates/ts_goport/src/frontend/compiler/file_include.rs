@@ -350,7 +350,7 @@ impl FileIncludeReason {
                         } else {
                             new_compiler_diagnostic(
                                 diag::Matched_by_include_pattern_0_in_1,
-                                args![matched_include_spec, to_file_name(&config.config_name())],
+                                args![matched_include_spec, to_file_name(config.config_name())],
                             )
                         }
                     } else {

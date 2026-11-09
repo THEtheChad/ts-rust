@@ -575,7 +575,7 @@ impl Checker {
             if !self.are_type_parameters_identical(
                 &declarations,
                 &[type_parameter],
-                &mut |decl: Node| vec![decl],
+                &|decl: Node| vec![decl],
             ) {
                 // Report an error on every conflicting declaration.
                 let name = self.symbol_to_string(symbol);

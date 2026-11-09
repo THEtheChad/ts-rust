@@ -203,7 +203,7 @@ impl View {
         let importing_file_path = tspath::Path(source_file_info(self.importing_file).path.clone());
 
         if let Some(bucket) = self.registry.projects.get(&self.project_id) {
-            let exports = search_fn(&**bucket);
+            let exports = search_fn(bucket);
             results.reserve(exports.len());
             for e in exports {
                 // ts#64159: view.go:114, only a file module is the importing file.
@@ -263,7 +263,7 @@ impl View {
             .get_directory_path()
             .for_each_ancestor_directory(|dir_path: tspath::Path| -> ((), bool) {
                 if let Some(node_modules_bucket) = self.registry.node_modules.get(&dir_path) {
-                    let exports = search_fn(&**node_modules_bucket);
+                    let exports = search_fn(node_modules_bucket);
                     results.reserve(exports.len());
                     for e in exports {
                         // Exclude packages found in lower node_modules (shadowing)
@@ -430,7 +430,7 @@ impl View {
         };
         let groups: Vec<&Vec<Rc<Export>>> = grouped.values().collect();
         let (late, early): (Vec<usize>, Vec<usize>) =
-            (0..groups.len()).partition(|&i| groups[i].iter().all(|e| is_augmentation(&**e)));
+            (0..groups.len()).partition(|&i| groups[i].iter().all(|e| is_augmentation(e)));
         let mut group_fixes: Vec<Vec<FixAndExport>> = vec![Vec::new(); groups.len()];
 
         for i in early.into_iter().chain(late) {

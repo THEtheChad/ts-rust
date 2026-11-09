@@ -3964,7 +3964,7 @@ impl Session {
 
         self.encode_source_file_response(
             program
-                .get_source_file(&params.file.to_file_name(&program_base_directory(&program)))
+                .get_source_file(&params.file.to_file_name(&program_base_directory(program)))
                 .map_or(Node::NIL, |f| f.root),
         )
     }
@@ -4128,7 +4128,7 @@ impl Session {
         let program = &sd.get_program(&params.project)?;
 
         let Some(source_file) =
-            program.get_source_file(&params.file.to_file_name(&program_base_directory(&program)))
+            program.get_source_file(&params.file.to_file_name(&program_base_directory(program)))
         else {
             return Ok(None);
         };

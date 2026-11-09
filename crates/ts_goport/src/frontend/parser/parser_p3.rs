@@ -226,7 +226,7 @@ impl<'a> Parser<'a> {
         // line terminator after the identifier or keyword.
         if self.has_preceding_line_break()
             && token_is_identifier_or_keyword(self.token)
-            && self.look_ahead(&mut Self::next_token_is_identifier_or_keyword_on_same_line)
+            && self.look_ahead(Self::next_token_is_identifier_or_keyword_on_same_line)
         {
             // Report that we need an identifier.  However, report it right after the dot,
             // and not on the next token.  This is because the next token might actually
@@ -536,7 +536,7 @@ impl<'a> Parser<'a> {
             return self.parse_signature_member(SyntaxKind::CallSignature);
         }
         if self.token == SyntaxKind::NewKeyword
-            && self.look_ahead(&mut Self::next_token_is_open_paren_or_less_than)
+            && self.look_ahead(Self::next_token_is_open_paren_or_less_than)
         {
             return self.parse_signature_member(SyntaxKind::ConstructSignature);
         }
@@ -831,7 +831,7 @@ impl<'a> Parser<'a> {
             return self.do_in_context(
                 NodeFlags::DISALLOW_CONDITIONAL_TYPES_CONTEXT,
                 false,
-                &mut Self::parse_type_or_type_predicate,
+                Self::parse_type_or_type_predicate,
             );
         }
         Node::NIL
@@ -1025,7 +1025,7 @@ impl<'a> Parser<'a> {
     // Go: parser/parser.go:3562 isIndexSignature
     pub fn is_index_signature(&mut self) -> bool {
         self.token == SyntaxKind::OpenBracketToken
-            && self.look_ahead(&mut Self::next_is_unambiguously_index_signature)
+            && self.look_ahead(Self::next_is_unambiguously_index_signature)
     }
 
     // Go: parser/parser.go:3566 nextIsUnambiguouslyIndexSignature
@@ -1184,7 +1184,7 @@ impl<'a> Parser<'a> {
 
     // Go: parser/parser.go:3671 parseTupleElementNameOrTupleElementType
     pub fn parse_tuple_element_name_or_tuple_element_type(&mut self) -> Node {
-        if self.look_ahead(&mut Self::scan_start_of_named_tuple_element) {
+        if self.look_ahead(Self::scan_start_of_named_tuple_element) {
             let pos = self.node_pos();
             let jsdoc = self.jsdoc_scanner_info();
             let dot_dot_dot_token = self.parse_optional_token(SyntaxKind::DotDotDotToken);
@@ -1404,10 +1404,10 @@ impl<'a> Parser<'a> {
     pub fn is_start_of_function_type_or_constructor_type(&mut self) -> bool {
         self.token == SyntaxKind::LessThanToken
             || self.token == SyntaxKind::OpenParenToken
-                && self.look_ahead(&mut Self::next_is_unambiguously_start_of_function_type)
+                && self.look_ahead(Self::next_is_unambiguously_start_of_function_type)
             || self.token == SyntaxKind::NewKeyword
             || self.token == SyntaxKind::AbstractKeyword
-                && self.look_ahead(&mut Self::next_token_is_new_keyword)
+                && self.look_ahead(Self::next_token_is_new_keyword)
     }
 
     // Go: parser/parser.go:3829 parseFunctionOrConstructorType
@@ -1576,7 +1576,7 @@ impl<'a> Parser<'a> {
         let expression = self.do_in_context(
             NodeFlags::DECORATOR_CONTEXT,
             true,
-            &mut Self::parse_decorator_expression,
+            Self::parse_decorator_expression,
         );
         let result = self.factory.new_decorator(expression);
         self.finish_node(result, pos)
@@ -1613,14 +1613,14 @@ impl<'a> Parser<'a> {
         if self.token == SyntaxKind::ConstKeyword && permit_const_as_modifier {
             // We need to ensure that any subsequent modifiers appear on the same line
             // so that when 'const' is a standalone declaration, we don't issue an error.
-            if !self.look_ahead(&mut Self::next_token_is_on_same_line_and_can_follow_modifier) {
+            if !self.look_ahead(Self::next_token_is_on_same_line_and_can_follow_modifier) {
                 return Node::NIL;
             } else {
                 self.next_token();
             }
         } else if stop_on_start_of_class_static_block
             && self.token == SyntaxKind::StaticKeyword
-            && self.look_ahead(&mut Self::next_token_is_open_brace)
+            && self.look_ahead(Self::next_token_is_open_brace)
         {
             return Node::NIL;
         } else if has_seen_static_modifier && self.token == SyntaxKind::StaticKeyword {
@@ -1662,10 +1662,10 @@ impl<'a> Parser<'a> {
             SyntaxKind::ExportKeyword => {
                 self.next_token();
                 if self.token == SyntaxKind::DefaultKeyword {
-                    return self.look_ahead(&mut Self::next_token_can_follow_default_keyword);
+                    return self.look_ahead(Self::next_token_can_follow_default_keyword);
                 }
                 if self.token == SyntaxKind::TypeKeyword {
-                    return self.look_ahead(&mut Self::next_token_can_follow_export_modifier);
+                    return self.look_ahead(Self::next_token_can_follow_export_modifier);
                 }
                 self.can_follow_export_modifier()
             }
@@ -1690,10 +1690,10 @@ impl<'a> Parser<'a> {
             | SyntaxKind::InterfaceKeyword
             | SyntaxKind::AtToken => true,
             SyntaxKind::AbstractKeyword => {
-                self.look_ahead(&mut Self::next_token_is_class_keyword_on_same_line)
+                self.look_ahead(Self::next_token_is_class_keyword_on_same_line)
             }
             SyntaxKind::AsyncKeyword => {
-                self.look_ahead(&mut Self::next_token_is_function_keyword_on_same_line)
+                self.look_ahead(Self::next_token_is_function_keyword_on_same_line)
             }
             _ => false,
         }
@@ -1804,7 +1804,7 @@ impl<'a> Parser<'a> {
         self.do_in_context(
             NodeFlags::DISALLOW_IN_CONTEXT,
             false,
-            &mut Self::parse_expression,
+            Self::parse_expression,
         )
     }
 
@@ -1938,9 +1938,8 @@ impl<'a> Parser<'a> {
             // for now we just check if the next token is an identifier.  More heuristics
             // can be added here later as necessary.  We just need to make sure that we
             // don't accidentally consume something legal.
-            return self.look_ahead(
-                &mut Self::next_token_is_identifier_or_keyword_or_literal_on_same_line,
-            );
+            return self
+                .look_ahead(Self::next_token_is_identifier_or_keyword_or_literal_on_same_line);
         }
         false
     }

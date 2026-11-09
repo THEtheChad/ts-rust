@@ -2790,7 +2790,7 @@ mod symbol_id_tests {
         const O: u64 = BLOCK_ID_OFFSET;
         let mut binder = SymbolArena::new();
         let symbols: Vec<_> = (0..300)
-            .map(|n| binder.new_symbol(SymbolFlags::NONE, &format!("s{n}")))
+            .map(|n| binder.new_symbol(SymbolFlags::NONE, format!("s{n}")))
             .collect();
         let global = binder.new_symbol(SymbolFlags::NONE, "global");
         let binder = std::sync::Arc::new(binder);

@@ -7111,7 +7111,7 @@ fn try_with_build_slot(n: Node, f: impl FnOnce(&mut FileStore, usize)) -> bool {
         s.nodes[index].is_some(),
         "store handle does not name a node slot"
     );
-    f(&mut *s, index);
+    f(&mut s, index);
     true
 }
 
@@ -9041,7 +9041,7 @@ mod tests {
             }
             let mut expected: Vec<NodeRecord> = records.iter().map(copy_record).collect();
             let expected_root = mark_roots_with_state(&mut expected, &kinds);
-            let root = mark_roots(&mut records, &kinds);
+            let root = mark_roots(&records, &kinds);
             assert_eq!(root, expected_root);
             for (i, (a, b)) in records.iter().zip(&expected).enumerate() {
                 assert_eq!(

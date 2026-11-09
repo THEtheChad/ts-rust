@@ -146,7 +146,7 @@ impl ResolutionState<'_> {
     fn path_key(&self, file_name: &str) -> Path {
         to_path(
             file_name,
-            &self.resolver.host.get_current_directory(),
+            self.resolver.host.get_current_directory(),
             self.resolver.host.fs().use_case_sensitive_file_names(),
         )
     }
@@ -204,7 +204,7 @@ impl ResolutionState<'_> {
             return continue_searching();
         }
         let current_directory = self.resolver.host.get_current_directory();
-        let base_directory = compiler_options.get_paths_base_path(&current_directory);
+        let base_directory = compiler_options.get_paths_base_path(current_directory);
         let path_patterns = self.get_parsed_patterns_for_paths();
         let extensions = self.extensions;
         let name = self.name.clone();
@@ -473,7 +473,7 @@ impl ResolutionState<'_> {
                 .resolver
                 .host
                 .fs()
-                .directory_exists(&parent_of_candidate)
+                .directory_exists(parent_of_candidate)
             {
                 trace_write!(
                     self,
@@ -1702,7 +1702,7 @@ pub fn get_automatic_type_directive_names(
     // Walk the primary type lookup locations
     let mut wildcard_matches: Vec<String> = Vec::new();
     let current_directory = host.get_current_directory();
-    let (type_roots, _) = options.get_effective_type_roots(&current_directory);
+    let (type_roots, _) = options.get_effective_type_roots(current_directory);
     for root in &type_roots {
         if host.fs().directory_exists(root) {
             for type_directive_path in &host.fs().get_accessible_entries(root).directories {

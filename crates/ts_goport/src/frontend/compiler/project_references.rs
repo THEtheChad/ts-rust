@@ -42,7 +42,7 @@ impl ProjectReferenceParseTask {
         resolved.parse_input_output_names();
         let sub_references = resolved.resolved_project_reference_paths();
         if !sub_references.is_empty() {
-            self.sub_tasks = create_project_reference_parse_tasks(&sub_references);
+            self.sub_tasks = create_project_reference_parse_tasks(sub_references);
         }
     }
 }
@@ -745,7 +745,7 @@ impl ProjectReferenceDtsFakingVfs {
         let current_directory = self.host.get_current_directory();
         to_path(
             path,
-            &current_directory,
+            current_directory,
             self.use_case_sensitive_file_names(),
         )
     }
@@ -883,7 +883,7 @@ impl ProjectReferenceDtsFakingVfs {
                     // Store the real path for the file
                     let current_directory = self.host.get_current_directory();
                     let absolute_path =
-                        get_normalized_absolute_path(file_or_directory, &current_directory);
+                        get_normalized_absolute_path(file_or_directory, current_directory);
                     self.known_symlinks.borrow_mut().set_file(
                         &absolute_path,
                         file_or_directory_path,

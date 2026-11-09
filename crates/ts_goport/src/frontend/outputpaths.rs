@@ -85,7 +85,7 @@ pub fn get_output_paths_for(
     get_output_paths_for_file(
         source_file.file_name(),
         source_file.script_kind,
-        &source_file.content_mapper(),
+        source_file.content_mapper(),
         options,
         host,
         force,

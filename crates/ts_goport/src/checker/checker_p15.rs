@@ -1661,7 +1661,7 @@ impl Checker {
         resolve_name(
             self,
             reference,
-            &text,
+            text,
             SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE | SymbolFlags::ALIAS,
             None,
             false, /*isUse*/
@@ -1673,7 +1673,7 @@ impl Checker {
     pub fn get_cannot_find_name_diagnostic_for_name(&self, node: Node) -> &'static Message {
         let text = node.text();
         let uses_wildcard_types = self.compiler_options.uses_wildcard_types();
-        match &*text {
+        match text {
             "document" | "console" => {
                 diag::Cannot_find_name_0_Do_you_need_to_change_your_target_library_Try_changing_the_lib_compiler_option_to_include_dom
             }
@@ -1713,7 +1713,7 @@ impl Checker {
             }
             _ => {
                 // PORT: Go's "await" case falls through to the default branch when the parent is not a call.
-                if &*text == "await" && is_call_expression(node.parent()) {
+                if text == "await" && is_call_expression(node.parent()) {
                     return diag::Cannot_find_name_0_Did_you_mean_to_write_this_in_an_async_function;
                 }
                 if node.parent().kind() == SyntaxKind::ShorthandPropertyAssignment {

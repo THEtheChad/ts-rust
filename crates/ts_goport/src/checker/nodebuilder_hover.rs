@@ -634,7 +634,7 @@ impl Checker {
         } else {
             let symbol_type = self.get_type_of_symbol(resolved);
             let t = self.get_widened_type(symbol_type);
-            hv_ctx(b).borrow_mut().approximate_length += go_len(&name) as i32 + 5;
+            hv_ctx(b).borrow_mut().approximate_length += go_len(name) as i32 + 5;
             let type_node = self.serialize_type_for_declaration(b, Node::NIL, t, resolved, true);
             let bb = b.borrow();
             let declaration = bb.f().new_variable_declaration(
@@ -933,7 +933,7 @@ impl Checker {
             c.flags = saved_flags;
             c.internal_flags = saved_internal_flags;
             c.depth = saved_depth;
-            c.approximate_length += 8 + go_len(&name) as i32;
+            c.approximate_length += 8 + go_len(name) as i32;
         }
         let bb = b.borrow();
         bb.f().new_type_alias_declaration(

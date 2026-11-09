@@ -939,7 +939,7 @@ fn flush_writes(
         // the parse and config prefetch threads).
         for _ in 1..threads {
             if std::thread::Builder::new()
-                .spawn_scoped(scope, &work)
+                .spawn_scoped(scope, work)
                 .is_err()
             {
                 break;

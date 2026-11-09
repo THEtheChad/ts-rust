@@ -132,7 +132,7 @@ impl EmitResolver {
             let checker = checker
                 .upgrade()
                 .expect("the checker of an emit resolver was dropped");
-            return f(&mut *checker.borrow_mut());
+            return f(&mut checker.borrow_mut());
         }
         with_checker_at(self.checker_index, f)
     }

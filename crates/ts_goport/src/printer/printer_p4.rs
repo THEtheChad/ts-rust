@@ -1253,7 +1253,7 @@ impl Printer {
                     });
                     self.write_lines(&text);
                 } else {
-                    self.write_lines(&helper.text);
+                    self.write_lines(helper.text);
                 }
                 helpers_emitted = true;
             }

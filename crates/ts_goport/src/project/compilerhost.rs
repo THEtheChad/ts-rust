@@ -523,7 +523,7 @@ impl compiler::CompilerHost for CompilerHost {
                 return true;
             }
             let guess = |metadata| {
-                parser::get_external_module_indicator_options(&key.file_name, &options, metadata)
+                parser::get_external_module_indicator_options(&key.file_name, options, metadata)
             };
             let plain = guess(&no_scope);
             key.jsx == plain.jsx

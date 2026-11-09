@@ -1683,7 +1683,7 @@ impl BuildTask {
         make_reader(&mut owned_reader);
         let reader = reader_of(&prefetched, &owned_reader);
         for root in reader.roots() {
-            let root: &Path = &root;
+            let root: &Path = root;
             if !seen_roots.contains(root) {
                 // File was root file when project was built but its not any more
                 // ts#64159: the message names the root as the build info

@@ -264,8 +264,8 @@ impl TypeChecker<'_> {
     fn symbols(&self) -> &SymbolArena {
         match self {
             TypeChecker::Checker(c) => &c.symbols,
-            TypeChecker::Nil(symbols) => *symbols,
-            TypeChecker::Bound(symbols) => &**symbols,
+            TypeChecker::Nil(symbols) => symbols,
+            TypeChecker::Bound(symbols) => symbols,
         }
     }
 

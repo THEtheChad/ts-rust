@@ -6690,9 +6690,9 @@ enum DiagnosticList {
 /// The list of `info` that `key` (a `DiagnosticList`) names.
 fn diagnostic_list(info: &crate::program::SourceFileInfo, key: usize) -> &[Diagnostic] {
     match key {
-        k if k == DiagnosticList::Parse as usize => &*info.diagnostics,
-        k if k == DiagnosticList::Js as usize => &*info.js_diagnostics,
-        _ => &*info.jsdoc_diagnostics,
+        k if k == DiagnosticList::Parse as usize => &info.diagnostics,
+        k if k == DiagnosticList::Js as usize => &info.js_diagnostics,
+        _ => &info.jsdoc_diagnostics,
     }
 }
 
