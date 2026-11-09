@@ -1069,50 +1069,31 @@ impl Checker {
                                             self.inference_context(n).inferences[index]
                                                 .contra_candidates(),
                                         );
-                                    let mut some = false;
-                                    for t in contra_candidates {
-                                        if self.is_type_assignable_to(inferred_covariant_type, t) {
-                                            some = true;
-                                            break;
-                                        }
-                                    }
-                                    some
+                                    contra_candidates.into_iter().any(|t| {
+                                        self.is_type_assignable_to(inferred_covariant_type, t)
+                                    })
                                 }
-                                && {
-                                    let count = self.inference_context(n).inferences.len();
-                                    let mut every = true;
-                                    for j in 0..count {
-                                        let other_type_parameter =
-                                            self.inference_context(n).inferences[j].type_parameter;
-                                        let ok = j != index
-                                            && self.get_constraint_of_type_parameter(
-                                                other_type_parameter,
-                                            ) != type_parameter
-                                            || {
-                                                let other_candidates: SmallVec<[TypeId; 8]> =
-                                                    SmallVec::from_slice(
-                                                        self.inference_context(n).inferences[j]
-                                                            .candidates(),
-                                                    );
-                                                let mut all = true;
-                                                for t in other_candidates {
-                                                    if !self.is_type_assignable_to(
-                                                        t,
-                                                        inferred_covariant_type,
-                                                    ) {
-                                                        all = false;
-                                                        break;
-                                                    }
-                                                }
-                                                all
-                                            };
-                                        if !ok {
-                                            every = false;
-                                            break;
+                                && (0..self.inference_context(n).inferences.len()).all(|j| {
+                                    let other_type_parameter =
+                                        self.inference_context(n).inferences[j].type_parameter;
+                                    j != index
+                                        && self
+                                            .get_constraint_of_type_parameter(other_type_parameter)
+                                            != type_parameter
+                                        || {
+                                            let other_candidates: SmallVec<[TypeId; 8]> =
+                                                SmallVec::from_slice(
+                                                    self.inference_context(n).inferences[j]
+                                                        .candidates(),
+                                                );
+                                            other_candidates.into_iter().all(|t| {
+                                                self.is_type_assignable_to(
+                                                    t,
+                                                    inferred_covariant_type,
+                                                )
+                                            })
                                         }
-                                    }
-                                    every
-                                });
+                                }));
                     if prefer_covariant_type {
                         inferred_type = inferred_covariant_type;
                         fallback_type = inferred_contravariant_type;
@@ -1143,18 +1124,14 @@ impl Checker {
             } else {
                 inferred_type = self.get_type_from_inference(n, index);
             }
-            self.inference_context_mut(n).inferences[index].inferred_type = inferred_type;
-            if self.inference_context(n).inferences[index]
-                .inferred_type
-                .is_nil()
-            {
-                let t = if n_flags.intersects(InferenceFlags::ANY_DEFAULT) {
+            self.inference_context_mut(n).inferences[index].inferred_type =
+                if inferred_type.is_some() {
+                    inferred_type
+                } else if n_flags.intersects(InferenceFlags::ANY_DEFAULT) {
                     self.any_type
                 } else {
                     self.unknown_type
                 };
-                self.inference_context_mut(n).inferences[index].inferred_type = t;
-            }
             let constraint = self.get_constraint_of_type_parameter(type_parameter);
             if constraint.is_some() {
                 let non_fixing_mapper = self.inference_context(n).non_fixing_mapper;
