@@ -525,15 +525,13 @@ impl LanguageService {
             if candidates[i] == resolved_signature {
                 selected_item_index = item_seen;
                 if item.len() > 1 {
-                    let mut count: i32 = 0;
-                    for j in item {
+                    for (count, j) in (0_i32..).zip(item) {
                         if j.is_variadic
                             || j.parameters.len() as i32 >= argument_info.argument_count
                         {
                             selected_item_index = item_seen + count;
                             break;
                         }
-                        count += 1;
                     }
                 }
             }

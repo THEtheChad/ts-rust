@@ -466,8 +466,7 @@ fn write_type_or_symbol_with_checker(
         ),
     ));
     let declarations = file_checker.sym(symbol).declarations.clone();
-    let mut count = 0;
-    for declaration in &declarations {
+    for (count, declaration) in declarations.iter().enumerate() {
         if count >= 5 {
             let _ = write!(
                 symbol_string,
@@ -476,7 +475,6 @@ fn write_type_or_symbol_with_checker(
             );
             break;
         }
-        count += 1;
         symbol_string.push_str(", ");
         // PORT: Go reads `declarationTextCache` here, but never writes it, so
         // the lookup always misses and is left out.
