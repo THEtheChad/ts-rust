@@ -74,10 +74,13 @@ material and is read only when it matches (lane H4).
   entry but `.git`: sources, configs, `node_modules` and symlink targets. The key also holds the
   config, the arguments, the timeout and the overlay command.
 - **lsp:** the session's definition (project, files, positions, scenario), the project's path and
-  its snapshot's hash, and for scenarios with ATA on the user's npm the snapshot of the typings cache
-  their ATA reads (`~/.cache/typescript/7.1`) and the npm on `PATH` (its realpath and version). It
-  also holds the lspdiff sources that script the session (the stand-in npm, the user-npm shim,
-  `sandbox.mjs` and `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
+  its snapshot's hash, for scenarios with ATA on the content hash of the frozen typings store their
+  ATA installs from (lane H5, "Hermetic ATA"), the state of the module-resolution names
+  (`node_modules`, `package.json`, `tsconfig.json`, `jsconfig.json`, PnP) in every ancestor dir of the
+  project and of the typings location, the node that runs lspdiff (path, version, sha) and the
+  servers' private home path. It
+  also holds the lspdiff sources that script the session (the stand-in npm, the servers'
+  environment in `sandbox.mjs`, and `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
   `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
   `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
@@ -510,9 +513,9 @@ Not every watch scenario keeps ATA on:
 
 | scenario | ATA |
 |---|---|
-| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, with the user's npm and typings cache `~/.cache/typescript/7.1`, whose snapshot and npm are in their Go cache key ("Input identities"). Since lane H4 every server run starts from that snapshot (an overlay; what ATA's npm writes is thrown away), so a run no longer sees an earlier run's installs. npm itself still reads the registry over the network: that input is not keyed. Since lane ND2 the npm runs behind the logging shim `user-npm/`, and the scenario's waits cover its calls (below). Their refereed answers are on configured projects |
+| `fsevents`, `fsevents-narrow`, `watch-*`, `unsaved-ts-pattern`, `second-project-query` | on, hermetic since lane H5: a private typings cache, empty at the start of every server run, and the stand-in npm installing from the frozen typings store, whose content hash is in their key ("Hermetic ATA" below). Until H5 they ran the user's npm (behind ND2's logging shim) against the network registry and a snapshot of the shared `~/.cache/typescript/7.1`. Their refereed answers are on configured projects |
 | `pkgjson-overlay` | off (lane H2: its npm call raced the overlay steps) |
-| `ata-overlay` | on, deterministic: a private typings cache and the stand-in npm |
+| `ata-overlay` | on, deterministic: a private typings cache and the stand-in npm with the fixture's store |
 
 `ata-overlay` restores what turning ATA off in `pkgjson-overlay` lost: the interaction of ATA with
 the inferred project, overlays and the watchers. For every server run (Go and tsc-rs alike):
@@ -583,7 +586,8 @@ ATA's npm calls (`ND2_NPM_DELAY`, fixed or `rand:<max>`) and logs their times; `
 | after | 48 burners, 4 side by side (load 50 to 62) | 0 to 3 s more | 32, and 16 Go | 1: all 32 tsc-rs runs equal on every answer; every round MATCH 52 of 52 |
 
 **Fix.** The scenarios with ATA on the user's typings run the user's npm behind a logging shim,
-and every wait covers it:
+and every wait covers it (lane H5 replaced the shim and the user's npm with the stand-in npm; the
+waits are unchanged):
 
 - `vendor/lspdiff/user-npm/npm` is first on the server's `PATH`. It writes the call's start line
   (pid) itself, before node starts, then runs `user-npm.mjs` with the same pid. That script runs
@@ -629,6 +633,98 @@ after the wait began and lasts until its done line, then waits for quiet again; 
 lasts `ATA_IDLE_MS` even when npm never runs; with ATA off it is the server's quiet window alone.
 They fail with the idle window counted from the last log change only.
 
+## Hermetic ATA and external inputs (lane H5, 2026-11-09)
+
+**The problem.** The combined-head gate (`runs/head-0bf6ff2a7-full`) lost
+`lsp/watch-ts-pattern-f12/0018`, an auto-import completion: tsc-rs gave 1,147 items and Go's cached
+answer 1,150 (`Less`, `less` and `gc` missing). Every binary gave 1,147 by then, including
+`427ff93d5`, which had matched, and a `--go-refill` gave 1,147 on all 4 Go runs. The environment had
+changed, not the compiler. The watch scenarios ran ATA with the user's npm (`types-registry@latest`
+over the network) against a snapshot of the shared `~/.cache/typescript/7.1`, and the registry
+was in no key. So a cached Go answer could describe another environment than the one tsc-rs ran in,
+and the H4 variant record merged answers from two environments as "Go varies": after the refill,
+0018 was GO-BROKEN with the variants 1,150 and 1,147, the wrong widening that incomplete key
+material allows.
+
+**Design** (the `ata-overlay` design, now for every scenario with ATA on):
+
+- **A private home per server process** (`sandbox.mjs` `serverEnv`). Every server (Go, tsc-rs, JS)
+  gets `HOME` = a new empty dir, the XDG dirs and `TMPDIR` under it, `PATH=/usr/bin:/bin`, `LANG=C.UTF-8`,
+  and nothing else of the harness's environment but what its caller passes (a scenario's ATA
+  plumbing, a `--rs-env` setting). In the sandbox the home is bound at a fixed path,
+  `~/.cache/perf-rearch/parity/lsp-home`, the same for every run and both servers, since the typings
+  location (`os.UserCacheDir()/typescript/7.1`) shows in watch registrations. That dir must be empty
+  before and after the tier.
+- **The stand-in npm with a store** (`ata-npm/fake-npm.mjs`, first on `PATH`; the only npm a server
+  can find). It is offline, takes `ATA_NPM_DELAY_MS` per call, and installs from a store: `registry/`
+  (types-registry), `node_modules/` as npm laid it out, the install's `package-lock.json`, and
+  `closure.json` (per `@types/<x>`, the lock paths an install of it lays out; `@types/node` brings its
+  nested `undici-types` 8.9.0, `bun-types` the top-level 8.12.4). It records what it installs in
+  `package.json` and `package-lock.json` as npm does. A call for a package the store lacks fails with
+  nothing installed and logs `missing`; a call in a directory outside the private `XDG_CACHE_HOME`
+  logs `refused`. Either makes the scenario's wait throw a harness error, so lspdiff exits and the
+  session is ERROR, never a crash of the server (which would be GO-BROKEN for Go).
+- **The frozen typings store** (`ata_typings.py build`): built once from the registry, in a new
+  empty dir with its own npm cache and an empty user config, with `--ignore-scripts`, the registry
+  tarball extracted with tarfile's `data` filter, and links or special files refused. It is
+  read-only in `~/.cache/perf-rearch/ata-typings/<sha[:24]>/`; the repo holds only its manifest
+  `scripts/perf-rearch/ata-typings.json` (sha, versions, every file's sha256). `sha` is the tree hash
+  under a fixed label, so it names the content and not the path. The store is the 7 `@types` the
+  scenarios acquire (the discovery run, below): `bun` 1.4.4, `jsdom` 30.0.0, `less` 3.0.8, `node`
+  26.6.6, `stylus` 0.48.43, `ws` 8.18.2, `yargs` 17.0.35, with their dependencies (14 packages,
+  1,737 files), and types-registry 0.1.794; store `d339a2b67e79850a`.
+- **parity_lsp.py** snapshots the store like a project (read-only copy, bound at its path, inotify
+  while the tier runs, verified at its end), requires its hash to be the manifest's (else the
+  sessions that use it are ERROR), passes it to lspdiff (`--ata-store`), and puts the hash in the key
+  of every session that uses it.
+- **No network.** lspdiff and every server run in a network namespace of their own (`unshare -rmn`):
+  only a loopback that is down.
+- **Kept:** ND2's completion barrier (the waits pair the stand-in npm's start and done lines and
+  last at least `ATA_IDLE_MS`), and what the scenarios test: ATA's installs still change the inferred
+  projects, schedule the refreshes and add the typings watchers. Every checkpoint of a scenario with
+  ATA on now also has an `<cp> ata npm` item: the npm calls since the last one, each call's package
+  names sorted (Go builds the list from a map), so which typings each server acquires is compared
+  too.
+
+**External inputs, found and keyed.**
+
+| input | before | now |
+|---|---|---|
+| the types registry and `@types/*` (network) | not keyed | the frozen store: its content hash is in the key; no network |
+| the shared typings cache `~/.cache/typescript/7.1` | a snapshot, keyed | not read: the typings cache is in the private home, empty at the start; a tripwire covers the real one |
+| npm (the user's, its cache `~/.npm`, its config) | path and version keyed | not run: the stand-in npm (a keyed source); tripwires on `~/.npm` and `~/.config` |
+| `HOME`, the XDG dirs, `TMPDIR` | the user's, passed through | private and new per process; the fixed home path is in the key |
+| the rest of the harness's environment (`GO*`, `GOPORT_*`, `NODE_OPTIONS`, ...) | passed to every server | not passed: `serverEnv` is a keyed source |
+| node (runs lspdiff, the stand-in npm and JS tsserver) | not keyed | path, version and sha in the key |
+| ancestor dirs of the project and of the typings location (`node_modules`, `package.json`, `tsconfig.json`, `jsconfig.json`, `.pnp.cjs`, `.pnp.js`, `bower_components`: module resolution and the default `typeRoots` walk up to `/`) | not keyed | their state is in the key (none exists on MS-A2), and the dirs are watched for those names while the tier runs: any create, delete or change makes every lsp item ERROR |
+
+**Fail closed.** In lspdiff's namespace (so in every server's), each guarded dir that exists
+(`~/.cache/typescript`, `~/.npm`, `~/.config`) is covered by a read-only bait dir of the session's
+own, which inotify watches for every access, reads included (`parity_watch.ACCESS`). The typings bait
+holds what ATA's init reads first (`7.1/package.json`, `package-lock.json`,
+`node_modules/types-registry/index.json`). Any access makes the session ERROR ("a process of the
+session touched an unkeyed path") and discards every staged Go and JS entry of the tier. The watch
+drops the events of its own listing of the dirs (the first try reported them as accesses).
+Not seen: a `stat` or a lookup of a name that does not exist (no inotify event), and a write (the
+bait is read-only, so it fails and leaves nothing).
+
+**Variant records.** The key material changed (sources, `CACHE_VERSION` 3, the store hash, node,
+home, ancestors, no npm), so every lsp Go fill and every variant record starts fresh. The old records
+stay on disk under other file names and are never read. The record's material has the store hash, so
+two stores never share a record (control below). After the key change, the record of
+`watch-ts-pattern-f12` has the one 0018 variant of the new store; the 1,150 and 1,147 variants of the
+user-npm environment are in the old record only.
+
+**Discovery run** (`parity_lsp.py --tier full --no-js` on the 9 scenarios with ATA on, store
+`d339a2b67e79850a`, tsc-rs `tsgo-head-0bf6ff2a7-rel`, 592 s): no store miss; 591 MATCH and 4
+GO-BROKEN (watch-hono-f12 `end watch ids`, watch-umami-f12 `load watch events` and `end watch ids`,
+and watch-hono-f12's new `load ata npm` before the names were sorted). The npm calls, the same for Go
+and tsc-rs: `watch-hono-f12` installs the registry and all 7 `@types` (two calls: `jsdom ws` and
+`bun less node stylus yargs`); `watch-ts-pattern-f12` the registry and `@types/node`; `ata-overlay`
+its two fixture packages; fsevents, fsevents-narrow, unsaved-ts-pattern, second-project-query and the
+umami scenarios make no npm call. `watch-ts-pattern-f12/0018` is MATCH (4 Go runs and tsc-rs agree).
+
+<!-- H5-GATE -->
 ## LSP watch scenarios on the perf head (2026-11-04)
 
 The full gate with the new LSP items ran on `tsgo-head-b2febcd86-goport-w1` (sha256
@@ -1653,9 +1749,13 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   next run snapshots the new content, which changes the Go cache keys. A changed input can still
   turn base MATCHes into new results, so rerun the base after one.
 - **Inputs outside the snapshots.** The Go and tsc-rs binaries are keyed by their sha, and JS by its
-  package. The node that runs lspdiff, the kernel and the environment variables the harness passes
-  through (`PATH`, `HOME`) are not keyed, and neither is the npm registry the user-npm watch
-  scenarios' ATA reads over the network (their npm's path and version are).
+  package. In the lsp tier (lane H5) the node, the typings store and the ancestor dirs' lookup names
+  are keyed too, the servers see none of the harness's environment, and the tripwires cover the
+  shared typings cache, npm's cache and `~/.config`. Not keyed: the kernel, the CPU count and the
+  host's load (which change how Go's goroutines race, not its inputs), the system libraries, and
+  `stat` of a guarded path (a tripwire sees opens and reads, not lookups). The CLI, fuzz and corpus
+  tiers still pass the harness's environment through and do not key their ancestor dirs (none holds
+  a lookup name on MS-A2 now).
 - **Transient changes of a fixture scenario's dir by a server.** The fixture must hold exactly what
   the script made it after each run, but a change a server makes and undoes inside its own run is not
   seen there (the script writes the same dir; inotify cannot tell the writers apart).
@@ -1671,7 +1771,11 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   inotify watch; `parity-grandfathered.json`: the known-bad items pinned to their failure;
   `parity_grandfather.py`: its schema, matcher, evidence runs and `regen`.
 - `parity_h4_test.py` and `vendor/lspdiff/selftest/h4-selftest.mjs`: lane H4's negative controls
-  (about 1 minute together).
+  (about 1 minute together; the JS file also has lane ND2's and H5's).
+- `ata_typings.py`: builds and checks the frozen typings store (`build`, `check`, `path`);
+  `ata-typings.json`: its manifest (hash, versions, every file's sha256; the store itself is in
+  `~/.cache/perf-rearch/ata-typings/<sha>/`); `parity_h5_test.py`: lane H5's negative controls (unit
+  checks in seconds, `--e2e BIN` through the real tier).
 - `parity_referees.py`: GO-BROKEN, GO-PARTITION, JS-AGREES and the diagnostic parser;
   `parity_referees_test.py`: their self-test (fake compilers, every classification path, about 2
   minutes; `SELFTEST OK`).
@@ -1680,8 +1784,8 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
-  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm; `user-npm/`
-  the logging shim of the user's npm; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
+  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm, the only npm a
+  server can run; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
   the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process and its session result,
   `settings.mjs` every setting, `selftest/` their self-tests) and `vendor/difffuzz/` (feat/difffuzz
   033e55442; `oracle.py` checks the inputs since lane H4).
