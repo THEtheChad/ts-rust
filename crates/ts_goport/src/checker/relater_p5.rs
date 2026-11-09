@@ -1700,22 +1700,15 @@ impl Checker {
         {
             let mut message = diag::The_intersection_0_was_reduced_to_never_because_property_1_has_conflicting_types_in_some_constituents;
             let props = self.get_properties_of_union_or_intersection_type(original_target);
-            let mut prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_discriminant_with_never_type(p) {
-                    prop = p;
-                    break;
-                }
-            }
+            let mut prop = (props.iter().copied())
+                .find(|&p| self.is_discriminant_with_never_type(p))
+                .unwrap_or(SymbolId::NIL);
             if prop.is_nil() {
                 message = diag::The_intersection_0_was_reduced_to_never_because_property_1_exists_in_multiple_constituents_and_is_private_in_some;
                 let props = self.get_properties_of_union_or_intersection_type(original_target);
-                for &p in &props {
-                    if self.is_conflicting_private_property(p) {
-                        prop = p;
-                        break;
-                    }
-                }
+                prop = (props.iter().copied())
+                    .find(|&p| self.is_conflicting_private_property(p))
+                    .unwrap_or(SymbolId::NIL);
             }
             if prop.is_some() {
                 let target_str = self.type_to_string_ex(
