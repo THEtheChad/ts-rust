@@ -1170,3 +1170,24 @@ once a **reconciliation step** is built and tested.
 - **Wave 2,** after Q0 and Q4 merge: area lanes (checker, frontend and
   loader, LS, build/emit), each doing complexity and duplication on its own
   files.
+- **Q0 merged** (`t3/go-complexity-ranking`, merge `65c26c8b2`). It is tooling
+  only, it gates nothing, and its self-tests pass, so it went in without an
+  Astra round. Ranking: `cleanup/q0-ranking.md`.
+  - **Port bloat:** 160 targets (Δ ≥ 10, Σ 2,803); 68% of the Σ is in the
+    checker. The giants are only 10–20% over Go in cognitive complexity.
+  - **Own code:** 149 functions over 25 (Σ 2,389); Effect is 56% of that Σ.
+  - **Root's decision on `gostd/`, `locale.rs`, the `json.rs` decoder and
+    `filepath_clean`:** these port Go code outside the pin (the stdlib,
+    x/text). They are treated as ported code, not as own code: their shape
+    follows that Go, and they have the lowest priority in wave 2. They are
+    not measured against that Go yet.
+  - **Wave-2 lanes,** once Q4 merges:
+    - checker A: `inference_p*`, `relater_p*`;
+    - checker B: `checker_p01`–`p19`;
+    - checker C: `checker_p20`–`p35`, `nodebuilder_impl_p*`,
+      `emit_resolver_p*`, `services.rs`, and the rest of `checker/`;
+    - frontend with execute/build/emit;
+    - ls;
+    - Effect.
+
+    "Other" joins the lane that owns the nearest code.
