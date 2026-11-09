@@ -1108,3 +1108,20 @@ once a **reconciliation step** is built and tested.
     and only the 13 intentional not-run names. It is now `base-current`.
   - Merged without an Astra round: it only makes the keys stricter, and its
     negative controls fail as expected.
+- **2026-11-09, ttfd on the combined head** (`5c13a7657`, goport, umami,
+  idle-gated, interleaved):
+
+  | | head | Go | timing-window-2 head |
+  |---|---|---|---|
+  | 7 rounds | 269.6 ms | 267.7 ms | 267.3 ms |
+  | 15 rounds | 271.5 ms | 276.1 ms | — |
+
+  - **Verdict:** a tie with Go within about 2%, and no regression from C2,
+    C3 or P3.
+  - **Why it's close:** head's ttfd range is narrower and it uses 42% of
+    Go's CPU. Its program update is 9–27 ms slower than Go's, and the
+    faster diagnostics make that up.
+  - **Margin candidate (not needed for "≤ Go", not scheduled):** Go-like
+    streaming and a parallel BFS level of project loads (P2 notes, L1
+    backlog).
+  - Data: `~/.cache/perf-rearch/ttfd-5c13a7657{,-b}/`.
