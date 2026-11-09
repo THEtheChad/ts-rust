@@ -6,7 +6,8 @@
 use crate::diagnostics::Message;
 use crate::prelude::*;
 
-// PORT: the Go closure `visit` inside isSymbolUsedInBinaryExpressionChain.
+// PORT: the Go closure `visit` inside isSymbolUsedInBinaryExpressionChain:
+// part of Go `isSymbolUsedInBinaryExpressionChain`.
 fn visit_binary_expression_chain_child(
     c: &mut Checker,
     child: Node,
@@ -21,7 +22,8 @@ fn visit_binary_expression_chain_child(
     child.for_each_child(&mut |n: Node| visit_binary_expression_chain_child(c, n, tested_symbol))
 }
 
-// PORT: the Go closure `visit` inside isSymbolUsedInConditionBody.
+// PORT: the Go closure `visit` inside isSymbolUsedInConditionBody: part of
+// Go `isSymbolUsedInConditionBody`.
 fn visit_condition_body_child(
     c: &mut Checker,
     child_node: Node,
