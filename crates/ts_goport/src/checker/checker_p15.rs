@@ -1437,21 +1437,13 @@ impl Checker {
                                 Node::NIL, /*flowContainer*/
                                 get_flow_node_of_node(location),
                             );
-                            let position = match func
+                            let position = func
                                 .parameters()
-                                .to_vec()
                                 .iter()
-                                .position(|&p| p == declaration)
-                            {
-                                Some(i) => i as i64,
-                                None => -1,
-                            };
-                            let index = position
-                                - if get_this_parameter(func).is_some() {
-                                    1
-                                } else {
-                                    0
-                                };
+                                .position(|p| p == declaration)
+                                .map_or(-1, |i| i as i64);
+                            let index =
+                                position - if_else(get_this_parameter(func).is_some(), 1, 0);
                             let index_type = self
                                 .get_number_literal_type(crate::jsnum::Number::from(index as f64));
                             t = self.get_indexed_access_type(narrowed_type, index_type);
