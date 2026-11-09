@@ -1044,3 +1044,23 @@ once a **reconciliation step** is built and tested.
       Logs are in `~/.cache/perf-rearch/c2f/`.
     - Still to do after the thaw: nm and disassembly checks, icount
       (CLI and LSP), clippy, and removing `../ts-rust-c2fbase`.
+- **2026-11-08, resumed after the pause.** MS-A2 was rebooted with a new NVMe
+  (`/` has about 1 TB free), which killed the frozen units.
+  - **Combined-head gate:** restarted from scratch as
+    `head-gate-0bf6ff2a7-r2`. The killed run was moved aside to
+    `runs/head-0bf6ff2a7-full-killed`.
+  - **C2 follow-up:** the coordinator resumed it.
+  - **Timing window 2: done** (`experiments/window2.md`).
+    - **One cell is over Go:** `build-warm query`, a no-op `-b`, 8 ms vs
+      7 ms. Lane P3 is on it.
+    - **Every other cell is at or under Go:**
+
+      | cell | head vs Go |
+      |---|---|
+      | CLI | 0.37–0.67× |
+      | `-b` | 0.22–0.63× |
+      | incr-edit | 0.48–0.74× |
+      | open12 | 0.88× |
+      | ttfd | 0.93× |
+      | concurrent typing | 0.28–0.69× |
+      | probes | 0.13–0.26× |
