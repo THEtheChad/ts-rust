@@ -412,13 +412,23 @@ impl LoadView {
             }
             let mut view = LoadView::default();
             view.diag.frozen = true;
-            r.list(|r, path| Ok(view.stats.insert_recorded(path, r.info()?)))?;
+            r.list(|r, path| {
+                view.stats.insert_recorded(path, r.info()?);
+                Ok(())
+            })?;
             r.list(|r, path| {
                 let text = r.option(|r| Ok(SharedText::new(r.string()?)))?;
-                Ok(view.reads.insert_recorded(path, text))
+                view.reads.insert_recorded(path, text);
+                Ok(())
             })?;
-            r.list(|r, path| Ok(view.realpaths.insert_recorded(path, r.string()?)))?;
-            r.list(|r, path| Ok(view.entries.insert_recorded(path, r.entries()?)))?;
+            r.list(|r, path| {
+                view.realpaths.insert_recorded(path, r.string()?);
+                Ok(())
+            })?;
+            r.list(|r, path| {
+                view.entries.insert_recorded(path, r.entries()?);
+                Ok(())
+            })?;
             views.push(Arc::new(view));
         }
         Ok(views)
