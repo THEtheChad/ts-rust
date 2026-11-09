@@ -1134,7 +1134,11 @@ impl Checker {
                 let apparent_string = self.type_to_string(apparent_type);
                 diagnostic = Some(new_diagnostic_for_node(
                     target,
-                    if_else(is_call, diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other, diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other),
+                    if_else(
+                        is_call,
+                        diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other,
+                        diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other,
+                    ),
                     args![apparent_string],
                 ));
             }
