@@ -1473,6 +1473,66 @@ impl FileIndex {
             })
         })
     }
+
+    /// Whether a node on the path from the node with entry number `p` to
+    /// its root mentions one of `keys`.
+    #[inline]
+    fn mentions_any_on_path(&self, keys: &[u64], p: u32) -> bool {
+        keys.iter().any(|&key| self.mentions_on_path(key, p) > 0)
+    }
+
+    /// The refusals a walk from flow node `u` gets before its keys are
+    /// read: `u` is not reached by the forest, or its walk is shorter than
+    /// `min_steps` and its root cannot move to the containing function
+    /// (then Go's walk is cheaper than the test).
+    #[inline]
+    fn refuse_unreached_or_short(&self, u: usize, min_steps: u32) -> Result<(), Refusal> {
+        if u >= self.flows.len() || self.tin[u] == NONE {
+            return Err(Refusal::Unreached);
+        }
+        if self.steps[u] < min_steps {
+            let root = self.root_of[u] as usize;
+            if self.root_kind[root] != ROOT_START || self.flows[root].node.is_nil() {
+                return Err(Refusal::Short);
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the walk of a reference of kind `kind` goes at the root of
+    /// segment `seg`: `None` when it ends there, the flow node of the
+    /// containing function when it moves there (Go's rule, flow.go:189), or
+    /// the refusal of a root the index cannot follow.
+    #[inline]
+    fn segment_after(
+        &self,
+        seg: usize,
+        kind: u8,
+        flow_container: Node,
+    ) -> Result<Option<usize>, Refusal> {
+        let root = self.root_of[seg] as usize;
+        match self.root_kind[root] {
+            ROOT_UNREACHABLE => Ok(None),
+            ROOT_START => {
+                let container = self.flows[root].node;
+                let crosses = container.is_some()
+                    && container != flow_container
+                    && match kind {
+                        K_IDENT => true,
+                        K_THIS => is_arrow_function(container),
+                        _ => false,
+                    };
+                if !crosses {
+                    return Ok(None);
+                }
+                match local_flow(self.flows, self.file, container.flow_node()) {
+                    Some(outer) => Ok(Some(outer as usize)),
+                    None => Err(Refusal::Cross),
+                }
+            }
+            _ => Err(Refusal::Root),
+        }
+    }
 }
 
 /// Union-find with path halving.
@@ -1964,76 +2024,12 @@ impl Checker {
         flow: FlowNodeId,
     ) -> Result<u32, Refusal> {
         let u = flow.local_index();
-        if u >= index.flows.len() || index.tin[u] == NONE {
-            return Err(Refusal::Unreached);
-        }
-        if index.steps[u] < self.flow_skip.min_steps() {
-            // A short walk: test it only when its root may move to the
-            // containing function.
-            let root = index.root_of[u] as usize;
-            if index.root_kind[root] != ROOT_START || index.flows[root].node.is_nil() {
-                return Err(Refusal::Short);
-            }
-        }
+        index.refuse_unreached_or_short(u, self.flow_skip.min_steps())?;
         let union = self.ty(declared_type).flags.intersects(TypeFlags::UNION);
         let Some(keys) = self.flow_skip_ref_keys(reference, union) else {
             return Err(Refusal::Kind);
         };
-        let mut segments: SmallVec<[u32; 4]> = SmallVec::new();
-        let mut seg = u;
-        let mut total_nest = 0u32;
-        loop {
-            let p = index.tin[seg];
-            if p == NONE {
-                return Err(Refusal::Unreached);
-            }
-            for &key in &keys.mentions {
-                if index.mentions_on_path(key, p) > 0 {
-                    return Err(Refusal::Mention);
-                }
-            }
-            for &key in &keys.chains {
-                let first = index.chain_sites.partition_point(|s| s.0 < key);
-                for &(k, site_tin, site_tout, root) in &index.chain_sites[first..] {
-                    if k != key || site_tin > p {
-                        break;
-                    }
-                    if site_tout > p && !self.flow_skip_resolved(root) {
-                        return Err(Refusal::Chain);
-                    }
-                }
-            }
-            total_nest += index.nest[seg];
-            if total_nest >= 2000 {
-                return Err(Refusal::Depth);
-            }
-            segments.push(seg as u32);
-            let root = index.root_of[seg] as usize;
-            match index.root_kind[root] {
-                ROOT_UNREACHABLE => break,
-                ROOT_START => {
-                    // Go's rule for moving to the containing function
-                    // (flow.go:189).
-                    let container = index.flows[root].node;
-                    let crosses = container.is_some()
-                        && container != flow_container
-                        && match keys.kind {
-                            K_IDENT => true,
-                            K_THIS => is_arrow_function(container),
-                            _ => false,
-                        };
-                    if !crosses {
-                        break;
-                    }
-                    let Some(outer) = local_flow(index.flows, index.file, container.flow_node())
-                    else {
-                        return Err(Refusal::Cross);
-                    };
-                    seg = outer as usize;
-                }
-                _ => return Err(Refusal::Root),
-            }
-        }
+        let (segments, total_nest) = self.flow_skip_segments(index, &keys, flow_container, u)?;
         let cr = match self.flow_skip_constant_reference_cached(reference) {
             Some(false) => 0,
             Some(true) => 1,
@@ -2045,51 +2041,137 @@ impl Checker {
             cr,
         };
         for &seg in &segments {
-            // Candidates on the path, through the joined ones.
-            let mut s = find(&mut index.class_state(class).next, seg);
-            loop {
-                let ci = index.cand_of[s as usize];
-                if ci == NONE {
-                    break;
-                }
-                let st = index.class_state(class).state[ci as usize];
-                match st {
-                    S_BLOCKED => return Err(Refusal::Blocked),
-                    S_EXTRAS => {
-                        let state = index.class_state(class);
-                        let extras = &state.extras[&ci];
-                        if !self.flow_skip_extras_ok(extras, &keys) {
-                            return Err(Refusal::Extras);
-                        }
-                    }
-                    _ => match self.flow_skip_settle(index, ci, class) {
-                        Settle::Joined => {
-                            let parent = index.parent[s as usize];
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_JOINED;
-                            state.next[s as usize] = parent;
-                        }
-                        Settle::Extras(extras) => {
-                            let ok = self.flow_skip_extras_ok(&extras, &keys);
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_EXTRAS;
-                            state.extras.insert(ci, extras);
-                            if !ok {
-                                return Err(Refusal::Extras);
-                            }
-                        }
-                        Settle::Unsettled => return Err(Refusal::Unsettled),
-                        Settle::Blocked => {
-                            index.class_state(class).state[ci as usize] = S_BLOCKED;
-                            return Err(Refusal::Blocked);
-                        }
-                    },
-                }
-                let parent = index.parent[s as usize];
-                s = find(&mut index.class_state(class).next, parent);
-            }
+            self.flow_skip_candidates_on_segment(index, seg, class, &keys)?;
         }
         Ok(total_nest)
+    }
+
+    /// The static tests of the walk from flow node `u`: per segment (the
+    /// path in one function, then in each containing function it moves to)
+    /// no mention of the reference's keys, every chain site with one of its
+    /// chain keys resolved, and a nesting count under Go's limit. Returns
+    /// the segments and the nesting count of the whole path.
+    #[inline]
+    fn flow_skip_segments(
+        &self,
+        index: &FileIndex,
+        keys: &RefKeys,
+        flow_container: Node,
+        u: usize,
+    ) -> Result<(SmallVec<[u32; 4]>, u32), Refusal> {
+        let mut segments: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut seg = u;
+        let mut total_nest = 0u32;
+        loop {
+            let p = index.tin[seg];
+            if p == NONE {
+                return Err(Refusal::Unreached);
+            }
+            if index.mentions_any_on_path(&keys.mentions, p) {
+                return Err(Refusal::Mention);
+            }
+            if !self.flow_skip_chain_sites_resolved(index, &keys.chains, p) {
+                return Err(Refusal::Chain);
+            }
+            total_nest += index.nest[seg];
+            if total_nest >= 2000 {
+                return Err(Refusal::Depth);
+            }
+            segments.push(seg as u32);
+            match index.segment_after(seg, keys.kind, flow_container)? {
+                Some(outer) => seg = outer,
+                None => return Ok((segments, total_nest)),
+            }
+        }
+    }
+
+    /// Whether every chain site with one of `chains` on the path from the
+    /// node with entry number `p` has its root identifier resolved: Go
+    /// resolves it there (flow.go:1625-1633), so an unresolved one would be
+    /// a lasting write.
+    #[inline]
+    fn flow_skip_chain_sites_resolved(&self, index: &FileIndex, chains: &[u64], p: u32) -> bool {
+        for &key in chains {
+            let first = index.chain_sites.partition_point(|s| s.0 < key);
+            for &(k, site_tin, site_tout, root) in &index.chain_sites[first..] {
+                if k != key || site_tin > p {
+                    break;
+                }
+                if site_tout > p && !self.flow_skip_resolved(root) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The candidates of `class` on the path from segment start `seg` to
+    /// its root, through the joined ones: each must be settled (or settle
+    /// now) with extras that the reference's keys pass.
+    #[inline]
+    fn flow_skip_candidates_on_segment(
+        &mut self,
+        index: &mut FileIndex,
+        seg: u32,
+        class: Class,
+        keys: &RefKeys,
+    ) -> Result<(), Refusal> {
+        let mut s = find(&mut index.class_state(class).next, seg);
+        loop {
+            let ci = index.cand_of[s as usize];
+            if ci == NONE {
+                return Ok(());
+            }
+            let st = index.class_state(class).state[ci as usize];
+            match st {
+                S_BLOCKED => return Err(Refusal::Blocked),
+                S_EXTRAS => {
+                    let extras = &index.class_state(class).extras[&ci];
+                    if !self.flow_skip_extras_ok(extras, keys) {
+                        return Err(Refusal::Extras);
+                    }
+                }
+                _ => self.flow_skip_settle_candidate(index, s, ci, class, keys)?,
+            }
+            let parent = index.parent[s as usize];
+            s = find(&mut index.class_state(class).next, parent);
+        }
+    }
+
+    /// Settles candidate `ci` (flow node `s`) for `class` the first time a
+    /// walk meets it, and records the outcome: a joined candidate links
+    /// `s` to its parent, extras are kept for later walks, a blocked one
+    /// refuses every later walk.
+    #[inline]
+    fn flow_skip_settle_candidate(
+        &mut self,
+        index: &mut FileIndex,
+        s: u32,
+        ci: u32,
+        class: Class,
+        keys: &RefKeys,
+    ) -> Result<(), Refusal> {
+        match self.flow_skip_settle(index, ci, class) {
+            Settle::Joined => {
+                let parent = index.parent[s as usize];
+                let state = index.class_state(class);
+                state.state[ci as usize] = S_JOINED;
+                state.next[s as usize] = parent;
+                Ok(())
+            }
+            Settle::Extras(extras) => {
+                let ok = self.flow_skip_extras_ok(&extras, keys);
+                let state = index.class_state(class);
+                state.state[ci as usize] = S_EXTRAS;
+                state.extras.insert(ci, extras);
+                if ok { Ok(()) } else { Err(Refusal::Extras) }
+            }
+            Settle::Unsettled => Err(Refusal::Unsettled),
+            Settle::Blocked => {
+                index.class_state(class).state[ci as usize] = S_BLOCKED;
+                Err(Refusal::Blocked)
+            }
+        }
     }
 
     /// `flow_skip_constant_reference` with the answer for an identifier
