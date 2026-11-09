@@ -3546,7 +3546,7 @@ pub fn source_files() -> Vec<Node> {
 
 // Go: compiler/program.go:535 Options
 pub fn options() -> &'static CompilerOptions {
-    &prog().options
+    prog().options
 }
 
 // Go: compiler/program.go:550 ContentMapperExtensions (#4712)
@@ -4207,7 +4207,7 @@ fn checker_count() -> usize {
     if program.single_threaded() {
         checker_count = 1;
     } else if let Some(count) = program.options.checkers {
-        checker_count = i64::from(count);
+        checker_count = count;
     }
     checker_count.min(files as i64).min(256).max(1) as usize
 }
@@ -5942,7 +5942,7 @@ pub fn get_semantic_diagnostics_with_checker(
             source_file,
             false, /*includeDeferredGlobals*/
         ),
-        &prog().options,
+        prog().options,
     );
     diags.extend(get_include_processor_diagnostics(source_file));
     diags

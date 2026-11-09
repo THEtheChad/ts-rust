@@ -1145,7 +1145,7 @@ impl Declarations {
             DeclarationList::Many(list) => Arc::make_mut(list).push(node),
             DeclarationList::Static(list) => {
                 let mut owned = Vec::with_capacity(list.len() + 1);
-                owned.extend_from_slice(*list);
+                owned.extend_from_slice(list);
                 owned.push(node);
                 self.0 = DeclarationList::Many(Arc::new(owned));
             }
