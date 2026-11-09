@@ -69,7 +69,7 @@ pub fn new_alias_resolver(
     to_path: Rc<dyn Fn(&str) -> tspath::Path>,
     on_failed_ambient_module_lookup: Rc<dyn Fn(&dyn HasFileName, &str)>,
 ) -> Rc<AliasResolver> {
-    let r = Rc::new(AliasResolver {
+    Rc::new(AliasResolver {
         to_path,
         host,
         module_resolver,
@@ -78,8 +78,7 @@ pub fn new_alias_resolver(
         on_failed_ambient_module_lookup,
         resolved_modules: RefCell::new(FxHashMap::default()),
         checker_program: Cell::new(None),
-    });
-    r
+    })
 }
 
 /// Go `binder.BindSourceFile(file)` on a file that the registry host parsed

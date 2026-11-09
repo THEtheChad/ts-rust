@@ -53,8 +53,8 @@ impl LanguageService {
         let (checker, _done) =
             ls_program::get_type_checker_for_file(program, ctx, get_source_file_of_node(node));
         let c = &mut *checker.borrow_mut();
-        let result = c.get_symbol_at_location_exported(node);
-        result
+
+        c.get_symbol_at_location_exported(node)
     }
 
     // Go: ls/api.go:40 GetTypeOfSymbol
@@ -62,7 +62,7 @@ impl LanguageService {
         let program = self.get_program();
         let (checker, _done) = ls_program::get_type_checker(program, ctx);
         let c = &mut *checker.borrow_mut();
-        let result = c.get_type_of_symbol_at_location(symbol, Node::NIL);
-        result
+
+        c.get_type_of_symbol_at_location(symbol, Node::NIL)
     }
 }

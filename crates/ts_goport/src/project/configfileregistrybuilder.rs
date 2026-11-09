@@ -311,11 +311,11 @@ impl ConfigFileRegistryBuilder {
                         &mut |config: Option<&Rc<RefCell<ConfigFileEntry>>>| {
                             let config =
                                 config.unwrap_or_else(|| crate::core::go_nil_dereference());
-                            let exists = config
+
+                            config
                                 .borrow()
                                 .retaining_configs
-                                .contains(extending_config_path);
-                            exists
+                                .contains(extending_config_path)
                         },
                         &mut |config: &Rc<RefCell<ConfigFileEntry>>| {
                             config
@@ -549,8 +549,8 @@ impl ConfigFileRegistryBuilder {
             entry.change_if(
                 &mut |config: Option<&Rc<RefCell<ConfigFileEntry>>>| {
                     let config = config.unwrap_or_else(|| crate::core::go_nil_dereference());
-                    let exists = config.borrow().retaining_projects.contains(project_id);
-                    exists
+
+                    config.borrow().retaining_projects.contains(project_id)
                 },
                 &mut |config: &Rc<RefCell<ConfigFileEntry>>| {
                     config.borrow_mut().retaining_projects.remove(project_id);
@@ -595,8 +595,8 @@ impl ConfigFileRegistryBuilder {
             entry.change_if(
                 &mut |config: Option<&Rc<RefCell<ConfigFileEntry>>>| {
                     let config = config.unwrap_or_else(|| crate::core::go_nil_dereference());
-                    let ok = config.borrow().retaining_open_files.contains(path);
-                    ok
+
+                    config.borrow().retaining_open_files.contains(path)
                 },
                 &mut |config: &Rc<RefCell<ConfigFileEntry>>| {
                     config.borrow_mut().retaining_open_files.remove(path);

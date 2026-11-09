@@ -915,8 +915,8 @@ impl<P: ProgramView> LanguageService<P> {
                 .unwrap_or_else(|| crate::core::go_nil_dereference())
                 .symbol;
             let (checker, _done) = program.get_type_checker(ctx);
-            let declarations = checker.borrow().sym(symbol).declarations.to_vec();
-            declarations
+
+            checker.borrow().sym(symbol).declarations.to_vec()
         };
         for d in declarations {
             let (file, start_pos) = get_file_and_start_pos_from_declaration(d);
@@ -1444,8 +1444,8 @@ impl LanguageService {
                 // PORT: Go reads `symbol.Declarations` directly; see the file header.
                 let declarations = {
                     let (checker, _done) = ls_program::get_type_checker(self.get_program(), ctx);
-                    let declarations = checker.borrow().sym(symbol).declarations.to_vec();
-                    declarations
+
+                    checker.borrow().sym(symbol).declarations.to_vec()
                 };
                 let node = if !declarations.is_empty() {
                     let decl = declarations[0];

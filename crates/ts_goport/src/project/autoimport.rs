@@ -70,13 +70,12 @@ impl FileHandleSource for AutoImportBuilderFS {
             .fs
             .get_file_by_path(file_name, path);
         // Go: fh, _ = a.untrackedFiles.LoadOrStore(path, fh)
-        let fh = self
-            .untracked_files
+
+        self.untracked_files
             .borrow_mut()
             .entry(path.clone())
             .or_insert(fh)
-            .clone();
-        fh
+            .clone()
     }
 }
 
@@ -177,8 +176,8 @@ impl autoimport::RegistryCloneHost for AutoImportRegistryCloneHost {
         let id = ID(project_id.0.clone());
         let project = self.project_collection.get_project(&id)?;
         // PORT: Go `project.GetProgram()` is the field read.
-        let program = project.borrow().program.clone();
-        program
+
+        project.borrow().program.clone()
     }
 
     // Go: project/autoimport.go:99 GetPackageJson

@@ -139,13 +139,11 @@ impl LanguageService {
         if let Some(request) = symbol_completion.request {
             match request {
                 CompletionData::JSDocTagName(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
+                    create_simple_details(item, &data.name, doc_format)
                 }
-                CompletionData::JSDocTag(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
-                }
+                CompletionData::JSDocTag(_) => create_simple_details(item, &data.name, doc_format),
                 CompletionData::JSDocParameterName(_) => {
-                    return create_simple_details(item, &data.name, doc_format);
+                    create_simple_details(item, &data.name, doc_format)
                 }
                 CompletionData::Keyword(request) => {
                     if request
@@ -155,7 +153,7 @@ impl LanguageService {
                     {
                         return create_simple_details(item, &data.name, doc_format);
                     }
-                    return item;
+                    item
                 }
                 // PORT: Go prints the dynamic type with `%T`; the only other
                 // variant is `*completionDataData`.
@@ -164,22 +162,22 @@ impl LanguageService {
                 ),
             }
         } else if let Some(symbol_details) = symbol_completion.symbol {
-            return self.create_completion_details_for_symbol(
+            self.create_completion_details_for_symbol(
                 item,
                 symbol_details.symbol,
                 checker,
                 symbol_details.location,
                 position,
                 doc_format,
-            );
+            )
         } else if let Some(literal) = symbol_completion.literal {
-            return create_simple_details(
+            create_simple_details(
                 item,
                 &completion_name_for_literal(file, &preferences, &literal),
                 doc_format,
-            );
+            )
         } else if symbol_completion.cases.is_some() {
-            return item;
+            item
         } else {
             // Didn't find a symbol with this name.  See if we can find a keyword instead.
             if all_keyword_completions()
@@ -188,7 +186,7 @@ impl LanguageService {
             {
                 return create_simple_details(item, &data.name, doc_format);
             }
-            return item;
+            item
         }
     }
 }

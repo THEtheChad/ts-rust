@@ -1435,8 +1435,8 @@ impl SourceFS {
         let Some(seen_files) = seen_files.as_ref() else {
             return false;
         };
-        let seen = seen_files.borrow().contains_key(path);
-        seen
+
+        seen_files.borrow().contains_key(path)
     }
 
     // Go: project/snapshotfs.go:817 sourceFS.SeenFileOrMissingParentDirectory

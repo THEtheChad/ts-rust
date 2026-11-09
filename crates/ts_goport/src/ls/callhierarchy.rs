@@ -297,8 +297,8 @@ pub fn get_text_of_call_hierarchy_name(
         None,
     );
     p.write_exported(print_node, source_file, writer.clone(), None);
-    let text = writer.borrow().string();
-    text
+
+    writer.borrow().string()
 }
 
 // Go: ls/callhierarchy.go:252 getCallHierarchyItemContainerName
