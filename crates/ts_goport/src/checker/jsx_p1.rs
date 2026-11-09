@@ -563,36 +563,11 @@ impl Checker {
                     }),
                 )
             };
-            // PORT: Go `getInvalidTextualChildDiagnostic` is a closure that computes
-            // the message and args once, on first call. The cache is shared through
-            // `Rc<RefCell<..>>` so the returned `Rc<dyn Fn>` can be stored in
-            // `JsxElaborationElement::create_diagnostic` closures.
-            let invalid_text_diagnostic: Rc<RefCell<Option<(&'static Message, Vec<String>)>>> =
-                Rc::new(RefCell::new(None));
-            let get_invalid_textual_child_diagnostic: JsxInvalidTextDiagnosticFn = {
-                let invalid_text_diagnostic = invalid_text_diagnostic.clone();
-                let tag_name = node.parent().tag_name();
-                let children_prop_name = children_prop_name.clone();
-                Rc::new(move |c: &mut Checker| {
-                    if invalid_text_diagnostic.borrow().is_none() {
-                        let tag_name_text = get_text_of_node(tag_name);
-                        let message = diag::X_0_components_don_t_accept_text_as_child_elements_Text_in_JSX_has_the_type_string_but_the_expected_type_of_1_is_2;
-                        let children_target_type_string = c.type_to_string(children_target_type);
-                        *invalid_text_diagnostic.borrow_mut() = Some((
-                            message,
-                            args![
-                                tag_name_text,
-                                children_prop_name,
-                                children_target_type_string
-                            ],
-                        ));
-                    }
-                    invalid_text_diagnostic
-                        .borrow()
-                        .clone()
-                        .expect("invalid text diagnostic")
-                })
-            };
+            let get_invalid_textual_child_diagnostic = new_invalid_textual_child_diagnostic(
+                node.parent().tag_name(),
+                children_prop_name.clone(),
+                children_target_type,
+            );
             if more_than_one_real_children {
                 if array_like_target_parts != self.never_type {
                     let child_types =
@@ -637,25 +612,11 @@ impl Checker {
                         get_invalid_textual_child_diagnostic.clone(),
                     );
                     if e.error_node.is_some() {
-                        let create_diagnostic = e.create_diagnostic.clone();
-                        let mut factory = |c: &mut Checker, prop: Node| -> Diagnostic {
-                            (create_diagnostic.as_ref().expect("create_diagnostic"))(c, prop)
-                        };
-                        let factory_opt: Option<&mut dyn FnMut(&mut Checker, Node) -> Diagnostic> =
-                            if e.create_diagnostic.is_some() {
-                                Some(&mut factory)
-                            } else {
-                                None
-                            };
-                        reported_error = self.elaborate_element(
+                        reported_error = self.elaborate_jsx_elaboration_element(
                             source,
                             target,
                             relation,
-                            e.error_node,
-                            e.inner_expression,
-                            e.name_type,
-                            None,
-                            factory_opt,
+                            &e,
                             diagnostic_output.as_deref_mut(),
                         ) || reported_error;
                     }
@@ -687,6 +648,73 @@ impl Checker {
 // PORT: Go `func() (*diagnostics.Message, []any)` passed to the JSX child
 // elaboration helpers. Stored in closures, so it is an `Rc<dyn Fn>`.
 pub type JsxInvalidTextDiagnosticFn = Rc<dyn Fn(&mut Checker) -> (&'static Message, Vec<String>)>;
+
+/// Go's `getInvalidTextualChildDiagnostic` closure in `elaborateJsxComponents`:
+/// it computes the text-child message and its args on the first call and
+/// returns the same ones after. The cache is an `Rc<RefCell<..>>` so the
+/// function can be stored in `JsxElaborationElement::create_diagnostic`.
+fn new_invalid_textual_child_diagnostic(
+    tag_name: Node,
+    children_prop_name: String,
+    children_target_type: TypeId,
+) -> JsxInvalidTextDiagnosticFn {
+    let invalid_text_diagnostic: Rc<RefCell<Option<(&'static Message, Vec<String>)>>> =
+        Rc::new(RefCell::new(None));
+    Rc::new(move |c: &mut Checker| {
+        if invalid_text_diagnostic.borrow().is_none() {
+            let tag_name_text = get_text_of_node(tag_name);
+            let message = diag::X_0_components_don_t_accept_text_as_child_elements_Text_in_JSX_has_the_type_string_but_the_expected_type_of_1_is_2;
+            let children_target_type_string = c.type_to_string(children_target_type);
+            *invalid_text_diagnostic.borrow_mut() = Some((
+                message,
+                args![
+                    tag_name_text,
+                    children_prop_name,
+                    children_target_type_string
+                ],
+            ));
+        }
+        invalid_text_diagnostic
+            .borrow()
+            .clone()
+            .expect("invalid text diagnostic")
+    })
+}
+
+impl Checker {
+    /// `elaborateElement` for one JSX child element `e`. Go passes the nil-able
+    /// `e.createDiagnostic` func through as it is; Rust adapts the stored
+    /// `Rc<dyn Fn>` to the `&mut dyn FnMut` that `elaborate_element` takes.
+    fn elaborate_jsx_elaboration_element(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: &Rc<RefCell<Relation>>,
+        e: &JsxElaborationElement,
+        diagnostic_output: Option<&mut Vec<Diagnostic>>,
+    ) -> bool {
+        let mut factory = |c: &mut Checker, prop: Node| -> Diagnostic {
+            (e.create_diagnostic.as_ref().expect("create_diagnostic"))(c, prop)
+        };
+        let factory_opt: Option<&mut dyn FnMut(&mut Checker, Node) -> Diagnostic> =
+            if e.create_diagnostic.is_some() {
+                Some(&mut factory)
+            } else {
+                None
+            };
+        self.elaborate_element(
+            source,
+            target,
+            relation,
+            e.error_node,
+            e.inner_expression,
+            e.name_type,
+            None,
+            factory_opt,
+            diagnostic_output,
+        )
+    }
+}
 
 // Go: checker/jsx.go:369 JsxElaborationElement
 // PORT: Go `createDiagnostic func(prop *ast.Node) *ast.Diagnostic` (nil-able)
