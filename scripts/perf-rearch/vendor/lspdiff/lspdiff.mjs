@@ -293,7 +293,13 @@ if (mode === "diff") {
     try {
       ({ log, session } = await runOne(name, cmd, env));
     } catch (e) {
-      if (!e.log || e.harness) throw e; // a harness error (scenario.mjs: an input that is not the frozen one) is no server's answer
+      if (e.harness) {
+        // A harness error (scenario.mjs: an input that is not the frozen one) is no server's answer: the
+        // session fails (parity_lsp.py: ERROR), and no log of this run is kept.
+        console.error(`lspdiff: harness error in ${name}: ${e.message}`);
+        process.exit(3);
+      }
+      if (!e.log) throw e;
       log = e.log;
       session = e.session ?? { clean: false, why: [`no session result (${String(e.message).slice(0, 200)})`] };
       fail = { kind: e.timeout ? "timeout" : "crash", reason: String(e.message).slice(0, 300), at: e.log.length };

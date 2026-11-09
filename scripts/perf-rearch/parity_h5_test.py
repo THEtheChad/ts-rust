@@ -142,11 +142,12 @@ def e2e_checks(root, rs):
         cmd = [sys.executable, '-I', str(HERE / 'parity_lsp.py'), '--rs', str(rs_bin), '--out', str(out), '--tier', 'quick',
                '--only', only, '--no-js', *(['--ata-manifest', str(man)] if man else [])]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        (root / f'{name}.out').write_text(r.stdout + r.stderr)
         res = json.loads((out / 'results.json').read_text()) if (out / 'results.json').exists() else {}
         return r, res
 
     def wrapper(name, body):
-        return script(root / name, f'#!/bin/sh\n{body}\nexec {rs} "$@"\n')
+        return script(root / f'{name}.sh', f'#!/bin/sh\n{body}\nexec {rs} "$@"\n')
 
     # 1. a tsc-rs that reads the real typings cache. ata-overlay: fixture, ATA on, Go cached after its first fill.
     tier('warm', rs, '^ata-overlay$')
@@ -160,7 +161,8 @@ def e2e_checks(root, rs):
         check(f'e2e: {name}: no Go log of that tier is published', 'staged files discarded' in r.stdout, r.stdout[-300:])
     # 2-4. stores: one that lacks @types/node, one with a byte changed, a manifest that is not its store's.
     lacking = make_store(root, store, 'lack', lambda d: drop_closure(d, '@types/node'))
-    changed = make_store(root, store, 'byte', lambda d: append(d / 'node_modules/@types/node/index.d.ts', '\n'))
+    # A byte no earlier run of this test added (its pid), so no Go fill of this store exists yet.
+    changed = make_store(root, store, 'byte', lambda d: append(d / 'node_modules/@types/node/index.d.ts', f'// {os.getpid()}\n'))
     bad = root / 'bad-manifest.json'
     bad.write_text(json.dumps({**manifest, 'sha': 'f' * 64}))
     try:
