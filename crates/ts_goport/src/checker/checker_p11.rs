@@ -404,81 +404,48 @@ impl Checker {
             .collect();
         let mut this_parameter = SymbolId::NIL;
         if !this_parameters.is_empty() {
-            let mut types = Vec::with_capacity(this_parameters.len());
-            for &p in &this_parameters {
-                types.push(self.get_type_of_parameter(p));
-            }
+            let types: Vec<TypeId> = this_parameters
+                .iter()
+                .map(|&p| self.get_type_of_parameter(p))
+                .collect();
             this_parameter = self.create_combined_symbol_from_types(&this_parameters, &types);
         }
-        // PORT: Go `minAndMax(candidates, getNonRestParameterCount)`, inlined because the
-        // value function needs the checker.
-        let mut min_argument_count: i32 = 0;
-        let mut max_non_rest_param: i32 = 0;
-        for (i, &s) in candidates.iter().enumerate() {
-            let value = self.get_non_rest_parameter_count(s);
-            if i == 0 {
-                min_argument_count = value;
-                max_non_rest_param = value;
-            } else {
-                min_argument_count = min_argument_count.min(value);
-                max_non_rest_param = max_non_rest_param.max(value);
-            }
-        }
+        let (min_argument_count, max_non_rest_param) =
+            min_and_max(candidates, |s| self.get_non_rest_parameter_count(s));
         let mut parameters: Vec<SymbolId> = Vec::with_capacity(max_non_rest_param.max(0) as usize);
         for i in 0..max_non_rest_param {
-            let iu = i as usize;
-            let mut symbols: Vec<SymbolId> = Vec::new();
-            for &s in candidates {
-                let has_rest = self.signature_has_rest_parameter(s);
-                let sig_parameters = &self.sig(s).parameters;
-                let symbol = if has_rest {
-                    if iu + 1 < sig_parameters.len() {
-                        sig_parameters[iu]
-                    } else {
-                        sig_parameters.last().copied().unwrap_or(SymbolId::NIL)
-                    }
-                } else if iu < sig_parameters.len() {
-                    sig_parameters[iu]
-                } else {
-                    SymbolId::NIL
-                };
-                if symbol.is_some() {
-                    symbols.push(symbol);
-                }
-            }
-            let mut types: Vec<TypeId> = Vec::new();
-            for &s in candidates {
-                let t = self.try_get_type_at_position(s, i);
-                if t.is_some() {
-                    types.push(t);
-                }
-            }
+            let symbols: Vec<SymbolId> = candidates
+                .iter()
+                .map(|&s| self.overload_failure_parameter_at(s, i as usize))
+                .filter(|p| p.is_some())
+                .collect();
+            let types: Vec<TypeId> = candidates
+                .iter()
+                .map(|&s| self.try_get_type_at_position(s, i))
+                .filter(|t| t.is_some())
+                .collect();
             let combined = self.create_combined_symbol_from_types(&symbols, &types);
             parameters.push(combined);
         }
-        let mut rest_parameter_symbols: Vec<SymbolId> = Vec::new();
-        for &s in candidates {
-            if self.signature_has_rest_parameter(s) {
-                let last = self
-                    .sig(s)
+        let rest_parameter_symbols: Vec<SymbolId> = candidates
+            .iter()
+            .filter(|&&s| self.signature_has_rest_parameter(s))
+            .map(|&s| {
+                self.sig(s)
                     .parameters
                     .last()
                     .copied()
-                    .unwrap_or(SymbolId::NIL);
-                if last.is_some() {
-                    rest_parameter_symbols.push(last);
-                }
-            }
-        }
+                    .unwrap_or(SymbolId::NIL)
+            })
+            .filter(|p| p.is_some())
+            .collect();
         let mut flags = SignatureFlags::IS_SIGNATURE_CANDIDATE_FOR_OVERLOAD_FAILURE;
         if !rest_parameter_symbols.is_empty() {
-            let mut rest_types: Vec<TypeId> = Vec::new();
-            for &s in candidates {
-                let t = self.try_get_rest_type_of_signature(s);
-                if t.is_some() {
-                    rest_types.push(t);
-                }
-            }
+            let rest_types: Vec<TypeId> = candidates
+                .iter()
+                .map(|&s| self.try_get_rest_type_of_signature(s))
+                .filter(|t| t.is_some())
+                .collect();
             let union =
                 self.get_union_type_ex(&rest_types, UnionReduction::SUBTYPE, None, TypeId::NIL);
             let t = self.create_array_type(union);
@@ -487,17 +454,17 @@ impl Checker {
             parameters.push(combined);
             flags |= SignatureFlags::HAS_REST_PARAMETER;
         }
-        for &s in candidates {
-            if self.signature_has_literal_types(s) {
-                flags |= SignatureFlags::HAS_LITERAL_TYPES;
-                break;
-            }
+        if candidates
+            .iter()
+            .any(|&s| self.signature_has_literal_types(s))
+        {
+            flags |= SignatureFlags::HAS_LITERAL_TYPES;
         }
         let declaration = self.sig(candidates[0]).declaration;
-        let mut return_types = Vec::with_capacity(candidates.len());
-        for &s in candidates {
-            return_types.push(self.get_return_type_of_signature(s));
-        }
+        let return_types: Vec<TypeId> = candidates
+            .iter()
+            .map(|&s| self.get_return_type_of_signature(s))
+            .collect();
         let return_type = self.get_intersection_type(&return_types);
         self.new_signature(
             flags,
@@ -509,6 +476,25 @@ impl Checker {
             TypePredicateId::NIL,
             min_argument_count,
         )
+    }
+
+    /// The parameter of `s` that stands at position `i` in the combined
+    /// overload-failure signature: a rest parameter covers every position
+    /// from its own on. Part of Go `createUnionOfSignaturesForOverloadFailure`
+    /// (the closure passed to `core.MapNonNil` for each position).
+    fn overload_failure_parameter_at(&self, s: SignatureId, i: usize) -> SymbolId {
+        let has_rest = self.signature_has_rest_parameter(s);
+        let parameters = &self.sig(s).parameters;
+        if has_rest {
+            if i + 1 < parameters.len() {
+                return parameters[i];
+            }
+            return parameters.last().copied().unwrap_or(SymbolId::NIL);
+        }
+        if i < parameters.len() {
+            return parameters[i];
+        }
+        SymbolId::NIL
     }
 
     // Go: checker/checker.go:9844 createCombinedSymbolFromTypes
