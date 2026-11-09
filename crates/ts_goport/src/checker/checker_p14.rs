@@ -1077,11 +1077,11 @@ impl Checker {
                     // We create a synthetic expression so that getIndexedAccessType doesn't get confused
                     // when the element is a SyntaxKind.ElementAccessExpression.
                     let access_flags = AccessFlags::EXPRESSION_POSITION
-                        | if self.has_default_value(element) {
-                            AccessFlags::ALLOW_MISSING
-                        } else {
-                            AccessFlags::NONE
-                        };
+                        | if_else(
+                            self.has_default_value(element),
+                            AccessFlags::ALLOW_MISSING,
+                            AccessFlags::NONE,
+                        );
                     let synthetic =
                         self.create_synthetic_expression(element, index_type, false, Node::NIL);
                     let indexed = self.get_indexed_access_type_or_undefined(
@@ -1091,11 +1091,7 @@ impl Checker {
                         synthetic,
                         None,
                     );
-                    let element_type = if indexed.is_some() {
-                        indexed
-                    } else {
-                        self.error_type
-                    };
+                    let element_type = or_else_type(indexed, self.error_type);
                     let mut assigned_type = element_type;
                     if self.has_default_value(element) {
                         assigned_type =
