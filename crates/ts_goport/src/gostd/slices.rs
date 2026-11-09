@@ -586,6 +586,8 @@ pub fn break_patterns_cmp_func<T, F: FnMut(&T, &T) -> i32>(
 /// [0,8): chooses a static pivot.
 /// [8,shortestNinther): uses the simple median-of-three method.
 /// [shortestNinther,∞): uses the Tukey ninther method.
+// Go writes the three sample points as l/4*1, l/4*2 and l/4*3.
+#[allow(clippy::identity_op)]
 pub fn choose_pivot_cmp_func<T, F: FnMut(&T, &T) -> i32>(
     data: &mut [T],
     a: isize,
@@ -1224,6 +1226,8 @@ pub fn break_patterns_func<T, F: FnMut(&T, &T) -> bool>(
 /// [0,8): chooses a static pivot.
 /// [8,shortestNinther): uses the simple median-of-three method.
 /// [shortestNinther,∞): uses the Tukey ninther method.
+// Go writes the three sample points as l/4*1, l/4*2 and l/4*3.
+#[allow(clippy::identity_op)]
 pub fn choose_pivot_func<T, F: FnMut(&T, &T) -> bool>(
     data: &mut LessSwap<'_, T, F>,
     a: isize,

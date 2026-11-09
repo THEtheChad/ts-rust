@@ -1135,6 +1135,8 @@ fn store_node_data<'f>(
 }
 
 // Go: api/encoder/encoder.go:540 (the visitor.Visit func of encodeTree)
+// `base + 0` lines up with the `base + 1..3` byte stores, as in Go.
+#[allow(clippy::identity_op)]
 fn encode_visit(node: Node, visitor: &mut EncodeVisitor<'_>, fast: Option<&StoreFile<'_>>) -> Node {
     // PERF: (apiperf2) a node of the store file reads its record once.
     let in_file = fast.filter(|fast| node.file_index() == fast.file);
@@ -1433,6 +1435,8 @@ fn encode_store_list(list: NodeList, visitor: &mut EncodeVisitor<'_>, fast: &Sto
 
 /// The start of the VisitNodes hook of Go `encodeTree`: the entry of a
 /// list at `pos`..`end` with `len` nodes. Returns its index.
+// `base + 0` lines up with the `base + 1..3` byte stores, as in Go.
+#[allow(clippy::identity_op)]
 fn begin_node_list(
     st: &mut EncodeTreeState,
     pos: i32,

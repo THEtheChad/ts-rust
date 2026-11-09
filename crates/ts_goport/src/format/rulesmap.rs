@@ -107,7 +107,7 @@ pub fn build_rules_map() -> Vec<Vec<&'static RuleImpl>> {
 // Go: format/rulesmap.go:87 RulesPosition
 go_enum!(RulesPosition, i32 {
     STOP_RULES_SPECIFIC = 0; // RulesPositionStopRulesSpecific
-    STOP_RULES_ANY = MASK_BIT_SIZE * 1; // RulesPositionStopRulesAny
+    STOP_RULES_ANY = MASK_BIT_SIZE; // RulesPositionStopRulesAny (Go: maskBitSize * 1)
     CONTEXT_RULES_SPECIFIC = MASK_BIT_SIZE * 2; // RulesPositionContextRulesSpecific
     CONTEXT_RULES_ANY = MASK_BIT_SIZE * 3; // RulesPositionContextRulesAny
     NO_CONTEXT_RULES_SPECIFIC = MASK_BIT_SIZE * 4; // RulesPositionNoContextRulesSpecific
