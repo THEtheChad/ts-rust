@@ -564,7 +564,7 @@ def lsp_keys(root):
         (d / 'src/a.ts').write_text('export const a = 1;\n')
     sess = parity_lsp.std('umami')
     info = {'settings': {'LSPDIFF_SETTLE_MS': 1000}, 'scenarios': {}}
-    key = lambda r: parity_inputs.json_hash(parity_lsp.session_material(sess, r, parity_inputs.snapshot(r), None, 'src', info))  # noqa: E731
+    key = lambda r: parity_inputs.json_hash(parity_lsp.session_material(sess, r, parity_inputs.snapshot(r), None, 'src', info, {}))  # noqa: E731
     k1 = key(proj)
     (proj / 'src/a.ts').write_text('export const a = "two";\n')
     check('negative control: finding 8: an lsp session key changes with a content edit of its project', key(proj) != k1)
