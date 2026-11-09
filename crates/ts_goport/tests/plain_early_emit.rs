@@ -282,6 +282,8 @@ fn pool_project(options: &str) -> PathBuf {
 }
 
 #[test]
+// tsc writes the output extensions in lower case.
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn plain_early_emit_writes_what_the_barrier_writes() {
     let root = pool_project("");
     let cases: [(&str, &[&str]); 9] = [
@@ -414,7 +416,7 @@ fn global_project() -> PathBuf {
 }
 
 /// The global diagnostics boundary. With `noCheck` the d.ts emit of the
-/// generator makes TS2318 'IterableIterator' in the checker's globals after
+/// generator makes TS2318 `IterableIterator` in the checker's globals after
 /// Go's read: Go reports nothing and exits 0. The early emit sends the read
 /// before each checker's emit, so it reports nothing either (a read after
 /// the emit would report TS2318). With the check, the check makes TS2318
@@ -657,7 +659,7 @@ fn plain_early_emit_writes_nothing_before_the_check_ends() {
                 }
             }
         });
-        let stalled = receiver.recv_timeout(Duration::from_secs(60)).is_ok();
+        let stalled = receiver.recv_timeout(Duration::from_mins(1)).is_ok();
         if stalled {
             // The other checkers' checks and emits are short; give them time.
             let until = Instant::now() + Duration::from_millis(1500);
@@ -698,7 +700,7 @@ fn plain_early_emit_drains_after_a_write_panic() {
     let start = Instant::now();
     let run = tsgo(&root, &args, true, None, &hooks);
     assert!(
-        start.elapsed() < Duration::from_secs(60),
+        start.elapsed() < Duration::from_mins(1),
         "the run ends after the panic"
     );
     assert!(

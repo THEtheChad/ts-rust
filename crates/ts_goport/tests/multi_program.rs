@@ -34,6 +34,7 @@
 //! and names it in the message.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1240,12 +1241,13 @@ fn go_steps_match<'s>(
                 .expect("tsgo output is UTF-8")
                 .replace(&norm(project), "<project>")
         };
-        report.push_str(&format!(
+        let _ = write!(
+            report,
             "== {step}: exit {}\n{}-- stderr\n{}",
             run.status.code().expect("tsgo exited with a code"),
             text(run.stdout),
             text(run.stderr)
-        ));
+        );
         assert_eq!(
             read(&project.join(info)),
             read(&go.join(format!("step{n}.tsbuildinfo"))),
@@ -1768,7 +1770,6 @@ fn many_references_report_like_fresh_runs() {
 /// value as a number, and exports `v<i>` of type `ty` with value `value`,
 /// then `extra`.
 fn many_references_file(i: usize, ty: &str, value: &str, extra: &str) -> String {
-    use std::fmt::Write as _;
     let n = MANY_REFERENCES_FILES;
     let mut text = String::new();
     for k in 1..=MANY_REFERENCES_IMPORTS {
