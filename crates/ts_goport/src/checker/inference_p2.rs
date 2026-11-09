@@ -738,33 +738,8 @@ impl Checker {
         };
         if overflow {
             // Record this relation as having failed such that we don't attempt the overflowing operation again.
-            let (id, _) = self.get_relation_key(
-                source,
-                target,
-                IntersectionState::NONE,
-                true,  /*isIdentity*/
-                false, /*ignoreConstraints*/
-            );
-            self.identity_relation.borrow_mut().set(
-                id,
-                RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
-            );
-            if let Some(tr) = self.tracer {
-                let (depth, target_depth) = {
-                    let rb = r.borrow();
-                    (rb.source_stack.len(), rb.target_stack.len())
-                };
-                tr.instant(
-                    crate::tracing::Phase::CheckTypes,
-                    "checkTypeRelatedTo_DepthLimit",
-                    vec![
-                        ("sourceId", source.into()),
-                        ("targetId", target.into()),
-                        ("depth", depth.into()),
-                        ("targetDepth", target_depth.into()),
-                    ],
-                );
-            }
+            let relation = self.identity_relation.clone();
+            self.record_complexity_overflow(&relation, true, &r, source, target);
             let source_string = self.type_to_string(source);
             let target_string = self.type_to_string(target);
             let diagnostic = new_diagnostic_for_node(

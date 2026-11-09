@@ -956,6 +956,46 @@ impl Checker {
         self.check_type_related_to_ex(source, target, relation, error_node, None, None)
     }
 
+    /// Part of Go `checkTypeRelatedToEx`, where the relater overflowed: record the pair as
+    /// failed with a complexity overflow so the overflowing check does not run again, and trace
+    /// the depth limit. Its identity copy (`check_normalized_type_identical_to`) shares it.
+    pub(crate) fn record_complexity_overflow(
+        &mut self,
+        relation: &Rc<RefCell<Relation>>,
+        is_identity: bool,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        let (id, _) = self.get_relation_key(
+            source,
+            target,
+            IntersectionState::NONE,
+            is_identity,
+            false, /*ignoreConstraints*/
+        );
+        relation.borrow_mut().set(
+            id,
+            RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
+        );
+        if let Some(tr) = self.tracer {
+            let (depth, target_depth) = {
+                let rb = r.borrow();
+                (rb.source_stack.len(), rb.target_stack.len())
+            };
+            tr.instant(
+                crate::tracing::Phase::CheckTypes,
+                "checkTypeRelatedTo_DepthLimit",
+                vec![
+                    ("sourceId", source.into()),
+                    ("targetId", target.into()),
+                    ("depth", depth.into()),
+                    ("targetDepth", target_depth.into()),
+                ],
+            );
+        }
+    }
+
     // Go: checker/relater.go:358 checkTypeRelatedToEx
     // Check that source is related to target according to the given relation. When errorNode is non-nil, errors are
     // reported to the checker's diagnostic collection or through diagnosticOutput when non-nil. Callers can assume that
@@ -998,33 +1038,7 @@ impl Checker {
         if overflow {
             // Record this relation as having failed such that we don't attempt the overflowing operation again.
             let is_identity = Rc::ptr_eq(relation, &self.identity_relation);
-            let (id, _) = self.get_relation_key(
-                source,
-                target,
-                IntersectionState::NONE,
-                is_identity,
-                false, /*ignoreConstraints*/
-            );
-            relation.borrow_mut().set(
-                id,
-                RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
-            );
-            if let Some(tr) = self.tracer {
-                let (depth, target_depth) = {
-                    let rb = r.borrow();
-                    (rb.source_stack.len(), rb.target_stack.len())
-                };
-                tr.instant(
-                    crate::tracing::Phase::CheckTypes,
-                    "checkTypeRelatedTo_DepthLimit",
-                    vec![
-                        ("sourceId", source.into()),
-                        ("targetId", target.into()),
-                        ("depth", depth.into()),
-                        ("targetDepth", target_depth.into()),
-                    ],
-                );
-            }
+            self.record_complexity_overflow(relation, is_identity, &r, source, target);
             if error_node.is_nil() {
                 error_node = self.current_node;
             }
