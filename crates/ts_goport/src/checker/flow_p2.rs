@@ -1202,7 +1202,9 @@ impl Checker {
     }
 
     /// `is_matching_reference` for a caller that has read `source_kind`
-    /// (`source.kind()`) and `target_kind` (`target.kind()`).
+    /// (`source.kind()`) and `target_kind` (`target.kind()`): the body of Go
+    /// `isMatchingReference`. Both Go switches stay here; the longer source
+    /// cases call helpers split out of it.
     // PERF: flowcost1. A flow walk compares its one reference with each
     // flow node on its path; the walk reads the reference kind once.
     pub fn is_matching_reference_kinds(
@@ -1233,80 +1235,7 @@ impl Checker {
                     && source.name().text() == target.name().text();
             }
             SyntaxKind::Identifier | SyntaxKind::PrivateIdentifier => {
-                // PERF: every answer below is false for a target of another
-                // kind, and `is_this_in_type_query` only reads the tree, so
-                // such a target returns before it.
-                if !matches!(
-                    target_kind,
-                    SyntaxKind::ThisKeyword
-                        | SyntaxKind::Identifier
-                        | SyntaxKind::VariableDeclaration
-                        | SyntaxKind::BindingElement
-                ) {
-                    return false;
-                }
-                // PERF: the reads of `source` come from the memo (see
-                // `MatchingReferenceMemo`). Each one is made at the same
-                // point as in Go the first time.
-                if self.matching_reference_memo.node != source {
-                    let memo = &mut self.matching_reference_memo;
-                    memo.node = source;
-                    memo.this_in_type_query = is_this_in_type_query(source);
-                    memo.resolved = SymbolId::NIL;
-                    memo.export = SymbolId::NIL;
-                    memo.export_merge_version = 0;
-                }
-                if self.matching_reference_memo.this_in_type_query {
-                    return target_kind == SyntaxKind::ThisKeyword;
-                }
-                if target_kind == SyntaxKind::Identifier {
-                    let source_symbol = self.memo_resolved_symbol(source);
-                    if source_symbol == self.get_resolved_symbol(target) {
-                        return true;
-                    }
-                }
-                if target_kind == SyntaxKind::VariableDeclaration
-                    || target_kind == SyntaxKind::BindingElement
-                {
-                    let export_symbol = self.memo_export_symbol(source);
-                    // PERF: chkA. Go compares `export_symbol` with
-                    // `getMergedSymbol(target.Symbol())`. The binder puts
-                    // `target` in the declarations of its symbol, and only a
-                    // merge (`merge_symbol`, `clone_symbol`) gives a symbol
-                    // another merged symbol. Both copy the declarations of
-                    // their source into the merged symbol, which only grows.
-                    // So the two are equal only when `target` is one of the
-                    // declarations of `export_symbol`. Any other target gives
-                    // false with no read of its symbol and no merge lookup.
-                    // Debug builds check the rule (`merge_rule_holds`).
-                    if export_symbol.is_some()
-                        && !self.sym(export_symbol).declarations.contains(&target)
-                    {
-                        debug_assert!(self.merge_rule_holds(export_symbol, target));
-                        return false;
-                    }
-                    // PERF: Go `getSymbolOfDeclaration(target)` without its
-                    // `getLateBoundSymbol` step, which returns its argument
-                    // here: the binder symbol of a variable or binding
-                    // element has an identifier name, never the internal
-                    // computed name. So the symbol is not read.
-                    let symbol = target.symbol();
-                    debug_assert_eq!(
-                        symbol,
-                        if symbol.is_some() {
-                            self.get_late_bound_symbol(symbol)
-                        } else {
-                            symbol
-                        }
-                    );
-                    let declared = if symbol.is_some() {
-                        self.get_merged_symbol(symbol)
-                    } else {
-                        SymbolId::NIL
-                    };
-                    return export_symbol == declared;
-                }
-                return false;
+                return self.is_matching_identifier_reference(source, target, target_kind);
             }
             SyntaxKind::ThisKeyword => {
                 return target_kind == SyntaxKind::ThisKeyword;
@@ -1332,64 +1261,13 @@ impl Checker {
             {
                 return false;
             }
-            // PERF: flowcost1. Two property accesses: Go compares the two
-            // `getAccessedPropertyName` texts (`Name().Text()` of each), and
-            // equal texts are equal interned names, so the name ids are
-            // compared (`Node::text_name`) without reading either text.
             SyntaxKind::PropertyAccessExpression
                 if target_kind == SyntaxKind::PropertyAccessExpression =>
             {
-                debug_assert_eq!(
-                    source.name().text_name() == target.name().text_name(),
-                    source.name().text() == target.name().text()
-                );
-                // PERF: synthref1. A synthetic `source` (Go
-                // `getFlowTypeInConstructor` and
-                // `isPropertyInitializedInConstructor`) reads its name and
-                // expression from the memo (`SyntheticAccessMemo`).
-                if is_synthetic_node(source) {
-                    self.fill_synthetic_access_memo(source);
-                    let memo = &self.matching_reference_memo.access;
-                    if memo.name != target.name().text_name() {
-                        return false;
-                    }
-                    let (expression, expression_kind) = (memo.expression, memo.expression_kind);
-                    let target_expression = target.expression();
-                    return self.is_matching_reference_kinds(
-                        expression,
-                        expression_kind,
-                        target_expression,
-                        target_expression.kind(),
-                    );
-                }
-                return source.name().text_name() == target.name().text_name()
-                    && self.is_matching_reference(source.expression(), target.expression());
+                return self.is_matching_property_access_pair(source, target);
             }
             SyntaxKind::PropertyAccessExpression | SyntaxKind::ElementAccessExpression => {
-                let (source_property_name, ok) = self.get_accessed_property_name(source);
-                if ok && is_access_expression(target) {
-                    let (target_property_name, ok) = self.get_accessed_property_name(target);
-                    if ok {
-                        return target_property_name == source_property_name
-                            && self
-                                .is_matching_reference(source.expression(), target.expression());
-                    }
-                }
-                if is_element_access_expression(source) && is_element_access_expression(target) {
-                    let source_arg = source.argument_expression();
-                    let target_arg = target.argument_expression();
-                    if is_identifier(source_arg) && is_identifier(target_arg) {
-                        let symbol = self.get_resolved_symbol(source_arg);
-                        if symbol == self.get_resolved_symbol(target_arg)
-                            && (self.is_constant_variable(symbol)
-                                || self.is_parameter_or_mutable_local_variable(symbol)
-                                    && !self.is_symbol_assigned(symbol))
-                        {
-                            return self
-                                .is_matching_reference(source.expression(), target.expression());
-                        }
-                    }
-                }
+                return self.is_matching_access_reference(source, target);
             }
             SyntaxKind::QualifiedName => {
                 if is_access_expression(target) {
@@ -1406,6 +1284,174 @@ impl Checker {
                     && self.is_matching_reference(source.right(), target);
             }
             _ => {}
+        }
+        false
+    }
+
+    /// The identifier and private identifier case of `isMatchingReference`
+    /// (`source` is one of them), split out of Go `isMatchingReference`
+    /// because the port reads `source` through the memo.
+    #[inline]
+    fn is_matching_identifier_reference(
+        &mut self,
+        source: Node,
+        target: Node,
+        target_kind: SyntaxKind,
+    ) -> bool {
+        // PERF: every answer below is false for a target of another
+        // kind, and `is_this_in_type_query` only reads the tree, so
+        // such a target returns before it.
+        if !matches!(
+            target_kind,
+            SyntaxKind::ThisKeyword
+                | SyntaxKind::Identifier
+                | SyntaxKind::VariableDeclaration
+                | SyntaxKind::BindingElement
+        ) {
+            return false;
+        }
+        // PERF: the reads of `source` come from the memo (see
+        // `MatchingReferenceMemo`). Each one is made at the same
+        // point as in Go the first time.
+        if self.matching_reference_memo.node != source {
+            let memo = &mut self.matching_reference_memo;
+            memo.node = source;
+            memo.this_in_type_query = is_this_in_type_query(source);
+            memo.resolved = SymbolId::NIL;
+            memo.export = SymbolId::NIL;
+            memo.export_merge_version = 0;
+        }
+        if self.matching_reference_memo.this_in_type_query {
+            return target_kind == SyntaxKind::ThisKeyword;
+        }
+        if target_kind == SyntaxKind::Identifier {
+            let source_symbol = self.memo_resolved_symbol(source);
+            if source_symbol == self.get_resolved_symbol(target) {
+                return true;
+            }
+        }
+        if target_kind == SyntaxKind::VariableDeclaration
+            || target_kind == SyntaxKind::BindingElement
+        {
+            return self.is_matching_declaration_reference(source, target);
+        }
+        false
+    }
+
+    /// Whether the export symbol of identifier `source` is the symbol of
+    /// the variable or binding declaration `target`: the declaration test of
+    /// the identifier case, split out of Go `isMatchingReference`
+    /// (`getExportSymbolOfValueSymbolIfExported(getResolvedSymbol(source))
+    /// == getSymbolOfDeclaration(target)`).
+    #[inline]
+    fn is_matching_declaration_reference(&mut self, source: Node, target: Node) -> bool {
+        let export_symbol = self.memo_export_symbol(source);
+        // PERF: chkA. Go compares `export_symbol` with
+        // `getMergedSymbol(target.Symbol())`. The binder puts
+        // `target` in the declarations of its symbol, and only a
+        // merge (`merge_symbol`, `clone_symbol`) gives a symbol
+        // another merged symbol. Both copy the declarations of
+        // their source into the merged symbol, which only grows.
+        // So the two are equal only when `target` is one of the
+        // declarations of `export_symbol`. Any other target gives
+        // false with no read of its symbol and no merge lookup.
+        // Debug builds check the rule (`merge_rule_holds`).
+        if export_symbol.is_some() && !self.sym(export_symbol).declarations.contains(&target) {
+            debug_assert!(self.merge_rule_holds(export_symbol, target));
+            return false;
+        }
+        // PERF: Go `getSymbolOfDeclaration(target)` without its
+        // `getLateBoundSymbol` step, which returns its argument
+        // here: the binder symbol of a variable or binding
+        // element has an identifier name, never the internal
+        // computed name. So the symbol is not read.
+        let symbol = target.symbol();
+        debug_assert_eq!(
+            symbol,
+            if symbol.is_some() {
+                self.get_late_bound_symbol(symbol)
+            } else {
+                symbol
+            }
+        );
+        let declared = if symbol.is_some() {
+            self.get_merged_symbol(symbol)
+        } else {
+            SymbolId::NIL
+        };
+        export_symbol == declared
+    }
+
+    /// Two property accesses: the access case of Go `isMatchingReference`
+    /// when both names are plain property names, split out of it so the
+    /// port can compare name ids and read a synthetic `source` from the
+    /// memo.
+    // PERF: flowcost1. Two property accesses: Go compares the two
+    // `getAccessedPropertyName` texts (`Name().Text()` of each), and
+    // equal texts are equal interned names, so the name ids are
+    // compared (`Node::text_name`) without reading either text.
+    #[inline]
+    fn is_matching_property_access_pair(&mut self, source: Node, target: Node) -> bool {
+        debug_assert_eq!(
+            source.name().text_name() == target.name().text_name(),
+            source.name().text() == target.name().text()
+        );
+        if is_synthetic_node(source) {
+            return self.is_matching_synthetic_property_access(source, target);
+        }
+        source.name().text_name() == target.name().text_name()
+            && self.is_matching_reference(source.expression(), target.expression())
+    }
+
+    /// `is_matching_property_access_pair` for a synthetic `source`, whose
+    /// name and expression come from the memo.
+    // PERF: synthref1. A synthetic `source` (Go
+    // `getFlowTypeInConstructor` and
+    // `isPropertyInitializedInConstructor`) reads its name and
+    // expression from the memo (`SyntheticAccessMemo`).
+    fn is_matching_synthetic_property_access(&mut self, source: Node, target: Node) -> bool {
+        self.fill_synthetic_access_memo(source);
+        let memo = &self.matching_reference_memo.access;
+        if memo.name != target.name().text_name() {
+            return false;
+        }
+        let (expression, expression_kind) = (memo.expression, memo.expression_kind);
+        let target_expression = target.expression();
+        self.is_matching_reference_kinds(
+            expression,
+            expression_kind,
+            target_expression,
+            target_expression.kind(),
+        )
+    }
+
+    /// The property and element access case of `isMatchingReference` (Go
+    /// flow.go:1621) for every pair the two-property-access shortcut
+    /// leaves: equal accessed property names, or element accesses with the
+    /// same constant identifier argument, and matching expressions. Split
+    /// out of Go `isMatchingReference`.
+    fn is_matching_access_reference(&mut self, source: Node, target: Node) -> bool {
+        let (source_property_name, ok) = self.get_accessed_property_name(source);
+        if ok && is_access_expression(target) {
+            let (target_property_name, ok) = self.get_accessed_property_name(target);
+            if ok {
+                return target_property_name == source_property_name
+                    && self.is_matching_reference(source.expression(), target.expression());
+            }
+        }
+        if is_element_access_expression(source) && is_element_access_expression(target) {
+            let source_arg = source.argument_expression();
+            let target_arg = target.argument_expression();
+            if is_identifier(source_arg) && is_identifier(target_arg) {
+                let symbol = self.get_resolved_symbol(source_arg);
+                if symbol == self.get_resolved_symbol(target_arg)
+                    && (self.is_constant_variable(symbol)
+                        || self.is_parameter_or_mutable_local_variable(symbol)
+                            && !self.is_symbol_assigned(symbol))
+                {
+                    return self.is_matching_reference(source.expression(), target.expression());
+                }
+            }
         }
         false
     }
