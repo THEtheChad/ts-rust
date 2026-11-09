@@ -2549,8 +2549,7 @@ impl Checker {
         {
             let mut result = false;
             for t in self.ty(constraint_type).types_list() {
-                let r = self.infer_to_mapped_type(n, source, target, t);
-                result = r || result;
+                result |= self.infer_to_mapped_type(n, source, target, t);
             }
             return result;
         }
@@ -2561,33 +2560,28 @@ impl Checker {
             // such that direct inferences to T get priority over inferences to Partial<T>, for example.
             let index_target = self.ty(constraint_type).as_index_type().target;
             let inference = self.get_inference_info_for_type(n, index_target);
-            if let Some(inference) = inference {
-                let ctx = n.inferences;
-                let (is_fixed, type_parameter) = {
-                    let info = &self.inference_context(ctx).inferences[inference];
-                    (info.is_fixed, info.type_parameter)
-                };
-                if !is_fixed && !self.is_from_inference_blocked_source(source) {
-                    let inferred_type = self.infer_type_for_homomorphic_mapped_type(
-                        source,
-                        target,
-                        constraint_type,
-                    );
-                    if inferred_type.is_some() {
-                        // We assign a lower priority to inferences made from types containing non-inferrable
-                        // types because we may only have a partial result (i.e. we may have failed to make
-                        // reverse inferences for some properties).
-                        let priority = if self
-                            .ty(source)
-                            .object_flags
-                            .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
-                        {
-                            InferencePriority::PARTIAL_HOMOMORPHIC_MAPPED_TYPE
-                        } else {
-                            InferencePriority::HOMOMORPHIC_MAPPED_TYPE
-                        };
-                        self.infer_with_priority(n, inferred_type, type_parameter, priority);
-                    }
+            if let Some(inference) = inference
+                && !self.inference_context(n.inferences).inferences[inference].is_fixed
+                && !self.is_from_inference_blocked_source(source)
+            {
+                let inferred_type =
+                    self.infer_type_for_homomorphic_mapped_type(source, target, constraint_type);
+                if inferred_type.is_some() {
+                    // We assign a lower priority to inferences made from types containing non-inferrable
+                    // types because we may only have a partial result (i.e. we may have failed to make
+                    // reverse inferences for some properties).
+                    let priority = if self
+                        .ty(source)
+                        .object_flags
+                        .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
+                    {
+                        InferencePriority::PARTIAL_HOMOMORPHIC_MAPPED_TYPE
+                    } else {
+                        InferencePriority::HOMOMORPHIC_MAPPED_TYPE
+                    };
+                    let type_parameter =
+                        self.inference_context(n.inferences).inferences[inference].type_parameter;
+                    self.infer_with_priority(n, inferred_type, type_parameter, priority);
                 }
             }
             return true;
@@ -2627,18 +2621,17 @@ impl Checker {
             }
             // If no inferences can be made to K's constraint, infer from a union of the property types
             // in the source to the template type X.
-            let mut prop_types: Vec<TypeId> = Vec::new();
-            for prop in self.get_properties_of_type(source) {
-                prop_types.push(self.get_type_of_symbol(prop));
-            }
-            let mut index_types: Vec<TypeId> = Vec::new();
-            for info in self.get_index_infos_of_type(source) {
-                if info != self.enum_number_index_info {
-                    index_types.push(self.index_info(info).value_type);
-                } else {
-                    index_types.push(self.never_type);
-                }
-            }
+            let mut prop_types: Vec<TypeId> = (self.get_properties_of_type(source).into_iter())
+                .map(|prop| self.get_type_of_symbol(prop))
+                .collect();
+            let index_types: Vec<TypeId> = (self.get_index_infos_of_type(source).into_iter())
+                .map(|info| {
+                    if info != self.enum_number_index_info {
+                        return self.index_info(info).value_type;
+                    }
+                    self.never_type
+                })
+                .collect();
             prop_types.extend(index_types);
             let union = self.get_union_type(&prop_types);
             let template_type = self.get_template_type_from_mapped_type(target);
