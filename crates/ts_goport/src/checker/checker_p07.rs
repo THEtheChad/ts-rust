@@ -162,11 +162,11 @@ impl Checker {
             }
             // check private/protected variable access
             let parent = node.parent().parent();
-            let parent_check_mode = if has_dot_dot_dot_token(node) {
-                CheckMode::REST_BINDING_ELEMENT
-            } else {
-                CheckMode::NORMAL
-            };
+            let parent_check_mode = if_else(
+                has_dot_dot_dot_token(node),
+                CheckMode::REST_BINDING_ELEMENT,
+                CheckMode::NORMAL,
+            );
             let parent_type = self.get_type_for_binding_element_parent(parent, parent_check_mode);
             let prop_name_name = node.property_name_or_name();
             if parent_type.is_some() && !is_binding_pattern(prop_name_name) {
@@ -364,24 +364,18 @@ impl Checker {
                 }
             }
             let declarations = self.sym(symbol).declarations.clone();
-            if declarations.len() > 1 {
-                let mut some = false;
-                for &d in &declarations {
-                    if d != node
+            if declarations.len() > 1
+                && declarations.iter().any(|&d| {
+                    d != node
                         && is_variable_like(d)
                         && !self.are_declaration_flags_identical(d, node)
-                    {
-                        some = true;
-                        break;
-                    }
-                }
-                if some {
-                    self.error(
-                        name,
-                        diag::All_declarations_of_0_must_have_identical_modifiers,
-                        args![declaration_name_to_string(name)],
-                    );
-                }
+                })
+            {
+                self.error(
+                    name,
+                    diag::All_declarations_of_0_must_have_identical_modifiers,
+                    args![declaration_name_to_string(name)],
+                );
             }
         } else {
             // Node is a secondary declaration, check that type is identical to primary declaration and check that
