@@ -225,3 +225,36 @@ is a rewrite, so it does not keep old code behind switches:
 - **Clippy** under the repo config must not get worse.
 - Your final answer lists every switch your change removed and confirms it
   added none.
+
+## Code-quality phase (from 2026-11-09)
+
+Chad approved this phase after perf finished (every window-2 cell ≤ Go, ttfd
+ties with Go; base `runs/head-e81a14807-full-combined`). Quality is now the
+primary consideration, and the output contract, the parity gate and "≤ Go" on
+every timing still hold. The baseline report is
+`~/.cache/perf-rearch/quality/reports/q0-f853c4dea/` (713 prod functions over
+cognitive complexity 25, duplication 3.58%, 21 env names read in shipped
+code, 2,120 `clippy::all` warnings under `--force-warn`).
+
+- **Go-relative complexity.** Much of tsc-rs is a port, and Go's own functions
+  are large (`structuredTypeRelatedToWorker` is 641 lines, `getCompletionData`
+  1,273). Keeping the Go shape is what makes pin bumps cheap. So:
+  - **Ported code:** the target is port bloat, where our function is much
+    more complex than its Go counterpart. Split it back toward Go's shape
+    (Go's helper boundaries and names first). A function as complex as its Go
+    counterpart is not a target by itself; don't invent a split Go lacks
+    unless it makes the code clearly easier to follow, and say why.
+  - **Our own code** (no Go counterpart: the loader and its views,
+    resolve-ahead, flow_skip, Effect, the parallel emit, THP guard, build
+    caches, verifiers): the limit is cognitive complexity 25.
+  - `quality.sh` reports the Go-relative ranking (lane Q0).
+- **Behavior and speed don't move.** Each lane runs parity quick, icount A/B
+  on the cells its code touches (checker and relater changes: all CLI cells),
+  and a full gate before merge. Splitting a hot function can change inlining:
+  any icount cost over +0.3% is fixed (`#[inline]` on the new helper, a
+  different boundary) or reported, never waved through.
+- **One owner per file.** Lanes get disjoint file lists. A lane that needs a
+  file another lane owns stops and reports.
+- **Mechanical and structural changes stay apart.** Clippy fixes and
+  renames go in their own commits from structural splits, so review can
+  read each one.

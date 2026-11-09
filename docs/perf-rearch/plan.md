@@ -1150,3 +1150,23 @@ once a **reconciliation step** is built and tested.
     and the evidence above checks each one.
   - **The perf phase is complete:** every window-2 cell is ≤ Go and ttfd ties
     with Go.
+
+## Code-quality phase (Chad: "Proceed", 2026-11-09)
+
+- Baseline report `q0-f853c4dea`: 713 functions over cognitive 25 (218 over
+  50), duplication 3.58% (698 blocks), 21 env names read in shipped code (8
+  switches), clippy 1 under the repo config and 2,120 under `--force-warn
+  clippy::all`.
+- **Go comparison:** our port-bloated giants are 1.7–2.3× their Go
+  counterparts in lines (`structured_type_related_to_worker` 1,265 vs 641,
+  `check_grammar_modifiers` 817 vs 356, `resolve_external_module` 550 vs
+  319, `get_up_to_date_status` 534 vs 274). Go's `getCompletionData` (1,273)
+  is longer than ours (539). Rule: Go-relative for ported code, the limit 25
+  for our own (brief, "Code-quality phase").
+- **Wave 1:**
+  - **Q0:** the Go-relative ranking in `quality.sh`.
+  - **Q3:** the shipped env names.
+  - **Q4:** the mechanical clippy cleanup.
+- **Wave 2,** after Q0 and Q4 merge: area lanes (checker, frontend and
+  loader, LS, build/emit), each doing complexity and duplication on its own
+  files.
