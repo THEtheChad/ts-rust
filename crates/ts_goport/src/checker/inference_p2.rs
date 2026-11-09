@@ -511,7 +511,8 @@ impl Checker {
                 && self.ty(s).flags.intersects(TypeFlags::NUMBER_LITERAL)
     }
 
-    // Go: checker/relater.go:117 isTypeIdenticalTo for one pair of `inferFromMatchingTypes` (inference.go:381).
+    // Go: checker/relater.go:169 isTypeRelatedTo (the identity relation, as Go's isTypeIdenticalTo at relater.go:117
+    // calls it) for one pair of `inferFromMatchingTypes` (inference.go:381).
     // `slots` are the pair's source and target slots of `infer_from_identical_types`.
     // PORT: perf (identmatch1). This is Go's `isTypeRelatedTo` (relater.go:169) with identityRelation. A pair that
     // Go sends to the normalization of isRelatedToEx (relater.go:2654 getNormalizedType) runs that part in
