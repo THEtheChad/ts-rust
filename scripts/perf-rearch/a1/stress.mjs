@@ -12,8 +12,8 @@
 // Exit 1 when the server exits, a request fails other than by cancellation, or no reuse ran.
 //
 // What it shows: the lifetimes of reused programs, their synthetic specifier owners and their
-// snapshots under releases and cancellations (with GOPORT_CHECK_VERSION_TABLES=1 and a debug
-// build, the table and debug checks too), and memory over a long session. It does not compare
+// snapshots under releases and cancellations (with GOPORT_CHECK_VERSION_TABLES=1 in the diagnostics
+// build, the table checks too; a debug build adds its debug checks), and memory over a long session. It does not compare
 // answers: answer parity under cancellation is not established here (lspdiff runs one request at
 // a time).
 import { existsSync, readFileSync, rmSync } from "node:fs";

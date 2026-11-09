@@ -1164,16 +1164,25 @@ fn build_program(
     program
 }
 
-/// True in debug builds, or when `GOPORT_CHECK_VERSION_TABLES=1`:
-/// `build_program` builds the tables of a version that starts from the
-/// tables of an older one (`reused_tables`) again from its files alone
-/// (`full_tables`), and panics when they differ. Read once.
+/// True in debug builds, or in a `diagnostics` feature build with
+/// `GOPORT_CHECK_VERSION_TABLES=1`: `build_program` builds the tables of a
+/// version that starts from the tables of an older one (`reused_tables`)
+/// again from its files alone (`full_tables`), and panics when they differ.
+/// Read once.
+#[cfg(feature = "diagnostics")]
 fn check_version_tables() -> bool {
     static CHECK: OnceLock<bool> = OnceLock::new();
     *CHECK.get_or_init(|| {
         cfg!(debug_assertions)
             || std::env::var("GOPORT_CHECK_VERSION_TABLES").is_ok_and(|v| v == "1")
     })
+}
+
+/// True in debug builds (see the `diagnostics` build's).
+#[cfg(not(feature = "diagnostics"))]
+#[inline]
+const fn check_version_tables() -> bool {
+    cfg!(debug_assertions)
 }
 
 /// The version that a new program version was updated from, while it is

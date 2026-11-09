@@ -184,8 +184,9 @@ child_test! {
     // so the tables of the new version start from the old version's. An
     // edit that adds a program file (an import of a file that the config
     // does not list) builds them from the files alone, and the next body
-    // edit starts from those. With GOPORT_CHECK_VERSION_TABLES=1 each
-    // reused build is also compared with a full build.
+    // edit starts from those. With GOPORT_CHECK_VERSION_TABLES=1 (a
+    // `diagnostics` build; debug builds check always) each reused build is
+    // also compared with a full build.
     fn version_tables_reuse_only_files_replaced_in_place() {
         const B_FILE: &str = "/home/projects/TS/p1/b.ts";
         const INDEX_FILE: &str = "/home/projects/TS/p1/index.ts";

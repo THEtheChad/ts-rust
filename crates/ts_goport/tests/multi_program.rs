@@ -182,13 +182,15 @@ fn cycles_free_file_versions_only_when_the_flag_is_on() {
     );
 }
 
-/// editfast1: with `GOPORT_CHECK_VERSION_TABLES=1`, `goport_multiprog`
-/// builds the tables of each version that replaces files of the old one in
-/// place (`go_frontend::reused_tables`) again from its files alone, and
-/// panics when they differ. A pair passes with it, and so do cycles, where
-/// each version starts from tables made that way and the file versions are
+/// editfast1: with `GOPORT_CHECK_VERSION_TABLES=1` (a `diagnostics` build;
+/// debug builds check always), `goport_multiprog` builds the tables of each
+/// version that replaces files of the old one in place
+/// (`go_frontend::reused_tables`) again from its files alone, and panics
+/// when they differ. A pair passes with it, and so do cycles, where each
+/// version starts from tables made that way and the file versions are
 /// freeable. The cycles still free every file version.
 // PORT: no Go counterpart.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
 #[test]
 fn reused_version_tables_equal_a_full_build() {
     const CHECK: (&str, &str) = ("GOPORT_CHECK_VERSION_TABLES", "1");
