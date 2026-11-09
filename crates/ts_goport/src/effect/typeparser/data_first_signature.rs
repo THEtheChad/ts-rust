@@ -23,21 +23,8 @@ pub struct PipeableSignatureWitness {
 impl TypeParser<'_> {
     // Go: typeparser/data_first_signature.go TypeParser.DataFirstOrLastCall
     pub fn data_first_or_last_call(&mut self, node: Node) -> Option<Rc<ParsedDataFirstOrLastCall>> {
-        if node.is_nil() || node.kind() != SyntaxKind::CallExpression {
-            return None;
-        }
         let call = node;
-        if call.expression().is_nil() || call.argument_list().is_nil() || call.arguments().len() < 2
-        {
-            return None;
-        }
-        let call_arguments = call.arguments().to_vec();
-
-        for &arg in &call_arguments {
-            if arg.is_nil() || arg.kind() == SyntaxKind::SpreadElement {
-                return None;
-            }
-        }
+        let call_arguments = data_first_or_last_call_arguments(call)?;
 
         let resolved = self.checker.get_resolved_signature_exported(node);
         if resolved.is_nil() {
@@ -69,23 +56,8 @@ impl TypeParser<'_> {
             .checker
             .get_signatures_of_type_exported(callee_type, SignatureKind::CALL);
 
-        let mut subject_indexes: Vec<usize> = vec![0];
-        if call_arguments.len() == 2 {
-            let last = call_arguments.len() - 1;
-            let mut prefer_first = false;
-            let params = self.checker.sig(resolved).parameters().to_vec();
-            if !params.is_empty() {
-                prefer_first = is_likely_self_parameter(self.checker, params[0]);
-            }
-            if prefer_first {
-                subject_indexes = vec![0, last];
-            } else {
-                subject_indexes = vec![last, 0];
-            }
-        }
-
         let mut matched: Option<Rc<ParsedDataFirstOrLastCall>> = None;
-        for subject_index in subject_indexes {
+        for subject_index in self.data_first_subject_indexes(resolved, call_arguments.len()) {
             let subject_type = self.get_type_at_location(call_arguments[subject_index]);
             if subject_type.is_nil() {
                 continue;
@@ -100,66 +72,100 @@ impl TypeParser<'_> {
                 subject_type,
             };
 
-            for &candidate in &candidates {
-                if candidate.is_nil() {
-                    continue;
-                }
-                if resolved_symbol.is_some() {
-                    let candidate_declaration = {
-                        let raw = raw_signature(self.checker, candidate);
-                        self.checker.sig(raw).declaration()
-                    };
-                    if candidate_declaration.is_nil() {
-                        continue;
-                    }
-                    let candidate_symbol = self
-                        .checker
-                        .get_symbol_of_declaration(candidate_declaration);
-                    if candidate_symbol.is_nil()
-                        || self
-                            .checker
-                            .get_symbol_if_same_reference(resolved_symbol, candidate_symbol)
-                            .is_nil()
-                    {
-                        continue;
-                    }
-                }
-                if !matches_pipeable_signature(
-                    self.checker,
+            let any_candidate = candidates.iter().any(|&candidate| {
+                self.is_pipeable_candidate_of(
                     resolved,
+                    resolved_symbol,
                     candidate,
-                    subject_index as i32,
-                    Some(&witness),
-                ) {
-                    continue;
-                }
-
-                if let Some(matched) = &matched
-                    && matched.subject_index != subject_index as i32
-                {
-                    let resolved_parameters = self.checker.sig(resolved).parameters().to_vec();
-                    if (matched.subject_index as usize) < resolved_parameters.len()
-                        && is_likely_self_parameter(
-                            self.checker,
-                            resolved_parameters[matched.subject_index as usize],
-                        )
-                    {
-                        return Some(matched.clone());
-                    }
-                    return None;
-                }
-                matched = Some(Rc::new(ParsedDataFirstOrLastCall {
-                    node: call,
-                    callee: call.expression(),
-                    subject: call_arguments[subject_index],
-                    args,
-                    subject_index: subject_index as i32,
-                }));
-                break;
+                    subject_index,
+                    &witness,
+                )
+            });
+            if !any_candidate {
+                continue;
             }
+            if let Some(matched) = &matched
+                && matched.subject_index != subject_index as i32
+            {
+                // Both orders match: keep the earlier one only when its
+                // subject is likely a self parameter.
+                let resolved_parameters = self.checker.sig(resolved).parameters().to_vec();
+                if (matched.subject_index as usize) < resolved_parameters.len()
+                    && is_likely_self_parameter(
+                        self.checker,
+                        resolved_parameters[matched.subject_index as usize],
+                    )
+                {
+                    return Some(matched.clone());
+                }
+                return None;
+            }
+            matched = Some(Rc::new(ParsedDataFirstOrLastCall {
+                node: call,
+                callee: call.expression(),
+                subject: call_arguments[subject_index],
+                args,
+                subject_index: subject_index as i32,
+            }));
         }
 
         matched
+    }
+
+    /// The subject positions to try for a call with `argument_count`
+    /// arguments: the first only, or with two arguments both, the first
+    /// first when the resolved signature's first parameter is likely a self
+    /// parameter, otherwise the last first.
+    fn data_first_subject_indexes(
+        &mut self,
+        resolved: SignatureId,
+        argument_count: usize,
+    ) -> Vec<usize> {
+        if argument_count != 2 {
+            return vec![0];
+        }
+        let last = argument_count - 1;
+        let params = self.checker.sig(resolved).parameters().to_vec();
+        let prefer_first = !params.is_empty() && is_likely_self_parameter(self.checker, params[0]);
+        if prefer_first {
+            vec![0, last]
+        } else {
+            vec![last, 0]
+        }
+    }
+
+    /// Whether the callee signature `candidate` is the pipeable form of
+    /// `resolved` with the subject at `subject_index`, and (when
+    /// `resolved_symbol` is set) declared by the same symbol.
+    fn is_pipeable_candidate_of(
+        &mut self,
+        resolved: SignatureId,
+        resolved_symbol: SymbolId,
+        candidate: SignatureId,
+        subject_index: usize,
+        witness: &PipeableSignatureWitness,
+    ) -> bool {
+        if candidate.is_nil() {
+            return false;
+        }
+        if resolved_symbol.is_some() {
+            let candidate_symbol = self.signature_declaration_symbol(candidate);
+            if candidate_symbol.is_nil()
+                || self
+                    .checker
+                    .get_symbol_if_same_reference(resolved_symbol, candidate_symbol)
+                    .is_nil()
+            {
+                return false;
+            }
+        }
+        matches_pipeable_signature(
+            self.checker,
+            resolved,
+            candidate,
+            subject_index as i32,
+            Some(witness),
+        )
     }
 }
 
@@ -418,4 +424,20 @@ pub fn omit_arg_at(nodes: &[Node], index: usize) -> Vec<Node> {
         result.push(node);
     }
     result
+}
+
+/// The arguments of `call` when it is a call expression with at least two
+/// arguments and no spread.
+fn data_first_or_last_call_arguments(call: Node) -> Option<Vec<Node>> {
+    if call.is_nil() || call.kind() != SyntaxKind::CallExpression {
+        return None;
+    }
+    if call.expression().is_nil() || call.argument_list().is_nil() || call.arguments().len() < 2 {
+        return None;
+    }
+    let call_arguments = call.arguments().to_vec();
+    call_arguments
+        .iter()
+        .all(|&arg| arg.is_some() && arg.kind() != SyntaxKind::SpreadElement)
+        .then_some(call_arguments)
 }

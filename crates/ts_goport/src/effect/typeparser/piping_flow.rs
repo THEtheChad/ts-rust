@@ -561,7 +561,7 @@ impl TypeParser<'_> {
 
     /// The symbol of the declaration of `sig` (through its target), or nil
     /// when it has no declaration.
-    fn signature_declaration_symbol(&mut self, sig: SignatureId) -> SymbolId {
+    pub(crate) fn signature_declaration_symbol(&mut self, sig: SignatureId) -> SymbolId {
         let declaration = {
             let raw = raw_signature(self.checker, sig);
             self.checker.sig(raw).declaration()
