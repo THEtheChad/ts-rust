@@ -1711,7 +1711,7 @@ mod tests {
             by_index::stable_sort_by(&mut got, |a, b| (a.file, a.pos).cmp(&(b.file, b.pos)));
             assert_eq!(ids(&got), ids(&want));
             let (mut want, mut got) = (input.clone(), input);
-            want.sort_by(|a, b| b.file.cmp(&a.file));
+            want.sort_by_key(|b| std::cmp::Reverse(b.file));
             by_index::stable_sort_by(&mut got, |a, b| b.file.cmp(&a.file));
             assert_eq!(ids(&got), ids(&want));
         }

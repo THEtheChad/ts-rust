@@ -324,7 +324,7 @@ fn parse_uint(s: &str) -> (u64, Option<NumError>) {
             continue;
         } else if c.is_ascii_digit() {
             c - b'0'
-        } else if (b'a'..=b'z').contains(&lower(c)) {
+        } else if lower(c).is_ascii_lowercase() {
             lower(c) - b'a' + 10
         } else {
             return (0, Some(NumError::Syntax));

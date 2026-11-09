@@ -1543,7 +1543,7 @@ impl NodeSlice {
         let ids = match self.0 {
             SliceRepr::Nodes(nodes) => SliceIds::Nodes(nodes),
             // An empty slice reads no node, so it needs no store lookup.
-            SliceRepr::Ids { ids, .. } if ids.is_empty() => SliceIds::Nodes(&[]),
+            SliceRepr::Ids { ids: [], .. } => SliceIds::Nodes(&[]),
             SliceRepr::Ids { file, ids } => match frozen_store_ids(file as usize) {
                 Some(frozen) => SliceIds::Frozen(ids, frozen),
                 None => SliceIds::Slow,

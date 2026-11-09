@@ -1548,7 +1548,7 @@ impl Checker {
                     rest_type,
                     relation,
                     report_errors,
-                    diagnostic_output.as_deref_mut(),
+                    diagnostic_output,
                 );
                 return false;
             }

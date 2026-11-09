@@ -674,7 +674,7 @@ impl Checker {
                             diag::This_JSX_tag_s_0_prop_expects_type_1_which_requires_multiple_children_but_only_a_single_child_was_provided,
                             args![children_prop_name, children_target_type_string],
                         );
-                        self.report_diagnostic(diag, diagnostic_output.as_deref_mut());
+                        self.report_diagnostic(diag, diagnostic_output);
                         reported_error = true;
                     }
                 }

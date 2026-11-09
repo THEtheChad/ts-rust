@@ -602,9 +602,8 @@ pub fn get_documentation_from_declaration(
                                 comment_text[caption_end + "</caption>".len()..].to_string();
                             // Trim leading blank lines from commentText
                             loop {
-                                let s1 = comment_text
-                                    .trim_start_matches(|ch: char| ch == ' ' || ch == '\t');
-                                let s2 = s1.trim_start_matches(|ch: char| ch == '\r' || ch == '\n');
+                                let s1 = comment_text.trim_start_matches([' ', '\t']);
+                                let s2 = s1.trim_start_matches(['\r', '\n']);
                                 if s1.len() == s2.len() {
                                     break;
                                 }
@@ -1850,7 +1849,7 @@ pub fn write_js_doc_link(
     {
         let mut link_text = name.text().to_string() + text;
         let mut link_uri = link_text.clone();
-        if let Some(comment_pos) = link_text.find(|ch: char| ch == ' ' || ch == '|') {
+        if let Some(comment_pos) = link_text.find([' ', '|']) {
             link_uri = link_text[..comment_pos].to_string();
             link_text = trim_comment_prefix(&link_text[comment_pos..]).to_string();
             if link_text.is_empty() {

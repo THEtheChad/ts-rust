@@ -495,10 +495,7 @@ impl Common {
         };
 
         // PORT: Go `fs.ReadDir` calls the `ReadDirFS` method directly.
-        match fsys.read_dir(&rest) {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        }
+        fsys.read_dir(&rest).unwrap_or_default()
     }
 
     // Go: internal.go:132 ReadFile

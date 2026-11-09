@@ -313,10 +313,10 @@ pub fn get_references_for_this_keyword(
                 || search_space_node.kind() == SyntaxKind::MethodSignature)
                 && is_object_literal_method(search_space_node)
             {
-                static_flag = static_flag & search_space_node.modifier_flags();
+                static_flag &= search_space_node.modifier_flags();
                 search_space_node = search_space_node.parent(); // re-assign to be the owning object literals
             } else {
-                static_flag = static_flag & search_space_node.modifier_flags();
+                static_flag &= search_space_node.modifier_flags();
                 search_space_node = search_space_node.parent(); // re-assign to be the owning class
             }
         }
@@ -431,7 +431,7 @@ pub fn get_references_for_super_keyword(super_keyword: Node) -> Vec<Rc<RefCell<S
         | SyntaxKind::Constructor
         | SyntaxKind::GetAccessor
         | SyntaxKind::SetAccessor => {
-            static_flag = static_flag & search_space_node.modifier_flags();
+            static_flag &= search_space_node.modifier_flags();
             search_space_node = search_space_node.parent(); // re-assign to be the owning class
         }
         _ => return Vec::new(),

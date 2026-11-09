@@ -1256,7 +1256,7 @@ pub fn get_any_import_syntax(node: Node) -> Node {
         SyntaxKind::ImportClause => node.parent(),
         SyntaxKind::NamespaceImport => node.parent().parent(),
         SyntaxKind::ImportSpecifier => node.parent().parent().parent(),
-        _ => return Node::NIL,
+        _ => Node::NIL,
     }
 }
 

@@ -95,7 +95,7 @@ impl Logger for LoggerImpl {
     fn logf(&self, msg: &str) {
         // Go: fmt.Fprintf(l.writer, "%s %s\n", l.prefix(), fmt.Sprintf(format, args...))
         let prefix = (self.prefix)();
-        let _ = write!(self.writer.borrow_mut(), "{} {}\n", prefix, msg);
+        let _ = writeln!(self.writer.borrow_mut(), "{} {}", prefix, msg);
     }
 
     // Go: project/logging/logger.go:64 Verbose

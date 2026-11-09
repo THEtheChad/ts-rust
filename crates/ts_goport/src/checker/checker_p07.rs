@@ -1480,13 +1480,8 @@ impl Checker {
             error_node,
             diagnostic_output.as_deref_mut(),
         );
-        let throw = self.get_iteration_types_of_method(
-            t,
-            r,
-            "throw",
-            error_node,
-            diagnostic_output.as_deref_mut(),
-        );
+        let throw =
+            self.get_iteration_types_of_method(t, r, "throw", error_node, diagnostic_output);
         self.combine_iteration_types(&[next, return_, throw])
     }
 
@@ -1656,7 +1651,7 @@ impl Checker {
                         resolver.must_have_a_value_diagnostic,
                         args![method_name],
                     ),
-                    diagnostic_output.as_deref_mut(),
+                    diagnostic_output,
                 );
             }
             yield_type = self.any_type;

@@ -587,6 +587,9 @@ impl Binder {
     }
 
     // Go: binder/binder.go:2196 bindPrefixUnaryExpressionFlow
+    // clippy::manual_swap misreads the save: `save_true_target` is read again
+    // after the children bind.
+    #[allow(clippy::manual_swap)]
     pub fn bind_prefix_unary_expression_flow(&mut self, node: Node) {
         let operator = node.operator();
         if operator == SyntaxKind::ExclamationToken {

@@ -85,10 +85,7 @@ impl LanguageService {
         {
             let clauses = case_clause.parent().clauses().nodes().to_vec();
             let tracker = new_case_clause_tracker(type_checker, &clauses);
-            literals = literals
-                .into_iter()
-                .filter(|literal| !tracker.has_value(literal))
-                .collect();
+            literals.retain(|literal| !tracker.has_value(literal));
             data.symbols = data
                 .symbols
                 .iter()
@@ -1968,16 +1965,15 @@ pub fn should_include_symbol(
         return false;
     }
 
-    all_flags = all_flags
-        | type_checker
-            .sym(symbol_origin)
-            .combined_local_and_export_symbol_flags(&type_checker.symbols);
+    all_flags |= type_checker
+        .sym(symbol_origin)
+        .combined_local_and_export_symbol_flags(&type_checker.symbols);
     if type_checker
         .sym(symbol)
         .flags
         .intersects(SymbolFlags::ALIAS)
     {
-        all_flags = all_flags | type_checker.get_symbol_flags_exported(symbol);
+        all_flags |= type_checker.get_symbol_flags_exported(symbol);
     }
 
     // import m = /**/ <-- It can only access namespace (if typing import = x. this would get member symbols and not namespace)

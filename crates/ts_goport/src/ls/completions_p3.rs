@@ -1309,7 +1309,7 @@ impl LanguageService {
             if filter_text.is_empty() || is_snippet {
                 filter_text = name.clone();
             }
-            name = name + "?";
+            name += "?";
         }
         if kind_modifiers.intersects(lsutil::ScriptElementKindModifier::DEPRECATED) {
             tags = Some(vec![lsproto::CompletionItemTag::DEPRECATED]);

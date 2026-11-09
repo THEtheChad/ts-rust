@@ -1859,12 +1859,7 @@ pub fn is_declaration_of_symbol(symbols: &SymbolArena, node: Node, target: Symbo
     // !!!
     // const commonjsSource = source && isBinaryExpression(source) ? source.left as unknown as Declaration : undefined;
 
-    source.is_some()
-        && symbols
-            .sym(target)
-            .declarations
-            .iter()
-            .any(|&decl| decl == source)
+    source.is_some() && symbols.sym(target).declarations.contains(&source)
 }
 
 impl<P: ProgramView> LanguageService<P> {

@@ -1307,7 +1307,7 @@ impl Checker {
                     };
                     let source_str = self.type_to_string_exported(source_return_type);
                     let target_str = self.type_to_string_exported(target_return_type);
-                    let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+                    let reporter = error_reporter.expect("call of nil func");
                     reporter(self, message, args![source_str, target_str]);
                 }
             }
@@ -1371,7 +1371,7 @@ impl Checker {
         if related == Ternary::FALSE && report_errors {
             let source_str = self.type_predicate_to_string(source);
             let target_str = self.type_predicate_to_string(target);
-            let reporter = error_reporter.as_deref_mut().expect("call of nil func");
+            let reporter = error_reporter.expect("call of nil func");
             reporter(
                 self,
                 diag::Type_predicate_0_is_not_assignable_to_1,

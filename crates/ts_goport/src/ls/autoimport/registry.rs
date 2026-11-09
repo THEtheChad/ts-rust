@@ -1038,7 +1038,7 @@ impl RegistryBuilder {
             let on_added: &mut dyn FnMut(&tspath::Path, &String) =
                 &mut |dir_path: &tspath::Path, dir_name: &String| {
                     // Need and don't have
-                    let had_node_modules = self.base.node_modules.get(dir_path).is_some();
+                    let had_node_modules = self.base.node_modules.contains_key(dir_path);
                     update_directory(dir_path, dir_name, false);
                     if logger.is_some() {
                         logger.logf(&format!("Added directory: {dir_path}"));
@@ -1051,7 +1051,7 @@ impl RegistryBuilder {
             let on_removed: &mut dyn FnMut(&tspath::Path, &Rc<RefCell<Directory>>) =
                 &mut |dir_path: &tspath::Path, _dir: &Rc<RefCell<Directory>>| {
                     // Have and don't need
-                    let had_node_modules = self.base.node_modules.get(dir_path).is_some();
+                    let had_node_modules = self.base.node_modules.contains_key(dir_path);
                     self.directories.delete(dir_path);
                     self.node_modules.try_delete(dir_path);
                     if logger.is_some() {
@@ -1550,7 +1550,7 @@ impl RegistryBuilder {
         // For packages whose main extraction yielded nothing, fall back to @types.
         for pkg in &types_fallback_candidates {
             // Go: extractionMu.Lock() (PORT: one thread, no lock)
-            let main_extracted = extraction_cache.get(&pkg.realpath).is_some();
+            let main_extracted = extraction_cache.contains_key(&pkg.realpath);
             // Go: extractionMu.Unlock()
             if main_extracted || seen.get(&pkg.types_realpath).copied().unwrap_or(false) {
                 continue;

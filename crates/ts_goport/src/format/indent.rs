@@ -230,19 +230,15 @@ pub fn get_range_of_enclosing_comment(
     }
     let leading_ranges_of_next_token =
         get_leading_comment_ranges_of_node(token_at_position, source_file);
-    let comment_ranges = trailing_ranges_of_previous_token
+    let mut comment_ranges = trailing_ranges_of_previous_token
         .into_iter()
         .chain(leading_ranges_of_next_token);
-    for comment_range in comment_ranges {
-        if comment_range.text_range.contains_exclusive(position)
+    comment_ranges.find(|&comment_range| {
+        comment_range.text_range.contains_exclusive(position)
             || position == comment_range.end()
                 && (comment_range.kind == SyntaxKind::SingleLineCommentTrivia
                     || position == source_file_text(source_file).len() as i32)
-        {
-            return Some(comment_range);
-        }
-    }
-    None
+    })
 }
 
 // Go: format/indent.go:177 getBlockIndent

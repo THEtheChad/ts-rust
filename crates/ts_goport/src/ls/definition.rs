@@ -166,19 +166,13 @@ impl LanguageService {
                 if !is_constructor_declaration(called_declaration) {
                     declarations = Vec::new();
                 } else {
-                    declarations = declarations
-                        .into_iter()
-                        .filter(|&node| {
-                            node != called_declaration
-                                && (is_class_declaration(node) || is_class_expression(node))
-                        })
-                        .collect();
+                    declarations.retain(|&node| {
+                        node != called_declaration
+                            && (is_class_declaration(node) || is_class_expression(node))
+                    });
                 }
             } else {
-                declarations = declarations
-                    .into_iter()
-                    .filter(|&node| node != called_declaration)
-                    .collect();
+                declarations.retain(|&node| node != called_declaration);
             }
             declarations.push(called_declaration);
         }

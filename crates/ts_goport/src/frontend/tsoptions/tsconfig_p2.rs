@@ -502,7 +502,7 @@ pub fn parse_config(
                 CompilerOptionsValue::Bool(result.compile_on_save),
             );
         }
-        if let Some(source_file) = source_file.as_deref_mut() {
+        if let Some(source_file) = source_file {
             // PERF: Go grows the slice in `slices.Insert`. One reserve keeps
             // the list near its final length, with no doubling slack.
             source_file
