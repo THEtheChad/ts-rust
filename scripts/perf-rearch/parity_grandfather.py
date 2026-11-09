@@ -27,7 +27,7 @@ attempt that differs from the others (nondeterminism is never excused), and an i
 now (the entry is stale and must be removed). Entries exist for the fuzz and corpus tiers only, the
 tiers whose rows carry per-attempt evidence.
 
-The site form of stderr (version 3, lane H6): where Go prints its goroutine trace after a panic that
+The site form of stderr (version 3, lane H6; domain-tagged in version 4): where Go prints its goroutine trace after a panic that
 nothing recovers (or a fatal runtime error), tsc-rs prints one port-site line, `<TAB><file>:<line>`
 (crates/ts_goport/src/gopanic.rs: print_go_panic, go_fatal_newosproc), whose Rust line number moves
 with any edit above the call. stderr_site() replaces that line number, and nothing else, by `<line>`.
@@ -41,7 +41,7 @@ with another panic line does not. parity_fuzz.py records the form on every tsc-r
 that field, so pins and runs use the same function. Version 2 pinned the raw stderr hash under
 `stderr`: a version 2 file is invalid, and a row without `stderrSite` is never pinned or matched.
 
-The file is validated strictly: the top level is exactly {about, version: 3, items}, every entry has
+The file is validated strictly: the top level is exactly {about, version: 4, items}, every entry has
 exactly the keys above with the right types, and an item id must name a fuzz or corpus item. A key
 anywhere else (an entry beside `items`, a typo, a field the matcher does not know) is an error, and
 compare fails on an invalid file. parity_compare.py reads the file at the accepted ref
@@ -74,7 +74,7 @@ from parity_modes import ArtifactError, _exact_keys, working_manifest  # noqa: E
 
 GRANDFATHERED = HERE / 'parity-grandfathered.json'
 REPO_PATH = 'scripts/perf-rearch/parity-grandfathered.json'
-VERSION = 3  # 3: attempt.stderrSite, the site form of stderr (lane H6); 2: the raw stderr hash
+VERSION = 4  # 4: stderrSite domain-tagged (site/raw); 3: attempt.stderrSite untagged (lane H6); 2: the raw stderr hash
 SITE_LINE = b'<line>'
 # The Go panic block at the end of tsc-rs's stderr (see the top comment). Only group `line` is replaced.
 SITE = re.compile(rb'^(?:panic: |fatal error: )[^\n]*\n(?:[^\n]+\n)*\n\t[A-Za-z0-9_./-]+\.rs:(?P<line>[0-9]+)\n\Z', re.M)
@@ -144,8 +144,12 @@ def stderr_site(stderr):
 
 
 def stderr_site_hash(stderr):
-    """An attempt's `stderrSite`: sha256 (16 hex digits) of stderr_site(stderr)."""
-    return hashlib.sha256(stderr_site(stderr)).hexdigest()[:16]
+    """An attempt's `stderrSite`: sha256 (16 hex digits) of stderr_site(stderr), domain-tagged by whether
+    the site line was normalized (version 4). Without the tag, a stderr that ends in a literal `<line>`
+    (not matched by SITE, so hashed as it is) collided with a normalized one (Astra, H6 review)."""
+    m = SITE.search(stderr)
+    tagged = b'site\0' + stderr_site(stderr) if m is not None else b'raw\0' + stderr
+    return hashlib.sha256(tagged).hexdigest()[:16]
 
 
 def fingerprint(a):
@@ -281,7 +285,7 @@ ABOUT = ('Known parity items that are not good, each pinned to its exact failure
          'format and the matching rules). An entry excuses its item only while every recorded field is the same: '
          'status, rsFailure, the case identity, Go\'s result, the attempt list of the mode and the fingerprint of '
          'every attempt (outcome, exit code, sha256 of stdout, of stderr in its site form and of the written files, '
-         'inputs intact; the site form replaces the Rust line number of tsc-rs\'s port-site line, version 3, lane H6). '
+         'inputs intact; the site form replaces the Rust line number of tsc-rs\'s port-site line, version 4 (lane H6, domain-tagged)). '
          'Anything else fails the gate, and so does an entry whose item is good now. parity_compare.py reads this '
          'file at the accepted ref. Regenerate entries with `parity_grandfather.py regen`; add an item only with a '
          'reason a reviewer can check. The 35 fuzz cases of the full batch where Go itself crashes or times out and '

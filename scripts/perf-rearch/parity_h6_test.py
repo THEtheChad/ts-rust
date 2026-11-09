@@ -86,6 +86,10 @@ def form_checks():
     }
     for name, text in untouched.items():
         check(f'form: unchanged: {name}', G.stderr_site(b(text)) == b(text), G.stderr_site(b(text)))
+    for name, text in (('a panic', REPEAT), ('a panic with the signal line', NIL), ('a repanicked panic', REPANIC),
+                       ('fatal error: newosproc', NEWOSPROC)):
+        check(f'form: {name}: a literal <line> in the site line does not hash like a normalized one (Astra, H6)',
+              G.stderr_site_hash(b(text.format('<line>'))) != G.stderr_site_hash(b(text.format(1383))))
 
 
 # ---- the fuzz tier on fake binaries ---------------------------------------------------------
@@ -125,6 +129,7 @@ def pin_checks(root):
         'the signal line added': (REPEAT.replace('count\n', 'count\n[signal SIGSEGV: segmentation violation code=0x1 addr=0x8 pc=0x0]\n')
                                   .format(1383), 2),
         'another exit code': (REPEAT.format(1383), 1),
+        'a literal <line> in place of the number (Astra, H6 review)': (REPEAT.format('<line>'), 2),
     }
     for name, (err, code) in bad.items():
         rows[name] = row = run(root, bins, err, code)
@@ -142,6 +147,9 @@ def compare_checks(root, entry, pinned, rows):
     check('compare: the moved line is GRANDFATHERED, PARITY OK', rc == 0 and f'GRANDFATHERED {k}' in out, out)
     rc, out = H4.run_compare(root, 'other-file', base, {k: rows['another file']}, raw_grand=grand)
     check('compare: another file is KNOWN-BAD not as pinned, PARITY FAIL', rc == 1 and 'KNOWN-BAD' in out, out)
+    rc, out = H4.run_compare(root, 'literal-line', base, {k: rows['a literal <line> in place of the number (Astra, H6 review)']},
+                             raw_grand=grand)
+    check('compare: a literal <line> is KNOWN-BAD not as pinned, PARITY FAIL', rc == 1 and 'KNOWN-BAD' in out, out)
     old_attempt = {('stderr' if kk == 'stderrSite' else kk): v for kk, v in entry['attempt'].items()}
     old = {'about': 'selftest', 'version': 2, 'items': {k: {**entry, 'attempt': old_attempt}}}
     rc, out = H4.run_compare(root, 'v2', base, {k: rows['same']}, raw_grand=old)

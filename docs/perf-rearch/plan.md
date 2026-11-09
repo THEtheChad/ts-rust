@@ -1256,3 +1256,10 @@ once a **reconciliation step** is built and tested.
     revert its line-keeping commits.
   - Root fixed the `parity_referees_test.py` "lsp keys" failure that H6
     found (pre-existing since H5's `node` argument): `3ecee68ec`.
+- **H6 review: ACCEPT WITH FIXES.**
+  - **Finding:** a literal `<line>` collided with a normalized hash.
+  - **Fix (root):** a domain-tagged hash, grandfather format v4, the negative
+    controls, and a re-pin.
+  - **Check:** only `stderrSite` and `evidence` changed in the 36 entries,
+    and the shifted-line probe binary matches all 36.
+  - Review: `reviews/2026-11-09-astra-h6.md`.

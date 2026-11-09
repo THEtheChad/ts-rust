@@ -1996,3 +1996,23 @@ CLOCK_MONOTONIC` around every `build` and `incr` side.
 `scripts/perf-rearch/clock-steps.py` logs the steps, and
 `scripts/perf-rearch/b-race-repro.py` reproduces the effect (`--step-back`
 forces it).
+
+### Version 4: the site hash is domain-tagged (Astra's H6 review)
+Astra found a false pass in version 3. A stderr that ends in a literal
+`\t<file>.rs:<line>` doesn't match `SITE`, so it was hashed unchanged. That
+gave the same `stderrSite` as a normalized crash at any real line, and it
+passed against all 9 crash pins.
+
+- **The fix:** `stderr_site_hash()` now hashes `site\0` + the normalized form
+  when `SITE` matched, and `raw\0` + stderr when it didn't. The format is
+  version 4, so a version 3 file is INVALID.
+- **New negative controls** in `parity_h6_test.py`:
+  - the literal `<line>` form for each panic shape;
+  - an end-to-end pin mismatch;
+  - a compare that gives KNOWN-BAD and PARITY FAIL.
+- **Re-pinned** from `runs/h6fix-gf-evidence-e81a14807-{full,quick}` (with
+  `--old runs/h6-head-e81a14807-full`).
+  - In all 36 entries, only `attempt.stderrSite` and `evidence` changed.
+  - The shifted-line probe binary (`tsgo-h6-probe-blankline`, one blank line
+    above `go_repeat`; run `runs/h6fix-probe-blankline-full`) matches all 36
+    pins.
