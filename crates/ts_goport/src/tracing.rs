@@ -1538,7 +1538,9 @@ fn write_json_string(out: &mut String, s: &str) {
 // exponent, which is Go `strconv.AppendFloat(f, 'f', -1, 64)`.
 fn write_json_float(out: &mut String, value: f64) {
     let abs = value.abs();
-    if abs != 0.0 && !(1e-6..1e21).contains(&abs) {
+    // A range `contains` would differ for NaN, which takes the plain branch here.
+    #[allow(clippy::manual_range_contains)]
+    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
         // Go 'e' format with the "e-09" to "e-9" clean up.
         let text = format!("{value:e}");
         let (mantissa, exponent) = text.split_once('e').unwrap_or((text.as_str(), "0"));

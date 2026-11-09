@@ -901,7 +901,9 @@ pub fn unmarshal_string_as(
 fn append_float(dst: &mut String, src: f64) {
     let abs = src.abs();
     let mut fmt_e = false;
-    if abs != 0.0 && !(1e-6..1e21).contains(&abs) {
+    // A range `contains` would differ for NaN, which takes the plain branch here.
+    #[allow(clippy::manual_range_contains)]
+    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
         fmt_e = true;
     }
     if !fmt_e {
