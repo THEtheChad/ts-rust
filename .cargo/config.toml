@@ -1,0 +1,10 @@
+[env]
+# jemalloc's settings for the goport binaries, built into jemalloc
+# (tikv-jemalloc-sys `--with-malloc-conf`) for every cargo build run from this
+# repo, so no binary execs itself at start to set `_RJEM_MALLOC_CONF`. That
+# variable still overrides the built-in value at run time. The bins check at
+# compile time that their `JEMALLOC_CONF` line equals this value
+# (`program::jemalloc_conf_built_in`); `scripts/build-release.sh` sets the
+# same value from bin/tsgo.rs. See bin/goport.rs `set_malloc_tunables` for
+# what each setting does.
+JEMALLOC_SYS_WITH_MALLOC_CONF = "narenas:4,thp:always,metadata_thp:disabled,cache_oblivious:false"

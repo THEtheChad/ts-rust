@@ -616,10 +616,10 @@ fn tsgo_catches_sigurg_and_sigwinch() {
 /// `launch`), as a run that never was a launcher: a plain compile goes on
 /// after SIGINT and SIGTERM, and SIGQUIT ends it with Go's text and exit 2.
 /// The test runs tsgo from a memfd, whose path (`/memfd:tsgo (deleted)`)
-/// cannot start a worker, and where the exec of `set_malloc_tunables` fails
-/// too: the run then ended by SIGPIPE at the second signal (that exec gave
-/// SIGPIPE its default action). Where a memfd cannot run, the test says so
-/// and passes.
+/// cannot start a worker, and where the exec of `set_malloc_tunables` (a
+/// glibc build, or a limit) fails too: the run then ended by SIGPIPE at the
+/// second signal (that exec gave SIGPIPE its default action). Where a memfd
+/// cannot run, the test says so and passes.
 #[test]
 fn a_launcher_whose_worker_cannot_start() {
     let memfd = rustix::fs::memfd_create("tsgo", rustix::fs::MemfdFlags::CLOEXEC).unwrap();

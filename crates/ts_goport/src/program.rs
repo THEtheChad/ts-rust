@@ -2369,6 +2369,30 @@ impl ThreadBudget {
     }
 }
 
+/// Whether jemalloc has `conf` built in as its settings: the
+/// `JEMALLOC_SYS_WITH_MALLOC_CONF` of the build (`.cargo/config.toml`),
+/// which tikv-jemalloc-sys passes to jemalloc's `--with-malloc-conf`. The
+/// jemalloc bins assert it at compile time for their `JEMALLOC_CONF`, so a
+/// build without the value (cargo run from outside the repo, or another
+/// value) fails instead of running with jemalloc's defaults.
+pub const fn jemalloc_conf_built_in(conf: &str) -> bool {
+    let Some(built_in) = option_env!("JEMALLOC_SYS_WITH_MALLOC_CONF") else {
+        return false;
+    };
+    let (a, b) = (built_in.as_bytes(), conf.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// The arena of one file bound on a bind thread, with its ids already moved
 /// to program ids and its binder output installed, or None when binding it
 /// made thread-local state or panicked.

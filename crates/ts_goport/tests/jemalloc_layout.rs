@@ -5,8 +5,8 @@
 //! checks what that process can see: 4 arenas, the holder thread, and
 //! arena grows at 2 MiB boundaries in every arena.
 //!
-//! `layout_stops_at_4_arenas` does the same without `narenas:4` (4 arenas
-//! per CPU): the layout makes no arena after the fourth.
+//! `layout_stops_at_4_arenas` does the same with 128 arenas in place of
+//! `narenas:4`: the layout makes no arena after the fourth.
 //!
 //! `claims_move_off_held_arenas` and `claims_keep_own_arenas`: the arena
 //! claims of a checker pool (`ArenaClaims`) with `narenas:4` and without
@@ -286,12 +286,19 @@ fn claim_on_threads(starts: &[Option<u32>]) -> Vec<(u32, u32)> {
     threads.into_iter().map(|t| t.join().unwrap()).collect()
 }
 
-/// `JEMALLOC_CONF` of bin/tsgo.rs without `narenas:4`: jemalloc then has 4
-/// arenas per CPU.
+/// `JEMALLOC_CONF` of bin/tsgo.rs with `narenas:128` for `narenas:4`, as a
+/// run without the setting has on 32 CPUs (4 arenas per CPU). jemalloc has
+/// `JEMALLOC_CONF` built in, so leaving `narenas` out would keep 4.
 fn conf_without_narenas() -> String {
     let conf: Vec<&str> = bins_jemalloc_conf()
         .split(',')
-        .filter(|option| !option.starts_with("narenas:"))
+        .map(|option| {
+            if option.starts_with("narenas:") {
+                "narenas:128"
+            } else {
+                option
+            }
+        })
         .collect();
     conf.join(",")
 }

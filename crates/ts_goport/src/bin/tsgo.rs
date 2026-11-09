@@ -59,10 +59,16 @@ const UNPORTED_PREFIX: &str = "unported Go code";
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-/// Same as `goport.rs` `JEMALLOC_CONF`. `scripts/build-release.sh` reads it
-/// from this line for its BOLT runs.
-#[cfg(all(target_os = "linux", target_env = "gnu", feature = "jemalloc"))]
+/// Same as `goport.rs` `JEMALLOC_CONF`: the jemalloc settings, built into
+/// jemalloc (`.cargo/config.toml`). `scripts/build-release.sh` reads it from
+/// this line.
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
 const JEMALLOC_CONF: &str = "narenas:4,thp:always,metadata_thp:disabled,cache_oblivious:false";
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
+const _: () = assert!(
+    jemalloc_conf_built_in(JEMALLOC_CONF),
+    "JEMALLOC_SYS_WITH_MALLOC_CONF must be JEMALLOC_CONF (.cargo/config.toml)"
+);
 
 /// The `arg0` of a worker (see `launch`) is this word, the launcher's
 /// process id, and the number, device and inode of the launcher's end of
@@ -176,34 +182,24 @@ fn main() -> MainResult {
 }
 
 /// Copied from `goport.rs` `set_malloc_tunables`, which explains the
-/// values. jemalloc gets `JEMALLOC_CONF`. With glibc malloc, `arena_max`
-/// comes from `budget` (`ThreadBudget::one_program`): with the signal thread
-/// it is 7 here, and 10 at 8 or more cores (3 spare arenas for the parse
-/// workers that a large program adds). At 6, two checkers share one arena
-/// lock (zod: 3.9k voluntary context switches, 0.5k at 7). Under an address
-/// space or data limit, glibc malloc gets `arena_max=1`, with jemalloc too.
-/// The variables stay set, so the exec runs once. A jemalloc build with
-/// `JEMALLOC_CONF` built in execs only under a limit.
+/// values. jemalloc has `JEMALLOC_CONF` built in. With glibc malloc,
+/// `arena_max` comes from `budget` (`ThreadBudget::one_program`): with the
+/// signal thread it is 7 here, and 10 at 8 or more cores (3 spare arenas for
+/// the parse workers that a large program adds). At 6, two checkers share one
+/// arena lock (zod: 3.9k voluntary context switches, 0.5k at 7). Under an
+/// address space or data limit, glibc malloc gets `arena_max=1`, with
+/// jemalloc too. The variable stays set, so the exec runs once. A jemalloc
+/// build execs only under a limit.
 fn set_malloc_tunables(budget: &ThreadBudget) {
     // Unused off Linux.
     let _ = budget;
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         use std::os::unix::process::CommandExt;
-        let mut vars = Vec::new();
-        // A build with `JEMALLOC_CONF` built into jemalloc
-        // (`JEMALLOC_SYS_WITH_MALLOC_CONF`, set by `scripts/build-release.sh`)
-        // needs no exec for it: jemalloc reads it at its start, and
-        // `_RJEM_MALLOC_CONF` still overrides it.
-        #[cfg(feature = "jemalloc")]
-        if option_env!("JEMALLOC_SYS_WITH_MALLOC_CONF") != Some(JEMALLOC_CONF) {
-            vars.push(("_RJEM_MALLOC_CONF", String::from(JEMALLOC_CONF)));
-        }
-        if let Some(value) = budget.glibc_tunables() {
-            vars.push(("GLIBC_TUNABLES", value));
-        }
-        vars.retain(|(name, _)| std::env::var_os(name).is_none());
-        if vars.is_empty() {
+        let Some(value) = budget.glibc_tunables() else {
+            return;
+        };
+        if std::env::var_os("GLIBC_TUNABLES").is_some() {
             return;
         }
         let Ok(exe) = std::env::current_exe() else {
@@ -222,7 +218,7 @@ fn set_malloc_tunables(budget: &ThreadBudget) {
         // SIGPIPE at start, and Go gets EPIPE there. A handler that does
         // nothing gives this process EPIPE again.
         // PORT: std and rustix have no safe `SIG_IGN`.
-        let _ = command.args(args).envs(vars).exec();
+        let _ = command.args(args).env("GLIBC_TUNABLES", value).exec();
         let ignore = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let _ = signal_hook::flag::register(signal_hook::consts::SIGPIPE, ignore);
     }

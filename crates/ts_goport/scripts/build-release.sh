@@ -231,8 +231,8 @@
 #   - Each run trains PGO and BOLT again. Do not reuse a profile after a
 #     source change: a stale profile only makes rustc or BOLT warn.
 #   - The BOLT runs of a jemalloc build set _RJEM_MALLOC_CONF to the
-#     JEMALLOC_CONF line of the bin source, so the bin does not exec itself
-#     even when its jemalloc lacks the built-in value.
+#     JEMALLOC_CONF line of the bin source, the value built into jemalloc
+#     (no bin execs itself for it).
 #     The glibc tunables depend on the core count (ThreadBudget in
 #     program.rs), so glibc bins exec themselves under perf. The perf2bolt
 #     check below fails when the samples do not map to the bin.
@@ -447,9 +447,9 @@ malloc_env() {
   fi
 }
 
-# jemalloc: build JEMALLOC_CONF into jemalloc (tikv-jemalloc-sys --with-malloc-conf) for the
-# shipped bins only, so they do not exec themselves at start. Dev and evidence builds leave it
-# unset and keep the exec (the same allocator settings, one more execve).
+# jemalloc: build JEMALLOC_CONF into jemalloc (tikv-jemalloc-sys --with-malloc-conf). Every
+# cargo build in the repo gets the same value from .cargo/config.toml, and the bins check it at
+# compile time; this sets it again from bin/tsgo.rs for a build run from outside the repo.
 if [[ $jemalloc == 1 ]]; then
   JEMALLOC_SYS_WITH_MALLOC_CONF="$(malloc_env tsgo)"
   export JEMALLOC_SYS_WITH_MALLOC_CONF="${JEMALLOC_SYS_WITH_MALLOC_CONF#_RJEM_MALLOC_CONF=}"

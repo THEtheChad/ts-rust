@@ -53,13 +53,17 @@ const UNPORTED_PREFIX: &str = "unported Go code";
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-/// The jemalloc settings that `set_malloc_tunables` sets. `tsgo.rs` and
-/// `goport_build.rs` have the same value, and `scripts/build-release.sh`
-/// reads it from this line for its BOLT runs. `scripts/build-release.sh` builds
-/// the same value into jemalloc (`JEMALLOC_SYS_WITH_MALLOC_CONF`); with
-/// another value there, the bins exec themselves to set it.
-#[cfg(all(target_os = "linux", target_env = "gnu", feature = "jemalloc"))]
+/// The jemalloc settings (see `set_malloc_tunables`), built into jemalloc
+/// for every build (`JEMALLOC_SYS_WITH_MALLOC_CONF` in `.cargo/config.toml`;
+/// the assert below checks it). `tsgo.rs` and `goport_build.rs` have the
+/// same value, and `scripts/build-release.sh` reads it from bin/tsgo.rs.
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
 const JEMALLOC_CONF: &str = "narenas:4,thp:always,metadata_thp:disabled,cache_oblivious:false";
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
+const _: () = assert!(
+    jemalloc_conf_built_in(JEMALLOC_CONF),
+    "JEMALLOC_SYS_WITH_MALLOC_CONF must be JEMALLOC_CONF (.cargo/config.toml)"
+);
 
 fn main() {
     // First: it must run before the first heap allocation.
@@ -112,8 +116,9 @@ fn main() {
 
 /// Sets the malloc tunables for this process.
 ///
-/// jemalloc (default feature `jemalloc`): `_RJEM_MALLOC_CONF` is
-/// `JEMALLOC_CONF`.
+/// jemalloc (default feature `jemalloc`): jemalloc has `JEMALLOC_CONF`
+/// built in, so it has these settings from its start, and a caller's
+/// `_RJEM_MALLOC_CONF` still overrides them.
 /// - `narenas:4` has the same speed as the default (4 arenas per CPU), with
 ///   less RSS (query: 140 MB against 160 MB).
 /// - `thp:always` makes jemalloc ask for huge pages (`madvise`) for its
@@ -172,13 +177,11 @@ fn main() {
 /// `GLIBC_TUNABLES` sets `arena_max=1`, with jemalloc too
 /// (`ThreadBudget::glibc_tunables`).
 ///
-/// The allocator reads these settings only at process start, so this runs
-/// the same binary again once with them set. It leaves out each variable
-/// that the caller already set (`_RJEM_MALLOC_CONF` or `GLIBC_TUNABLES`), so
-/// the caller can override the values, and does nothing when none is left.
-/// The run continues without the settings when the exec fails. A jemalloc
-/// build with `JEMALLOC_CONF` built in (see there) has the jemalloc settings
-/// from its start and execs only under a limit.
+/// glibc reads `GLIBC_TUNABLES` only at process start, so this runs the
+/// same binary again once with it set, unless the caller already set it
+/// (the caller can override the values). A jemalloc build sets it only
+/// under a limit, so it execs only there. The run continues without the
+/// settings when the exec fails.
 // PERF (perf11 qprof, dbook, perf10 release tsgo with `_RJEM_MALLOC_CONF`
 // set by the caller): without the exec, `--version` takes 0.46 to 0.53 ms
 // less and the time to `main` drops from 4.06 to 3.21 ms.
@@ -188,20 +191,10 @@ fn set_malloc_tunables(budget: &ThreadBudget) {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         use std::os::unix::process::CommandExt;
-        let mut vars = Vec::new();
-        // A build with `JEMALLOC_CONF` built into jemalloc
-        // (`JEMALLOC_SYS_WITH_MALLOC_CONF`, set by `scripts/build-release.sh`)
-        // needs no exec for it: jemalloc reads it at its start, and
-        // `_RJEM_MALLOC_CONF` still overrides it.
-        #[cfg(feature = "jemalloc")]
-        if option_env!("JEMALLOC_SYS_WITH_MALLOC_CONF") != Some(JEMALLOC_CONF) {
-            vars.push(("_RJEM_MALLOC_CONF", String::from(JEMALLOC_CONF)));
-        }
-        if let Some(value) = budget.glibc_tunables() {
-            vars.push(("GLIBC_TUNABLES", value));
-        }
-        vars.retain(|(name, _)| std::env::var_os(name).is_none());
-        if vars.is_empty() {
+        let Some(value) = budget.glibc_tunables() else {
+            return;
+        };
+        if std::env::var_os("GLIBC_TUNABLES").is_some() {
             return;
         }
         let Ok(exe) = std::env::current_exe() else {
@@ -213,7 +206,7 @@ fn set_malloc_tunables(budget: &ThreadBudget) {
             command.arg0(arg0);
         }
         // `exec` returns only when it fails.
-        let _ = command.args(args).envs(vars).exec();
+        let _ = command.args(args).env("GLIBC_TUNABLES", value).exec();
     }
 }
 
