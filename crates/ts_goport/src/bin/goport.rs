@@ -77,7 +77,7 @@ fn main() {
     let start = Instant::now();
     // #4734: Go `osutil.Args()[1:]`.
     let args: Vec<String> = ts_goport::frontend::osutil::args()[1..].to_vec();
-    ts_goport::core::install_dev_panic_hook("goport");
+    ts_goport::core::DevPanicHook::GOPORT.install();
     // Go: cmd/tsc/main.go runMain sends `--lsp` and `--api` to their own
     // entry points; everything else continues below. Nothing may write to
     // stdout before this point (stdout is the LSP channel). The panic hook

@@ -55,7 +55,7 @@ fn main() {
     set_malloc_tunables(&budget);
     budget.install();
     let args: Vec<String> = ts_goport::frontend::vfs::os_args();
-    ts_goport::core::install_dev_panic_hook("goport_build");
+    ts_goport::core::DevPanicHook::GOPORT_BUILD.install();
     let work = std::thread::Builder::new()
         .name("goport_build".to_string())
         .stack_size(ts_goport::gostd::stack::max_stack_size())

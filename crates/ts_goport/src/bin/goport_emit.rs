@@ -86,7 +86,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    ts_goport::core::install_dev_panic_hook("goport_emit");
+    ts_goport::core::DevPanicHook::GOPORT_EMIT.install();
     let worker = std::thread::Builder::new()
         .name("goport_emit".to_string())
         .stack_size(ts_goport::gostd::stack::max_stack_size())

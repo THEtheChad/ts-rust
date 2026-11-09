@@ -75,29 +75,80 @@ pub fn note_caught_panic(payload: &(dyn std::any::Any + Send)) {
     }
 }
 
-/// The panic hook of the dev bins (`goport`, `goport_build`, `goport_emit`,
-/// `goport_typesyms`): a Go panic prints nothing here (the bin prints it),
-/// an unported panic is quiet (it is counted), and any other panic prints
-/// `<bin>: panic at <site>: <message>` on stderr. A `diagnostics` build
-/// adds the backtraces of `gostd::backtrace::trace_panic`. `tsgo` has its
-/// own hook (bin/tsgo.rs).
-pub fn install_dev_panic_hook(bin: &'static str) {
-    std::panic::set_hook(Box::new(move |info| {
-        if info.payload().is::<GoPanic>() {
-            return;
-        }
-        let message = panic_message(info.payload());
-        if message.starts_with(UNPORTED_PREFIX) {
-            crate::gostd::backtrace::trace_panic(Some(&message));
-            return;
-        }
-        let location = info
-            .location()
-            .map(|l| format!(" at {}:{}", go_site_file(l.file()), l.line()))
+/// The panic hook of a dev bin (`goport`, `goport_build`, `goport_emit`,
+/// `goport_typesyms`; `tsgo` has its own in bin/tsgo.rs): a Go panic prints
+/// nothing here (the bin prints it), an unported panic is quiet (it is
+/// counted), and any other panic prints `<bin>: panic at <site>: <message>`
+/// on stderr. The options keep each bin's output as its own hook printed
+/// it.
+#[derive(Clone, Copy, Debug)]
+pub struct DevPanicHook {
+    pub bin: &'static str,
+    /// The site file as panic text prints it (`go_site_file`: no `<dir>/..`
+    /// pairs of the `parts/` crates); false prints `Location::file` as it
+    /// is.
+    pub go_site_file: bool,
+    /// In a `diagnostics` build, `GOPORT_TRACE` also prints the backtrace
+    /// of a printed panic, not only of an unported one.
+    pub trace_printed: bool,
+}
+
+impl DevPanicHook {
+    pub const GOPORT: Self = Self {
+        bin: "goport",
+        go_site_file: true,
+        trace_printed: false,
+    };
+    pub const GOPORT_BUILD: Self = Self {
+        bin: "goport_build",
+        go_site_file: true,
+        trace_printed: true,
+    };
+    pub const GOPORT_EMIT: Self = Self {
+        bin: "goport_emit",
+        go_site_file: true,
+        trace_printed: true,
+    };
+    pub const GOPORT_TYPESYMS: Self = Self {
+        bin: "goport_typesyms",
+        go_site_file: false,
+        trace_printed: false,
+    };
+
+    /// The stderr line of a printed panic (without its newline).
+    #[must_use]
+    pub fn line(&self, location: Option<&std::panic::Location<'_>>, message: &str) -> String {
+        let location = location
+            .map(|l| {
+                let file = if self.go_site_file {
+                    go_site_file(l.file())
+                } else {
+                    std::borrow::Cow::Borrowed(l.file())
+                };
+                format!(" at {file}:{}", l.line())
+            })
             .unwrap_or_default();
-        eprintln!("{bin}: panic{location}: {message}");
-        crate::gostd::backtrace::trace_panic(None);
-    }));
+        format!("{}: panic{location}: {message}", self.bin)
+    }
+
+    /// Sets this as the process's panic hook.
+    pub fn install(self) {
+        use crate::gostd::backtrace::{TraceText, trace_panic};
+        std::panic::set_hook(Box::new(move |info| {
+            if info.payload().is::<GoPanic>() {
+                return;
+            }
+            let message = panic_message(info.payload());
+            if message.starts_with(UNPORTED_PREFIX) {
+                trace_panic(Some(&message), TraceText::Std);
+                return;
+            }
+            eprintln!("{}", self.line(info.location(), &message));
+            if self.trace_printed {
+                trace_panic(None, TraceText::Std);
+            }
+        }));
+    }
 }
 
 /// Marks unported Go code. It records the hit, then panics so the gap is
@@ -661,6 +712,44 @@ mod tests {
     use super::*;
     use std::io::{Error, ErrorKind};
     use std::time::Duration;
+
+    /// Each dev bin's panic line is the line of its own hook from before
+    /// `DevPanicHook`. A site in a `parts/` crate shows the difference:
+    /// goport_typesyms prints `Location::file` as it is, the other three
+    /// without the `<dir>/..` pairs (`go_site_file`).
+    #[test]
+    fn dev_panic_hook_lines_keep_each_bins_site_format() {
+        let at = std::panic::Location::caller();
+        let (file, line) = (at.file(), at.line());
+        assert!(
+            file.ends_with("parts/goport_util/../../src/gopanic.rs"),
+            "a goport_util site goes through its parts/ root: {file}"
+        );
+        assert_eq!(
+            DevPanicHook::GOPORT_TYPESYMS.line(Some(at), "boom"),
+            format!("goport_typesyms: panic at {file}:{line}: boom")
+        );
+        let plain = file.replace("parts/goport_util/../../", "");
+        for (hook, bin) in [
+            (DevPanicHook::GOPORT, "goport"),
+            (DevPanicHook::GOPORT_BUILD, "goport_build"),
+            (DevPanicHook::GOPORT_EMIT, "goport_emit"),
+        ] {
+            assert_eq!(
+                hook.line(Some(at), "boom"),
+                format!("{bin}: panic at {plain}:{line}: boom")
+            );
+        }
+        assert_eq!(
+            DevPanicHook::GOPORT_TYPESYMS.line(None, "boom"),
+            "goport_typesyms: panic: boom"
+        );
+        // Only goport_build and goport_emit traced printed panics.
+        assert!(!DevPanicHook::GOPORT.trace_printed);
+        assert!(DevPanicHook::GOPORT_BUILD.trace_printed);
+        assert!(DevPanicHook::GOPORT_EMIT.trace_printed);
+        assert!(!DevPanicHook::GOPORT_TYPESYMS.trace_printed);
+    }
 
     fn eagain() -> Error {
         Error::from(ErrorKind::WouldBlock)

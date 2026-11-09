@@ -21,19 +21,32 @@ const NT_GNU_BUILD_ID: u32 = 3;
 const MH_MAGIC_64: u32 = 0xfeed_facf;
 const LC_UUID: u32 = 0x1b;
 
+/// How `trace_panic` prints a backtrace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceText {
+    /// `text`: std's short text, with the build id and the addresses of
+    /// frames that have no name (`tsgo`).
+    Named,
+    /// std's short text as it is (`{backtrace}`; the dev bins).
+    Std,
+}
+
 /// `GOPORT_TRACE` (a `diagnostics` feature build only): the bins' panic
-/// hooks print the backtrace (`text`) of a panic that they keep quiet (an
-/// unported or recovered panic, `message`, printed first as
-/// `trace: <message>`) or print without one (`message` None) on stderr.
-/// The write drops its errors: a panic inside a panic hook aborts the
-/// process.
+/// hooks print the backtrace of a panic that they keep quiet (an unported
+/// or recovered panic, `message`, printed first as `trace: <message>`) or
+/// print without one (`message` None) on stderr, as `style` says. The write
+/// drops its errors: a panic inside a panic hook aborts the process.
 #[cfg(feature = "diagnostics")]
-pub fn trace_panic(message: Option<&str>) {
+pub fn trace_panic(message: Option<&str>, style: TraceText) {
     use std::io::Write as _;
     if std::env::var_os("GOPORT_TRACE").is_none() {
         return;
     }
-    let backtrace = text(&Backtrace::force_capture());
+    let backtrace = Backtrace::force_capture();
+    let backtrace = match style {
+        TraceText::Named => text(&backtrace),
+        TraceText::Std => backtrace.to_string(),
+    };
     let mut stderr = std::io::stderr().lock();
     let _ = match message {
         Some(message) => writeln!(stderr, "trace: {message}\n{backtrace}"),
@@ -44,7 +57,7 @@ pub fn trace_panic(message: Option<&str>) {
 /// `trace_panic` without the `diagnostics` feature: nothing.
 #[cfg(not(feature = "diagnostics"))]
 #[inline(always)]
-pub fn trace_panic(_message: Option<&str>) {}
+pub fn trace_panic(_message: Option<&str>, _style: TraceText) {}
 
 /// std's short text of `backtrace` (`{backtrace}`), unchanged when every
 /// frame has a name. Otherwise a frame without a name prints as in std's

@@ -54,7 +54,7 @@ fn main() {
         eprintln!("usage: goport_typesyms -p <tsconfig> -o <outdir>");
         std::process::exit(1);
     };
-    ts_goport::core::install_dev_panic_hook("goport_typesyms");
+    ts_goport::core::DevPanicHook::GOPORT_TYPESYMS.install();
     // The loading thread keeps the frontend program and the checker pool, so
     // the whole run stays on it. The checkers run on their own threads.
     let worker = std::thread::Builder::new()
