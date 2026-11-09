@@ -1449,6 +1449,20 @@ def cmd_report(args) -> None:
     print(text)
 
 
+def cmd_ranking(args) -> None:
+    """The Go-relative planning page (rankings, per-area and per-file totals) for one revision."""
+    rev = rev_sha(args.rev)
+    gorel, note = load_gorel()
+    if not gorel:
+        sys.exit(note)
+    g = gorel.go_relative(build_snapshot(rev, False), REPO, CACHE)
+    text = "\n".join(gorel.md_planning(g, args.rev, rev, args.top))
+    if args.out:
+        Path(args.out).write_text(text)
+    else:
+        print(text)
+
+
 def first_parent_merges(base: str, branch: str) -> list[tuple[str, str]]:
     out = git("log", "--first-parent", "--reverse", "--format=%H %P%x00%s", f"{base}..{branch}")
     res = []
@@ -1530,12 +1544,16 @@ def main() -> None:
     r.add_argument("--no-go-relative", action="store_true", help="skip the Go-relative complexity ranking (gorel.py)")
     r.add_argument("--top", type=int, default=20)
     r.add_argument("--out")
+    k = sub.add_parser("ranking")
+    k.add_argument("rev")
+    k.add_argument("--top", type=int, default=60)
+    k.add_argument("--out")
     h = sub.add_parser("history")
     h.add_argument("--base", default="main")
     h.add_argument("--branch", default="perf/first-principles")
     h.add_argument("--out")
     args = ap.parse_args()
-    {"report": cmd_report, "history": cmd_history}[args.cmd](args)
+    {"report": cmd_report, "history": cmd_history, "ranking": cmd_ranking}[args.cmd](args)
 
 
 if __name__ == "__main__":

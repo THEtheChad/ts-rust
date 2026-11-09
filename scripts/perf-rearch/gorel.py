@@ -42,7 +42,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 4  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 5  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -803,6 +803,12 @@ def summarize_rows(rfs, ports, own) -> dict:
                         sum(1 for rf in both if rf["name_conf"] == c)] for c in ("high", "medium", "low")},
     }
     s["markers_unresolved"] = sum(1 for rf in rfs if rf["marker"] and not rf["conf"].startswith(("marker", "prose")))
+    # calibration: on functions placed by a marker, a faithful port should score as Go does
+    cal = [r for r in ports if r["conf"].startswith(("marker", "prose"))]
+    s["calibration"] = {
+        "rows": len(cal), "exact": sum(1 for r in cal if r["diff"] == 0), "within2": sum(1 for r in cal if abs(r["diff"]) <= 2),
+        "rust_sum": sum(r["cog"] for r in cal), "go_sum": sum(r["go_cog"] for r in cal),
+    }
     return s
 
 
@@ -814,6 +820,7 @@ def area_totals(ports, own) -> dict:
         out[a] = {
             "ported": len(p), "port_diff_ge10": sum(1 for r in p if r["diff"] >= 10),
             "port_diff_ge25": sum(1 for r in p if r["diff"] >= 25), "port_excess_sum": sum(max(0, r["diff"]) for r in p),
+            "port_target_excess": sum(r["diff"] for r in p if r["diff"] >= 10),
             "own": len(o), "own_gt25": sum(1 for r in o if r["cog"] > OWN_LIMIT),
             "own_excess_sum": sum(max(0, r["cog"] - OWN_LIMIT) for r in o),
             "files_with_targets": len({r["file"] for r in p if r["diff"] >= 10} | {r["file"] for r in o if r["cog"] > OWN_LIMIT}),
@@ -856,7 +863,8 @@ def go_relative(snap: dict, repo: Path, cache: Path, go_root: Path = GO_ROOT) ->
         "version": GOREL_VERSION, "tree": snap["tree"], "go_root": gof["root"], "go_key": gof["key"],
         "summary": summary, "areas": area_totals(ports, own),
         "port_bloat": ports, "own": own,
-        "ambiguous": [{"key": rf["key"], "candidates": rf["ambiguous"]} for rf in rfs if rf["ambiguous"]],
+        "ambiguous": [{"key": rf["key"], "name": rf["name"], "file": rf["file"], "line": rf["start"], "cog": rf["cog"],
+                       "candidates": rf["ambiguous"]} for rf in rfs if rf["conf"] == "ambiguous"],
         # every Rust function: confidence, Go function id, the row it is summed into or folded into
         "mapping": {rf["key"]: [rf["conf"], rf["go"]["id"] if rf["go"] else None, rf["part_of"] or rf["parent"]] for rf in rfs},
     }
@@ -896,11 +904,15 @@ def md_own_rows(rows: list[dict], top: int) -> list[str]:
 
 
 def md_areas(areas: dict) -> list[str]:
-    o = ["| area | ported fns | Δ≥10 | Δ≥25 | Σ excess Δ | own fns | own >25 | Σ own excess over 25 | files with targets |",
-         "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    o = ["| area | ported rows | Δ≥10 (targets) | Δ≥25 | Σ Δ of targets | Σ positive Δ | own fns | own >25 (targets) | Σ (cog − 25) of targets | files with targets |",
+         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    tot = Counter()
     for a, v in areas.items():
-        o.append(f"| {a} | {v['ported']:,} | {v['port_diff_ge10']} | {v['port_diff_ge25']} | {v['port_excess_sum']:,} | {v['own']:,} | "
-                 f"{v['own_gt25']} | {v['own_excess_sum']:,} | {v['files_with_targets']} |")
+        tot.update({k: x for k, x in v.items() if isinstance(x, int)})
+        o.append(f"| {a} | {v['ported']:,} | {v['port_diff_ge10']} | {v['port_diff_ge25']} | {v['port_target_excess']:,} | {v['port_excess_sum']:,} | "
+                 f"{v['own']:,} | {v['own_gt25']} | {v['own_excess_sum']:,} | {v['files_with_targets']} |")
+    o.append(f"| **all** | {tot['ported']:,} | {tot['port_diff_ge10']} | {tot['port_diff_ge25']} | {tot['port_target_excess']:,} | {tot['port_excess_sum']:,} | "
+             f"{tot['own']:,} | {tot['own_gt25']} | {tot['own_excess_sum']:,} | {tot['files_with_targets']} |")
     return o
 
 
@@ -919,6 +931,9 @@ def md_summary(g: dict) -> list[str]:
         f"- Name matcher checked against the markers: it places {nv['name_matcher_placed']:,} of {nv['marker_resolved']:,} marked functions "
         f"and agrees on {nv['agree']:,} ({100 * nv['agree'] / max(1, nv['name_matcher_placed']):.1f}%); by confidence "
         + ", ".join(f"{k} {v[0]:,}/{v[1]:,}" for k, v in nv["by_conf"].items()) + ".",
+        f"- Calibration (rows placed by a marker): Rust cog = Go cog in {100 * s['calibration']['exact'] / max(1, s['calibration']['rows']):.0f}%, "
+        f"within 2 in {100 * s['calibration']['within2'] / max(1, s['calibration']['rows']):.0f}% of {s['calibration']['rows']:,}; "
+        f"Σ Rust {s['calibration']['rust_sum']:,} vs Σ Go {s['calibration']['go_sum']:,}.",
         f"- Port bloat: {s['ported_rows']:,} ported rows; Rust above Go {s['port_rust_gt_go']:,}, Δcog ≥10 {s['port_diff_ge10']}, "
         f"≥25 {s['port_diff_ge25']}, ratio ≥1.5 with Rust cog >{OWN_LIMIT} {s['port_ratio_ge1_5_cog_gt25']}; Σ positive Δ {s['port_excess_sum']:,}. "
         f"Rows with Rust cog >{OWN_LIMIT}: {s['port_cog_gt25']}, with Go cog >{OWN_LIMIT}: {s['port_go_cog_gt25']}.",
@@ -936,7 +951,11 @@ def md_go_relative(g: dict, top: int = 20) -> list[str]:
     o += md_port_rows(ratio, top)
     o += ["", f"Own code over {OWN_LIMIT}, top {top}:", ""]
     o += md_own_rows(g["own"], top)
-    o += ["", "Per area (Δ = Rust cog − Go cog; excess = Σ of positive Δ, and Σ (cog − 25) for own code):", ""]
+    if g["ambiguous"]:
+        o += ["", f"Ambiguous name matches ({len(g['ambiguous'])}; ranked as own code until a `// Go:` marker names one):", ""]
+        for a in sorted(g["ambiguous"], key=lambda a: -a["cog"]):
+            o.append(f"- `{short(a['file'])}:{a['line']}` {a['name']} (cog {a['cog']}): " + "; ".join(f"`{c.removeprefix('internal/')}`" for c in a["candidates"][:4]))
+    o += ["", "Per area (Δ = Rust cog − Go cog; a port target is Δ ≥ 10, an own-code target cog > 25):", ""]
     o += md_areas(g["areas"])
     o += ["", f"_go-relative: {g['seconds']} s{' (cached)' if g.get('cached') else ''}_", ""]
     return o
@@ -978,6 +997,66 @@ def md_delta(d: dict, top: int = 20) -> list[str]:
             o.append(f"  - {label} moved ({len(rows)}):")
             for m in rows[:top]:
                 o.append(f"    - `{short(m['file'])}` {m['name']}: {fmt(m[val][0])} → {fmt(m[val][1])}" + (f" (cog {fmt(m['cog'][0])} → {fmt(m['cog'][1])})" if kind == "port_bloat" else ""))
+    o.append("")
+    return o
+
+
+def file_totals(g: dict) -> dict[str, dict]:
+    """Per Rust file: the port-bloat targets (Δ ≥ 10) and own-code targets (cog > 25) with their excess."""
+    out: dict[str, dict] = defaultdict(lambda: {"area": "", "port": 0, "port_excess": 0, "own": 0, "own_excess": 0})
+    for r in g["port_bloat"]:
+        if r["diff"] >= 10:
+            f = out[r["file"]]
+            f["area"], f["port"], f["port_excess"] = r["area"], f["port"] + 1, f["port_excess"] + r["diff"]
+    for r in g["own"]:
+        if r["cog"] > OWN_LIMIT:
+            f = out[r["file"]]
+            f["area"], f["own"], f["own_excess"] = r["area"], f["own"] + 1, f["own_excess"] + r["cog"] - OWN_LIMIT
+    return out
+
+
+def md_planning(g: dict, rev: str, sha: str, top: int = 60, files_per_area: int = 30) -> list[str]:
+    """The wave-2 planning page: rankings, per-area and per-file totals (quality.sh ranking)."""
+    o = [f"# Q0 ranking: Go-relative complexity at {rev} ({sha[:9]})", "",
+         f"Generated by `scripts/perf-rearch/quality.sh ranking {rev} --top {top}` (gorel.py version {g['version']}); "
+         "docs/perf-rearch/quality.md, \"Go-relative complexity\", defines every figure.", "",
+         "- **Port bloat** (ported code): Δ = Rust cognitive − Go cognitive of the counterpart at the pin. "
+         "Both sides count their closures; Rust helpers that are splits of the Go function or lifted Go closures are summed into its row. "
+         "A target is Δ ≥ 10.",
+         f"- **Own code** (no Go counterpart): the limit is cognitive {OWN_LIMIT}. A target is cog > {OWN_LIMIT}; excess = cog − {OWN_LIMIT}.",
+         "- Areas are the wave-2 lane areas, by path under `crates/ts_goport/src/`: checker (`checker/`); "
+         "frontend (`frontend/`, `program/`, `program.rs`, `scanner_util*`); ls (`ls/`, with autoimport); "
+         "execute/build/emit (`execute/`, `emitter/`, `bin/`, `cmd/`); effect (`effect/`); other (the rest: ast, binder, printer, "
+         "transformers, declarations, project, lsp, api, gostd, …).", "", "## Summary", ""]
+    o += md_summary(g)
+    o += ["", "## Per area", ""]
+    o += md_areas(g["areas"])
+    ft = file_totals(g)
+    for a in AREA_NAMES:
+        v = g["areas"][a]
+        o += ["", f"### {a}", ""]
+        if v["subareas"]:
+            o += ["| subarea | port targets | Σ Δ | own targets | Σ own excess |", "|---|---:|---:|---:|---:|"]
+            for k, x in v["subareas"].items():
+                o.append(f"| {k} | {x['port_diff_ge10']} | {x['port_excess']:,} | {x['own_gt25']} | {x['own_excess']:,} |")
+            files = sorted(((f, x) for f, x in ft.items() if x["area"] == a), key=lambda fx: -(fx[1]["port_excess"] + fx[1]["own_excess"]))
+            o += ["", f"Files by Σ excess (top {files_per_area} of {len(files)}):", "",
+                  "| file | port targets | Σ Δ | own targets | Σ own excess |", "|---|---:|---:|---:|---:|"]
+            for f, x in files[:files_per_area]:
+                o.append(f"| `{short(f)}` | {x['port']} | {x['port_excess']:,} | {x['own']} | {x['own_excess']:,} |")
+        else:
+            o.append("No targets.")
+    o += ["", f"## Port bloat: top {top} by Δ", ""]
+    o += md_port_rows(g["port_bloat"], top)
+    ratio = sorted((r for r in g["port_bloat"] if r["cog"] > OWN_LIMIT), key=lambda r: (-r["ratio"], -r["diff"]))
+    o += ["", f"## Port bloat: top {top // 2} by ratio (Rust cog > {OWN_LIMIT})", ""]
+    o += md_port_rows(ratio, top // 2)
+    o += ["", f"## Own code: top {top} over {OWN_LIMIT}", ""]
+    o += md_own_rows(g["own"], top)
+    if g["ambiguous"]:
+        o += ["", f"## Ambiguous name matches ({len(g['ambiguous'])}, ranked as own code)", ""]
+        for x in sorted(g["ambiguous"], key=lambda x: -x["cog"]):
+            o.append(f"- `{short(x['file'])}:{x['line']}` {x['name']} (cog {x['cog']}): " + "; ".join(f"`{c.removeprefix('internal/')}`" for c in x["candidates"][:4]))
     o.append("")
     return o
 
