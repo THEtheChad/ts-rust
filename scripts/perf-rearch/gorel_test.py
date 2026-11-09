@@ -240,6 +240,7 @@ def mapper_cases() -> None:
         gofn("internal/ls", "symbols.go", 100, "", "getDocumentSymbols", 9,
              closures=[{"name": "visit", "line": 147, "end": 190, "cog": 12, "cyc": 9, "lines": 44, "cog_inplace": 15}]),
         gofn("internal/scanner", "scanner.go", 50, "", "NewScanner", 1),
+        gofn("internal/ipc", "transport.go", 55, "PipeTransport", "close", 3),
         gofn("internal/checker", "printer.go", 55, "Checker", "TypeToStringEx", 0, lines=3),
         gofn("internal/checker", "printer.go", 59, "Checker", "typeToStringEx", 17),
         gofn("internal/ls/lsutil", "userpreferences_generated.go", 193, "", "parsePreferenceIndentStyle", 4),
@@ -304,6 +305,16 @@ def mapper_cases() -> None:
             "    pub fn new() -> Self {}",
             "}",
         ],
+        "crates/ts_goport/src/ipc/transport.rs": [
+            "impl PipeTransport {",
+            "    #[cfg(unix)]",
+            "    // Go: ipc/transport.go:55 close",
+            "    fn close(&self) {}",
+            "    #[cfg(windows)]",
+            "    // Go: ipc/transport.go:55 close",
+            "    fn close(&self) {}",
+            "}",
+        ],
         C + "printer_impl.rs": [
             "impl Checker {",
             "    // Go: checker/printer.go:55 TypeToStringEx and checker/printer.go:59 typeToStringEx",
@@ -345,6 +356,8 @@ def mapper_cases() -> None:
         rust(L + "semantictokens.rs", "SemanticTokenCollector::visit", 2, 2, 88),
         rust("crates/ts_goport/src/frontend/scanner/scanner_p1.rs", "Scanner::new", 2, 2, 0),
         rust(C + "printer_impl.rs", "Checker::type_to_string_ex", 3, 3, 17),
+        {**rust("crates/ts_goport/src/ipc/transport.rs", "PipeTransport::close", 4, 4, 4)},
+        {**rust("crates/ts_goport/src/ipc/transport.rs", "PipeTransport::close", 7, 7, 6), "key": "crates/ts_goport/src/ipc/transport.rs::PipeTransport::close#2"},
         rust("crates/ts_goport/src/ls/lsutil/formatcodeoptions.rs", "parse_indent_style", 3, 3, 4),
         rust("crates/ts_goport/src/locale.rs", "parse_tag", 2, 2, 5),
         rust("crates/ts_goport/src/locale.rs", "parse_extension", 4, 4, 5),
@@ -388,6 +401,9 @@ def mapper_cases() -> None:
     r = rows["Checker::get_completion_thing"]
     # Rust 50 + lifted 6; Go 60 with the closure in place (8) replaced by its standalone figure (5)
     check("lifted closure: Rust sum, Go standalone", (r["cog"], r["go_cog"], r["diff"]), (56, 57, -1))
+    r = next(r for r in ports if r["name"] == "PipeTransport::close")
+    check("cfg variants of one Go function: the larger, not the sum", (r["cog"], r["go_cog"], [p["kind"] for p in r["parts"]]),
+          (6, 3, ["variant"]))
     r = rows["Checker::check_thing"]
     check("parent less its nested row", r["cog"], 17)
     check("own rows", sorted(x["name"] for x in own),

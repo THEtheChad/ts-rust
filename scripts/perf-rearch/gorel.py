@@ -42,7 +42,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 6  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 7  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -749,8 +749,15 @@ def build_rows(rfs: list[dict]) -> tuple[list[dict], list[dict]]:
             go_cog, go_cyc, go_lines, go_line = g["cog"], g["cyc"], g["lines"], g["line"]
             go_name = (g["recv"] + "." if g["recv"] else "") + g["name"]
         extra = []
-        for p in parts.get(rf["key"], ()):
+        # the same name again in the file family is a `#[cfg]` variant (unix/windows) or a trait method
+        # delegating to the inherent one: one of them runs, so the row takes the larger
+        for p in sorted(parts.get(rf["key"], ()), key=lambda p: p["fn"] != rf["fn"] or p["closure"] is not None):
             pc, py = own_figure(p)
+            if p["fn"] == rf["fn"] and p["closure"] is None:
+                extra.append({"name": p["name"], "cog": pc, "kind": "variant"})
+                if pc > cog:
+                    cog, cyc, row["sloc"] = pc, py, p["sloc"]
+                continue
             cog += pc
             cyc += py
             row["sloc"] += p["sloc"]
