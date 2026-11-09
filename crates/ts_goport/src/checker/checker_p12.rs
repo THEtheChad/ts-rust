@@ -654,11 +654,11 @@ impl Checker {
         };
         let result = self.instantiation_expression_get_instantiated_type(&mut state, expr_type);
         self.instantiation_expression_types.insert(key, result);
-        let error_type = if state.has_some_applicable_signature {
-            state.non_applicable_type
-        } else {
-            expr_type
-        };
+        let error_type = if_else(
+            state.has_some_applicable_signature,
+            state.non_applicable_type,
+            expr_type,
+        );
         if error_type.is_some() {
             let source_file = get_source_file_of_node(node);
             let loc = TextRange::new(
@@ -687,32 +687,36 @@ impl Checker {
         signatures: &[SignatureId],
     ) -> Vec<SignatureId> {
         let type_arguments = state.type_arguments.clone();
-        let mut applicable_signatures: Vec<SignatureId> = Vec::new();
-        for sig in signatures.iter().copied() {
-            if !self.sig(sig).type_parameters.is_empty()
-                && self.has_correct_type_argument_arity(sig, &type_arguments)
-            {
-                applicable_signatures.push(sig);
-            }
-        }
-        let mut result = Vec::with_capacity(applicable_signatures.len());
-        for sig in applicable_signatures {
-            let type_argument_types =
-                self.check_type_arguments(sig, &type_arguments, true /*reportErrors*/, None);
-            if let Some(type_argument_types) = type_argument_types {
+        let applicable_signatures: Vec<SignatureId> = signatures
+            .iter()
+            .copied()
+            .filter(|&sig| {
+                !self.sig(sig).type_parameters.is_empty()
+                    && self.has_correct_type_argument_arity(sig, &type_arguments)
+            })
+            .collect();
+        applicable_signatures
+            .into_iter()
+            .map(|sig| {
+                let type_argument_types = self.check_type_arguments(
+                    sig,
+                    &type_arguments,
+                    true, /*reportErrors*/
+                    None,
+                );
+                let Some(type_argument_types) = type_argument_types else {
+                    return sig;
+                };
                 let declaration = self.sig(sig).declaration;
-                result.push(self.get_signature_instantiation(
+                self.get_signature_instantiation(
                     sig,
                     &type_argument_types,
                     is_in_js_file(declaration),
                     &[],
                     0,
-                ));
-            } else {
-                result.push(sig);
-            }
-        }
-        result
+                )
+            })
+            .collect()
     }
 
     // PORT: Go closure `getInstantiatedType` inside getInstantiationExpressionType.
