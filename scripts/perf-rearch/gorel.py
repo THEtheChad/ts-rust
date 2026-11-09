@@ -17,9 +17,10 @@ Mapping, per Rust function (rca's list: prod functions, closures folded into the
    to Go's exported `Foo`, `T::new` to `NewT`; candidates are filtered by package (from the Rust
    path), then the receiver or impl type, then the Go file (Rust file stem without `_pN`).
    Confidence "high" (one candidate in the path's packages agreeing on file or receiver),
-   "medium" (one candidate there with neither, or one found only through the file's package
-   affinity), "low" (outside both, a long name unique in the whole Go tree) or "ambiguous"
-   (more than one left; listed, never ranked).
+   "medium" (one candidate there with neither, or one in a package the file's other functions
+   map to, agreeing), "low" (that package, not agreeing, a long name) or "ambiguous" (more than one
+   left). A receiver differs only where the markers show the pairing. Low and ambiguous matches
+   are kept in the mapping and ranked as own code, with a note.
 3. A Rust function the matcher does not place but whose name is a named Go closure of the Go
    function its own file maps (`foo := func` in Go, a separate `fn foo` in Rust) is that closure,
    lifted: it is summed into the parent's row (the fairness rule).
@@ -41,7 +42,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 2  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 4  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
@@ -49,7 +50,8 @@ GO_ROOT = Path(os.environ.get("PERF_QUALITY_GO_ROOT", Path.home() / ".explore/re
 GO_DIRS = ("internal", "cmd")
 SRC = "crates/ts_goport/src/"
 OWN_LIMIT = 25
-LONG_NAME = 10  # normalized length a name needs for a match outside the path's packages
+LONG_NAME = 10  # normalized length a name needs for a match through file affinity alone
+TEST_PKG_RE = re.compile(r"(^|/)(testutil|fourslash|testrunner)(/|$)|test$|mock$")
 
 # Rust directory (under crates/ts_goport/src, longest prefix wins) -> Go packages. A directory not
 # listed maps to internal/<dir> with a leading frontend/ removed; "*" adds the subpackages.
@@ -343,7 +345,7 @@ class GoIndex:
         out = set()
         for p in pkgs:
             if p.endswith("/*"):
-                out |= {q for q in self.pkgs if q.startswith(p[:-1])}
+                out |= {q for q in self.pkgs if q.startswith(p[:-1]) and not TEST_PKG_RE.search(q)}
             elif p in self.pkgs:
                 out.add(p)
         return out
@@ -369,7 +371,7 @@ class GoIndex:
         for s in (stem, stem.split("_")[0]):
             pk |= self.expand(STEM_PKGS.get(s, []))
             for p in self.pkg_last.get(s, []):
-                if not p.startswith(("internal/testutil", "internal/fourslash")):
+                if not TEST_PKG_RE.search(p):
                     pk.add(p)
         return pk
 
@@ -551,15 +553,12 @@ def match_by_name(rf: dict, gi: GoIndex, pkgs: set[str], aff: set[str], recv_ok:
             return None, "ambiguous", cs
         g = cs[0]
         agree = recv_eq(recv, g["recv"]) or stem_key(file_stem(g["file"])) == stem
-        if tier == "path" and (agree or len(norm(fn)) >= 8):
+        same_kind = (recv is None) == (not g["recv"])  # both free functions or both methods
+        if tier == "path" and (agree or (len(norm(fn)) >= 8 and same_kind)):
             return g, "high" if agree else "medium", []
-        if tier == "affinity" and (agree or len(norm(fn)) >= LONG_NAME):
+        if tier == "affinity" and (agree or (len(norm(fn)) >= LONG_NAME and same_kind)):
             return g, "medium" if agree else "low", []
         return None, "none", []
-    if len(norm(fn)) >= LONG_NAME:
-        cs = narrow(cands)
-        if len(cs) == 1 and (recv is None or recv_eq(recv, cs[0]["recv"]) or not cs[0]["recv"]):
-            return cs[0], "low", []
     return None, "none", []
 
 
@@ -726,11 +725,20 @@ def build_rows(rfs: list[dict]) -> tuple[list[dict], list[dict]]:
         row = {"key": rf["key"], "file": rf["file"], "line": rf["start"], "name": rf["name"], "area": area_of(rf["file"]),
                "subarea": subarea_of(rf["file"]), "cog": cog, "cyc": cyc, "sloc": rf["sloc"]}
         g = rf["go"]
+        if g is not None and rf["conf"].startswith("low"):
+            # a low-confidence name match is listed in the mapping but ranked as own code
+            row["low_match"] = (g["recv"] + "." if g["recv"] else "") + g["name"]
+            g = None
         if g is None:
             if rf["ambiguous"]:
                 row["ambiguous"] = rf["ambiguous"]
             if rf["marker"]:
                 row["marker"] = rf["marker"]
+            for p in parts.get(rf["key"], ()):
+                pc, py = own_figure(p)
+                row["cog"] += pc
+                row["cyc"] += py
+                row["sloc"] += p["sloc"]
             own.append(row)
             continue
         if rf["closure"] is not None:  # a lifted Go closure whose Go function has no row in this file
@@ -880,7 +888,9 @@ def md_port_rows(rows: list[dict], top: int) -> list[str]:
 def md_own_rows(rows: list[dict], top: int) -> list[str]:
     o = ["| cog | cyc | lines | area | Rust function | note |", "|---:|---:|---:|---|---|---|"]
     for r in rows[:top]:
-        note = "ambiguous: " + "; ".join(r["ambiguous"][:3]) if r.get("ambiguous") else (f"marker `{r['marker']}` not at the pin" if r.get("marker") else "")
+        note = ("ambiguous: " + "; ".join(r["ambiguous"][:3]) if r.get("ambiguous")
+                else f"marker `{r['marker'][:80]}` not at the pin" if r.get("marker")
+                else f"low-confidence name match `{r['low_match']}`" if r.get("low_match") else "")
         o.append(f"| {r['cog']} | {r['cyc']} | {r['sloc']} | {r['area']} | `{short(r['file'])}:{r['line']}` {r['name']} | {note} |")
     return o
 
