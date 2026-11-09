@@ -10,6 +10,11 @@ pub mod parsed_options;
 pub mod parsing_helpers;
 pub mod show_config;
 pub mod tsconfig_p1;
+// parse_config keeps its late `let result;`: the parity gate pins the line of
+// the deliberate nil dereference further down this file
+// (tsconfig_p2.rs:803, grandfathered fuzz/1:795). Re-pin it there before
+// moving that line.
+#[allow(clippy::needless_late_init)]
 pub mod tsconfig_p2;
 pub mod wildcard;
 pub use command_line_option::*;

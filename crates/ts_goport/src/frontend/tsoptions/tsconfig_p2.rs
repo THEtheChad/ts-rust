@@ -328,12 +328,13 @@ pub fn parse_config(
             diag::Circularity_detected_while_resolving_configuration_Colon_0,
             args![],
         ));
-        let result = if json.as_ref().map_or(0, IndexMap::len) == 0 {
+        let result;
+        if json.as_ref().map_or(0, IndexMap::len) == 0 {
             // PORT: Go stores the (maybe nil) map pointer. A nil map is `Nil`.
-            ParsedTsconfig {
+            result = ParsedTsconfig {
                 raw: json.map_or(CompilerOptionsValue::Nil, CompilerOptionsValue::Map),
                 ..Default::default()
-            }
+            };
         } else {
             // PORT: Go reads `sourceFile.SourceFile` here, which panics when
             // `sourceFile` is nil (the `json` path). Kept as Go does.
@@ -344,11 +345,11 @@ pub fn parse_config(
                     .source_file,
             );
             errors.extend(err);
-            ParsedTsconfig {
+            result = ParsedTsconfig {
                 raw: raw_result,
                 ..Default::default()
-            }
-        };
+            };
+        }
         return (result, errors);
     }
 
