@@ -80,32 +80,19 @@ impl Checker {
             let info_key_type = self.index_info(info).key_type;
             let info_value_type = self.index_info(info).value_type;
             let mut local_index_declaration = Node::NIL;
-            if info_declaration.is_some() {
-                let decl_symbol = self.get_symbol_of_declaration(info_declaration);
-                if self.get_parent_of_symbol(decl_symbol) == t_symbol {
-                    local_index_declaration = info_declaration;
-                }
+            if info_declaration.is_some() && self.is_declared_in(info_declaration, t_symbol) {
+                local_index_declaration = info_declaration;
             }
             // We check only when (a) the property is declared in the containing type, or (b) the applicable index signature is declared
             // in the containing type, or (c) the containing type is an interface and no base interface contains both the property and
             // the index signature (i.e. property and index signature are declared in separate inherited interfaces).
-            let mut error_node = if local_prop_declaration.is_some() {
-                local_prop_declaration
-            } else {
-                local_index_declaration
-            };
+            let mut error_node = or_else_node(local_prop_declaration, local_index_declaration);
             if error_node.is_nil() && interface_declaration.is_some() {
                 let prop_name = self.sym(prop).name.clone();
-                let mut some = false;
-                for base in self.get_base_types(t) {
-                    if self.get_property_of_object_type(base, &prop_name).is_some()
+                if !self.get_base_types(t).iter().any(|&base| {
+                    self.get_property_of_object_type(base, &prop_name).is_some()
                         && self.get_index_type_of_type(base, info_key_type).is_some()
-                    {
-                        some = true;
-                        break;
-                    }
-                }
-                if !some {
+                }) {
                     error_node = interface_declaration;
                 }
             }
@@ -152,11 +139,8 @@ impl Checker {
                 get_declaration_of_kind(&self.symbols, t_symbol, SyntaxKind::InterfaceDeclaration);
         }
         let mut local_check_declaration = Node::NIL;
-        if declaration.is_some() {
-            let decl_symbol = self.get_symbol_of_declaration(declaration);
-            if self.get_parent_of_symbol(decl_symbol) == t_symbol {
-                local_check_declaration = declaration;
-            }
+        if declaration.is_some() && self.is_declared_in(declaration, t_symbol) {
+            local_check_declaration = declaration;
         }
         for info in index_infos {
             if info == check_info {
@@ -166,33 +150,21 @@ impl Checker {
             let info_key_type = self.index_info(info).key_type;
             let info_value_type = self.index_info(info).value_type;
             let mut local_index_declaration = Node::NIL;
-            if info_declaration.is_some() {
-                let decl_symbol = self.get_symbol_of_declaration(info_declaration);
-                if self.get_parent_of_symbol(decl_symbol) == t_symbol {
-                    local_index_declaration = info_declaration;
-                }
+            if info_declaration.is_some() && self.is_declared_in(info_declaration, t_symbol) {
+                local_index_declaration = info_declaration;
             }
             // We check only when (a) the check index signature is declared in the containing type, or (b) the applicable index
             // signature is declared in the containing type, or (c) the containing type is an interface and no base interface contains
             // both index signatures (i.e. the index signatures are declared in separate inherited interfaces).
-            let mut error_node = if local_check_declaration.is_some() {
-                local_check_declaration
-            } else {
-                local_index_declaration
-            };
-            if error_node.is_nil() && interface_declaration.is_some() {
-                let mut some = false;
-                for base in self.get_base_types(t) {
-                    if self.get_index_info_of_type(base, check_key_type).is_some()
+            let mut error_node = or_else_node(local_check_declaration, local_index_declaration);
+            if error_node.is_nil()
+                && interface_declaration.is_some()
+                && !self.get_base_types(t).iter().any(|&base| {
+                    self.get_index_info_of_type(base, check_key_type).is_some()
                         && self.get_index_type_of_type(base, info_key_type).is_some()
-                    {
-                        some = true;
-                        break;
-                    }
-                }
-                if !some {
-                    error_node = interface_declaration;
-                }
+                })
+            {
+                error_node = interface_declaration;
             }
             if error_node.is_some()
                 && !self.is_type_assignable_to(check_value_type, info_value_type)
@@ -208,6 +180,15 @@ impl Checker {
                 );
             }
         }
+    }
+
+    /// Go `c.getParentOfSymbol(c.getSymbolOfDeclaration(declaration)) == symbol`,
+    /// the "declared in the containing type" test of the index-constraint
+    /// checks. Rust needs the symbol in a local between the two `&mut self`
+    /// calls.
+    fn is_declared_in(&mut self, declaration: Node, symbol: SymbolId) -> bool {
+        let declaration_symbol = self.get_symbol_of_declaration(declaration);
+        self.get_parent_of_symbol(declaration_symbol) == symbol
     }
 
     // Go: checker/checker.go:4999 checkClassOrInterfaceForDuplicateIndexSignatures
