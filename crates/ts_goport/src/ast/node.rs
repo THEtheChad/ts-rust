@@ -3267,7 +3267,7 @@ impl Node {
     // Go: ast.go:530 MemberList
     #[must_use]
     pub fn member_list(self) -> NodeList {
-        let list = list_by_data!(
+        list_by_data!(
             self,
             list_of,
             NodeList::NIL,
@@ -3279,8 +3279,7 @@ impl Node {
                 EnumDeclaration,
                 TypeLiteralNode,
             ] => req members,
-        );
-        list
+        )
     }
 
     // Go: ast.go:548 Members

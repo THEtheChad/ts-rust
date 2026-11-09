@@ -342,8 +342,8 @@ impl Checker {
         }; // TODO: GH#18217
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         printer_.write_exported(entity, source_file, inner, None); // TODO: GH#18217
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // Go: checker/printer.go:179 signatureToString
@@ -408,8 +408,8 @@ impl Checker {
         let writer = Rc::new(RefCell::new(get_single_line_string_writer()));
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         p.write_exported(sig, source_file, inner, None);
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // Go: checker/printer.go:229 typePredicateToString
@@ -449,8 +449,8 @@ impl Checker {
         let source_file = source_file_of_enclosing(enclosing_declaration);
         let inner: Rc<RefCell<dyn EmitTextWriter>> = writer.clone();
         printer_.write_exported(predicate, source_file, inner, None);
-        let text = writer.borrow().string();
-        text
+
+        writer.borrow().string()
     }
 
     // PORT: Go checker/printer.go:379 valueToString is a wrapper over
@@ -564,7 +564,8 @@ impl Checker {
         let _print = PrintScope::open(&node_builder);
         let _verbosity = VerbosityRestore::install(&node_builder, vc);
         let nodes = self.node_builder_expand_symbol_for_hover(&node_builder, symbol, meaning);
-        let result = if nodes.is_empty() {
+
+        if nodes.is_empty() {
             String::new()
         } else {
             let emit_context = node_builder.borrow().emit_context();
@@ -583,8 +584,7 @@ impl Checker {
                 b.push_str(&p.emit(node, source_file));
             }
             b
-        };
-        result
+        }
     }
 
     /// Renders a type parameter declaration (e.g. "T extends Foo") with optional verbosity support.
@@ -608,7 +608,8 @@ impl Checker {
             InternalNodeBuilderFlags::NONE,
             None,
         );
-        let result = if type_param_node.is_nil() {
+
+        if type_param_node.is_nil() {
             // PORT: Go calls TypeToString while the deferred verbosity restore
             // is still pending, so the node builder still holds `vc` here.
             self.type_to_string_exported(t)
@@ -617,8 +618,7 @@ impl Checker {
             let mut p = create_printer_with_remove_comments(emit_context);
             let source_file = source_file_of_enclosing(enclosing_declaration);
             p.emit(type_param_node, source_file)
-        };
-        result
+        }
     }
 
     // Go: checker/printer.go:348 TypeToTypeNodeEx

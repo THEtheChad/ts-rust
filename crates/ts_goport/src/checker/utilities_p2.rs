@@ -1251,14 +1251,13 @@ impl Checker {
 
 // Go: checker/utilities.go:1736 getAnyImportSyntax
 pub fn get_any_import_syntax(node: Node) -> Node {
-    let import_node = match node.kind() {
+    match node.kind() {
         SyntaxKind::ImportEqualsDeclaration => node,
         SyntaxKind::ImportClause => node.parent(),
         SyntaxKind::NamespaceImport => node.parent().parent(),
         SyntaxKind::ImportSpecifier => node.parent().parent().parent(),
         _ => return Node::NIL,
-    };
-    import_node
+    }
 }
 
 // Go: checker/utilities.go:1756 isReservedMemberName

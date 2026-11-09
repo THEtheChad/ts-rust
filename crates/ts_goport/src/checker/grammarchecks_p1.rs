@@ -1262,11 +1262,10 @@ impl Checker {
     // PERF: chkport1 item 4. Takes `node.ModifierNodes()`, read once.
     pub fn find_first_illegal_decorator(&self, node: Node, modifiers: NodeSlice) -> Node {
         if can_have_illegal_decorators(node) {
-            let decorator = modifiers
+            modifiers
                 .iter()
                 .find(|&m| is_decorator(m))
-                .unwrap_or(Node::NIL);
-            decorator
+                .unwrap_or(Node::NIL)
         } else {
             Node::NIL
         }

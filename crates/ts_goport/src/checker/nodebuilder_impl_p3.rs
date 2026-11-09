@@ -25,8 +25,8 @@ pub(super) fn nb_ctx<R>(
     f: impl FnOnce(&NodeBuilderContext) -> R,
 ) -> R {
     let b = b.borrow();
-    let r = f(&b.ctx.borrow());
-    r
+
+    f(&b.ctx.borrow())
 }
 
 /// Runs `f` with a mutable borrow of `b.ctx`. The rule of `nb_ctx` holds:
@@ -36,8 +36,8 @@ pub(super) fn nb_ctx_mut<R>(
     f: impl FnOnce(&mut NodeBuilderContext) -> R,
 ) -> R {
     let b = b.borrow();
-    let r = f(&mut b.ctx.borrow_mut());
-    r
+
+    f(&mut b.ctx.borrow_mut())
 }
 
 /// Go `b.e`. The node factory is `nb_e(b).factory()` (Go `b.f`).
