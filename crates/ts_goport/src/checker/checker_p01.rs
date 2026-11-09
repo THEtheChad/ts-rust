@@ -427,6 +427,15 @@ impl InferenceContext {
     pub fn rare_mut(&mut self) -> &mut InferenceContextRare {
         self.rare.get_or_insert_default()
     }
+
+    /// Go `n.returnMapper = mapper`. Setting nil makes no box.
+    pub fn set_return_mapper(&mut self, mapper: MapperId) {
+        if mapper.is_some() {
+            self.rare_mut().return_mapper = mapper;
+        } else if let Some(rare) = &mut self.rare {
+            rare.return_mapper = MapperId::NIL;
+        }
+    }
 }
 
 // PORT: `Default` exists only for the dummy entry at index 0 of

@@ -47,21 +47,17 @@ impl Checker {
         if !is_decorator(node) && !is_binary_expression(node) {
             // PERF: the type parameters are read from the signature in place,
             // not copied.
-            let mut skip_binding_patterns = true;
-            for i in 0..self.sig(signature).type_parameters.len() {
+            let skip_binding_patterns = (0..self.sig(signature).type_parameters.len()).all(|i| {
                 let p = self.sig(signature).type_parameters[i];
-                if self.get_default_from_type_parameter(p).is_nil() {
-                    skip_binding_patterns = false;
-                    break;
-                }
-            }
+                self.get_default_from_type_parameter(p).is_some()
+            });
             let contextual_type = self.get_contextual_type(
                 node,
-                if skip_binding_patterns {
-                    ContextFlags::SKIP_BINDING_PATTERNS
-                } else {
-                    ContextFlags::NONE
-                },
+                if_else(
+                    skip_binding_patterns,
+                    ContextFlags::SKIP_BINDING_PATTERNS,
+                    ContextFlags::NONE,
+                ),
             );
             if contextual_type.is_some() {
                 let inference_target_type = self.get_return_type_of_signature(signature);
@@ -147,21 +143,15 @@ impl Checker {
                         false,
                     );
                     let count = self.inference_context(return_context).inferences.len();
-                    let mut any_candidates = false;
-                    for i in 0..count {
-                        if self.has_inference_candidates(return_context, i) {
-                            any_candidates = true;
-                            break;
-                        }
-                    }
-                    if any_candidates {
-                        let cloned = self.clone_inferred_part_of_context(return_context);
-                        let return_mapper = self.get_mapper_from_context(cloned);
-                        self.inference_context_mut(context).rare_mut().return_mapper =
-                            return_mapper;
-                    } else if let Some(rare) = &mut self.inference_context_mut(context).rare {
-                        rare.return_mapper = MapperId::NIL;
-                    }
+                    let return_mapper =
+                        if (0..count).any(|i| self.has_inference_candidates(return_context, i)) {
+                            let cloned = self.clone_inferred_part_of_context(return_context);
+                            self.get_mapper_from_context(cloned)
+                        } else {
+                            MapperId::NIL
+                        };
+                    self.inference_context_mut(context)
+                        .set_return_mapper(return_mapper);
                 }
             }
         }
