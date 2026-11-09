@@ -232,9 +232,9 @@ thread_local! {
 // ipc/conn_sync.go:119-136, api/session.go:1148-1153) put
 // `panic: <value>\n<stack>` in the error response and write nothing to
 // stderr. In `tsgo` a plain Rust panic in `f` (a port gap that is not
-// `unported!`) is quiet too: its message is in the error response, and
-// `GOPORT_TRACE=1` prints it with the backtrace of the panic site on
-// stderr. The `goport` dev bin prints it with its port site.
+// `unported!`) is quiet too: its message is in the error response, and in
+// a `diagnostics` feature build `GOPORT_TRACE=1` prints it with the
+// backtrace of the panic site on stderr (`gostd::backtrace::trace_panic`). The `goport` dev bin prints it with its port site.
 pub fn go_recover<R>(f: impl FnOnce() -> R) -> std::thread::Result<R> {
     GO_RECOVER_DEPTH.with(|depth| depth.set(depth.get() + 1));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));

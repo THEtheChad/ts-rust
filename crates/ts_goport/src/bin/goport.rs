@@ -219,13 +219,9 @@ fn install_panic_hook() {
         }
         let message = payload_message(info.payload());
         if message.starts_with(UNPORTED_PREFIX) {
-            // GOPORT_TRACE=1 prints where each unported hit came from.
-            if std::env::var_os("GOPORT_TRACE").is_some() {
-                eprintln!(
-                    "trace: {message}\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
+            // GOPORT_TRACE=1 (a `diagnostics` build) prints where each
+            // unported hit came from.
+            ts_goport::gostd::backtrace::trace_panic(Some(&message));
             return;
         }
         let location = info

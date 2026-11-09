@@ -182,12 +182,7 @@ fn install_panic_hook() {
         }
         let message = payload_message(info.payload());
         if message.starts_with(UNPORTED_PREFIX) {
-            if std::env::var_os("GOPORT_TRACE").is_some() {
-                eprintln!(
-                    "trace: {message}\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
+            ts_goport::gostd::backtrace::trace_panic(Some(&message));
             return;
         }
         let location = info
@@ -195,9 +190,7 @@ fn install_panic_hook() {
             .map(|l| format!(" at {}:{}", go_site_file(l.file()), l.line()))
             .unwrap_or_default();
         eprintln!("goport_build: panic{location}: {message}");
-        if std::env::var_os("GOPORT_TRACE").is_some() {
-            eprintln!("{}", std::backtrace::Backtrace::force_capture());
-        }
+        ts_goport::gostd::backtrace::trace_panic(None);
     }));
 }
 

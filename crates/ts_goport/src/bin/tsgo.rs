@@ -1039,13 +1039,7 @@ fn install_panic_hook() {
         }
         let message = payload_message(info.payload());
         if message.starts_with(UNPORTED_PREFIX) || ts_goport::core::in_go_recover() {
-            if std::env::var_os("GOPORT_TRACE").is_some() {
-                let _ = writeln!(
-                    std::io::stderr(),
-                    "trace: {message}\n{}",
-                    ts_goport::gostd::backtrace::text(&std::backtrace::Backtrace::force_capture())
-                );
-            }
+            ts_goport::gostd::backtrace::trace_panic(Some(&message));
             return;
         }
         let location = info
@@ -1055,13 +1049,7 @@ fn install_panic_hook() {
         // The output so far comes first, also in one file with stderr.
         ts_goport::execute::tsc::stdio::flush_cli_stdout_at_exit();
         let _ = writeln!(std::io::stderr(), "tsgo: panic{location}: {message}");
-        if std::env::var_os("GOPORT_TRACE").is_some() {
-            let _ = writeln!(
-                std::io::stderr(),
-                "{}",
-                ts_goport::gostd::backtrace::text(&std::backtrace::Backtrace::force_capture())
-            );
-        }
+        ts_goport::gostd::backtrace::trace_panic(None);
     }));
 }
 
