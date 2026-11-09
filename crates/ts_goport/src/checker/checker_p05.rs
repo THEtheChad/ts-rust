@@ -1648,11 +1648,7 @@ impl Checker {
             && self.is_non_bindable_dynamic_name(value_declaration.name())
         {
             if error_node.is_some() {
-                let message = if is_js {
-                    diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_its_name_is_dynamic
-                } else {
-                    diag::This_member_cannot_have_an_override_modifier_because_its_name_is_dynamic
-                };
+                let message = if_else(is_js, diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_its_name_is_dynamic, diag::This_member_cannot_have_an_override_modifier_because_its_name_is_dynamic);
                 self.error(error_node, message, args![]);
             }
             return MemberOverrideStatus::HAS_INVALID_OVERRIDE;
@@ -1662,16 +1658,8 @@ impl Checker {
             && (member_has_override_modifier
                 || self.compiler_options.no_implicit_override.is_true())
         {
-            let this_type = if member_is_static {
-                static_type
-            } else {
-                type_with_this
-            };
-            let base_type = if member_is_static {
-                base_static_type
-            } else {
-                base_with_this
-            };
+            let this_type = if_else(member_is_static, static_type, type_with_this);
+            let base_type = if_else(member_is_static, base_static_type, base_with_this);
             let member_name = self.sym(member).name.clone();
             let prop = self.get_property_of_type(this_type, &member_name);
             let base_prop = self.get_property_of_type(base_type, &member_name);
@@ -1682,20 +1670,12 @@ impl Checker {
                     let suggestion =
                         self.get_suggested_symbol_for_nonexistent_class_member(&name, base_type);
                     if suggestion.is_some() {
-                        let message = if is_js {
-                            diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_it_is_not_declared_in_the_base_class_0_Did_you_mean_1
-                        } else {
-                            diag::This_member_cannot_have_an_override_modifier_because_it_is_not_declared_in_the_base_class_0_Did_you_mean_1
-                        };
+                        let message = if_else(is_js, diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_it_is_not_declared_in_the_base_class_0_Did_you_mean_1, diag::This_member_cannot_have_an_override_modifier_because_it_is_not_declared_in_the_base_class_0_Did_you_mean_1);
                         let base_string = self.type_to_string_exported(base_with_this);
                         let suggestion_string = self.symbol_to_string(suggestion);
                         self.error(error_node, message, args![base_string, suggestion_string]);
                     } else {
-                        let message = if is_js {
-                            diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_it_is_not_declared_in_the_base_class_0
-                        } else {
-                            diag::This_member_cannot_have_an_override_modifier_because_it_is_not_declared_in_the_base_class_0
-                        };
+                        let message = if_else(is_js, diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_it_is_not_declared_in_the_base_class_0, diag::This_member_cannot_have_an_override_modifier_because_it_is_not_declared_in_the_base_class_0);
                         let base_string = self.type_to_string_exported(base_with_this);
                         self.error(error_node, message, args![base_string]);
                     }
@@ -1719,17 +1699,19 @@ impl Checker {
                 }
                 if !base_has_abstract {
                     if error_node.is_some() {
-                        let message = if member_is_parameter_property {
-                            if is_js {
-                                diag::This_parameter_property_must_have_a_JSDoc_comment_with_an_override_tag_because_it_overrides_a_member_in_the_base_class_0
-                            } else {
-                                diag::This_parameter_property_must_have_an_override_modifier_because_it_overrides_a_member_in_base_class_0
-                            }
-                        } else if is_js {
-                            diag::This_member_must_have_a_JSDoc_comment_with_an_override_tag_because_it_overrides_a_member_in_the_base_class_0
-                        } else {
-                            diag::This_member_must_have_an_override_modifier_because_it_overrides_a_member_in_the_base_class_0
-                        };
+                        let message = if_else(
+                            member_is_parameter_property,
+                            if_else(
+                                is_js,
+                                diag::This_parameter_property_must_have_a_JSDoc_comment_with_an_override_tag_because_it_overrides_a_member_in_the_base_class_0,
+                                diag::This_parameter_property_must_have_an_override_modifier_because_it_overrides_a_member_in_base_class_0,
+                            ),
+                            if_else(
+                                is_js,
+                                diag::This_member_must_have_a_JSDoc_comment_with_an_override_tag_because_it_overrides_a_member_in_the_base_class_0,
+                                diag::This_member_must_have_an_override_modifier_because_it_overrides_a_member_in_the_base_class_0,
+                            ),
+                        );
                         let base_string = self.type_to_string_exported(base_with_this);
                         self.error(error_node, message, args![base_string]);
                     }
@@ -1749,11 +1731,7 @@ impl Checker {
             }
         } else if member_has_override_modifier {
             if error_node.is_some() {
-                let message = if is_js {
-                    diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_its_containing_class_0_does_not_extend_another_class
-                } else {
-                    diag::This_member_cannot_have_an_override_modifier_because_its_containing_class_0_does_not_extend_another_class
-                };
+                let message = if_else(is_js, diag::This_member_cannot_have_a_JSDoc_comment_with_an_override_tag_because_its_containing_class_0_does_not_extend_another_class, diag::This_member_cannot_have_an_override_modifier_because_its_containing_class_0_does_not_extend_another_class);
                 let type_string = self.type_to_string_exported(t);
                 self.error(error_node, message, args![type_string]);
             }
