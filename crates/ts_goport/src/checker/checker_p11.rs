@@ -715,13 +715,9 @@ impl Checker {
                 min_above = max_parameter;
             }
         }
-        let mut has_rest_parameter = false;
-        for &sig in signatures {
-            if self.has_effective_rest_parameter(sig) {
-                has_rest_parameter = true;
-                break;
-            }
-        }
+        let has_rest_parameter = signatures
+            .iter()
+            .any(|&sig| self.has_effective_rest_parameter(sig));
         let parameter_range = if has_rest_parameter {
             min_count.to_string()
         } else if min_count < max_count {
@@ -775,11 +771,8 @@ impl Checker {
             let mut parameter = Node::NIL;
             if closest_signature.is_some() && self.sig(closest_signature).declaration.is_some() {
                 let closest_declaration = self.sig(closest_signature).declaration;
-                let this_offset = if self.sig(closest_signature).this_parameter.is_some() {
-                    1
-                } else {
-                    0
-                };
+                let this_offset =
+                    if_else(self.sig(closest_signature).this_parameter.is_some(), 1, 0);
                 parameter = node_slice_element_or_nil(
                     closest_declaration.parameters(),
                     args.len() + this_offset,
