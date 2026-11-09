@@ -47,9 +47,9 @@
 //! inline countdown does not flush, and its walks are not in the counts).
 //! Its writes cost
 //! instructions (VS Code +0.17%): leave it unset when you count them.
-//! `GOPORT_FLOWSKIP_BUILD_STEPS`, `GOPORT_FLOWSKIP_MIN_STEPS`,
-//! `GOPORT_FLOWSKIP_SAMPLE_EVERY` and `GOPORT_FLOWSKIP_CONFIRM_STEPS` (`0`
-//! turns the look off) set the tuning values for A/B runs.
+//! The thresholds (`BUILD_STEPS`, `MIN_STEPS`, `SAMPLE_EVERY`,
+//! `CONFIRM_STEPS`, `NEAR_GAP`) are constants; for an A/B of one, build
+//! both values.
 
 use crate::prelude::*;
 use smallvec::SmallVec;
@@ -108,29 +108,59 @@ fn verify_from_env() -> bool {
     *VERIFY.get_or_init(|| std::env::var("GOPORT_FLOWSKIP").as_deref() == Ok("verify"))
 }
 
-#[cfg(not(feature = "diagnostics"))]
-fn verify_from_env() -> bool {
-    false
+/// The thresholds that verify mode and the tests lower (`FlowSkip`'s
+/// `build_steps` and `min_steps` fields).
+#[cfg(feature = "diagnostics")]
+impl FlowSkip {
+    #[inline]
+    fn build_steps(&self) -> u32 {
+        self.build_steps
+    }
+
+    #[inline]
+    fn min_steps(&self) -> u32 {
+        self.min_steps
+    }
 }
 
-/// A tuning value from the environment (read once per process), else
-/// `default`.
-fn tuning(name: &'static str, default: u32) -> u32 {
-    static VALUES: OnceLock<FxHashMap<&'static str, u32>> = OnceLock::new();
-    let values = VALUES.get_or_init(|| {
-        [
-            "GOPORT_FLOWSKIP_BUILD_STEPS",
-            "GOPORT_FLOWSKIP_MIN_STEPS",
-            "GOPORT_FLOWSKIP_SAMPLE_EVERY",
-            "GOPORT_FLOWSKIP_CONFIRM_STEPS",
-            "GOPORT_FLOWSKIP_NEAR_GAP",
-        ]
-        .into_iter()
-        .filter_map(|n| Some((n, std::env::var(n).ok()?.parse().ok()?)))
-        .collect()
-    });
-    values.get(name).copied().unwrap_or(default)
+/// The thresholds: constants in a build without `diagnostics`.
+#[cfg(not(feature = "diagnostics"))]
+impl FlowSkip {
+    #[inline]
+    fn build_steps(&self) -> u32 {
+        BUILD_STEPS
+    }
+
+    #[inline]
+    fn min_steps(&self) -> u32 {
+        MIN_STEPS
+    }
 }
+
+/// A file is indexed when the steps of its walks so far reach this many
+/// per flow node of the file (and `CONFIRM_STEPS` holds). The index costs
+/// about as much as 5 to 8 skipped walk steps per flow node, and it pays
+/// only for the walks after it that it skips. Without the look of
+/// `CONFIRM_STEPS`, 16 cost VS Code and TypeORM 0.1 to 0.3% instructions in
+/// indexes whose later walks were refused. 24 and 32 with the look made T3
+/// server's 4 checkers index their files later (flowskip4). Files below it
+/// pay only the sample.
+const BUILD_STEPS: u32 = 16;
+
+/// A walk with fewer loop turns to its root (and no move to an outer
+/// function there) is not tested: Go's walk is cheaper than the test.
+const MIN_STEPS: u32 = 8;
+
+/// A file is indexed only when also the steps of its measured walks that
+/// pass the look of `flow_skip_sample` reach this many per flow node
+/// (looked at from half of `BUILD_STEPS` on).
+const CONFIRM_STEPS: u32 = 8;
+
+/// The largest gap once the count passed half of `BUILD_STEPS`, so a file
+/// near the threshold is decided soon. Without it, T3 server's 4 checkers
+/// indexed their files later (default instructions -0.01% against -0.10%
+/// with it; flowskip4).
+const NEAR_GAP: u32 = 32;
 
 /// Why a test said no (stats only).
 #[derive(Clone, Copy, Debug)]
@@ -259,30 +289,13 @@ pub struct FlowSkip {
     /// skip test, and a skip that would differ panics.
     #[cfg(feature = "diagnostics")]
     pub verify: bool,
-    /// A file is indexed when the steps of its walks so far reach this many
-    /// per flow node of the file (and `confirm_steps` holds). The index
-    /// costs about as much as 5 to 8 skipped walk steps per flow node, and
-    /// it pays only for the walks after it that it skips. Without the look
-    /// of `confirm_steps`, 16 cost VS Code and TypeORM 0.1 to 0.3%
-    /// instructions in indexes whose later walks were refused. 24 and 32
-    /// with the look made T3 server's 4 checkers index their files later
-    /// (flowskip4). Files below it pay only the sample.
+    /// `BUILD_STEPS`, or 0 (index every file at once) in verify mode and
+    /// tests.
+    #[cfg(feature = "diagnostics")]
     pub build_steps: u32,
-    /// A walk with fewer loop turns to its root (and no move to an outer
-    /// function there) is not tested: Go's walk is cheaper than the test.
+    /// `MIN_STEPS`, or 0 (test every walk) in tests.
+    #[cfg(feature = "diagnostics")]
     pub min_steps: u32,
-    /// While a file is counted, the gap between measured walks grows from
-    /// `FIRST_GAP` up to this many walks.
-    pub sample_every: u32,
-    /// When not 0, a file is indexed only when also the steps of its
-    /// measured walks that pass the look of `flow_skip_sample` reach this
-    /// many per flow node (looked at from half of `build_steps` on).
-    pub confirm_steps: u32,
-    /// The largest gap once the count passed half of `build_steps` (0: no
-    /// such limit), so a file near the threshold is decided soon. Without
-    /// it, T3 server's 4 checkers indexed their files later (default
-    /// instructions -0.01% against -0.10% with it; flowskip4).
-    pub near_gap: u32,
     files: FxHashMap<u32, FileState>,
     /// The last counted file and its live count. Its entry in `files` is
     /// stale until another counted file takes its place, so a walk that only
@@ -313,16 +326,16 @@ pub struct FlowSkip {
 
 impl Default for FlowSkip {
     fn default() -> Self {
+        #[cfg(feature = "diagnostics")]
         let verify = verify_from_env();
         FlowSkip {
             #[cfg(feature = "diagnostics")]
             verify,
             // Verify mode indexes every file at once, so it tests every walk.
-            build_steps: tuning("GOPORT_FLOWSKIP_BUILD_STEPS", if verify { 0 } else { 16 }),
-            min_steps: tuning("GOPORT_FLOWSKIP_MIN_STEPS", 8),
-            sample_every: tuning("GOPORT_FLOWSKIP_SAMPLE_EVERY", SAMPLE_EVERY).max(1),
-            confirm_steps: tuning("GOPORT_FLOWSKIP_CONFIRM_STEPS", 8),
-            near_gap: tuning("GOPORT_FLOWSKIP_NEAR_GAP", 32),
+            #[cfg(feature = "diagnostics")]
+            build_steps: if verify { 0 } else { BUILD_STEPS },
+            #[cfg(feature = "diagnostics")]
+            min_steps: MIN_STEPS,
             files: FxHashMap::default(),
             hot_file: None,
             hot: Count {
@@ -356,21 +369,19 @@ impl std::fmt::Debug for FlowSkip {
 
 /// The count of a file before it is indexed. The last walk of each gap is
 /// measured (`flow_skip_sample`, weighted by the gap), and the gap
-/// doubles from `FIRST_GAP` up to `sample_every`: a new file is judged on
+/// doubles from `FIRST_GAP` up to `SAMPLE_EVERY`: a new file is judged on
 /// small gaps, so one long walk of a file with few walks does not index it
 /// (query-core lost 0.15% that way with a fixed gap of 32). `countdown` is
 /// the walks up to the next measured one, `measured` the weighted steps
-/// measured so far. The file is indexed when they reach
-/// `FlowSkip::build_steps` per flow node, read at each measured walk, so a
-/// later change of `build_steps` reaches a file that is counted already.
-/// The other walks pay only the countdown.
+/// measured so far. The file is indexed when they reach `BUILD_STEPS` per
+/// flow node. The other walks pay only the countdown.
 #[derive(Clone, Copy)]
 struct Count {
     countdown: u32,
     gap: u32,
     measured: u64,
     /// The part of `measured` that passed the look of `flow_skip_sample`
-    /// (looked at from half of `build_steps` on).
+    /// (looked at from half of `BUILD_STEPS` on).
     probed: u64,
 }
 
@@ -387,11 +398,11 @@ enum FileState {
 const DRY_CAP: u32 = 256;
 /// The first gap between measured walks of a file.
 const FIRST_GAP: u32 = 4;
-/// The largest gap (`FlowSkip::sample_every`). The estimate needs few
+/// The largest gap between measured walks of a file. The estimate needs few
 /// samples: a file is worth an index only when it has many walks. A gap of
 /// 4 cost VS Code +0.13% instructions. With 32, T3 server indexes 57 files
 /// (63 with a fixed gap of 4), but the skipped steps stay the same (38.28 M,
-/// flowskip3). 128 with `FlowSkip::near_gap` 32 against 32: fewer samples
+/// flowskip3). 128 with `NEAR_GAP` 32 against 32: fewer samples
 /// in the many files that never come near an index (flowskip4).
 const SAMPLE_EVERY: u32 = 128;
 
@@ -1668,7 +1679,7 @@ impl Checker {
                         entry.insert(FileState::Unsupported);
                         return Err(Refusal::File);
                     }
-                    let gap = FIRST_GAP.min(self.flow_skip.sample_every);
+                    let gap = FIRST_GAP.min(SAMPLE_EVERY);
                     let count = Count {
                         countdown: gap,
                         gap,
@@ -1692,8 +1703,7 @@ impl Checker {
             }
         }
         if self.flow_skip.hot_file == Some(file as u32) {
-            let sample_every = self.flow_skip.sample_every;
-            let build_steps = self.flow_skip.build_steps;
+            let build_steps = self.flow_skip.build_steps();
             let hot = &mut self.flow_skip.hot;
             if build_steps > 0 {
                 hot.countdown -= 1;
@@ -1701,29 +1711,28 @@ impl Checker {
                     return Err(Refusal::Counting);
                 }
                 let weight = hot.gap;
-                hot.gap = hot.gap.saturating_mul(2).min(sample_every);
+                hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
                 hot.countdown = hot.gap;
                 let flows = static_go_file(file)
                     .and_then(|g| g.flow_nodes.get())
                     .expect("a counted file is static");
                 let u = flow.local_index();
                 let n = flows.len() as u64;
-                let confirm_steps = u64::from(self.flow_skip.confirm_steps);
-                let check = confirm_steps > 0 && hot.measured * 2 >= u64::from(build_steps) * n;
+                let confirm_steps = u64::from(CONFIRM_STEPS);
+                let check = hot.measured * 2 >= u64::from(build_steps) * n;
                 let (steps, passed) = if u < flows.len() {
                     self.flow_skip_sample(reference, declared_type, flows, file, u, check)
                 } else {
                     (0, false)
                 };
-                let near_gap = self.flow_skip.near_gap;
                 let hot = &mut self.flow_skip.hot;
                 let steps = u64::from(steps) * u64::from(weight);
                 hot.measured += steps;
                 if passed {
                     hot.probed += steps;
                 }
-                if near_gap > 0 && hot.measured * 2 >= u64::from(build_steps) * n {
-                    hot.gap = hot.gap.min(near_gap);
+                if hot.measured * 2 >= u64::from(build_steps) * n {
+                    hot.gap = hot.gap.min(NEAR_GAP);
                     hot.countdown = hot.countdown.min(hot.gap);
                 }
                 if hot.measured < u64::from(build_steps) * n || hot.probed < confirm_steps * n {
@@ -1764,7 +1773,7 @@ impl Checker {
     /// The steps of pi(u) to its root (no move to an outer function, at
     /// most `DRY_CAP`): the length of Go's walk when nothing narrows. With
     /// `check`, also whether the index can skip the walk as far as a cheap
-    /// look sees (flowskip4): it is at least `min_steps` long, its reference
+    /// look sees (flowskip4): it is at least `MIN_STEPS` long, its reference
     /// has an indexed kind, no assignment on the path assigns the
     /// reference's root name (Go's walk stops there; the index refuses a
     /// mention), and no call on the path has a real effects signature
@@ -1773,7 +1782,7 @@ impl Checker {
     /// their own declarations: VS Code test files and TypeORM query
     /// runners were indexed, and 0 to 30% of their counted steps were
     /// skipped. The look costs about 500 instructions, so it runs only
-    /// for files past half of `build_steps`.
+    /// for files past half of `BUILD_STEPS`.
     fn flow_skip_sample(
         &self,
         reference: Node,
@@ -1819,7 +1828,7 @@ impl Checker {
             steps += 1;
         }
         let passed = passed
-            && steps >= self.flow_skip.min_steps
+            && steps >= self.flow_skip.min_steps()
             && self
                 .flow_skip_ref_keys(
                     reference,
@@ -1844,7 +1853,7 @@ impl Checker {
         if u >= index.flows.len() || index.tin[u] == NONE {
             return Err(Refusal::Unreached);
         }
-        if index.steps[u] < self.flow_skip.min_steps {
+        if index.steps[u] < self.flow_skip.min_steps() {
             // A short walk: test it only when its root may move to the
             // containing function.
             let root = index.root_of[u] as usize;
