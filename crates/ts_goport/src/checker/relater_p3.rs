@@ -1540,6 +1540,32 @@ impl Checker {
         )
     }
 
+    /// Go's `isSimpleTypeRelatedTo(source, target, r.relation, core.IfElse(reportErrors,
+    /// r.reportError, nil))` of `isRelatedToEx`, at its two sites.
+    #[inline]
+    fn is_simple_type_related_to_reporting(
+        &mut self,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+        kind: RelationKind,
+        report_errors: bool,
+    ) -> bool {
+        if !report_errors {
+            return self.is_simple_type_related_to_kind(source, target, kind, None);
+        }
+        self.is_simple_type_related_to_kind(
+            source,
+            target,
+            kind,
+            Some(
+                &mut |c: &mut Checker, message: &'static Message, args: Vec<String>| {
+                    c.report_error(r, message, args)
+                },
+            ),
+        )
+    }
+
     // Go: checker/relater.go:2634 isRelatedToEx
     #[allow(clippy::too_many_arguments)]
     pub fn is_related_to_ex(
@@ -1568,25 +1594,13 @@ impl Checker {
             if is_comparable
                 && !self.ty(original_target).flags.intersects(TypeFlags::NEVER)
                 && self.is_simple_type_related_to_kind(original_target, original_source, kind, None)
-                || if report_errors {
-                    self.is_simple_type_related_to_kind(
-                        original_source,
-                        original_target,
-                        kind,
-                        Some(&mut |c: &mut Checker,
-                                   message: &'static Message,
-                                   args: Vec<String>| {
-                            c.report_error(r, message, args)
-                        }),
-                    )
-                } else {
-                    self.is_simple_type_related_to_kind(
-                        original_source,
-                        original_target,
-                        kind,
-                        None,
-                    )
-                }
+                || self.is_simple_type_related_to_reporting(
+                    r,
+                    original_source,
+                    original_target,
+                    kind,
+                    report_errors,
+                )
             {
                 return Ternary::TRUE;
             }
@@ -1666,20 +1680,7 @@ impl Checker {
         if is_comparable
             && !self.ty(target).flags.intersects(TypeFlags::NEVER)
             && self.is_simple_type_related_to_kind(target, source, kind, None)
-            || if report_errors {
-                self.is_simple_type_related_to_kind(
-                    source,
-                    target,
-                    kind,
-                    Some(
-                        &mut |c: &mut Checker, message: &'static Message, args: Vec<String>| {
-                            c.report_error(r, message, args)
-                        },
-                    ),
-                )
-            } else {
-                self.is_simple_type_related_to_kind(source, target, kind, None)
-            }
+            || self.is_simple_type_related_to_reporting(r, source, target, kind, report_errors)
         {
             return Ternary::TRUE;
         }
