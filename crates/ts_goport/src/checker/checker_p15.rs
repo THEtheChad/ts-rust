@@ -1113,12 +1113,18 @@ impl Checker {
     }
 
     // Go: checker/checker.go:13913 isConstTypeVariable
-    // PERF (constvar1, not in Go): the answer of a union, intersection or
-    // conditional type is kept in `const_type_variable_memo` (see there).
     pub fn is_const_type_variable(&mut self, t: TypeId, depth: i32) -> bool {
         if depth >= 5 || t.is_nil() {
             return false;
         }
+        self.is_const_type_variable_memoized(t, depth)
+    }
+
+    /// PERF (constvar1, not in Go): the answer of a union, intersection or
+    /// conditional type is kept in `const_type_variable_memo` (see there);
+    /// other types go straight to `is_const_type_variable_walk`.
+    #[inline]
+    fn is_const_type_variable_memoized(&mut self, t: TypeId, depth: i32) -> bool {
         if !self
             .ty(t)
             .flags
@@ -1152,12 +1158,7 @@ impl Checker {
                     .any(|&d| has_syntactic_modifier(d, ModifierFlags::CONST));
         } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
             let types = self.ty(t).types_list();
-            for s in types {
-                if self.is_const_type_variable(s, depth) {
-                    return true;
-                }
-            }
-            return false;
+            return types.iter().any(|&s| self.is_const_type_variable(s, depth));
         } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
             let object_type = self.ty(t).as_indexed_access_type().object_type;
             return self.is_const_type_variable(object_type, depth + 1);
