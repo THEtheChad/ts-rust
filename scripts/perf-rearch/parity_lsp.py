@@ -10,8 +10,7 @@ scenarios (scenario.mjs; the client advertises dynamic didChangeWatchedFiles reg
 refresh support, and registrations, pushed diagnostics and every other server message are compared
 at checkpoints): fsevents, fsevents-narrow and pkgjson-overlay (the watch-small fixture, written
 fresh into ~/.cache/perf-rearch/parity/scratch/lsp-<session> before each server run), ata-overlay
-(the ata-small fixture with ATA on against a private typings cache and the stand-in npm
-vendor/lspdiff/ata-npm), watch-ts-pattern-f12 and unsaved-ts-pattern; full adds watch-umami-f12, watch-narrow-umami-f12 (the
+(the ata-small fixture with ATA on against the fixture's typings store), watch-ts-pattern-f12 and unsaved-ts-pattern; full adds watch-umami-f12, watch-narrow-umami-f12 (the
 workspace folder is umami/src), watch-hono-f12 and second-project-query. Up to --jobs sessions run
 side by side. quick's
 sessions are all full sessions, so a quick run compares with a full base.
@@ -20,23 +19,31 @@ Go's four sessions per item set (go.jsonl to go4.jsonl with their session result
 kept in ~/.cache/perf-rearch/parity/go-cache/<go sha>/lsp/<session>-<key>/ and reused, so a run starts
 only tsc-rs. The key (session_material) is the sha of what the session reads and how it runs: the
 session's definition (project, files, positions, scenario), the project's path and the content of
-its snapshot (parity_inputs.Inputs), for scenarios with ATA on the user's npm also the snapshot of the
-typings cache (~/.cache/typescript/7.1) and the npm on PATH, the lspdiff sources that script the
-session (SESSION_SOURCES), every lspdiff setting (vendor/lspdiff/settings.mjs, read with `lspdiff.mjs
-info`: the settle and quiet waits, the request and shutdown timeouts, the ATA idle window, npm delay
-and deadline) and GO_RUNS. The cache dir's key.json holds that material, and a dir whose key.json is
+its snapshot (parity_inputs.Inputs), for scenarios with ATA on the frozen typings store also the
+store's content hash (ata_typings.py), the lspdiff sources that script the session
+(SESSION_SOURCES: the stand-in npm and the server environment of sandbox.mjs among them), every
+lspdiff setting (vendor/lspdiff/settings.mjs, read with `lspdiff.mjs info`: the settle and quiet
+waits, the request and shutdown timeouts, the ATA idle window, npm delay and deadline), the node
+that runs lspdiff, the stand-in npm and JS (node_identity), the servers' private home path
+(SANDBOX_HOME) and GO_RUNS. The cache dir's key.json holds that material, and a dir whose key.json is
 other material is not read. New Go and JS logs go to a staging dir (lspdiff --go-stage/--js-stage)
 and are published only when the tier verified its inputs clean; lspdiff's settings.json must equal
 the keyed settings. Standard sessions run with ATA off (vendor/lspdiff client.mjs initializeParams).
 
-Inputs (lane H4): every project and the typings cache are read-only snapshots, made before the
-first session and watched with inotify while the tier runs. lspdiff runs in a user and mount
-namespace with each snapshot bound read-only at its own path (so the file texts it sends are the
-snapshot's), and every server process (Go, tsc-rs, JS) in a namespace of its own with a fresh
-overlay of the snapshots (vendor/lspdiff/sandbox.mjs, LSPDIFF_SANDBOX): a server that writes into
-its project fails its session ("session end": DIFF with rsFailure input for tsc-rs), and the typings
-cache starts from the same snapshot in every run, whatever ATA wrote before. A change to a snapshot
-while the tier runs makes its sessions ERROR and discards the staged logs. In full, tsc-rs runs three times: twice as is and once with
+Inputs (lanes H4 and H5): every project and the frozen typings store are read-only snapshots, made
+before the first session and watched with inotify while the tier runs. lspdiff runs in a user, mount
+and network namespace (no network) with each snapshot bound read-only at its own path (so the file
+texts it sends are the snapshot's), and every server process (Go, tsc-rs, JS) in a namespace of its
+own with a fresh overlay of the project and a private home, empty and new for every process, at
+SANDBOX_HOME, with nothing of this environment (vendor/lspdiff/sandbox.mjs, LSPDIFF_SANDBOX): a
+server that writes into its project fails its session ("session end": DIFF with rsFailure input
+for tsc-rs), and ATA's typings cache is in the private home, so every run starts it empty and fills
+it from the store. A change to a snapshot while the tier runs makes its sessions ERROR and discards
+the staged logs. Tripwires (GUARDED): the real dirs a server could read outside its keyed inputs (the
+shared typings cache ~/.cache/typescript, npm's cache and config, ~/.config) are each covered, in
+lspdiff's namespace, by a bait dir of the session's own (a typings cache with the files ATA reads
+first) that inotify watches for every access, reads included: any access makes every item of the
+session ERROR. SANDBOX_HOME must still be empty when the tier ends. In full, tsc-rs runs three times: twice as is and once with
 GOPORT_PARSE_THREADS=1. An item is judged in this order (docs/perf-rearch/parity.md, "JS tsserver as
 the LSP referee"):
 1. tsc-rs determinism: a tsc-rs run that crashed or timed out, or an answer on which a later tsc-rs
@@ -77,9 +84,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # python3 -I leaves the script dir out
+import ata_typings  # noqa: E402
 import parity_inputs as inputs  # noqa: E402
 import parity_modes as modes  # noqa: E402
 import parity_referees as referees  # noqa: E402
+import parity_watch  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
@@ -193,8 +202,10 @@ JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsse
 # The lspdiff sources that script a session, so Go's (and JS's) answers depend on them; the diff and
 # referee code (lspdiff.mjs, referee.mjs) and the bench scripts do not change a cached answer.
 SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
-                   'ata-npm/npm', 'ata-npm/fake-npm.mjs', 'user-npm/npm', 'user-npm/user-npm.mjs')
-CACHE_VERSION = 2  # bump when the form of the cached logs changes (2: lane H4, session results, snapshots)
+                   'ata-npm/npm', 'ata-npm/fake-npm.mjs')
+# Bump when the form of the cached logs changes (2: lane H4, session results, snapshots; 3: lane H5, the
+# hermetic servers: private home, frozen typings store, no network).
+CACHE_VERSION = 3
 
 
 def scenario_sources_sha(extra=()):
@@ -205,14 +216,77 @@ def scenario_sources_sha(extra=()):
     return h.hexdigest()[:12]
 
 
-TYPINGS = HOME / '.cache/typescript/7.1'  # the ATA typings cache of a server with the default XDG_CACHE_HOME
 LSPDIFF = HERE / 'vendor/lspdiff/lspdiff.mjs'
-# lspdiff in a user and mount namespace with each snapshot bound read-only at its path: $1 snapshot,
-# $2 path, then the next pair, then the command.
+# The servers' private home (sandbox.mjs): an empty dir that every server process has its own new home
+# bound over, so the typings location (os.UserCacheDir()/typescript/7.1, in some answers) has the same
+# path in every run.
+SANDBOX_HOME = HOME / '.cache/perf-rearch/parity/lsp-home'
+# The tripwires: real dirs that hold state a server or its npm could read, keyed by nothing. Each is
+# covered by a bait dir in lspdiff's namespace (so in every server's too), and any access to the bait
+# fails the session. The typings bait holds what ATA's init reads first (Go project/ata/ata.go init:
+# package.json, package-lock.json, the registry's index.json).
+GUARDED = {HOME / '.cache/typescript': {'7.1/package.json': '{ "private": true }', '7.1/package-lock.json': '{}',
+                                        '7.1/node_modules/types-registry/index.json': '{ "entries": {} }',
+                                        '7.1/node_modules/@types/.keep': ''},
+           HOME / '.npm': {'.keep': ''}, HOME / '.config': {'.keep': ''}}
+
+
+# lspdiff in a user, mount and network namespace with each snapshot (or bait) bound read-only at its
+# path: $1 snapshot, $2 path, then the next pair, then the command.
 def outer(binds):
     script = [f'mount --bind "${{{2 * k + 1}}}" "${{{2 * k + 2}}}" && mount -o remount,bind,ro "${{{2 * k + 2}}}"' for k in range(len(binds))]
-    return ['unshare', '-rm', '--', 'sh', '-c', ' && '.join([*script, f'shift {2 * len(binds)}', 'exec "$@"']), 'outer',
+    return ['unshare', '-rmn', '--', 'sh', '-c', ' && '.join([*script, f'shift {2 * len(binds)}', 'exec "$@"']), 'outer',
             *[x for b in binds for x in b]]
+
+
+# The names a server looks up in every ancestor dir of its project and of its typings location (module
+# resolution and the default typeRoots walk up to /, the config search, Yarn PnP): not in any snapshot.
+# Their state (absent, or their content hash) is in the key of every session (ancestors_state), and the
+# ancestor dirs are watched for them while the tier runs (any create, delete or change: ERROR).
+ANCESTOR_NAMES = ('node_modules', 'package.json', 'tsconfig.json', 'jsconfig.json', '.pnp.cjs', '.pnp.js', 'bower_components')
+
+
+def ancestor_dirs(*paths):
+    out = set()
+    for p in paths:
+        p = Path(os.path.realpath(p))
+        out.update(str(a) for a in p.parents)
+    return sorted(out)
+
+
+def ancestors_state(dirs):
+    """{dir/name: content hash} of every ANCESTOR_NAMES entry in dirs (an absent one is not listed)."""
+    out = {}
+    for d in dirs:
+        for n in ANCESTOR_NAMES:
+            p = os.path.join(d, n)
+            if os.path.isdir(p) and not os.path.islink(p):
+                out[p] = inputs.tree_hash(p)
+            elif os.path.lexists(p):
+                out[p] = inputs._file_sha(p) if os.path.isfile(p) and not os.path.islink(p) else f'link {os.readlink(p)}'
+    return out
+
+
+def make_baits(dir_):
+    """A session's bait dirs (fresh): [(bait, guarded path)] for every GUARDED dir that exists."""
+    inputs.remove_tree(dir_)
+    out = []
+    for k, (real, files) in enumerate(GUARDED.items()):
+        if not real.is_dir():
+            continue
+        bait = dir_ / str(k)
+        for rel, text in files.items():
+            (bait / rel).parent.mkdir(parents=True, exist_ok=True)
+            (bait / rel).write_text(text)
+        out.append((bait, real))
+    return out
+
+
+def node_identity():
+    """The node on PATH that runs lspdiff, the stand-in npm and JS tsserver: realpath, version, sha256."""
+    node = shutil.which('node')
+    v = subprocess.run([node, '--version'], capture_output=True, text=True, check=True)
+    return {'path': os.path.realpath(node), 'version': v.stdout.strip(), 'sha': sha256_file(os.path.realpath(node))[:16]}
 
 
 def lspdiff_info():
@@ -221,30 +295,22 @@ def lspdiff_info():
     return json.loads(r.stdout)
 
 
-def npm_identity():
-    """The npm on PATH that ATA runs in the scenarios with the user's typings: its realpath and version."""
-    npm = shutil.which('npm')
-    if not npm:
-        return None
-    v = subprocess.run([npm, '--version'], capture_output=True, text=True)
-    return {'path': os.path.realpath(npm), 'version': v.stdout.strip()}
-
-
-def uses_user_typings(sess, info):
+def uses_frozen_typings(sess, info):
     sc = info['scenarios'].get(sess.get('scenario') or '', {})
-    return bool(sess.get('scenario')) and sc.get('ata') and sc.get('typings') == 'user'
+    return bool(sess.get('scenario')) and sc.get('ata') and sc.get('typings') == 'frozen'
 
 
-def session_material(sess, root, project_snap, typings_snap, sources_sha, info, extra=()):
+def session_material(sess, root, project_snap, typings, sources_sha, info, node, extra=(), ancestors=None):
     """The key material of a session's Go (or JS) logs (see the top comment). A fixture session's root
     is its scratch dir, rewritten from fixtures.mjs (in the sources) before every server run, so it has
-    no snapshot."""
+    no snapshot. typings: the frozen store's content hash, for the sessions whose ATA installs from it."""
     material = {'version': CACHE_VERSION, 'session': sess, 'root': str(root), 'sources': sources_sha,
-                'settings': info['settings'], 'extra': list(extra)}
+                'settings': info['settings'], 'node': node, 'home': str(SANDBOX_HOME), 'ancestors': ancestors or {},
+                'extra': list(extra)}
     if project_snap is not None:
         material.update(real=project_snap.label, tree=project_snap.hash)
-    if typings_snap is not None:
-        material.update(typings=typings_snap.hash, npm=npm_identity())
+    if typings is not None:
+        material.update(typings=typings)
     return material
 
 
@@ -288,6 +354,8 @@ def main():
     ap.add_argument('--js', default=str(JS_TSSERVER), help='JS tsserver.js, the JS-AGREES referee')
     ap.add_argument('--no-js', action='store_true', help='no JS referee (statuses MATCH, GO-BROKEN, DIFF)')
     ap.add_argument('--js-all', action='store_true', help='run JS on every session: calibration and the report')
+    ap.add_argument('--ata-manifest', default=str(ata_typings.MANIFEST),
+                    help='the frozen typings store, by its manifest (default the committed ata-typings.json)')
     ap.add_argument('--go-refill', help='sessions (regex) whose Go runs run again into one more fill '
                     '(go-cache/<go sha>/lsp-refills/<key>/<run>/; its clean runs join the variant record)')
     args = ap.parse_args()
@@ -309,6 +377,13 @@ def main():
     js_src_sha = scenario_sources_sha(('tsserver.mjs',))
     js_sha = js_sha if use_js else None
     info = lspdiff_info()
+    node = node_identity()
+    SANDBOX_HOME.mkdir(parents=True, exist_ok=True)
+    if any(SANDBOX_HOME.iterdir()):
+        sys.exit(f'parity_lsp: {SANDBOX_HOME} is not empty: every server binds its own home over it')
+    for real in GUARDED:
+        if real == HOME / '.cache/typescript':
+            real.mkdir(parents=True, exist_ok=True)
     stage = inputs.Stage('lsp')
     snaps = inputs.Inputs()
     chosen = [sess for sess in sessions(args.tier) if re.search(args.only, sess['name'])]
@@ -320,15 +395,31 @@ def main():
             roots[sess['name']] = next((Path(os.path.expanduser(d)) for d in PROJECTS[sess['project']]
                                         if Path(os.path.expanduser(d)).is_dir()), None)
     need = {str(r) for name, r in roots.items() if r is not None and next(s for s in chosen if s['name'] == name)['project'] is not FIXTURE}
-    if any(uses_user_typings(sess, info) for sess in chosen):
-        TYPINGS.mkdir(parents=True, exist_ok=True)
-        need.add(str(TYPINGS))
+    store, store_error = None, None
+    if any(uses_frozen_typings(sess, info) for sess in chosen):
+        try:
+            manifest = ata_typings.read_manifest(args.ata_manifest)
+            store = ata_typings.store_dir(manifest)
+            need.add(str(store))
+        except (OSError, ValueError) as e:
+            store_error = f'no typings manifest: {e}'
     snap_start = time.monotonic()
     with ThreadPoolExecutor(4) as pool:  # every snapshot before the first session, then the watch
         errs = dict(zip(sorted(need), pool.map(lambda r: _snapshot_error(snaps, r), sorted(need))))
     snaps.watch()
+    up_dirs = ancestor_dirs(SANDBOX_HOME / '.cache/typescript/7.1', *[r for r in roots.values() if r is not None])
+    up_watch = parity_watch.Watch(up_dirs, keep=lambda p: os.path.basename(p) in ANCESTOR_NAMES, recursive=False)
+    up_state = ancestors_state(up_dirs)
     snap_secs = round(time.monotonic() - snap_start, 1)
     print(f'lsp: {len(snaps.snaps)} snapshots in {snap_secs}s; {snaps.watch_error or "watched with inotify"}', flush=True)
+    if store is not None and str(store) in snaps.snaps:  # the snapshot must be the manifest's content
+        got = ata_typings.content_sha(snaps.snaps[str(store)].path)
+        if got != manifest['sha']:
+            store_error = f'the typings store {store} has hash {got[:16]}, its manifest {manifest["sha"][:16]}'
+    elif store is not None:
+        store_error = errs.get(str(store)) or f'no snapshot of {store}'
+    if store is not None:
+        print(f'lsp: typings store {manifest["sha"][:16]} (types-registry {manifest["registry"]}): {store_error or "verified"}', flush=True)
 
     def run_one(sess):
         """One session: (its items, its summary, the line to print)."""
@@ -336,22 +427,27 @@ def main():
         root = roots[name]
         if root is None:
             return {f'lsp/{name}': {'status': 'SKIP', 'detail': 'project not prepared'}}, None, f'lsp {name}: SKIP'
-        project_snap = typings_snap = None
+        project_snap = typings = None
         binds, mounts = [], []
+        frozen = uses_frozen_typings(sess, info)
+        if frozen and store_error:
+            return {f'lsp/{name}': {'status': 'ERROR', 'detail': store_error}}, None, f'lsp {name}: ERROR {store_error}'
         try:
             if project is not FIXTURE:
                 project_snap = snaps.of(root)
                 binds.append((str(project_snap.path), project_snap.label))
-                mounts.append({'lower': str(project_snap.path), 'target': project_snap.label, 'writable': False})
-            if uses_user_typings(sess, info):
-                typings_snap = snaps.of(TYPINGS)
-                binds.append((str(typings_snap.path), typings_snap.label))
-                mounts.append({'lower': str(typings_snap.path), 'target': typings_snap.label, 'writable': True})
+                mounts.append({'lower': str(project_snap.path), 'target': project_snap.label})
+            if frozen:
+                store_snap = snaps.of(store)
+                binds.append((str(store_snap.path), store_snap.label))
+                typings = manifest['sha']
         except inputs.SnapshotError as e:
             return {f'lsp/{name}': {'status': 'ERROR', 'detail': f'no snapshot: {e}'}}, None, f'lsp {name}: ERROR {e}'
+        baits = make_baits(HOME / f'.cache/perf-rearch/parity/scratch/lsp-guard/{name}')
+        binds += [(str(b), str(real)) for b, real in baits]
         runs_go = go_runs(sess)
-        material = session_material(sess, root, project_snap, typings_snap, src_sha, info, [f'g{runs_go}'])
-        js_material = session_material(sess, root, project_snap, typings_snap, js_src_sha, info)
+        material = session_material(sess, root, project_snap, typings, src_sha, info, node, [f'g{runs_go}'], up_state)
+        js_material = session_material(sess, root, project_snap, typings, js_src_sha, info, node, (), up_state)
         key = f'{name}-{inputs.json_hash(material)[:24]}'
         js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
         go_dir = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}'
@@ -366,7 +462,8 @@ def main():
         priors = [f for d in [*prior_dirs(go_dir / 'lsp', name, key, material), *refill_dirs(refills, material)]
                   for f in sorted(d.glob('go*.jsonl'))]
         sout = out / name
-        sandbox = {'scratch': str(HOME / f'.cache/perf-rearch/parity/scratch/lsp-sandbox/{name}'), 'mounts': mounts}
+        sandbox = {'scratch': str(HOME / f'.cache/perf-rearch/parity/scratch/lsp-sandbox/{name}'), 'home': str(SANDBOX_HOME),
+                   'mounts': mounts}
         # A heap above Node's default: umami's 7 logs are 340 MB each, and JS adds one.
         cmd = [*outer(binds), 'node', '--max-old-space-size=12288', str(LSPDIFF), 'diff', '--project', str(root),
                '--files', str(sess['files']), '--go', args.go, '--rs', args.rs, '--out', str(sout),
@@ -381,11 +478,19 @@ def main():
             cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]
             cmd += ['--js-all'] if args.js_all else []
         cmd += ['--scenario', scenario] if scenario else ['--positions', str(sess['positions'])]
+        cmd += ['--ata-store', str(store)] if frozen else []
         start = time.monotonic()
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
-                           env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
+        with parity_watch.Watch([str(b) for b, _ in baits], mask=parity_watch.ACCESS) as guard:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                               env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
+            touched = guard.dirty()
         secs = round(time.monotonic() - start, 1)
         (out / f'{name}.log').write_text(r.stdout + r.stderr)
+        if touched:  # fail closed: the session read state that no key holds
+            real = {str(b): str(g) for b, g in baits}
+            why = '; '.join(f'{real[b]} ({ev.replace(b, real[b])})' for b, ev in sorted(touched.items()))
+            return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'a process of the session touched an unkeyed path: {why}'}},
+                    {'secs': secs, 'error': True, 'root': str(root), 'touched': why}, f'lsp {name}: ERROR touched {why}')
         produced = sout / f'{root.name}-diff{"-" + scenario if scenario else ""}' / 'items.json'
         if r.returncode or not produced.exists():
             return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'lspdiff exit {r.returncode}: {r.stderr[-300:]}'}},
@@ -412,7 +517,7 @@ def main():
         runs.update(re.findall(r'^(js|rs-confirm): \d+ answers in ([\d.]+) s', r.stdout, re.M))
         sinfo = {'secs': secs, 'answers': len(rows), 'counts': dict(c), 'root': str(root), 'key': key, 'goRuns': runs_go,
                  'variants': vfile.name, 'priors': [str(f) for f in priors],
-                 'typings': typings_snap is not None, 'runSecs': {k: float(v) for k, v in runs.items()}}
+                 'typings': typings, 'runSecs': {k: float(v) for k, v in runs.items()}}
         if js_info.get('ran'):
             sinfo['js'] = {'calibration': js_info.get('calibration', {}), 'decided': js_info.get('decided', 0),
                            'cached': bool(re.search(r'^js: \d+ answers from ', r.stdout, re.M))}
@@ -430,10 +535,17 @@ def main():
             print(line, flush=True)
     verify_start = time.monotonic()
     changed = snaps.verify()
+    up_events = up_watch.all_events()
+    up_watch.close()
+    if up_events or ancestors_state(up_dirs) != up_state:  # a lookup of every session saw another state than its key
+        why = f'an ancestor dir changed while the tier ran: {(up_events or ["state"])[0]}'
+        changed['ancestors'] = why
+        for k in [k for k in items if k.startswith('lsp/')]:
+            items[k] = {'status': 'ERROR', 'detail': why, 'was': items[k]}
     verify_secs = round(time.monotonic() - verify_start, 1)
     for sess in chosen:
         sinfo = sessions_info.get(sess['name'], {})
-        why = next((w for r, w in changed.items() if r == sinfo.get('root') or (sinfo.get('typings') and r == str(TYPINGS))), None)
+        why = next((w for r, w in changed.items() if r == sinfo.get('root') or (sinfo.get('typings') and r == str(store))), None)
         if why:
             for k in [k for k in items if k.startswith(f'lsp/{sess["name"]}/')]:
                 items[k] = {'status': 'ERROR', 'detail': why, 'was': items[k]}
@@ -441,13 +553,20 @@ def main():
     for root, err in errs.items():
         if err:
             print(f'lsp: no snapshot of {root}: {err}', flush=True)
+    for name, sinfo in sessions_info.items():  # its Go runs read unkeyed state: no evidence of this tier is kept
+        if sinfo.get('touched'):
+            changed[f'session {name}'] = f'{name} touched an unkeyed path: {sinfo["touched"]}'
+    if any(SANDBOX_HOME.iterdir()):  # a server wrote there without its own home over it
+        changed[str(SANDBOX_HOME)] = f'{SANDBOX_HOME} is not empty after the tier: {sorted(p.name for p in SANDBOX_HOME.iterdir())[:5]}'
+        for k in [k for k in items if k.startswith('lsp/')]:
+            items[k] = {'status': 'ERROR', 'detail': changed[str(SANDBOX_HOME)], 'was': items[k]}
     if changed:
         print(f'lsp: inputs changed ({len(changed)} roots): {stage.discard()} staged files discarded', flush=True)
     else:
         print(f'lsp: {stage.publish()} cache files published', flush=True)
     counts = Counter(v['status'] for v in items.values())
     summary = {'tier': args.tier, 'rs': args.rs, 'goSha': go_sha, 'counts': dict(counts), 'sessions': sessions_info,
-               'inputs': snaps.hashes, 'snapshots': {r: x.as_json() for r, x in snaps.snaps.items()},
+               'inputs': snaps.hashes, 'node': node, 'ancestors': up_state, 'typingsStore': (manifest['sha'] if store is not None else None), 'snapshots': {r: x.as_json() for r, x in snaps.snaps.items()},
                'watch': snaps.watch_error or 'inotify', 'changed': changed, 'settings': info['settings'],
                'secs': {'snapshots': snap_secs, 'verify': verify_secs},
                **({'jsError': js_error} if js_error else {}), 'wallSecs': round(time.monotonic() - t0, 1)}

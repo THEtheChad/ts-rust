@@ -36,19 +36,26 @@
 //                   and a stand-in npm with a fixed delay (ata-npm/): the inferred project's first
 //                   load, its refresh when ATA's typings arrive, an overlay whose import makes ATA
 //                   install more typings, and the watchers when the overlay and the file close
-// ATA: the scenarios that set `ata: false` turn it off (pkgjson-overlay); ata-overlay runs it against
-// the stand-in npm; the others leave it on with the user's npm and typings cache
-// (~/.cache/typescript/7.1, which parity_lsp.py keys their Go cache by), the npm run through the
-// logging shim user-npm/. Every wait of a scenario with ATA on (quiet, checkpoint) also waits until
-// ATA's npm is idle (Script.settle), so an answer never depends on how long npm took.
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+// ATA: the scenarios that set `ata: false` turn it off (pkgjson-overlay); every other one runs it
+// hermetically (lane H5): the typings location is in the server's private home (sandbox.mjs), empty at
+// the start of every server run, and ATA's npm is the stand-in ata-npm/ (offline; ATA_NPM_DELAY_MS per
+// call), which installs from a store: ata-overlay's is the fixture's (fixtures.mjs ATA_STORE,
+// `typings: "fixture"`), every other scenario's the frozen typings store (`typings: "frozen"`, lspdiff
+// --ata-store: types-registry and the @types packages the scenarios acquire, built once by
+// scripts/perf-rearch/ata_typings.py; parity_lsp.py keys the Go cache by its content hash). A call for a
+// package the store lacks, or in another directory than the private typings location, fails the
+// whole run (a harness error, never a server's answer). Every wait of a scenario with ATA on (quiet,
+// checkpoint) also waits until ATA's npm is idle (Script.settle), so an answer never depends on how
+// long npm took.
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
 import { TYPED, startServer } from "./session.mjs";
+import { SERVER_PATH } from "./sandbox.mjs";
 import { SETTINGS } from "./settings.mjs";
 
 const SETTLE_MS = SETTINGS.LSPDIFF_SETTLE_MS;
@@ -193,9 +200,8 @@ class Script {
     this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: fileUri(a), type: 3 }, { uri: fileUri(b), type: 1 }] });
   }
 
-  // ATA's npm calls so far, from the npm shim's log: every call writes a start line and, when its
-  // work is done, a done line with the same pid (ata-npm/fake-npm.mjs for ata-overlay, user-npm/ for
-  // the scenarios with the user's npm).
+  // ATA's npm calls so far, from the stand-in npm's log (ata-npm/fake-npm.mjs): every call writes a
+  // start line and, when its work is done, a done line with the same pid.
   npmCalls() {
     const file = this.ata.log;
     return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
@@ -218,6 +224,10 @@ class Script {
     const start = performance.now();
     for (let polls = 0; ; polls++) {
       const log = this.npmCalls();
+      // A call the store cannot answer (a package it lacks) or made outside the private typings
+      // location: the input is not the frozen one, so the run is a harness error, never an answer.
+      const bad = log.find((e) => e.missing || e.refused);
+      if (bad) throw Object.assign(new Error(`ATA's npm at ${label}: ${bad.missing ? `the typings store lacks ${bad.missing.join(", ")}` : `refused: ${bad.refused}`}`), { harness: true });
       if (log.length !== this.ata.seen) [this.ata.seen, this.ata.changedAt] = [log.length, performance.now()];
       const done = new Set(log.filter((e) => e.done).map((e) => e.pid));
       const busy = log.some((e) => e.start && (!done.has(e.pid) || alive(e.pid)));
@@ -255,9 +265,17 @@ class Script {
   // (Go and tsc-rs alike; the race ND1 found with the real npm).
   async ataIdle(label) {
     await this.settle(SETTLE_MS, label);
+    this.log.push({ step: `${label} ata npm`, method: "ata/npm", result: this.npmReport(), ms: 0 });
+  }
+
+  // The npm calls done since the last report, for an `ata npm` item: each call's arguments (its package
+  // names sorted: Go builds an install's list from a map, so their order varies from run to run, and
+  // npm's result does not depend on it) and exit code, the calls sorted.
+  npmReport() {
     const done = this.npmCalls().filter((e) => e.done);
-    this.log.push({ step: `${label} ata npm`, method: "ata/npm", result: done.slice(this.ata.reported).map((e) => ({ args: e.args, code: e.code })), ms: 0 });
+    const calls = done.slice(this.ata.reported).map((e) => ({ args: [...e.args.filter((a) => a.startsWith("--")), ...e.args.filter((a) => !a.startsWith("--")).sort()], code: e.code }));
     this.ata.reported = done.length;
+    return calls.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
   }
 
   // Waits until the server is quiet (no checkpoint): between didOpens, so that each snapshot's
@@ -309,6 +327,11 @@ class Script {
     entry("watch delta", "watch/delta", { added: delta.added.map(JSON.parse), removed: delta.removed.map(JSON.parse) });
     entry("watch active", "watch/active", after.map(JSON.parse));
     entry("publishDiagnostics", "publishDiagnostics", pushed);
+    // With ATA on, the npm calls ATA made since the last report end the list (lane H5: each call's
+    // arguments and exit code, sorted), so which typings each server's ATA acquired is compared too
+    // (ata-overlay reports them at every ataIdle as items of their own). They are part of this item, not
+    // one of their own, so the items of a scenario keep their indices.
+    if (this.ata) other.push(...this.npmReport().map((call) => ({ ata: call })));
     entry("server messages", "server/messages", other);
   }
 
@@ -530,11 +553,11 @@ export const SCENARIOS = {
 
 SCENARIOS["ata-overlay"] = {
   fixture: "ata-small",
-  // ATA on, against a private typings cache (XDG_CACHE_HOME, fresh for every server run) and the
-  // stand-in npm (ata-npm/: offline, ATA_NPM_DELAY_MS per call): the same for Go and tsc-rs, and the
-  // same on every run. After every step the script waits until ATA is idle (ataIdle), so each answer
-  // sees ATA's typings exactly when the steps before it made ATA install them.
-  typings: "private",
+  // ATA on, against the private typings cache (in the server's private home, fresh for every server
+  // run) and the stand-in npm with the fixture's store: the same for Go and tsc-rs, and the same on
+  // every run. After every step the script waits until ATA is idle (ataIdle), so each answer sees
+  // ATA's typings exactly when the steps before it made ATA install them.
+  typings: "fixture",
   async run(s) {
     const app = "src/app.js";
     const ghost = "src/ghost.js";
@@ -596,54 +619,36 @@ function fixtureChanges(root, expected) {
   return out;
 }
 
-// The npm that ATA would run with lspdiff's PATH: the first executable `npm` on it (the one
-// parity_lsp.py keys the Go cache by).
-function userNpm() {
-  for (const d of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
-    try {
-      accessSync(join(d, "npm"), constants.X_OK);
-      return join(d, "npm");
-    } catch {}
-  }
-  throw new Error("no npm on PATH: the scenarios with ATA on the user's typings run it");
-}
-
 // Runs a scenario on one server and returns { log: [{ step, method, params, result, error }],
 // session } (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
 // fixture dir is not what the script made it). A fixture scenario first writes its fixture into
 // `root`. When the server crashes or times out, the error carries the answers so far as `log` and the
 // session as `session`.
 // serverLog: a file that gets the server's window/logMessage stream (lspdiff --server-logs).
-export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog } = {}) {
+// ataStore: the frozen typings store (lspdiff --ata-store), for the scenarios with `typings: "frozen"`.
+export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog, ataStore } = {}) {
   const scenario = SCENARIOS[name];
   if (!scenario) throw new Error(`unknown scenario ${name}`);
   if (scenario.fixture) writeFixture(scenario.fixture, root);
-  // A private typings cache: <root>-ata/xdg as XDG_CACHE_HOME (so <root>-ata/xdg/typescript/7.1 is the
-  // typings location; it reads "<root>-ata" in answers), the stand-in npm first on PATH, its store
-  // and log beside it. Written fresh before every server run.
-  // With ATA on and the user's typings cache, the user's npm runs behind the logging shim user-npm/
-  // (first on PATH; it runs the npm that PATH held for lspdiff, ATA_REAL_NPM), whose log is in a new
-  // temporary dir: the scenario's waits see ATA's npm calls (Script.settle).
+  // ATA on: the stand-in npm first on PATH, with its store (the fixture's, written beside its log, or
+  // the frozen one) and its log in a new temporary dir. The typings location is in the server's
+  // private home (sandbox.mjs), new for every server run.
   let ata;
   const here = dirname(fileURLToPath(import.meta.url));
-  if (scenario.typings === "private") {
-    const dir = `${root}-ata`;
-    writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
-    mkdirSync(join(dir, "xdg"), { recursive: true });
+  if (scenario.ata ?? true) {
+    const typings = scenario.typings ?? "frozen";
+    if (typings === "frozen" && !ataStore) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store`);
+    const dir = mkdtempSync(join(tmpdir(), "lspdiff-ata-"));
+    if (typings === "fixture") writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
     ata = { dir, log: join(dir, "npm.log") };
     env = {
       ...env,
-      PATH: `${join(here, "ata-npm")}:${process.env.PATH}`,
+      PATH: `${join(here, "ata-npm")}:${SERVER_PATH}`,
       ATA_NODE: process.execPath,
-      ATA_STORE: join(dir, "store"),
+      ATA_STORE: typings === "fixture" ? join(dir, "store") : ataStore,
       ATA_NPM_LOG: ata.log,
       ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
-      XDG_CACHE_HOME: join(dir, "xdg"),
     };
-  } else if (scenario.ata ?? true) {
-    const dir = mkdtempSync(join(tmpdir(), "lspdiff-npm-"));
-    ata = { dir, log: join(dir, "npm.log") };
-    env = { ...env, PATH: `${join(here, "user-npm")}:${process.env.PATH}`, ATA_NODE: process.execPath, ATA_REAL_NPM: userNpm(), ATA_NPM_LOG: ata.log };
   }
   if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
@@ -682,7 +687,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
 }
 
 // What lspdiff and parity_lsp.py need to know of a scenario: whether it writes a fixture, whether ATA
-// is on, and whether its typings cache is private (else the user's, ~/.cache/typescript/7.1).
+// is on, and which store ATA's npm installs from ("fixture": ATA_STORE; "frozen": --ata-store).
 export function scenarioInfo() {
-  return Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, { fixture: v.fixture ?? null, ata: v.ata ?? true, typings: v.typings ?? "user" }]));
+  return Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, { fixture: v.fixture ?? null, ata: v.ata ?? true, typings: v.ata === false ? null : (v.typings ?? "frozen") }]));
 }

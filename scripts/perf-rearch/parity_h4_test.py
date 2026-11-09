@@ -434,8 +434,8 @@ def lsp_key_checks(root):
                                          text=True, env={**os.environ, 'ATA_IDLE_MS': '1500'}).stdout)
         other = json.loads(subprocess.run(['node', str(HERE / 'vendor/lspdiff/lspdiff.mjs'), 'info'], capture_output=True,
                                           text=True, env={**os.environ, 'ATA_IDLE_MS': '4000'}).stdout)
-        k1 = I.json_hash(L.session_material(sess, proj, None, None, 'src', info))
-        k2 = I.json_hash(L.session_material(sess, proj, None, None, 'src', other))
+        k1 = I.json_hash(L.session_material(sess, proj, None, None, 'src', info, {}))
+        k2 = I.json_hash(L.session_material(sess, proj, None, None, 'src', other, {}))
     else:
         import parity_inputs as I
         os.environ['ATA_IDLE_MS'] = '1500'
@@ -455,7 +455,7 @@ def variants_checks(root):
     info = {'settings': {'LSPDIFF_SETTLE_MS': 1000, 'LSPDIFF_REQUEST_TIMEOUT_MS': 300000}, 'scenarios': {}}
     snap = I.Snap(root / 'snap', '/p/hono', 'a' * 64, 'x')
     other = I.Snap(root / 'snap', '/p/hono', 'b' * 64, 'x')
-    m = lambda s, runs: L.session_material(sess, '/p/hono', s, None, 'src', info, [f'g{runs}'])  # noqa: E731
+    m = lambda s, runs: L.session_material(sess, '/p/hono', s, None, 'src', info, {}, [f'g{runs}'])  # noqa: E731
     v = lambda mat, go: I.json_hash(L.variants_material(mat, go))  # noqa: E731
     check('go variants: the record of 4 and of 8 Go runs of the same material is one', v(m(snap, 4), 'go1') == v(m(snap, 8), 'go1'))
     check('go variants: negative control: another binary has another record', v(m(snap, 8), 'go1') != v(m(snap, 8), 'go2'))

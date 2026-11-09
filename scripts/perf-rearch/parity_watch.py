@@ -24,9 +24,12 @@ import select
 import struct
 import threading
 
+IN_ACCESS = 0x001
 IN_MODIFY = 0x002
 IN_ATTRIB = 0x004
 IN_CLOSE_WRITE = 0x008
+IN_CLOSE_NOWRITE = 0x010
+IN_OPEN = 0x020
 IN_MOVED_FROM = 0x040
 IN_MOVED_TO = 0x080
 IN_CREATE = 0x100
@@ -47,7 +50,11 @@ IN_CLOEXEC = 0o2000000
 # a close-write event on a just-written input in about 1 case in 1,000.
 CHANGES = (IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
            | IN_DELETE_SELF | IN_MOVE_SELF)
-NAMES = {IN_MODIFY: 'modify', IN_ATTRIB: 'attrib', IN_CLOSE_WRITE: 'close-write', IN_MOVED_FROM: 'moved-from',
+# Every access, reads too: the tripwires of parity_lsp.py (lane H5), dirs no process of a session may
+# read. A read or a directory listing opens the file or dir, which makes IN_OPEN; a lookup of a name that
+# does not exist makes no event.
+ACCESS = CHANGES | IN_ACCESS | IN_OPEN | IN_CLOSE_NOWRITE
+NAMES = {IN_ACCESS: 'access', IN_OPEN: 'open', IN_CLOSE_NOWRITE: 'close-nowrite', IN_MODIFY: 'modify', IN_ATTRIB: 'attrib', IN_CLOSE_WRITE: 'close-write', IN_MOVED_FROM: 'moved-from',
          IN_MOVED_TO: 'moved-to', IN_CREATE: 'create', IN_DELETE: 'delete', IN_DELETE_SELF: 'delete-self',
          IN_MOVE_SELF: 'move-self', IN_Q_OVERFLOW: 'queue overflow'}
 _EVENT = struct.Struct('iIII')
@@ -76,12 +83,14 @@ def _describe(mask):
 class Watch:
     """Watches every directory under `roots` (a {root: label} dict or a list) until close()."""
 
-    def __init__(self, roots, mask=CHANGES, keep=None):
+    def __init__(self, roots, mask=CHANGES, keep=None, recursive=True):
         """keep(path): when given, only events on paths it accepts count, and all of them are listed in
-        `events` (a process's events on its input files). A WatchError (no inotify instance, the watch
+        `events` (a process's events on its input files). recursive=False watches each root dir alone
+        (its entries, not the dirs under it). A WatchError (no inotify instance, the watch
         limit) leaves nothing behind: the instance, its watches and the stop pipe are closed."""
         self.mask = mask
         self.keep = keep
+        self.recursive = recursive
         self.events = []
         self.wd = {}  # wd -> (root, directory)
         self.first = {}  # root -> the first event under it
@@ -97,6 +106,8 @@ class Watch:
             self.roots = [str(r) for r in roots]
             for root in self.roots:
                 self._add_tree(root, root)
+            if mask & (IN_ACCESS | IN_OPEN | IN_CLOSE_NOWRITE):
+                self._discard()  # the watch's own listing of the dirs opened them
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
         except BaseException:
@@ -114,6 +125,8 @@ class Watch:
 
     def _add_tree(self, root, top):
         self._add(root, top)
+        if not self.recursive:
+            return
         stack = [top]
         while stack:
             d = stack.pop()
@@ -126,6 +139,14 @@ class Watch:
                     if e.is_dir(follow_symlinks=False):
                         self._add(root, e.path)
                         stack.append(e.path)
+
+    def _discard(self):
+        """Drops the queued events (before the reader starts)."""
+        while select.select([self.fd], [], [], 0)[0]:
+            try:
+                os.read(self.fd, 1 << 16)
+            except (BlockingIOError, OSError):
+                return
 
     def _mark(self, root, why, path=None):
         if self.keep is not None and path is not None and not self.keep(path):
@@ -161,14 +182,14 @@ class Watch:
                 for root in self.roots:
                     self._mark(root, 'inotify queue overflow (events lost)')
                 continue
-            if mask & IN_IGNORED and not mask & CHANGES:
+            if mask & IN_IGNORED and not mask & self.mask:
                 continue
             root, d = self.wd.get(wd, (None, None))
             if root is None:
                 continue
             path = os.path.join(d, name) if name else d
-            self._mark(root, f'{_describe(mask & (CHANGES | IN_Q_OVERFLOW))} {path}', path)
-            if mask & IN_ISDIR and mask & (IN_CREATE | IN_MOVED_TO):
+            self._mark(root, f'{_describe(mask & (self.mask | IN_Q_OVERFLOW))} {path}', path)
+            if mask & IN_ISDIR and mask & (IN_CREATE | IN_MOVED_TO) and self.recursive:
                 try:
                     self._add_tree(root, path)
                 except WatchError as e:

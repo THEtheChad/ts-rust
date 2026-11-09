@@ -3,14 +3,23 @@
 // client.mjs and tsserver.mjs spawn their servers with it; `result()` is the mandatory session
 // result that lspdiff.mjs judges for every run.
 //
-// LSPDIFF_SANDBOX (set by parity_lsp.py): JSON { scratch, mounts: [{ lower, target, writable }] }.
-// Each server process then runs in its own user and mount namespace with a fresh overlay per mount
-// (lower: the input's read-only snapshot, upper: a new dir under scratch) at the input's own path.
-// After the process ends, the upper dir of a mount that is not writable must be empty: anything
-// there is a file the server wrote, created, deleted (an overlay whiteout) or changed in its inputs,
-// even one it put back. A writable mount (the ATA typings cache of the scenarios that use the user's
-// npm) starts from the same snapshot in every run, and what the server's npm wrote there is counted
-// and thrown away. Without LSPDIFF_SANDBOX (lspdiff on its own) a server runs as it is.
+// Hermetic environment (lane H5): every server process gets SERVER_ENV and nothing of lspdiff's own
+// environment but what its caller passes (a scenario's ATA plumbing, a --rs-env setting). HOME is a
+// private home, empty and new for every process (HOME_DIRS made in it): the XDG dirs (so ATA's typings
+// location, os.UserCacheDir()/typescript/<version>, is in it) and TMPDIR are under it. PATH holds the
+// system dirs only, so no npm of the user's is found (ATA's npm is the stand-in, ata-npm/, which
+// scenario.mjs puts first). What a server and its npm write there is counted (`homeWrites`) and
+// thrown away with the home.
+//
+// LSPDIFF_SANDBOX (set by parity_lsp.py): JSON { scratch, home, mounts: [{ lower, target }] }. Each
+// server process then runs in its own user, mount and network namespace (no network: only a loopback
+// that is down) with a fresh overlay per mount (lower: the input's read-only snapshot, upper: a new dir
+// under scratch) at the input's own path, and its private home bound at `home`, the same path in every
+// run (ATA's typings location shows in answers, so it must not differ between runs or servers). After
+// the process ends, the upper dir of every mount must be empty: anything there is a file the server
+// wrote, created, deleted (an overlay whiteout) or changed in its inputs, even one it put back.
+// Without LSPDIFF_SANDBOX (lspdiff on its own) a server runs as it is, with its private home in a new
+// temporary dir (so its path differs from run to run).
 //
 // stderr: the whole stream is hashed, and every line is matched against CRASH_RE (Go's panic,
 // fatal error, goroutine trace and signal lines; Rust's panic and stack overflow; an abort). A
@@ -18,12 +27,31 @@
 // compared with Go's: both servers write logs there that differ in timing and wording.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SETTINGS } from "./settings.mjs";
 
 const SANDBOX = process.env.LSPDIFF_SANDBOX ? JSON.parse(process.env.LSPDIFF_SANDBOX) : null;
+if (SANDBOX && !(typeof SANDBOX.home === "string" && SANDBOX.home.startsWith("/"))) throw new Error("LSPDIFF_SANDBOX: no absolute `home`");
 let started = 0;
+
+// The system dirs a server's PATH holds (callers put their own dirs before them).
+export const SERVER_PATH = "/usr/bin:/bin";
+const HOME_DIRS = [".cache", ".config", ".local/share", ".local/state", "tmp"];
+// The whole environment of a server process with its private home at `home` (callers add theirs).
+export function serverEnv(home) {
+  return {
+    PATH: SERVER_PATH,
+    HOME: home,
+    XDG_CACHE_HOME: `${home}/.cache`,
+    XDG_CONFIG_HOME: `${home}/.config`,
+    XDG_DATA_HOME: `${home}/.local/share`,
+    XDG_STATE_HOME: `${home}/.local/state`,
+    TMPDIR: `${home}/tmp`,
+    LANG: "C.UTF-8",
+  };
+}
 
 export const CRASH_RE = /^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at |.*has overflowed its stack|Aborted\b|.*core dumped)/;
 
@@ -48,9 +76,12 @@ export class ServerProcess {
   constructor(cmd, { cwd, env, stderr } = {}) {
     let argv = cmd;
     this.mounts = [];
+    this.dir = SANDBOX ? join(SANDBOX.scratch, `${process.pid}-${++started}`) : mkdtempSync(join(tmpdir(), "lspdiff-server-"));
+    if (SANDBOX) rmSync(this.dir, { recursive: true, force: true });
+    this.home = join(this.dir, "home");
+    for (const d of HOME_DIRS) mkdirSync(join(this.home, d), { recursive: true });
+    let home = this.home;
     if (SANDBOX) {
-      this.dir = join(SANDBOX.scratch, `${process.pid}-${++started}`);
-      rmSync(this.dir, { recursive: true, force: true });
       const pos = [];
       const script = [];
       SANDBOX.mounts.forEach((m, k) => {
@@ -63,10 +94,13 @@ export class ServerProcess {
         script.push(`mount -t overlay overlay -o "lowerdir=\${${b + 1}},upperdir=\${${b + 2}},workdir=\${${b + 3}}" "\${${b + 4}}"`);
         pos.push(m.lower, upper, work, m.target);
       });
+      script.push(`mount --bind "\${${pos.length + 1}}" "\${${pos.length + 2}}"`);
+      pos.push(this.home, SANDBOX.home);
+      home = SANDBOX.home;
       script.push(`shift ${pos.length}`, 'exec "$@"');
-      argv = ["unshare", "-rm", "--", "sh", "-c", script.join(" && "), "sandbox", ...pos, ...cmd];
+      argv = ["unshare", "-rmn", "--", "sh", "-c", script.join(" && "), "sandbox", ...pos, ...cmd];
     }
-    this.proc = spawn(argv[0], argv.slice(1), { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    this.proc = spawn(argv[0], argv.slice(1), { cwd, env: { ...serverEnv(home), ...env }, stdio: ["pipe", "pipe", "pipe"] });
     this.hash = createHash("sha256");
     this.bytes = 0;
     this.tail = "";
@@ -97,20 +131,16 @@ export class ServerProcess {
     if (!this.crash && CRASH_RE.test(line)) this.crash = line.slice(0, 300);
   }
 
-  // What the process did to its inputs (after it ended): { modified: [paths], cacheWrites: n }.
+  // What the process did to its inputs (after it ended): { modified: [paths], homeWrites: n } (the
+  // entries it and its children made in its private home, which goes with this call).
   inputs() {
     const modified = [];
-    let cacheWrites = 0;
-    for (const m of this.mounts) {
-      const found = walk(m.upper);
-      if (m.writable) cacheWrites += found.length;
-      else modified.push(...found.map((p) => `${m.target}/${p}`));
-    }
-    if (this.dir) {
-      spawnSync("chmod", ["-R", "u+rwx", this.dir]); // overlayfs leaves work/work with mode 000
-      rmSync(this.dir, { recursive: true, force: true });
-    }
-    return { modified, cacheWrites };
+    for (const m of this.mounts) modified.push(...walk(m.upper).map((p) => `${m.target}/${p}`));
+    const made = new Set(HOME_DIRS.flatMap((d) => d.split("/").map((_, k, a) => a.slice(0, k + 1).join("/"))));
+    const homeWrites = walk(this.home).filter((p) => !made.has(p)).length;
+    spawnSync("chmod", ["-R", "u+rwx", this.dir]); // overlayfs leaves work/work with mode 000
+    rmSync(this.dir, { recursive: true, force: true });
+    return { modified, homeWrites };
   }
 
   // The session result: every outcome of the process, and `clean` when none is a failure. shutdown:

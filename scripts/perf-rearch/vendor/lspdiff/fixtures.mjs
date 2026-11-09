@@ -41,8 +41,9 @@ export const FIXTURES = {
 
 // ata-small: JS files in no tsconfig (an inferred project, type acquisition on) that import packages
 // without types: ata-fake-lib (a dependency in package.json, in node_modules) and ata-fake-two
-// (imported only by an overlay the scenario opens). ATA_STORE is what the stand-in npm (ata-npm/)
-// installs: the types registry and the two @types packages.
+// (imported only by an overlay the scenario opens). ATA_STORE is the store the stand-in npm
+// (ata-npm/fake-npm.mjs, which documents the layout) installs from: the types registry and the two
+// @types packages.
 FIXTURES["ata-small"] = {
   "package.json": json({ name: "ata-small", version: "1.0.0", dependencies: { "ata-fake-lib": "1.0.0" } }),
   "node_modules/ata-fake-lib/package.json": json({ name: "ata-fake-lib", version: "1.0.0", main: "index.js" }),
@@ -50,11 +51,18 @@ FIXTURES["ata-small"] = {
   "src/app.js": ['import { pad } from "ata-fake-lib";', "", 'export const padded = pad("a", 3);', ""].join("\n"),
 };
 export const ATA_STORE = {
-  "registry.json": json({ entries: { "ata-fake-lib": { latest: "1.0.0", "ts7.1": "1.0.0" }, "ata-fake-two": { latest: "2.0.0", "ts7.1": "2.0.0" } } }),
-  "types/ata-fake-lib/package.json": json({ name: "@types/ata-fake-lib", version: "1.0.0", types: "index.d.ts" }),
-  "types/ata-fake-lib/index.d.ts": "/** Pads `text` to `n` characters. */\nexport declare function pad(text: string, n: number): string;\n",
-  "types/ata-fake-two/package.json": json({ name: "@types/ata-fake-two", version: "2.0.0", types: "index.d.ts" }),
-  "types/ata-fake-two/index.d.ts": "export declare function twice(n: number): number;\n",
+  "registry/package.json": json({ name: "types-registry", version: "0.1.0" }),
+  "registry/index.json": json({ entries: { "ata-fake-lib": { latest: "1.0.0", "ts7.1": "1.0.0" }, "ata-fake-two": { latest: "2.0.0", "ts7.1": "2.0.0" } } }),
+  "node_modules/@types/ata-fake-lib/package.json": json({ name: "@types/ata-fake-lib", version: "1.0.0", types: "index.d.ts" }),
+  "node_modules/@types/ata-fake-lib/index.d.ts": "/** Pads `text` to `n` characters. */\nexport declare function pad(text: string, n: number): string;\n",
+  "node_modules/@types/ata-fake-two/package.json": json({ name: "@types/ata-fake-two", version: "2.0.0", types: "index.d.ts" }),
+  "node_modules/@types/ata-fake-two/index.d.ts": "export declare function twice(n: number): number;\n",
+  "package-lock.json": json({
+    lockfileVersion: 3,
+    requires: true,
+    packages: { "node_modules/@types/ata-fake-lib": { version: "1.0.0", dev: true }, "node_modules/@types/ata-fake-two": { version: "2.0.0", dev: true } },
+  }),
+  "closure.json": json({ "@types/ata-fake-lib": ["node_modules/@types/ata-fake-lib"], "@types/ata-fake-two": ["node_modules/@types/ata-fake-two"] }),
 };
 
 // Writes a { path: text } map into a fresh dir.
