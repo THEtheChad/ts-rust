@@ -719,54 +719,7 @@ impl Scan {
             SyntaxKind::EqualsEqualsToken
             | SyntaxKind::ExclamationEqualsToken
             | SyntaxKind::EqualsEqualsEqualsToken
-            | SyntaxKind::ExclamationEqualsEqualsToken => {
-                let left = reference_candidate(e.left());
-                let right = reference_candidate(e.right());
-                if left.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(right) {
-                    self.typeof_(left);
-                    return;
-                }
-                if right.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(left) {
-                    self.typeof_(right);
-                    return;
-                }
-                self.out.push(Ev::M(left, false));
-                self.out.push(Ev::M(right, false));
-                if self.strict {
-                    self.out.push(Ev::Oc(left));
-                    self.out.push(Ev::Oc(right));
-                }
-                self.d(left);
-                self.d(right);
-                // isMatchingConstructorReference (flow.go:750)
-                for side in [left, right] {
-                    let name = if is_property_access_expression(side) {
-                        side.name()
-                    } else if is_element_access_expression(side)
-                        && is_string_literal_like(side.argument_expression())
-                    {
-                        side.argument_expression()
-                    } else {
-                        Node::NIL
-                    };
-                    if name.is_some() && name.text() == "constructor" {
-                        self.out.push(Ev::M(side.expression(), false));
-                    }
-                }
-                // narrowTypeByBooleanComparison (flow.go:800)
-                let (expr, bool_value) = if is_boolean_literal(right) && !is_access_expression(left)
-                {
-                    (left, right)
-                } else if is_boolean_literal(left) && !is_access_expression(right) {
-                    (right, left)
-                } else {
-                    return;
-                };
-                let at = (at != (bool_value.kind() == SyntaxKind::TrueKeyword))
-                    != (operator != SyntaxKind::ExclamationEqualsEqualsToken
-                        && operator != SyntaxKind::ExclamationEqualsToken);
-                self.n(expr, at, d);
-            }
+            | SyntaxKind::ExclamationEqualsEqualsToken => self.equality(e, operator, at, d),
             SyntaxKind::InstanceOfKeyword => {
                 // narrowTypeByInstanceof (flow.go:811)
                 let left = reference_candidate(e.left());
@@ -800,6 +753,76 @@ impl Scan {
             }
             _ => {}
         }
+    }
+
+    /// The events of the equality operators in Go
+    /// `narrowTypeByBinaryExpression` (flow.go:469): a `typeof` comparison,
+    /// else both operands in every role an equality gives them, then the
+    /// constructor and boolean comparison roles.
+    fn equality(&mut self, e: Node, operator: SyntaxKind, at: bool, d: u8) {
+        let left = reference_candidate(e.left());
+        let right = reference_candidate(e.right());
+        if left.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(right) {
+            self.typeof_(left);
+            return;
+        }
+        if right.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(left) {
+            self.typeof_(right);
+            return;
+        }
+        self.out.push(Ev::M(left, false));
+        self.out.push(Ev::M(right, false));
+        if self.strict {
+            self.out.push(Ev::Oc(left));
+            self.out.push(Ev::Oc(right));
+        }
+        self.d(left);
+        self.d(right);
+        self.constructor_reference(left);
+        self.constructor_reference(right);
+        self.boolean_comparison(left, right, operator, at, d);
+    }
+
+    /// The events of Go `isMatchingConstructorReference` (flow.go:750) on
+    /// one operand of an equality: `x.constructor` or `x["constructor"]`
+    /// matches `x`.
+    fn constructor_reference(&mut self, side: Node) {
+        let name = if is_property_access_expression(side) {
+            side.name()
+        } else if is_element_access_expression(side)
+            && is_string_literal_like(side.argument_expression())
+        {
+            side.argument_expression()
+        } else {
+            Node::NIL
+        };
+        if name.is_some() && name.text() == "constructor" {
+            self.out.push(Ev::M(side.expression(), false));
+        }
+    }
+
+    /// The events of Go `narrowTypeByBooleanComparison` (flow.go:800): an
+    /// equality with a boolean literal narrows the other operand as a
+    /// condition.
+    fn boolean_comparison(
+        &mut self,
+        left: Node,
+        right: Node,
+        operator: SyntaxKind,
+        at: bool,
+        d: u8,
+    ) {
+        let (expr, bool_value) = if is_boolean_literal(right) && !is_access_expression(left) {
+            (left, right)
+        } else if is_boolean_literal(left) && !is_access_expression(right) {
+            (right, left)
+        } else {
+            return;
+        };
+        let at = (at != (bool_value.kind() == SyntaxKind::TrueKeyword))
+            != (operator != SyntaxKind::ExclamationEqualsEqualsToken
+                && operator != SyntaxKind::ExclamationEqualsToken);
+        self.n(expr, at, d);
     }
 
     /// Go `narrowTypeByTypeof` (flow.go:614) when the operand does not match.
