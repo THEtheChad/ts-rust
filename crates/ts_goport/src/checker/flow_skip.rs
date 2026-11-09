@@ -1577,6 +1577,69 @@ struct RefKeys {
     chains: SmallVec<[u64; 4]>,
 }
 
+impl RefKeys {
+    /// The keys of an identifier or `this` reference (`text` is `this` for
+    /// the keyword): its plain mention, and its discriminant mention for a
+    /// union declared type.
+    fn identifier(kind: u8, text: &str, union: bool) -> RefKeys {
+        let mut mentions = SmallVec::new();
+        mentions.push(chain_key(F_IDENT, &[], text));
+        if union {
+            mentions.push(chain_key(F_IDENT_U, &[], text));
+        }
+        RefKeys {
+            kind,
+            mentions,
+            chains: SmallVec::new(),
+        }
+    }
+
+    /// The keys of a plain access chain with `names` (from the top down,
+    /// at least one) on `root`: the prefix mentions, the mention of the
+    /// whole chain, and for an identifier root the chain-site keys.
+    fn access(names: &[&'static str], root: Node, union: bool) -> RefKeys {
+        let mut mentions = SmallVec::new();
+        let mut chains = SmallVec::new();
+        let kind = if root.kind() == SyntaxKind::Identifier {
+            K_ACC_IDENT
+        } else {
+            K_ACC_THIS
+        };
+        // Each proper prefix `names[i..]` (i >= 1) is one more name
+        // out from the root than the one before, so its keys come
+        // from one running hash: a chain of k names costs O(k),
+        // not O(k^2) (deep chains such as `a[0][0]...[0]`).
+        let mut mention = ChainHash::rooted(root_text(root));
+        mentions.push(mention.key(F_ACCP));
+        let mut chain = ChainHash::rootless();
+        for name in names[1..].iter().rev() {
+            mention.push(name);
+            mentions.push(mention.key(F_ACCP));
+            chain.push(name);
+            if kind == K_ACC_IDENT {
+                chains.push(chain.key(C_CM));
+            }
+        }
+        mention.push(names[0]);
+        mentions.push(mention.key(F_ACC));
+        if union {
+            mentions.push(mention.key(F_ACC_U));
+        }
+        if kind == K_ACC_IDENT {
+            chain.push(names[0]);
+            chains.push(chain.key(C_M));
+            if union {
+                chains.push(chain.key(C_M_U));
+            }
+        }
+        RefKeys {
+            kind,
+            mentions,
+            chains,
+        }
+    }
+}
+
 enum Settle {
     Joined,
     Extras(Extras),
@@ -1627,109 +1690,63 @@ impl Checker {
     /// Kind and keys of `reference`, or `None` when the kind is not one
     /// the index knows (P2 in go-model.md 2.4).
     fn flow_skip_ref_keys(&self, reference: Node, union: bool) -> Option<RefKeys> {
-        let mut mentions = SmallVec::new();
-        let mut chains = SmallVec::new();
         match reference.kind() {
             SyntaxKind::Identifier => {
-                if is_this_in_type_query(reference) {
+                if !self.flow_skip_known_identifier(reference) {
                     return None;
                 }
-                let symbol = self.symbol_node_links.try_get(reference)?.resolved_symbol;
-                if symbol.is_nil() || symbol == self.unknown_symbol {
-                    return None;
-                }
-                mentions.push(chain_key(F_IDENT, &[], reference.text()));
-                if union {
-                    mentions.push(chain_key(F_IDENT_U, &[], reference.text()));
-                }
-                Some(RefKeys {
-                    kind: K_IDENT,
-                    mentions,
-                    chains,
-                })
+                Some(RefKeys::identifier(K_IDENT, reference.text(), union))
             }
-            SyntaxKind::ThisKeyword => {
-                mentions.push(chain_key(F_IDENT, &[], "this"));
-                if union {
-                    mentions.push(chain_key(F_IDENT_U, &[], "this"));
-                }
-                Some(RefKeys {
-                    kind: K_THIS,
-                    mentions,
-                    chains,
-                })
-            }
+            SyntaxKind::ThisKeyword => Some(RefKeys::identifier(K_THIS, "this", union)),
             SyntaxKind::PropertyAccessExpression | SyntaxKind::ElementAccessExpression => {
-                // A plain chain: no wrappers, literal element arguments.
-                let mut names: SmallVec<[&'static str; 4]> = SmallVec::new();
-                let mut x = reference;
-                let root = loop {
-                    match x.kind() {
-                        SyntaxKind::PropertyAccessExpression => {
-                            names.push(x.name().text());
-                            x = x.expression();
-                        }
-                        SyntaxKind::ElementAccessExpression => {
-                            let arg = x.argument_expression();
-                            if !is_string_or_numeric_literal_like(arg) {
-                                return None;
-                            }
-                            names.push(arg.text());
-                            x = x.expression();
-                        }
-                        SyntaxKind::Identifier => {
-                            if is_this_in_type_query(x) {
-                                return None;
-                            }
-                            let symbol = self.symbol_node_links.try_get(x)?.resolved_symbol;
-                            if symbol.is_nil() || symbol == self.unknown_symbol {
-                                return None;
-                            }
-                            break x;
-                        }
-                        SyntaxKind::ThisKeyword => break x,
-                        _ => return None,
-                    }
-                };
-                let kind = if root.kind() == SyntaxKind::Identifier {
-                    K_ACC_IDENT
-                } else {
-                    K_ACC_THIS
-                };
-                // Each proper prefix `names[i..]` (i >= 1) is one more name
-                // out from the root than the one before, so its keys come
-                // from one running hash: a chain of k names costs O(k),
-                // not O(k^2) (deep chains such as `a[0][0]...[0]`).
-                let mut mention = ChainHash::rooted(root_text(root));
-                mentions.push(mention.key(F_ACCP));
-                let mut chain = ChainHash::rootless();
-                for name in names[1..].iter().rev() {
-                    mention.push(name);
-                    mentions.push(mention.key(F_ACCP));
-                    chain.push(name);
-                    if kind == K_ACC_IDENT {
-                        chains.push(chain.key(C_CM));
-                    }
-                }
-                mention.push(names[0]);
-                mentions.push(mention.key(F_ACC));
-                if union {
-                    mentions.push(mention.key(F_ACC_U));
-                }
-                if kind == K_ACC_IDENT {
-                    chain.push(names[0]);
-                    chains.push(chain.key(C_M));
-                    if union {
-                        chains.push(chain.key(C_M_U));
-                    }
-                }
-                Some(RefKeys {
-                    kind,
-                    mentions,
-                    chains,
-                })
+                let (names, root) = self.flow_skip_plain_chain(reference)?;
+                Some(RefKeys::access(&names, root, union))
             }
             _ => None,
+        }
+    }
+
+    /// Whether identifier `x` can be the reference or the root of an
+    /// indexed reference: not `this` in a type query, and resolved to a
+    /// known symbol already.
+    #[inline]
+    fn flow_skip_known_identifier(&self, x: Node) -> bool {
+        if is_this_in_type_query(x) {
+            return false;
+        }
+        let symbol = self.flow_skip_resolved_symbol(x);
+        !symbol.is_nil() && symbol != self.unknown_symbol
+    }
+
+    /// The names (from the top down) and root of an access reference when
+    /// it is a plain chain: no wrappers, literal element arguments, and a
+    /// `this` or known identifier root (`flow_skip_known_identifier`).
+    fn flow_skip_plain_chain(
+        &self,
+        reference: Node,
+    ) -> Option<(SmallVec<[&'static str; 4]>, Node)> {
+        let mut names: SmallVec<[&'static str; 4]> = SmallVec::new();
+        let mut x = reference;
+        loop {
+            match x.kind() {
+                SyntaxKind::PropertyAccessExpression => {
+                    names.push(x.name().text());
+                    x = x.expression();
+                }
+                SyntaxKind::ElementAccessExpression => {
+                    let arg = x.argument_expression();
+                    if !is_string_or_numeric_literal_like(arg) {
+                        return None;
+                    }
+                    names.push(arg.text());
+                    x = x.expression();
+                }
+                SyntaxKind::Identifier if self.flow_skip_known_identifier(x) => {
+                    return Some((names, x));
+                }
+                SyntaxKind::ThisKeyword => return Some((names, x)),
+                _ => return None,
+            }
         }
     }
 
