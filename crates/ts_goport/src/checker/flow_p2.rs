@@ -1111,7 +1111,7 @@ impl Checker {
 
     /// True when the memo already shows that `is_matching_reference(source,
     /// target)` is false for a variable or binding declaration `target` (see
-    /// the declaration test in `is_matching_reference_kind`): the memo holds
+    /// the declaration test in `is_matching_declaration_reference`): the memo holds
     /// `source` with its export symbol, and `target` is not one of that
     /// symbol's declarations. It only reads; any other case is false, and the
     /// caller makes the full call.
@@ -1170,7 +1170,7 @@ impl Checker {
     }
 
     /// The merge rule that the chkA early returns depend on (the declaration
-    /// test in `is_matching_reference_kind` and
+    /// test in `is_matching_declaration_reference` and
     /// `matching_reference_memo_says_no`): when `export_symbol` is the merged
     /// symbol of `target` (Go `getMergedSymbol(target.Symbol())`), `target`
     /// is one of the declarations of `export_symbol`. Only `debug_assert!`
