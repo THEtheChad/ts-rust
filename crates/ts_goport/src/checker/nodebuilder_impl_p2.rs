@@ -1386,18 +1386,17 @@ impl Checker {
             old
         };
         let type_predicate = self.get_type_predicate_of_signature(signature);
-        let return_type_node;
-        if type_predicate.is_some() {
+        let return_type_node = if type_predicate.is_some() {
             let mapper = nb_mapper(b);
             let predicate = if mapper.is_some() {
                 self.instantiate_type_predicate(type_predicate, mapper)
             } else {
                 type_predicate
             };
-            return_type_node = self.type_predicate_to_type_predicate_node_helper(b, predicate);
+            self.type_predicate_to_type_predicate_node_helper(b, predicate)
         } else {
-            return_type_node = self.type_to_type_node(b, return_type);
-        }
+            self.type_to_type_node(b, return_type)
+        };
         b.borrow()
             .ctx
             .borrow_mut()

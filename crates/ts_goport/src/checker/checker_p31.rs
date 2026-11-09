@@ -250,20 +250,19 @@ impl Checker {
             // If the interface has any members, they may subtype members in the base, so we should do a full structural comparison
             return TypeId::NIL;
         }
-        let instantiated_base: TypeId;
         let type_parameters = self
             .ty(target)
             .as_interface_type()
             .type_parameters()
             .to_vec();
-        if type_parameters.is_empty() {
-            instantiated_base = bases[0];
+        let instantiated_base: TypeId = if type_parameters.is_empty() {
+            bases[0]
         } else {
             let type_arguments = self.get_type_arguments(t);
             let mapper =
                 self.new_type_mapper(&type_parameters, &type_arguments[..type_parameters.len()]);
-            instantiated_base = self.instantiate_type(bases[0], mapper);
-        }
+            self.instantiate_type(bases[0], mapper)
+        };
         let mut instantiated_base = instantiated_base;
         let last = {
             let type_arguments = self.type_arguments_of(t);

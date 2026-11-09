@@ -128,7 +128,6 @@ impl<P: ProgramView> LanguageService<P> {
         {
             return None;
         }
-        let module_source_file_name: &'static str;
         let module_source_file = checker
             .sym(symbol)
             .declarations
@@ -136,11 +135,11 @@ impl<P: ProgramView> LanguageService<P> {
             .copied()
             .find(|&decl| is_source_file(decl))
             .unwrap_or(Node::NIL);
-        if module_source_file.is_some() {
-            module_source_file_name = source_file_file_name(module_source_file);
+        let module_source_file_name: &'static str = if module_source_file.is_some() {
+            source_file_file_name(module_source_file)
         } else {
             return None;
-        }
+        };
         let export_equals = checker.symbols.get(
             checker.sym(symbol).exports,
             INTERNAL_SYMBOL_NAME_EXPORT_EQUALS,
@@ -2229,20 +2228,18 @@ impl<'c, P: ProgramView> RefState<'c, P> {
         // symbolAtLocation for a binding element is the local symbol. See if the search symbol is the property.
         // Don't do this when populating search set for a rename when prefix and suffix text will be provided -- just rename the local.
         if !is_for_rename_populate_search_symbol_set {
-            let binding_element_property_symbol: SymbolId;
-            if only_include_binding_element_at_reference_location {
-                if !is_object_binding_element_without_property_name(location.parent()) {
-                    return (SymbolId::NIL, EntryKind::NONE);
-                }
-                binding_element_property_symbol =
-                    get_property_symbol_from_binding_element(self.checker, location.parent());
-            } else {
-                binding_element_property_symbol =
+            let binding_element_property_symbol: SymbolId =
+                if only_include_binding_element_at_reference_location {
+                    if !is_object_binding_element_without_property_name(location.parent()) {
+                        return (SymbolId::NIL, EntryKind::NONE);
+                    }
+                    get_property_symbol_from_binding_element(self.checker, location.parent())
+                } else {
                     get_property_symbol_of_object_binding_pattern_without_property_name(
                         symbol,
                         self.checker,
-                    );
-            }
+                    )
+                };
             if binding_element_property_symbol.is_nil() {
                 return (SymbolId::NIL, EntryKind::NONE);
             }

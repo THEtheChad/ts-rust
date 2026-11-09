@@ -33,13 +33,12 @@ fn run_duplicate_package(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic> {
     }
 
     // Attach one diagnostic per duplicated package to the first statement (or the source file node).
-    let target;
     let stmts = ctx.source_file.statements();
-    if !stmts.is_empty() {
-        target = stmts.get(0);
+    let target = if !stmts.is_empty() {
+        stmts.get(0)
     } else {
-        target = ctx.source_file;
-    }
+        ctx.source_file
+    };
     let loc = ctx.get_error_range(target);
 
     let mut diags = Vec::with_capacity(entries.len());

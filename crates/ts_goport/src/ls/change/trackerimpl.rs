@@ -323,22 +323,17 @@ impl Tracker {
         let format_options =
             get_format_code_settings_for_writing(self.format_settings.clone(), target_source_file);
 
-        let initial_indentation: i32;
         let mut delta: i32 = 0;
-        match options.indentation {
-            None => {
-                initial_indentation = format::get_indentation(
-                    pos,
-                    source_file,
-                    &format_options,
-                    options.prefix == self.new_line
-                        || format::get_line_start_position_for_position(pos, source_file) == pos,
-                );
-            }
-            Some(indentation) => {
-                initial_indentation = indentation;
-            }
-        }
+        let initial_indentation: i32 = match options.indentation {
+            None => format::get_indentation(
+                pos,
+                source_file,
+                &format_options,
+                options.prefix == self.new_line
+                    || format::get_line_start_position_for_position(pos, source_file) == pos,
+            ),
+            Some(indentation) => indentation,
+        };
 
         if let Some(options_delta) = options.delta {
             delta = options_delta;

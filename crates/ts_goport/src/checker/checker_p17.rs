@@ -480,7 +480,6 @@ impl Checker {
 
         let importing_source_file = get_source_file_of_node(location);
         let mut context_specifier = Node::NIL;
-        let mode: ResolutionMode;
 
         if is_string_literal_like(location)
             || location.parent().is_some()
@@ -523,11 +522,12 @@ impl Checker {
             }
         }
 
-        if context_specifier.is_some() && is_string_literal_like(context_specifier) {
-            mode = get_mode_for_usage_location(importing_source_file, context_specifier);
-        } else {
-            mode = get_default_resolution_mode_for_file(importing_source_file);
-        }
+        let mode: ResolutionMode =
+            if context_specifier.is_some() && is_string_literal_like(context_specifier) {
+                get_mode_for_usage_location(importing_source_file, context_specifier)
+            } else {
+                get_default_resolution_mode_for_file(importing_source_file)
+            };
 
         // PERF: borrow the program's resolution instead of cloning it.
         let resolved_module_owner =

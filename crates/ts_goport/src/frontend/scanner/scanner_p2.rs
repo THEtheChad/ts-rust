@@ -1156,14 +1156,13 @@ impl<'a> Scanner<'a> {
         self.scanner_state.pos += 2;
         let start = self.scanner_state.pos;
         let extended = self.char() == '{' as i32;
-        let hex_digits;
-        if extended {
+        let hex_digits = if extended {
             self.scanner_state.pos += 1;
-            hex_digits = self.scan_hex_digits(1, true, false);
+            self.scan_hex_digits(1, true, false)
         } else {
             self.scanner_state.token_flags |= TokenFlags::UNICODE_ESCAPE;
-            hex_digits = self.scan_hex_digits(4, false, false);
-        }
+            self.scan_hex_digits(4, false, false)
+        };
         if hex_digits.is_empty() {
             self.scanner_state.token_flags |= TokenFlags::CONTAINS_INVALID_ESCAPE;
             if should_emit_invalid_escape_error {
@@ -1361,13 +1360,12 @@ impl<'a> Scanner<'a> {
             self.set_token_value(&js_number_string(self.scanner_state.token_value));
             return SyntaxKind::NumericLiteral;
         }
-        let result;
-        if fixed_part_end == self.scanner_state.pos {
-            result = self.scan_big_int_suffix();
+        let result = if fixed_part_end == self.scanner_state.pos {
+            self.scan_big_int_suffix()
         } else {
             self.set_token_value(&js_number_string(self.scanner_state.token_value));
-            result = SyntaxKind::NumericLiteral;
-        }
+            SyntaxKind::NumericLiteral
+        };
         let (ch, _) = self.char_and_size();
         if is_identifier_start(rune_to_char(ch)) {
             let id_start = self.scanner_state.pos;

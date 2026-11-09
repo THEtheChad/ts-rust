@@ -97,9 +97,8 @@ impl Checker {
                 intrinsic_class_attribs_symbol,
             );
             let host_class_type = self.get_return_type_of_signature(sig);
-            let library_managed_attribute_type;
             // PORT: Go `typeParams != nil`; the callee returns nil when it finds no type parameters.
-            if !type_params.is_empty() {
+            let library_managed_attribute_type = if !type_params.is_empty() {
                 // apply JSX.IntrinsicClassAttributes<hostClassType, ...>
                 let min_type_argument_count = self.get_min_type_argument_count(&type_params);
                 let inferred_args = self.fill_missing_type_arguments(
@@ -109,11 +108,10 @@ impl Checker {
                     is_in_js_file(context),
                 );
                 let mapper = self.new_type_mapper(&type_params, &inferred_args);
-                library_managed_attribute_type =
-                    self.instantiate_type(intrinsic_class_attribs, mapper);
+                self.instantiate_type(intrinsic_class_attribs, mapper)
             } else {
-                library_managed_attribute_type = intrinsic_class_attribs;
-            }
+                intrinsic_class_attribs
+            };
             apparent_attributes_type =
                 self.intersect_types(library_managed_attribute_type, apparent_attributes_type);
         }

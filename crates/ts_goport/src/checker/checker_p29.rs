@@ -1482,15 +1482,14 @@ impl Checker {
         }
         // We had to pick apart the constraintType to potentially map/filter it - compare the final resulting list with the
         // original constraintType, so we can return the union that preserves aliases/origin data if possible.
-        let result;
-        if index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES) {
+        let result = if index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES) {
             let union = self.get_union_type(&key_types);
-            result = self.filter_type(union, &mut |c: &mut Checker, t: TypeId| {
+            self.filter_type(union, &mut |c: &mut Checker, t: TypeId| {
                 !c.ty(t).flags.intersects(TypeFlags::ANY | TypeFlags::STRING)
-            });
+            })
         } else {
-            result = self.get_union_type(&key_types);
-        }
+            self.get_union_type(&key_types)
+        };
         if self.ty(result).flags.intersects(TypeFlags::UNION)
             && self.ty(constraint_type).flags.intersects(TypeFlags::UNION)
             && get_type_list_key(self.ty(result).types())

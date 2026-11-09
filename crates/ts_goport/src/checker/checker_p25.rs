@@ -1605,24 +1605,22 @@ impl Checker {
                 && (num_type_arguments < min_type_argument_count
                     || num_type_arguments > type_parameters.len() as i32)
             {
-                let message: &'static crate::diagnostics::Message;
-
                 let missing_augments_tag = is_js
                     && is_expression_with_type_arguments(node)
                     && !is_js_doc_augments_tag(node.parent());
-                if missing_augments_tag {
-                    message = if (min_type_argument_count as usize) < type_parameters.len() {
+                let message: &'static crate::diagnostics::Message = if missing_augments_tag {
+                    if (min_type_argument_count as usize) < type_parameters.len() {
                         diag::Expected_0_1_type_arguments_provide_these_with_an_extends_tag
                     } else {
                         diag::Expected_0_type_arguments_provide_these_with_an_extends_tag
-                    };
+                    }
                 } else {
-                    message = if (min_type_argument_count as usize) < type_parameters.len() {
+                    if (min_type_argument_count as usize) < type_parameters.len() {
                         diag::Generic_type_0_requires_between_1_and_2_type_arguments
                     } else {
                         diag::Generic_type_0_requires_1_type_argument_s
-                    };
-                }
+                    }
+                };
                 let type_str = self.type_to_string_ex(
                     t,
                     Node::NIL, /*enclosingDeclaration*/

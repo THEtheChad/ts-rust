@@ -552,12 +552,11 @@ impl Checker {
         // PERF: `get_name` finds the name by id with the interner's hash;
         // `get` hashes and compares the text. Same entry.
         let global_symbol = self.symbols.get_name(self.globals, &name);
-        let merged;
-        if global_symbol.is_some() {
-            merged = self.merge_symbol(global_symbol, symbol, false /*unidirectional*/);
+        let merged = if global_symbol.is_some() {
+            self.merge_symbol(global_symbol, symbol, false /*unidirectional*/)
         } else {
-            merged = self.get_merged_symbol(symbol);
-        }
+            self.get_merged_symbol(symbol)
+        };
         self.symbols.set(self.globals, name, merged);
     }
 

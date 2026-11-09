@@ -934,17 +934,16 @@ impl Checker {
             if is_spread_argument(arg) {
                 // We are inferring from a spread expression in the last argument position, i.e. both the parameter
                 // and the argument are ...x forms.
-                let spread_type;
-                if is_synthetic_expression(arg) {
-                    spread_type = synthetic_expression_type(arg);
+                let spread_type = if is_synthetic_expression(arg) {
+                    synthetic_expression_type(arg)
                 } else {
-                    spread_type = self.check_expression_with_contextual_type(
+                    self.check_expression_with_contextual_type(
                         arg.expression(),
                         rest_type,
                         context,
                         check_mode,
-                    );
-                }
+                    )
+                };
                 if self.is_array_like_type(spread_type) {
                     return self.get_mutable_array_or_tuple_type(spread_type);
                 }
@@ -969,12 +968,11 @@ impl Checker {
             let t;
             let mut info = TupleElementInfo::default();
             if is_spread_argument(arg) {
-                let spread_type;
-                if is_synthetic_expression(arg) {
-                    spread_type = synthetic_expression_type(arg);
+                let spread_type = if is_synthetic_expression(arg) {
+                    synthetic_expression_type(arg)
                 } else {
-                    spread_type = self.check_expression(arg.expression());
-                }
+                    self.check_expression(arg.expression())
+                };
                 if self.is_array_like_type(spread_type) {
                     t = spread_type;
                     info.flags = ElementFlags::VARIADIC;
@@ -998,8 +996,7 @@ impl Checker {
                     info.flags = ElementFlags::REST;
                 }
             } else {
-                let contextual_type;
-                if self.is_tuple_type(rest_type) {
+                let contextual_type = if self.is_tuple_type(rest_type) {
                     let ct = self.get_contextual_type_for_element_expression(
                         rest_type,
                         i - index,
@@ -1007,17 +1004,17 @@ impl Checker {
                         -1,
                         -1,
                     );
-                    contextual_type = if ct.is_some() { ct } else { self.unknown_type };
+                    if ct.is_some() { ct } else { self.unknown_type }
                 } else {
                     let index_type = self.get_number_literal_type(Number((i - index) as f64));
-                    contextual_type = self.get_indexed_access_type_ex(
+                    self.get_indexed_access_type_ex(
                         rest_type,
                         index_type,
                         AccessFlags::CONTEXTUAL,
                         Node::NIL,
                         None,
-                    );
-                }
+                    )
+                };
                 let arg_type = self.check_expression_with_contextual_type(
                     arg,
                     contextual_type,
@@ -1465,12 +1462,13 @@ impl Checker {
         }
         // If we're already in the process of resolving the given signature, don't resolve again as
         // that could cause infinite recursion. Instead, return anySignature.
-        let signature;
-        if self.signature_links.get(call_target).resolved_signature == self.resolving_signature {
-            signature = self.resolving_signature;
+        let signature = if self.signature_links.get(call_target).resolved_signature
+            == self.resolving_signature
+        {
+            self.resolving_signature
         } else {
-            signature = self.get_resolved_signature(call_target, None, CheckMode::NORMAL);
-        }
+            self.get_resolved_signature(call_target, None, CheckMode::NORMAL)
+        };
         if is_jsx_opening_like_element(call_target) && arg_index == 0 {
             return self.get_effective_first_argument_for_jsx_signature(signature, call_target);
         }

@@ -1502,19 +1502,17 @@ impl LanguageService {
                                 elements.push(big_int);
                             }
                             LiteralValue::Number(v) => {
-                                let number: Node;
-                                if v.0 < 0.0 {
-                                    number = factory.new_prefix_unary_expression(
+                                let number: Node = if v.0 < 0.0 {
+                                    factory.new_prefix_unary_expression(
                                         SyntaxKind::MinusToken,
                                         factory.new_numeric_literal(
                                             v.abs().to_string(),
                                             TokenFlags::NONE,
                                         ),
-                                    );
+                                    )
                                 } else {
-                                    number = factory
-                                        .new_numeric_literal(v.to_string(), TokenFlags::NONE);
-                                }
+                                    factory.new_numeric_literal(v.to_string(), TokenFlags::NONE)
+                                };
                                 elements.push(number);
                             }
                             LiteralValue::String(v) => {

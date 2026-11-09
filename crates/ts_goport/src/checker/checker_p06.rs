@@ -825,7 +825,6 @@ impl Checker {
         if let Some(&t) = self.module_import_attributes_types.get(&symbol) {
             return t;
         }
-        let result;
         let module_decl = self
             .sym(symbol)
             .declarations
@@ -833,12 +832,11 @@ impl Checker {
             .copied()
             .find(|&d| is_module_with_string_literal_name(d))
             .unwrap_or(Node::NIL);
-        if module_decl.is_nil() {
-            result = self.empty_object_type;
+        let result = if module_decl.is_nil() {
+            self.empty_object_type
         } else {
-            result =
-                self.get_type_of_module_declaration_import_attributes(module_decl.attributes());
-        }
+            self.get_type_of_module_declaration_import_attributes(module_decl.attributes())
+        };
         self.module_import_attributes_types.insert(symbol, result);
         result
     }

@@ -179,12 +179,11 @@ impl Checker {
             let element_type_constraint = self.get_jsx_element_type_type_at(node);
             if element_type_constraint.is_some() {
                 let tag_name = node.tag_name();
-                let tag_type;
-                if is_jsx_intrinsic_tag_name(tag_name) {
-                    tag_type = self.get_string_literal_type(tag_name.text());
+                let tag_type = if is_jsx_intrinsic_tag_name(tag_name) {
+                    self.get_string_literal_type(tag_name.text())
                 } else {
-                    tag_type = self.check_expression(tag_name);
-                }
+                    self.check_expression(tag_name)
+                };
                 let mut diags: Vec<Diagnostic> = Vec::new();
                 let relation = self.assignable_relation.clone();
                 if !self.check_type_related_to_ex(
@@ -1071,8 +1070,7 @@ impl Checker {
         check_mode: CheckMode,
     ) -> SignatureId {
         let is_jsx_open_fragment = is_jsx_opening_fragment(node);
-        let expr_types;
-        if !is_jsx_open_fragment {
+        let expr_types = if !is_jsx_open_fragment {
             if is_jsx_intrinsic_tag_name(node.tag_name()) {
                 let result = self.get_intrinsic_attributes_type_from_jsx_opening_like_element(node);
                 let fake_signature = self.create_signature_for_jsx_intrinsic(node, result);
@@ -1110,10 +1108,10 @@ impl Checker {
                 }
                 return fake_signature;
             }
-            expr_types = self.check_expression(node.tag_name());
+            self.check_expression(node.tag_name())
         } else {
-            expr_types = self.get_jsx_fragment_type(node);
-        }
+            self.get_jsx_fragment_type(node)
+        };
         let apparent_type = self.get_apparent_type(expr_types);
         if self.is_error_type(apparent_type) {
             return self.resolve_error_call(node);
@@ -1172,19 +1170,16 @@ impl Checker {
         // However "context" and "updater" are implicit and can't be specify by users. Only the first parameter, props,
         // can be specified by users through attributes property.
         let param_type = self.get_effective_first_argument_for_jsx_signature(signature, node);
-        let attributes_type;
-        if is_jsx_opening_fragment(node) {
-            attributes_type =
-                self.create_jsx_attributes_type_from_attributes_property(node, CheckMode::NORMAL);
+        let attributes_type = if is_jsx_opening_fragment(node) {
+            self.create_jsx_attributes_type_from_attributes_property(node, CheckMode::NORMAL)
         } else {
-            attributes_type = self.check_expression_with_contextual_type(
+            self.check_expression_with_contextual_type(
                 node.attributes(),
                 param_type,
                 InferenceContextId::NIL, /*inferenceContext*/
                 check_mode,
-            );
-        }
-        let check_attributes_type;
+            )
+        };
         // PORT: Go closure `checkTagNameDoesNotExpectTooManyArguments` captures
         // `c` and `diagnosticOutput`; here it takes both as parameters.
         let check_tag_name_does_not_expect_too_many_arguments = |c: &mut Checker,
@@ -1299,11 +1294,11 @@ impl Checker {
             }
             false
         };
-        if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
-            check_attributes_type = self.get_regular_type_of_object_literal(attributes_type);
+        let check_attributes_type = if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
+            self.get_regular_type_of_object_literal(attributes_type)
         } else {
-            check_attributes_type = attributes_type;
-        }
+            attributes_type
+        };
         if !check_tag_name_does_not_expect_too_many_arguments(
             self,
             diagnostic_output.as_deref_mut(),

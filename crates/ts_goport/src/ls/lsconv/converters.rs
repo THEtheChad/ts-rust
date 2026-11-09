@@ -1160,22 +1160,21 @@ fn diagnostic_to_lsp(
         }
     }
 
-    let code: Option<lsproto::IntegerOrString>;
     let mut source_text = diagnostic.source().to_string();
     if source_text.is_empty() {
         source_text = "ts".to_string();
     }
-    if opts.visual_studio {
-        code = Some(lsproto::IntegerOrString {
+    let code: Option<lsproto::IntegerOrString> = if opts.visual_studio {
+        Some(lsproto::IntegerOrString {
             string: Some(format!("TS{}", diagnostic.code())),
             ..Default::default()
-        });
+        })
     } else {
-        code = Some(lsproto::IntegerOrString {
+        Some(lsproto::IntegerOrString {
             integer: Some(diagnostic.code()),
             ..Default::default()
-        });
-    }
+        })
+    };
 
     lsproto::Diagnostic {
         range: lsp_range,

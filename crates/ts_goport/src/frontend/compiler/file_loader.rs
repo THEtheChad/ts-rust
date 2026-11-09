@@ -1273,13 +1273,12 @@ impl FileLoader {
 
     // Go: fileloader.go:278 (*fileLoader).addAutomaticTypeDirectiveTasks
     pub fn add_automatic_type_directive_tasks(&mut self) {
-        let containing_directory;
         let compiler_options = self.opts.config.compiler_options();
-        if !compiler_options.config_file_path.is_empty() {
-            containing_directory = get_directory_path(&compiler_options.config_file_path);
+        let containing_directory = if !compiler_options.config_file_path.is_empty() {
+            get_directory_path(&compiler_options.config_file_path)
         } else {
-            containing_directory = self.host.get_current_directory();
-        }
+            self.host.get_current_directory()
+        };
         let containing_file_name =
             combine_paths(&containing_directory, &[INFERRED_TYPES_CONTAINING_FILE]);
         self.root_tasks.push(Rc::new(RefCell::new(ParseTask {

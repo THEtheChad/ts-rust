@@ -641,12 +641,11 @@ impl Checker {
     // Go: checker/checker.go:18548 getAssignmentDeclarationInitializerType
     pub fn get_assignment_declaration_initializer_type(&mut self, node: Node) -> TypeId {
         if is_binary_expression(node) {
-            let t: TypeId;
-            match get_assignment_declaration_kind(node) {
+            let t: TypeId = match get_assignment_declaration_kind(node) {
                 JSDeclarationKind::MODULE_EXPORTS | JSDeclarationKind::EXPORTS_PROPERTY => {
                     let expr_type =
                         self.check_expression_cached(get_right_most_assigned_expression(node));
-                    t = self.get_regular_type_of_literal_type(expr_type);
+                    self.get_regular_type_of_literal_type(expr_type)
                 }
                 kind => {
                     if kind == JSDeclarationKind::THIS_PROPERTY
@@ -655,9 +654,9 @@ impl Checker {
                         return TypeId::NIL;
                     }
                     // fallthrough
-                    t = self.check_expression_for_mutable_location(node.right(), CheckMode::NORMAL);
+                    self.check_expression_for_mutable_location(node.right(), CheckMode::NORMAL)
                 }
-            }
+            };
             if self.is_empty_array_literal_type(t)
                 && !self.has_parent_with_type_annotation(node.symbol())
             {

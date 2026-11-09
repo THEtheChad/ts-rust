@@ -259,29 +259,28 @@ impl MessagePackProtocol {
     fn read_bin(&mut self) -> Result<Vec<u8>, GoError> {
         let t = read_byte(&mut self.r)?;
 
-        let size: usize;
-        match t {
+        let size: usize = match t {
             MSGPACK_BIN8 => {
                 let mut size8 = [0u8; 1];
                 read_full(&mut self.r, &mut size8)?;
-                size = usize::from(size8[0]);
+                usize::from(size8[0])
             }
             MSGPACK_BIN16 => {
                 let mut size16 = [0u8; 2];
                 read_full(&mut self.r, &mut size16)?;
-                size = usize::from(u16::from_be_bytes(size16));
+                usize::from(u16::from_be_bytes(size16))
             }
             MSGPACK_BIN32 => {
                 let mut size32 = [0u8; 4];
                 read_full(&mut self.r, &mut size32)?;
-                size = u32::from_be_bytes(size32) as usize;
+                u32::from_be_bytes(size32) as usize
             }
             _ => {
                 return Err(invalid_request(format!(
                     "expected binary data (0xc4-0xc6), received: 0x{t:02x}"
                 )));
             }
-        }
+        };
 
         let mut payload = vec![0u8; size];
         read_full(&mut self.r, &mut payload)?;

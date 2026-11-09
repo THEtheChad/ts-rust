@@ -244,20 +244,19 @@ impl StdioServer {
             inner: session.clone(),
             depth: Cell::new(0),
         });
-        let conn: Rc<dyn Conn>;
-        if self.options.async_ {
+        let conn: Rc<dyn Conn> = if self.options.async_ {
             let protocol = new_jsonrpc_protocol(rwc.clone());
             let async_conn = new_async_conn_with_protocol(rwc.clone(), Box::new(protocol), handler);
             // PORT: Go's `Run` reads on its own goroutine (`read_on_thread`).
             async_conn.read_on_thread(Box::new(new_jsonrpc_protocol(rwc)));
             async_conn.set_collect_timing(self.options.collect_timing);
-            conn = async_conn;
+            async_conn
         } else {
             let protocol = new_message_pack_protocol(rwc.clone());
             let sync_conn = new_sync_conn(rwc, Box::new(protocol), handler);
             sync_conn.set_collect_timing(self.options.collect_timing);
-            conn = sync_conn;
-        }
+            sync_conn
+        };
 
         // If callbacks are enabled, set the connection on the FS
         if let Some(callback_fs) = &callback_fs {

@@ -984,12 +984,11 @@ fn span_for_jsx_attributes(
     source_file: Node,
     l: &LanguageService,
 ) -> Option<lsproto::FoldingRange> {
-    let attributes;
-    if node.kind() == SyntaxKind::JsxSelfClosingElement {
-        attributes = node.attributes();
+    let attributes = if node.kind() == SyntaxKind::JsxSelfClosingElement {
+        node.attributes()
     } else {
-        attributes = node.attributes();
-    }
+        node.attributes()
+    };
     if attributes.properties().is_empty() {
         return None;
     }

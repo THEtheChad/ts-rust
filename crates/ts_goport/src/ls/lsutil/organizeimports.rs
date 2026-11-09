@@ -33,7 +33,6 @@ pub fn get_detection_lists(
     preferences: &UserPreferences,
 ) -> (Vec<StringComparer>, Vec<OrganizeImportsTypeOrder>) {
     let comparers_to_test: Vec<StringComparer>;
-    let type_orders_to_test: Vec<OrganizeImportsTypeOrder>;
     if preferences.organize_imports_sort != OrganizeImportsSort::AUTO {
         comparers_to_test = vec![get_organize_imports_preset_string_comparer(
             preferences.organize_imports_sort,
@@ -50,15 +49,16 @@ pub fn get_detection_lists(
         ];
     }
 
-    if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::AUTO {
-        type_orders_to_test = vec![preferences.organize_imports_type_order];
-    } else {
-        type_orders_to_test = vec![
-            OrganizeImportsTypeOrder::LAST,
-            OrganizeImportsTypeOrder::INLINE,
-            OrganizeImportsTypeOrder::FIRST,
-        ];
-    }
+    let type_orders_to_test: Vec<OrganizeImportsTypeOrder> =
+        if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::AUTO {
+            vec![preferences.organize_imports_type_order]
+        } else {
+            vec![
+                OrganizeImportsTypeOrder::LAST,
+                OrganizeImportsTypeOrder::INLINE,
+                OrganizeImportsTypeOrder::FIRST,
+            ]
+        };
 
     (comparers_to_test, type_orders_to_test)
 }

@@ -993,12 +993,11 @@ impl Checker {
                 .flags
                 .intersects(TypeFlags::ANY_OR_UNKNOWN | TypeFlags::NEVER)
         {
-            let is_optional;
-            if self.exact_optional_property_types {
-                is_optional = self.sym(symbol).flags.intersects(SymbolFlags::OPTIONAL);
+            let is_optional = if self.exact_optional_property_types {
+                self.sym(symbol).flags.intersects(SymbolFlags::OPTIONAL)
             } else {
-                is_optional = self.has_type_facts(t, TypeFacts::IS_UNDEFINED);
-            }
+                self.has_type_facts(t, TypeFacts::IS_UNDEFINED)
+            };
             if !is_optional {
                 self.error(
                     expr,
@@ -1218,12 +1217,11 @@ impl Checker {
         self.check_grammar_yield_expression(node);
         // Always check the operand so its identifiers are resolved even when the yield is
         // outside a generator, keeping diagnostics stable regardless of traversal order.
-        let yield_expression_type;
-        if node.expression().is_some() {
-            yield_expression_type = self.check_expression(node.expression());
+        let yield_expression_type = if node.expression().is_some() {
+            self.check_expression(node.expression())
         } else {
-            yield_expression_type = self.undefined_widening_type;
-        }
+            self.undefined_widening_type
+        };
         let fn_ = get_containing_function(node);
         if fn_.is_nil() {
             return self.any_type;
@@ -1575,8 +1573,7 @@ impl Checker {
         } else {
             initial_type = self.get_optional_type(t, false /*isProperty*/);
         }
-        let flow_type;
-        if is_automatic_type_in_non_null {
+        let flow_type = if is_automatic_type_in_non_null {
             let flow = self.get_flow_type_of_reference_ex(
                 node,
                 t,
@@ -1584,16 +1581,16 @@ impl Checker {
                 flow_container,
                 FlowNodeId::NIL,
             );
-            flow_type = self.get_non_nullable_type(flow);
+            self.get_non_nullable_type(flow)
         } else {
-            flow_type = self.get_flow_type_of_reference_ex(
+            self.get_flow_type_of_reference_ex(
                 node,
                 t,
                 initial_type,
                 flow_container,
                 FlowNodeId::NIL,
-            );
-        }
+            )
+        };
         // A variable is considered uninitialized when it is possible to analyze the entire control flow graph
         // from declaration to use, and when the variable's declared type doesn't include undefined but the
         // control flow based type does include undefined.

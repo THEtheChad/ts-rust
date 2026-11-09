@@ -567,17 +567,16 @@ fn get_normalized_symbol_modifiers(
         let declaration = symbol_declarations[0];
         let declarations = &symbol_declarations[1..];
         // omit deprecated flag if some declarations are not deprecated
-        let exclude_flags;
-        if !declarations.is_empty()
+        let exclude_flags = if !declarations.is_empty()
             && is_deprecated_declaration(type_checker.checker(), declaration) // !!! include jsdoc node flags
             && declarations
                 .iter()
                 .any(|&d| !is_deprecated_declaration(type_checker.checker(), d))
         {
-            exclude_flags = ModifierFlags::DEPRECATED;
+            ModifierFlags::DEPRECATED
         } else {
-            exclude_flags = ModifierFlags::NONE;
-        }
+            ModifierFlags::NONE
+        };
         modifier_set = get_node_modifiers(type_checker.checker(), declaration, exclude_flags);
     }
 

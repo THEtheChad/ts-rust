@@ -1456,12 +1456,11 @@ impl Checker {
         }
         let head_message = diag::Argument_of_type_0_is_not_assignable_to_parameter_of_type_1;
         let rest_type = self.get_non_array_rest_type(signature);
-        let arg_count: i32;
-        if rest_type.is_some() {
-            arg_count = (self.get_parameter_count(signature) - 1).min(args.len() as i32);
+        let arg_count: i32 = if rest_type.is_some() {
+            (self.get_parameter_count(signature) - 1).min(args.len() as i32)
         } else {
-            arg_count = args.len() as i32;
-        }
+            args.len() as i32
+        };
         for i in 0..arg_count {
             let arg = args[i as usize];
             if !is_omitted_expression(arg) {
@@ -1475,12 +1474,12 @@ impl Checker {
                 // If one or more arguments are still excluded (as indicated by CheckMode.SkipContextSensitive),
                 // we obtain the regular type of any object literal arguments because we may not have inferred complete
                 // parameter types yet and therefore excess property checks may yield false positives (see #17041).
-                let check_arg_type: TypeId;
-                if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
-                    check_arg_type = self.get_regular_type_of_object_literal(arg_type);
-                } else {
-                    check_arg_type = arg_type;
-                }
+                let check_arg_type: TypeId =
+                    if check_mode.intersects(CheckMode::SKIP_CONTEXT_SENSITIVE) {
+                        self.get_regular_type_of_object_literal(arg_type)
+                    } else {
+                        arg_type
+                    };
                 let effective_check_argument_node = self.get_effective_check_node(arg);
                 if !self.check_type_related_to_and_optionally_elaborate(
                     check_arg_type,

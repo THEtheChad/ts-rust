@@ -79,13 +79,12 @@ impl Checker {
         }
         if container.parent().is_some() && is_class_like(container.parent()) {
             let symbol = self.get_symbol_of_declaration(container.parent());
-            let t;
-            if is_static(container) {
-                t = self.get_type_of_symbol(symbol);
+            let t = if is_static(container) {
+                self.get_type_of_symbol(symbol)
             } else {
                 let declared = self.get_declared_type_of_symbol(symbol);
-                t = self.ty(declared).as_interface_type().this_type;
-            }
+                self.ty(declared).as_interface_type().this_type
+            };
             return self.get_flow_type_of_reference(node, t);
         }
         if is_source_file(container) {
@@ -1133,16 +1132,15 @@ impl Checker {
                         elements,
                         diag::A_rest_parameter_or_binding_pattern_may_not_have_a_trailing_comma,
                     );
-                    let t;
-                    if self.every_type(source_type, &mut |c: &mut Checker, t: TypeId| {
+                    let t = if self.every_type(source_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_tuple_type(t)
                     }) {
-                        t = self.map_type(source_type, &mut |c: &mut Checker, t: TypeId| {
+                        self.map_type(source_type, &mut |c: &mut Checker, t: TypeId| {
                             c.slice_tuple_type(t, element_index, 0)
-                        });
+                        })
                     } else {
-                        t = self.create_array_type(element_type);
-                    }
+                        self.create_array_type(element_type)
+                    };
                     return self.check_destructuring_assignment(
                         rest_expression,
                         t,

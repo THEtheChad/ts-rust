@@ -412,15 +412,13 @@ impl Checker {
                 }
                 let source_arity = self.get_type_reference_arity(source);
                 let target_arity = self.get_type_reference_arity(target);
-                let source_rest: bool;
-                if self.is_tuple_type(source) {
-                    source_rest = self
-                        .target_tuple_type(source)
+                let source_rest: bool = if self.is_tuple_type(source) {
+                    self.target_tuple_type(source)
                         .combined_flags
-                        .intersects(ElementFlags::REST);
+                        .intersects(ElementFlags::REST)
                 } else {
-                    source_rest = true;
-                }
+                    true
+                };
                 let target_has_rest_element = self
                     .target_tuple_type(target)
                     .combined_flags
@@ -429,12 +427,11 @@ impl Checker {
                     .target_tuple_type(target)
                     .combined_flags
                     .intersects(ElementFlags::VARIABLE);
-                let source_min_length: i32;
-                if self.is_tuple_type(source) {
-                    source_min_length = self.target_tuple_type(source).min_length;
+                let source_min_length: i32 = if self.is_tuple_type(source) {
+                    self.target_tuple_type(source).min_length
                 } else {
-                    source_min_length = 0;
-                }
+                    0
+                };
                 let target_min_length = self.target_tuple_type(target).min_length;
                 if !source_rest && source_arity < target_min_length {
                     if report_errors {
@@ -482,32 +479,28 @@ impl Checker {
                     get_end_element_count(self.target_tuple_type(target), ElementFlags::NON_REST);
                 let mut can_exclude_discriminants = !excluded_properties.is_empty();
                 for source_position in 0..source_arity {
-                    let source_flags: ElementFlags;
-                    if self.is_tuple_type(source) {
-                        source_flags = self.target_tuple_type(source).element_infos
-                            [source_position as usize]
-                            .flags;
+                    let source_flags: ElementFlags = if self.is_tuple_type(source) {
+                        self.target_tuple_type(source).element_infos[source_position as usize].flags
                     } else {
-                        source_flags = ElementFlags::REST;
-                    }
+                        ElementFlags::REST
+                    };
                     let source_position_from_end = source_arity - 1 - source_position;
-                    let target_position: i32;
-                    if target_has_rest_element && source_position >= target_start_count {
-                        target_position =
-                            target_arity - 1 - source_position_from_end.min(target_end_count);
-                    } else {
-                        if source_position >= target_arity {
-                            if report_errors {
-                                self.report_error(
+                    let target_position: i32 =
+                        if target_has_rest_element && source_position >= target_start_count {
+                            target_arity - 1 - source_position_from_end.min(target_end_count)
+                        } else {
+                            if source_position >= target_arity {
+                                if report_errors {
+                                    self.report_error(
                                     r,
                                     diag::Target_allows_only_0_element_s_but_source_may_have_more,
                                     args![target_arity],
                                 );
+                                }
+                                return Ternary::FALSE;
                             }
-                            return Ternary::FALSE;
-                        }
-                        target_position = source_position;
-                    }
+                            source_position
+                        };
                     let mut target_flags = ElementFlags::NONE;
                     if target_position >= 0 {
                         target_flags = self.target_tuple_type(target).element_infos
@@ -560,17 +553,17 @@ impl Checker {
                         (source_flags & target_flags).intersects(ElementFlags::OPTIONAL),
                     );
                     let target_type = target_type_arguments[target_position as usize];
-                    let target_check_type: TypeId;
-                    if source_flags.intersects(ElementFlags::VARIADIC)
+                    let target_check_type: TypeId = if source_flags
+                        .intersects(ElementFlags::VARIADIC)
                         && target_flags.intersects(ElementFlags::REST)
                     {
-                        target_check_type = self.create_array_type(target_type);
+                        self.create_array_type(target_type)
                     } else {
-                        target_check_type = self.remove_missing_type(
+                        self.remove_missing_type(
                             target_type,
                             target_flags.intersects(ElementFlags::OPTIONAL),
-                        );
-                    }
+                        )
+                    };
                     let related = self.is_related_to_ex(
                         r,
                         source_type,
@@ -1497,12 +1490,12 @@ impl Checker {
         let mut result = Ternary::TRUE;
         let key_type = self.index_info(target_info).key_type;
         let target_value_type = self.index_info(target_info).value_type;
-        let props: SharedList<SymbolId>;
-        if self.ty(source).flags.intersects(TypeFlags::INTERSECTION) {
-            props = self.get_properties_of_union_or_intersection_type(source);
-        } else {
-            props = self.get_properties_of_object_type(source);
-        }
+        let props: SharedList<SymbolId> =
+            if self.ty(source).flags.intersects(TypeFlags::INTERSECTION) {
+                self.get_properties_of_union_or_intersection_type(source)
+            } else {
+                self.get_properties_of_object_type(source)
+            };
         for &prop in &props {
             // Skip over ignored JSX and symbol-named members
             if self.is_ignored_jsx_property(source, prop) {
@@ -1515,16 +1508,15 @@ impl Checker {
             );
             if self.is_applicable_index_type(literal, key_type) {
                 let prop_type = self.get_non_missing_type_of_symbol(prop);
-                let t: TypeId;
-                if self.exact_optional_property_types
+                let t: TypeId = if self.exact_optional_property_types
                     || self.ty(prop_type).flags.intersects(TypeFlags::UNDEFINED)
                     || key_type == self.number_type
                     || !self.sym(prop).flags.intersects(SymbolFlags::OPTIONAL)
                 {
-                    t = prop_type;
+                    prop_type
                 } else {
-                    t = self.get_type_with_facts(prop_type, TypeFacts::NE_UNDEFINED);
-                }
+                    self.get_type_with_facts(prop_type, TypeFacts::NE_UNDEFINED)
+                };
                 let related = self.is_related_to_ex(
                     r,
                     t,
@@ -1804,15 +1796,14 @@ impl Checker {
             generalized_source_type = self.get_type_name_for_error_display(generalized_source);
         }
         // If `target` is of indexed access type (and `source` it is not), we use the object type of `target` for better error reporting
-        let target_flags: TypeFlags;
-        if self.ty(target).flags.intersects(TypeFlags::INDEXED_ACCESS)
+        let target_flags: TypeFlags = if self.ty(target).flags.intersects(TypeFlags::INDEXED_ACCESS)
             && !self.ty(source).flags.intersects(TypeFlags::INDEXED_ACCESS)
         {
             let object_type = self.ty(target).as_indexed_access_type().object_type;
-            target_flags = self.ty(object_type).flags;
+            self.ty(object_type).flags
         } else {
-            target_flags = self.ty(target).flags;
-        }
+            self.ty(target).flags
+        };
         if target_flags.intersects(TypeFlags::TYPE_PARAMETER)
             && target != self.marker_super_type_for_check
             && target != self.marker_sub_type_for_check

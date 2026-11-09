@@ -740,9 +740,8 @@ fn encode_semantic_tokens(
         let end_pos = lsp_range.end;
 
         // Length is the character difference when on the same line
-        let token_length: u32;
-        if start_pos.line == end_pos.line {
-            token_length = end_pos.character - start_pos.character;
+        let token_length: u32 = if start_pos.line == end_pos.line {
+            end_pos.character - start_pos.character
         } else {
             crate::core::go_panic(format!(
                 "semantic tokens: token spans multiple lines: start=({},{}) end=({},{}) for token at offset {}",
@@ -752,7 +751,7 @@ fn encode_semantic_tokens(
                 end_pos.character,
                 token.node.pos()
             ));
-        }
+        };
 
         let line = start_pos.line;
         let char = start_pos.character;
@@ -775,12 +774,11 @@ fn encode_semantic_tokens(
 
         // Encode as: [deltaLine, deltaChar, length, tokenType, tokenModifiers]
         let delta_line = line - prev_line;
-        let delta_char: u32;
-        if delta_line == 0 {
-            delta_char = char - prev_char;
+        let delta_char: u32 = if delta_line == 0 {
+            char - prev_char
         } else {
-            delta_char = char;
-        }
+            char
+        };
 
         encoded.extend_from_slice(&[
             delta_line,

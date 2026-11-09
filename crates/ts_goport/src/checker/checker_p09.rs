@@ -1003,13 +1003,12 @@ impl Checker {
     // Go: checker/checker.go:8320 checkQualifiedName
     pub fn check_qualified_name(&mut self, node: Node, check_mode: CheckMode) -> TypeId {
         let left = node.left();
-        let left_type;
-        if is_part_of_type_query(node) && is_this_identifier(left) {
+        let left_type = if is_part_of_type_query(node) && is_this_identifier(left) {
             let this_type = self.check_this_expression(left);
-            left_type = self.check_non_null_type(this_type, left);
+            self.check_non_null_type(this_type, left)
         } else {
-            left_type = self.check_non_null_expression(left);
-        }
+            self.check_non_null_expression(left)
+        };
         self.check_property_access_expression_or_qualified_name(
             node,
             left,
@@ -1070,9 +1069,8 @@ impl Checker {
             effective_index_type = self.number_type;
         }
         let assignment_target_kind = get_assignment_target_kind(node);
-        let access_flags;
-        if assignment_target_kind == AssignmentKind::NONE {
-            access_flags = AccessFlags::EXPRESSION_POSITION;
+        let access_flags = if assignment_target_kind == AssignmentKind::NONE {
+            AccessFlags::EXPRESSION_POSITION
         } else {
             let mut flags = AccessFlags::WRITING;
             if assignment_target_kind == AssignmentKind::COMPOUND {
@@ -1082,8 +1080,8 @@ impl Checker {
             {
                 flags |= AccessFlags::NO_INDEX_SIGNATURES;
             }
-            access_flags = flags;
-        }
+            flags
+        };
         let indexed = self.get_indexed_access_type_or_undefined(
             object_type,
             effective_index_type,

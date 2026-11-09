@@ -572,15 +572,12 @@ fn get_literal_text_of_node_worker(
     if is_string_literal(node) {
         let text_source_node = text_source_of(emit_context, node);
         if text_source_node.is_some() {
-            let text: Cow<'static, str>;
-            match text_source_node.kind() {
-                SyntaxKind::NumericLiteral => {
-                    text = Cow::Borrowed(text_source_node.text());
-                }
+            let text: Cow<'static, str> = match text_source_node.kind() {
+                SyntaxKind::NumericLiteral => Cow::Borrowed(text_source_node.text()),
                 SyntaxKind::Identifier
                 | SyntaxKind::PrivateIdentifier
                 | SyntaxKind::JsxNamespacedName => {
-                    text = get_text_of_node_worker(generator, state, text_source_node, false);
+                    get_text_of_node_worker(generator, state, text_source_node, false)
                 }
                 _ => {
                     return get_literal_text_of_node_worker(
@@ -591,7 +588,7 @@ fn get_literal_text_of_node_worker(
                         flags,
                     );
                 }
-            }
+            };
 
             if flags.intersects(GetLiteralTextFlags::JSX_ATTRIBUTE_ESCAPE) {
                 return Cow::Owned(format!(

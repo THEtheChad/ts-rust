@@ -1189,8 +1189,7 @@ impl NumberConverter<'_> {
             // Not a number.
             return (false, false);
         }
-        let is_zero;
-        if e < self.w.zero {
+        let is_zero = if e < self.w.zero {
             if e > self.w.nine_special_hi {
                 // Not a number.
                 return (false, false);
@@ -1198,11 +1197,11 @@ impl NumberConverter<'_> {
             if !self.is_digit() {
                 return (false, false);
             }
-            is_zero = e <= self.w.zero_special_hi;
+            e <= self.w.zero_special_hi
         } else {
             // This is the common case if we encounter a digit.
-            is_zero = e == self.w.zero;
-        }
+            e == self.w.zero
+        };
         // Test the remaining added collation elements have a zero primary value.
         let n = buf_new.len() - self.elems.len();
         if n > 1 {

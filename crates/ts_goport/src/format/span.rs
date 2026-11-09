@@ -709,17 +709,16 @@ impl<'t> FormatSpanWorker<'t> {
                         false,
                     );
 
-                    let indentation_on_list_start_token;
-                    if self.indentation_on_last_indented_line != -1 {
-                        // scanner just processed list start token so consider last indentation as list indentation
-                        // function foo(): { // last indentation was 0, list item will be indented based on this value
-                        //   foo: number;
-                        // }: {};
-                        indentation_on_list_start_token = self.indentation_on_last_indented_line;
-                    } else {
-                        indentation_on_list_start_token =
-                            self.get_current_indentation_at_position(token_pos);
-                    }
+                    let indentation_on_list_start_token =
+                        if self.indentation_on_last_indented_line != -1 {
+                            // scanner just processed list start token so consider last indentation as list indentation
+                            // function foo(): { // last indentation was 0, list item will be indented based on this value
+                            //   foo: number;
+                            // }: {};
+                            self.indentation_on_last_indented_line
+                        } else {
+                            self.get_current_indentation_at_position(token_pos)
+                        };
 
                     let indent_size = self.options().editor_settings.indent_size;
                     list_dynamic_indentation = Some(self.get_dynamic_indentation(

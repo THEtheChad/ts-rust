@@ -944,8 +944,7 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
 
         let mut new_nodes: Vec<Node> = Vec::new();
 
-        let base_expr_node: Node;
-        if !is_identifier(initializer) {
+        let base_expr_node: Node = if !is_identifier(initializer) {
             // Create a temporary variable for complex expressions
             let temp_name = self
                 .change_tracker
@@ -972,14 +971,13 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
             );
             let var_stmt = factory.new_variable_statement(ModifierList::NIL, var_decl_list);
             new_nodes.push(var_stmt);
-            base_expr_node = temp_name;
+            temp_name
         } else {
             // Use a new identifier to avoid referencing original source positions
-            base_expr_node = self
-                .change_tracker
+            self.change_tracker
                 .node_factory()
-                .new_identifier(initializer.text());
-        }
+                .new_identifier(initializer.text())
+        };
 
         // Extract each binding element as a separate variable with type annotation
         self.extract_binding_elements(
@@ -1525,14 +1523,13 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
             );
 
         let factory = self.change_tracker.node_factory();
-        let initializer: Node;
-        if !is_in_const_context {
-            initializer = factory.deep_clone_node(expression);
+        let initializer: Node = if !is_in_const_context {
+            factory.deep_clone_node(expression)
         } else {
             let const_ref =
                 factory.new_type_reference_node(factory.new_identifier("const"), NodeList::NIL);
-            initializer = factory.new_as_expression(factory.deep_clone_node(expression), const_ref);
-        }
+            factory.new_as_expression(factory.deep_clone_node(expression), const_ref)
+        };
 
         let var_decl =
             factory.new_variable_declaration(temp_name, Node::NIL, Node::NIL, initializer);

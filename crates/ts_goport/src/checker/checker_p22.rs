@@ -1061,7 +1061,6 @@ impl Checker {
                 // For an async function, the return type will not be void/undefined, but rather a Promise for void/undefined.
                 let contextual_return_type =
                     self.get_contextual_return_type(fn_, ContextFlags::NONE);
-                let return_type: TypeId;
                 let mut has_undefined = false;
                 if contextual_return_type.is_some() {
                     let unwrapped = self.unwrap_return_type(contextual_return_type, function_flags);
@@ -1071,11 +1070,11 @@ impl Checker {
                         c.ty(t).flags.intersects(TypeFlags::UNDEFINED)
                     });
                 }
-                if has_undefined {
-                    return_type = self.undefined_type;
+                let return_type: TypeId = if has_undefined {
+                    self.undefined_type
                 } else {
-                    return_type = self.void_type;
-                }
+                    self.void_type
+                };
                 if function_flags.intersects(FunctionFlags::ASYNC) {
                     return self.create_promise_return_type(fn_, return_type);
                 }
@@ -1305,8 +1304,7 @@ impl Checker {
                 is_async,
             );
             append_if_unique_p22(&mut yield_types, yielded);
-            let next_type: TypeId;
-            if yield_expr.asterisk_token().is_some() {
+            let next_type: TypeId = if yield_expr.asterisk_token().is_some() {
                 let use_ = if is_async {
                     IterationUse::ASYNC_YIELD_STAR
                 } else {
@@ -1317,10 +1315,10 @@ impl Checker {
                     use_,
                     yield_expr.expression(),
                 );
-                next_type = iteration_types.next_type;
+                iteration_types.next_type
             } else {
-                next_type = self.get_contextual_type(yield_expr, ContextFlags::NONE);
-            }
+                self.get_contextual_type(yield_expr, ContextFlags::NONE)
+            };
             if next_type.is_some() {
                 append_if_unique_p22(&mut next_types, next_type);
             }

@@ -361,12 +361,11 @@ impl InlayHintState<'_> {
         let mut pos = 0;
         for param in node.parameters() {
             if is_hintable_declaration(param) {
-                let symbol;
-                if is_this_parameter(param) {
-                    symbol = self.checker.sig(signature).this_parameter();
+                let symbol = if is_this_parameter(param) {
+                    self.checker.sig(signature).this_parameter()
                 } else {
-                    symbol = self.checker.sig(signature).parameters()[pos];
-                }
+                    self.checker.sig(signature).parameters()[pos]
+                };
                 self.add_parameter_type_hint(param, symbol);
             }
             if is_this_parameter(param) {
@@ -386,12 +385,11 @@ impl InlayHintState<'_> {
         let Some(type_hints) = type_hints else {
             return;
         };
-        let pos;
-        if node.question_token().is_some() {
-            pos = node.question_token().end();
+        let pos = if node.question_token().is_some() {
+            node.question_token().end()
         } else {
-            pos = node.name().end();
-        }
+            node.name().end()
+        };
         self.add_type_hints(type_hints, pos);
     }
 
@@ -1077,12 +1075,11 @@ impl InlayHintState<'_> {
                 let associated_name = associated_names[index as usize];
                 if associated_name.is_some() {
                     crate::go_assert!(is_identifier(associated_name.name()));
-                    let is_rest_tuple_element;
-                    if is_named_tuple_member(associated_name) {
-                        is_rest_tuple_element = associated_name.dot_dot_dot_token().is_some();
+                    let is_rest_tuple_element = if is_named_tuple_member(associated_name) {
+                        associated_name.dot_dot_dot_token().is_some()
                     } else {
-                        is_rest_tuple_element = associated_name.dot_dot_dot_token().is_some();
-                    }
+                        associated_name.dot_dot_dot_token().is_some()
+                    };
                     return Some(ParameterInfo {
                         parameter: associated_name.name(),
                         name: associated_name.name().text().to_string(),

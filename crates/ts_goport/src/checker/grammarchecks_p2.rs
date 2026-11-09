@@ -290,8 +290,7 @@ impl Checker {
             //    c.IsAccessorDescriptor(previous) is true and IsDataDescriptor(propId.descriptor) is true.
             //    d.IsAccessorDescriptor(previous) is true and IsAccessorDescriptor(propId.descriptor) is true
             // and either both previous and propId.descriptor have[[Get]] fields or both previous and propId.descriptor have[[Set]] fields
-            let current_kind: DeclarationMeaning;
-            match prop_kind {
+            let current_kind: DeclarationMeaning = match prop_kind {
                 SyntaxKind::ShorthandPropertyAssignment | SyntaxKind::PropertyAssignment => {
                     // PORT: Go reads `NamedMemberBase.PostfixToken` from the concrete
                     // node; `postfix_token()` (Go `Node.PostfixToken()`) reads the same
@@ -324,19 +323,13 @@ impl Checker {
                         );
                     }
 
-                    current_kind = DeclarationMeaning::PROPERTY_ASSIGNMENT;
+                    DeclarationMeaning::PROPERTY_ASSIGNMENT
                 }
-                SyntaxKind::MethodDeclaration => {
-                    current_kind = DeclarationMeaning::METHOD;
-                }
-                SyntaxKind::GetAccessor => {
-                    current_kind = DeclarationMeaning::GET_ACCESSOR;
-                }
-                SyntaxKind::SetAccessor => {
-                    current_kind = DeclarationMeaning::SET_ACCESSOR;
-                }
+                SyntaxKind::MethodDeclaration => DeclarationMeaning::METHOD,
+                SyntaxKind::GetAccessor => DeclarationMeaning::GET_ACCESSOR,
+                SyntaxKind::SetAccessor => DeclarationMeaning::SET_ACCESSOR,
                 kind => panic!("Unexpected node kind {:?}", kind),
-            }
+            };
 
             if !in_destructuring {
                 let Some(effective_name) = self.get_effective_property_name_key(name) else {

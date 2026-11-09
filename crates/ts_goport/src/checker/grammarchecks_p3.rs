@@ -7,15 +7,14 @@ impl Checker {
         // `TypeParameterList()` returns that same list.
         let range_ = node.type_parameter_list();
         if !range_.is_nil() {
-            let pos: i32;
-            if range_.pos() == range_.end() {
-                pos = range_.pos();
+            let pos: i32 = if range_.pos() == range_.end() {
+                range_.pos()
             } else {
-                pos = skip_trivia(
+                skip_trivia(
                     &source_file_text(get_source_file_of_node(node)),
                     range_.pos(),
-                );
-            }
+                )
+            };
             return self.grammar_error_at_pos(
                 node,
                 pos,
