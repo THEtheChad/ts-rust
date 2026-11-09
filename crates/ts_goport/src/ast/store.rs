@@ -5568,9 +5568,7 @@ pub(crate) fn static_facts_word(n: Node) -> Option<&'static AtomicU32> {
 #[cold]
 #[inline(never)]
 fn new_static_facts_column(b: &'static FileBlock) -> Option<&'static [AtomicU32]> {
-    if b.file.store.is_none() {
-        return None;
-    }
+    b.file.store?;
     let column = b
         .file
         .subtree_facts

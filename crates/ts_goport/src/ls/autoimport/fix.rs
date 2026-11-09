@@ -1174,9 +1174,7 @@ impl View {
         export: &Export,
         usage_position: Option<lsproto::Position>,
     ) -> Option<Rc<Fix>> {
-        if usage_position.is_none() {
-            return None;
-        }
+        usage_position?;
 
         if get_import_kind(
             self.importing_file,

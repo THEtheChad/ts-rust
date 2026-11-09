@@ -102,9 +102,7 @@ fn analyze_catch_tag_transformation(
     sf: Node,
     transformation: Option<&PipingFlowTransformation>,
 ) -> Option<CatchTagToCatchReasonMatch> {
-    let Some(transformation) = transformation else {
-        return None;
-    };
+    let transformation = transformation?;
     if transformation.args.len() != 2 {
         return None;
     }
@@ -137,9 +135,7 @@ fn analyze_catch_tags_transformation(
     sf: Node,
     transformation: Option<&PipingFlowTransformation>,
 ) -> Option<CatchTagToCatchReasonMatch> {
-    let Some(transformation) = transformation else {
-        return None;
-    };
+    let transformation = transformation?;
     if transformation.args.len() != 1 {
         return None;
     }
@@ -174,9 +170,7 @@ fn analyze_catch_tags_transformation(
         candidate = Some(handler);
         break;
     }
-    let Some(candidate) = candidate else {
-        return None;
-    };
+    let candidate = candidate?;
 
     Some(CatchTagToCatchReasonMatch {
         source_file: sf,

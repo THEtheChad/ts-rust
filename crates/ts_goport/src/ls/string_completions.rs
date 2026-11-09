@@ -132,9 +132,7 @@ impl LanguageService {
         options: &CompilerOptions,
         include_symbols: bool,
     ) -> Option<CompletionList> {
-        let Some(completion) = completion else {
-            return None;
-        };
+        let completion = completion?;
 
         let optional_replacement_range =
             self.create_range_from_string_literal_like_content(file, context_token, position);
@@ -277,9 +275,7 @@ impl LanguageService {
         file: Node,
         position: i32,
     ) -> Option<CompletionList> {
-        let Some(completion) = completion else {
-            return None;
-        };
+        let completion = completion?;
         let is_new_identifier_location = true; // The user may type in a path that doesn't yet exist, creating a "new identifier" with respect to the collection of identifiers the server is aware of.
         let default_commit_characters = get_default_commit_characters(is_new_identifier_location);
         let mut items: Vec<CompletionItem> = completion
@@ -455,9 +451,7 @@ impl LanguageService {
                     // Get string literal completions from specialized signatures of the target
                     // i.e. declare function f(a: 'A');
                     // f("/*completion position*/")
-                    let Some(argument_info) = argument_info else {
-                        return None;
-                    };
+                    let argument_info = argument_info?;
 
                     let result = get_string_literal_completions_from_signature(
                         argument_info.invocation,
@@ -496,9 +490,7 @@ impl LanguageService {
                 let tracker = new_case_clause_tracker(type_checker, &clauses);
                 let contextual_types =
                     from_contextual_type(ContextFlags::IGNORE_NODE_INFERENCES, node, type_checker);
-                let Some(contextual_types) = contextual_types else {
-                    return None;
-                };
+                let contextual_types = contextual_types?;
                 let literals: Vec<TypeId> = contextual_types
                     .types
                     .iter()
@@ -700,9 +692,7 @@ fn from_unionable_literal_type(
                 position,
                 type_checker,
             );
-            let Some(result) = result else {
-                return None;
-            };
+            let result = result?;
             let already_used_types =
                 get_already_used_types_in_string_literal_union(grandparent, parent);
             if let Some(result) = result.from_properties {
@@ -2967,9 +2957,7 @@ impl LanguageService {
                 break;
             }
         }
-        let Some(found_range) = found_range else {
-            return None;
-        };
+        let found_range = found_range?;
 
         // PORT: `position` can cut a char (see `go_text_slice`). Go keeps
         // the cut bytes at the end of `text`. They are not white space,

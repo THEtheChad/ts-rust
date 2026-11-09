@@ -220,9 +220,7 @@ fn analyze_all_of_map_to_for_each_receiver(
         return None;
     }
     let number_index_type = tp.checker.get_number_index_type(map_result_type);
-    if tp.effect_type(number_index_type).is_none() {
-        return None;
-    }
+    tp.effect_type(number_index_type)?;
 
     if options.is_some() {
         let options_type = tp.get_type_at_location(options);

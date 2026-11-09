@@ -163,9 +163,7 @@ fn analyze_typed_schema_decoder_application(
 
     let schema_at = tp.get_type_at_location(schema);
     let schema_type = tp.effect_schema_types(schema_at);
-    let Some(schema_type) = schema_type else {
-        return None;
-    };
+    let schema_type = schema_type?;
     if schema_type.e.is_nil() {
         return None;
     }

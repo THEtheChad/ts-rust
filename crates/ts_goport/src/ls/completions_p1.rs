@@ -209,9 +209,7 @@ pub fn ensure_item_data(
     pos: i32,
     list: Option<lsproto::CompletionList>,
 ) -> Option<lsproto::CompletionList> {
-    let Some(mut list) = list else {
-        return None;
-    };
+    let mut list = list?;
     let text = source_file_text(file);
     let go_pos = go_byte_offset(&text, pos);
     for item in &mut list.items {
@@ -597,9 +595,7 @@ impl CompletionList {
     // PORT: a nil receiver is `None` (the lsproto `resolve` rule). Go shares
     // the item pointers; the items are cloned.
     pub fn to_lsp(l: Option<&CompletionList>) -> Option<lsproto::CompletionList> {
-        let Some(l) = l else {
-            return None;
-        };
+        let l = l?;
         let mut items: Vec<lsproto::CompletionItem> = Vec::with_capacity(l.items.len());
         for entry in &l.items {
             // PORT: Go skips nil entries and nil embedded items; a Rust

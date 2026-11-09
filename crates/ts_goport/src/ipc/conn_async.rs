@@ -619,9 +619,7 @@ impl AsyncConn {
             .borrow_mut()
             .write_request(Some(&id), method, params);
 
-        if let Err(err) = err {
-            return Err(err);
-        }
+        err?;
 
         if let Some(reader) = &reader {
             let wrote = Instant::now();

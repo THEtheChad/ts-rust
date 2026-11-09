@@ -1138,9 +1138,7 @@ impl ResolutionState<'_> {
     // This is used as a fallback after node_modules resolution fails, for declaration file lookups.
     // Returns nil if typeRoots is not configured or if no matching module is found in any typeRoot directory.
     pub fn resolve_from_type_root(&mut self) -> Option<Resolved> {
-        let Some(type_roots) = self.compiler_options.type_roots.clone() else {
-            return None;
-        };
+        let type_roots = self.compiler_options.type_roots.clone()?;
         for type_root in &type_roots {
             let candidate = self.get_candidate_from_type_root(type_root);
             let directory_exists = self.resolver.host.fs().directory_exists(type_root);

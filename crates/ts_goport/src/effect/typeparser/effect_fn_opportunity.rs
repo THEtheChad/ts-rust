@@ -154,9 +154,7 @@ impl TypeParser<'_> {
             return None;
         }
         for member in union_members {
-            if self.strict_effect_type(member).is_none() {
-                return None;
-            }
+            self.strict_effect_type(member)?;
         }
 
         // Step 8: Extract name identifier from context

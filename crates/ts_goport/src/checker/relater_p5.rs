@@ -2058,9 +2058,7 @@ impl Checker {
     ) -> Option<&'static Message> {
         let mut e = r.borrow().error_chain.clone();
         loop {
-            let Some(chain) = e else {
-                return None;
-            };
+            let chain = e?;
             if index == 0 {
                 return Some(chain.message);
             }

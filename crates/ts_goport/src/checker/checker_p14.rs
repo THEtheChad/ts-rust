@@ -1754,13 +1754,13 @@ impl Checker {
             SyntaxKind::PrefixUnaryExpression => {
                 // Unary operators ~, !, +, and - have no side effects.
                 // The rest do.
-                match node.operator() {
+                matches!(
+                    node.operator(),
                     SyntaxKind::ExclamationToken
-                    | SyntaxKind::PlusToken
-                    | SyntaxKind::MinusToken
-                    | SyntaxKind::TildeToken => true,
-                    _ => false,
-                }
+                        | SyntaxKind::PlusToken
+                        | SyntaxKind::MinusToken
+                        | SyntaxKind::TildeToken
+                )
             }
             _ => false,
         }

@@ -1506,14 +1506,11 @@ pub fn relative_path_within_directory<'a>(
     if !roots_equal {
         return None;
     }
-    let relative = match trim_file_path_prefix(
+    let relative = trim_file_path_prefix(
         &child[child_root_length..],
         &parent[parent_root_length..],
         case_sensitive,
-    ) {
-        Some(relative) => relative,
-        None => return None,
-    };
+    )?;
     if !relative.is_empty()
         && !has_trailing_directory_separator(parent)
         && parent.len() != parent_root_length

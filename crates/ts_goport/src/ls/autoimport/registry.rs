@@ -2345,9 +2345,7 @@ impl RegistryBuilder {
         file_exclude_patterns: Option<&vfs::SpecMatcher>,
         enable_directory_search: bool,
     ) -> Option<Rc<PerPackageExtractionResult>> {
-        let Some(package_json_entry) = package_json.as_ref() else {
-            return None;
-        };
+        let package_json_entry = package_json.as_ref()?;
         if !package_json_entry.directory_exists {
             return None;
         }

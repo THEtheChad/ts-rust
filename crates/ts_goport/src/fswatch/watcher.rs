@@ -772,10 +772,7 @@ impl Watcher for WatcherStruct {
     // Go: watcher.go:338 watcher.HasFastRecursiveBackend
     /// HasFastRecursiveBackend implements [Watcher.HasFastRecursiveBackend].
     fn has_fast_recursive_backend(&self) -> bool {
-        match self.name.as_str() {
-            "windows" | "fsevents" => true,
-            _ => false,
-        }
+        matches!(self.name.as_str(), "windows" | "fsevents")
     }
 
     // Go: watcher.go:487 watcher.WatchDirectory

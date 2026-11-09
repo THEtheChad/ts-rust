@@ -1404,18 +1404,17 @@ pub fn get_implied_node_format_for_emit_worker(
 
 // Go: ast/utilities.go:2719 GetDeclarationContainer
 pub fn get_declaration_container(node: Node) -> Node {
-    find_ancestor(
-        get_root_declaration(node),
-        &mut |node: Node| match node.kind() {
+    find_ancestor(get_root_declaration(node), &mut |node: Node| {
+        !matches!(
+            node.kind(),
             SyntaxKind::VariableDeclaration
-            | SyntaxKind::VariableDeclarationList
-            | SyntaxKind::ImportSpecifier
-            | SyntaxKind::NamedImports
-            | SyntaxKind::NamespaceImport
-            | SyntaxKind::ImportClause => false,
-            _ => true,
-        },
-    )
+                | SyntaxKind::VariableDeclarationList
+                | SyntaxKind::ImportSpecifier
+                | SyntaxKind::NamedImports
+                | SyntaxKind::NamespaceImport
+                | SyntaxKind::ImportClause
+        )
+    })
     .parent()
 }
 

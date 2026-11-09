@@ -237,9 +237,7 @@ impl LanguageService {
         // PORT: Go also returns nil for a nil program; the Rust program
         // reference is never nil.
         let program = self.get_program();
-        if program.get_source_file(file_name).is_none() {
-            return None;
-        }
+        program.get_source_file(file_name)?;
 
         let path = self.to_path(file_name);
         // If this is source file of project reference source (instead of redirect) there is no generated position

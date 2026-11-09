@@ -321,9 +321,7 @@ impl<'a, C> NodeVisitor<'a, C> {
     where
         I: Iterator<Item = Node> + Clone,
     {
-        if self.visit.is_none() {
-            return None;
-        }
+        self.visit.as_ref()?;
 
         let prefix = nodes.clone();
         let mut rest = nodes;

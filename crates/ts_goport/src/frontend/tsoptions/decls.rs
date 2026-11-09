@@ -1805,9 +1805,7 @@ impl NameMap {
     #[must_use]
     pub fn get_from_short(&self, short_name: &str) -> Option<&'static CommandLineOption> {
         // returns option only if shortName is a valid short option
-        let Some(name) = self.short_option_names.get(short_name) else {
-            return None;
-        };
+        let name = self.short_option_names.get(short_name)?;
         self.get(name)
     }
 
