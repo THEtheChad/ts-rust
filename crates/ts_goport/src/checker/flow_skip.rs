@@ -385,6 +385,19 @@ struct Count {
     probed: u64,
 }
 
+impl Count {
+    /// The count of a new file: no steps yet, the first gap to go.
+    fn new() -> Count {
+        let gap = FIRST_GAP.min(SAMPLE_EVERY);
+        Count {
+            countdown: gap,
+            gap,
+            measured: 0,
+            probed: 0,
+        }
+    }
+}
+
 enum FileState {
     /// Not indexed yet (`FlowSkip::hot` holds the live count of the hot
     /// file).
@@ -1872,6 +1885,9 @@ impl Checker {
         result.ok()
     }
 
+    /// The test past the countdown: makes the file of `flow` the hot file,
+    /// counts the walk while the file is not indexed, builds its index once
+    /// the count is reached, then checks the walk against the index.
     fn flow_skip_test_worker(
         &mut self,
         reference: Node,
@@ -1884,92 +1900,14 @@ impl Checker {
         }
         let file = flow.file_index();
         if self.flow_skip.hot_file != Some(file as u32) {
-            let count = match self.flow_skip.files.entry(file as u32) {
-                std::collections::hash_map::Entry::Occupied(entry) => match entry.into_mut() {
-                    FileState::Unsupported => return Err(Refusal::File),
-                    FileState::Built(_) => None,
-                    FileState::Counting(count) => Some(*count),
-                },
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Only a static file (the CLI case) is indexed: its flow
-                    // nodes live for the process.
-                    if static_flow_nodes(file).is_none() {
-                        entry.insert(FileState::Unsupported);
-                        return Err(Refusal::File);
-                    }
-                    let gap = FIRST_GAP.min(SAMPLE_EVERY);
-                    let count = Count {
-                        countdown: gap,
-                        gap,
-                        measured: 0,
-                        probed: 0,
-                    };
-                    entry.insert(FileState::Counting(count));
-                    Some(count)
-                }
-            };
-            if let Some(count) = count {
-                // The hot file's count goes back to its entry.
-                let fs = &mut self.flow_skip;
-                if let Some(hot_file) = fs.hot_file
-                    && let Some(FileState::Counting(old)) = fs.files.get_mut(&hot_file)
-                {
-                    *old = fs.hot;
-                }
-                fs.hot_file = Some(file as u32);
-                fs.hot = count;
-            }
+            self.flow_skip_switch_hot_file(file)?;
         }
         if self.flow_skip.hot_file == Some(file as u32) {
             let build_steps = self.flow_skip.build_steps();
-            let hot = &mut self.flow_skip.hot;
             if build_steps > 0 {
-                hot.countdown -= 1;
-                if hot.countdown > 0 {
-                    return Err(Refusal::Counting);
-                }
-                let weight = hot.gap;
-                hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
-                hot.countdown = hot.gap;
-                let flows = static_flow_nodes(file).expect("a counted file is static");
-                let u = flow.local_index();
-                let n = flows.len() as u64;
-                let confirm_steps = u64::from(CONFIRM_STEPS);
-                let check = hot.measured * 2 >= u64::from(build_steps) * n;
-                let (steps, passed) = if u < flows.len() {
-                    self.flow_skip_sample(reference, declared_type, flows, file, u, check)
-                } else {
-                    (0, false)
-                };
-                let hot = &mut self.flow_skip.hot;
-                let steps = u64::from(steps) * u64::from(weight);
-                hot.measured += steps;
-                if passed {
-                    hot.probed += steps;
-                }
-                if hot.measured * 2 >= u64::from(build_steps) * n {
-                    hot.gap = hot.gap.min(NEAR_GAP);
-                    hot.countdown = hot.countdown.min(hot.gap);
-                }
-                if hot.measured < u64::from(build_steps) * n || hot.probed < confirm_steps * n {
-                    return Err(Refusal::Counting);
-                }
+                self.flow_skip_count_walk(reference, declared_type, flow, build_steps)?;
             }
-            let flows = static_flow_nodes(file).expect("a counted file is static");
-            #[cfg(feature = "diagnostics")]
-            let start = std::time::Instant::now();
-            let index = FileIndex::build(file, flows, self.strict_null_checks);
-            self.flow_skip
-                .files
-                .insert(file as u32, FileState::Built(Box::new(index)));
-            self.flow_skip.hot_file = None;
-            #[cfg(feature = "diagnostics")]
-            {
-                let stats = &mut self.flow_skip.stats;
-                stats.built += 1;
-                stats.built_nodes += flows.len() as u64;
-                stats.build_ns += start.elapsed().as_nanos() as u64;
-            }
+            self.flow_skip_build_index(file);
         }
         let mut files = std::mem::take(&mut self.flow_skip.files);
         let Some(FileState::Built(index)) = files.get_mut(&(file as u32)) else {
@@ -1982,6 +1920,112 @@ impl Checker {
         }
         self.flow_skip.files = files;
         result
+    }
+
+    /// Makes `file` the hot file when it is counting (a new static file
+    /// starts its count here): the old hot file's live count goes back to
+    /// its entry. A built file leaves the hot file as it is; a file that is
+    /// not static is refused.
+    #[inline]
+    fn flow_skip_switch_hot_file(&mut self, file: usize) -> Result<(), Refusal> {
+        let count = match self.flow_skip.files.entry(file as u32) {
+            std::collections::hash_map::Entry::Occupied(entry) => match entry.into_mut() {
+                FileState::Unsupported => return Err(Refusal::File),
+                FileState::Built(_) => None,
+                FileState::Counting(count) => Some(*count),
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                // Only a static file (the CLI case) is indexed: its flow
+                // nodes live for the process.
+                if static_flow_nodes(file).is_none() {
+                    entry.insert(FileState::Unsupported);
+                    return Err(Refusal::File);
+                }
+                let count = Count::new();
+                entry.insert(FileState::Counting(count));
+                Some(count)
+            }
+        };
+        if let Some(count) = count {
+            // The hot file's count goes back to its entry.
+            let fs = &mut self.flow_skip;
+            if let Some(hot_file) = fs.hot_file
+                && let Some(FileState::Counting(old)) = fs.files.get_mut(&hot_file)
+            {
+                *old = fs.hot;
+            }
+            fs.hot_file = Some(file as u32);
+            fs.hot = count;
+        }
+        Ok(())
+    }
+
+    /// Counts one walk of the hot file (see `Count`): the countdown, and
+    /// at its end a measured walk (`flow_skip_sample`) weighted by the gap.
+    /// `Ok` when the file has reached `build_steps` and `CONFIRM_STEPS` per
+    /// flow node and is to be indexed now.
+    #[inline]
+    fn flow_skip_count_walk(
+        &mut self,
+        reference: Node,
+        declared_type: TypeId,
+        flow: FlowNodeId,
+        build_steps: u32,
+    ) -> Result<(), Refusal> {
+        let file = flow.file_index();
+        let hot = &mut self.flow_skip.hot;
+        hot.countdown -= 1;
+        if hot.countdown > 0 {
+            return Err(Refusal::Counting);
+        }
+        let weight = hot.gap;
+        hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
+        hot.countdown = hot.gap;
+        let flows = static_flow_nodes(file).expect("a counted file is static");
+        let u = flow.local_index();
+        let n = flows.len() as u64;
+        let confirm_steps = u64::from(CONFIRM_STEPS);
+        let check = hot.measured * 2 >= u64::from(build_steps) * n;
+        let (steps, passed) = if u < flows.len() {
+            self.flow_skip_sample(reference, declared_type, flows, file, u, check)
+        } else {
+            (0, false)
+        };
+        let hot = &mut self.flow_skip.hot;
+        let steps = u64::from(steps) * u64::from(weight);
+        hot.measured += steps;
+        if passed {
+            hot.probed += steps;
+        }
+        if hot.measured * 2 >= u64::from(build_steps) * n {
+            hot.gap = hot.gap.min(NEAR_GAP);
+            hot.countdown = hot.countdown.min(hot.gap);
+        }
+        if hot.measured < u64::from(build_steps) * n || hot.probed < confirm_steps * n {
+            return Err(Refusal::Counting);
+        }
+        Ok(())
+    }
+
+    /// Builds the index of the hot file `file` and ends its count. Runs
+    /// once per indexed file, so it stays out of line.
+    #[inline(never)]
+    fn flow_skip_build_index(&mut self, file: usize) {
+        let flows = static_flow_nodes(file).expect("a counted file is static");
+        #[cfg(feature = "diagnostics")]
+        let start = std::time::Instant::now();
+        let index = FileIndex::build(file, flows, self.strict_null_checks);
+        self.flow_skip
+            .files
+            .insert(file as u32, FileState::Built(Box::new(index)));
+        self.flow_skip.hot_file = None;
+        #[cfg(feature = "diagnostics")]
+        {
+            let stats = &mut self.flow_skip.stats;
+            stats.built += 1;
+            stats.built_nodes += flows.len() as u64;
+            stats.build_ns += start.elapsed().as_nanos() as u64;
+        }
     }
 
     /// The steps of pi(u) to its root (no move to an outer function, at
