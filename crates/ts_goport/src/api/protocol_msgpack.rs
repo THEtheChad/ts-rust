@@ -222,18 +222,17 @@ impl MessagePackProtocol {
 
         // Read message type - can be positive fixint (0x00-0x7F) or uint8 (0xCC + value)
         let t = read_byte(&mut self.r)?;
-        let raw_type: u8;
-        if t <= 0x7F {
+        let raw_type: u8 = if t <= 0x7F {
             // Positive fixint - the byte IS the value
-            raw_type = t;
+            t
         } else if t == MSGPACK_U8 {
             // uint8 marker - next byte is the value
-            raw_type = read_byte(&mut self.r)?;
+            read_byte(&mut self.r)?
         } else {
             return Err(invalid_request(format!(
                 "expected positive fixint or uint8 marker, received: 0x{t:02x}"
             )));
-        }
+        };
         let msg_type = MessageType(raw_type);
         if !msg_type.is_valid() {
             return Err(invalid_request(format!(

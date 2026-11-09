@@ -501,16 +501,15 @@ impl Checker {
                     go_assert!(index >= 0);
                     // A parameter declaration decorator will have three arguments (see `ParameterDecorator` in
                     // core.d.ts).
-                    let target_type;
-                    let key_type;
-                    if is_constructor_declaration(node.parent()) {
+                    let (target_type, key_type) = if is_constructor_declaration(node.parent()) {
                         let symbol = self.get_symbol_of_declaration(node.parent().parent());
-                        target_type = self.get_type_of_symbol(symbol);
-                        key_type = self.undefined_type;
+                        (self.get_type_of_symbol(symbol), self.undefined_type)
                     } else {
-                        target_type = self.get_parent_type_of_class_element(node.parent());
-                        key_type = self.get_class_element_property_key_type(node.parent());
-                    }
+                        (
+                            self.get_parent_type_of_class_element(node.parent()),
+                            self.get_class_element_property_key_type(node.parent()),
+                        )
+                    };
                     let index_type = self.get_number_literal_type(Number::from(index as f64));
                     let target_param = self.new_parameter("target", target_type);
                     let key_param = self.new_parameter("propertyKey", key_type);

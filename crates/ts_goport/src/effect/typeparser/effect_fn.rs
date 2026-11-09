@@ -253,7 +253,6 @@ impl TypeParser<'_> {
 
             let expression_to_check: Node;
             let mut trace_expression = Node::NIL;
-            let variant: EffectFnVariant;
 
             if expr.kind() == SyntaxKind::CallExpression {
                 let inner_call = expr;
@@ -274,15 +273,17 @@ impl TypeParser<'_> {
                 break 'compute None;
             }
 
-            if self.is_node_reference_to_effect_module_api(expression_to_check, member!("fn")) {
-                variant = EffectFnVariant::Fn;
+            let variant: EffectFnVariant = if self
+                .is_node_reference_to_effect_module_api(expression_to_check, member!("fn"))
+            {
+                EffectFnVariant::Fn
             } else if self
                 .is_node_reference_to_effect_module_api(expression_to_check, member!("fnUntraced"))
             {
                 if trace_expression.is_some() {
                     break 'compute None;
                 }
-                variant = EffectFnVariant::FnUntraced;
+                EffectFnVariant::FnUntraced
             } else if self.is_node_reference_to_effect_module_api(
                 expression_to_check,
                 member!("fnUntracedEager"),
@@ -290,10 +291,10 @@ impl TypeParser<'_> {
                 if trace_expression.is_some() {
                     break 'compute None;
                 }
-                variant = EffectFnVariant::FnUntracedEager;
+                EffectFnVariant::FnUntracedEager
             } else {
                 break 'compute None;
-            }
+            };
 
             let mut effect_module = Node::NIL;
             if expression_to_check.kind() == SyntaxKind::PropertyAccessExpression {

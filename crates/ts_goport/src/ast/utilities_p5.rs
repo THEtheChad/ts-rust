@@ -991,15 +991,12 @@ pub fn get_all_accessor_declarations_for_declaration(
         }
     }
 
-    let first_accessor;
-    let second_accessor;
-    if other_accessor.is_some() && (other_accessor.pos() < accessor.pos()) {
-        first_accessor = other_accessor;
-        second_accessor = accessor;
-    } else {
-        first_accessor = accessor;
-        second_accessor = other_accessor;
-    }
+    let (first_accessor, second_accessor) =
+        if other_accessor.is_some() && (other_accessor.pos() < accessor.pos()) {
+            (other_accessor, accessor)
+        } else {
+            (accessor, other_accessor)
+        };
 
     let mut set_accessor = Node::NIL;
     let mut get_accessor = Node::NIL;

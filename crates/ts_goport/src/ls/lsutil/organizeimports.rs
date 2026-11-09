@@ -32,22 +32,22 @@ pub fn filter_import_declarations(statements: &[Node]) -> Vec<Node> {
 pub fn get_detection_lists(
     preferences: &UserPreferences,
 ) -> (Vec<StringComparer>, Vec<OrganizeImportsTypeOrder>) {
-    let comparers_to_test: Vec<StringComparer>;
-    if preferences.organize_imports_sort != OrganizeImportsSort::AUTO {
-        comparers_to_test = vec![get_organize_imports_preset_string_comparer(
-            preferences.organize_imports_sort,
-        )];
-    } else if !preferences.organize_imports_ignore_case.is_unknown() {
-        comparers_to_test = vec![get_organize_imports_string_comparer(
-            preferences,
-            preferences.organize_imports_ignore_case.is_true(),
-        )];
-    } else {
-        comparers_to_test = vec![
-            get_organize_imports_string_comparer(preferences, true),
-            get_organize_imports_string_comparer(preferences, false),
-        ];
-    }
+    let comparers_to_test: Vec<StringComparer> =
+        if preferences.organize_imports_sort != OrganizeImportsSort::AUTO {
+            vec![get_organize_imports_preset_string_comparer(
+                preferences.organize_imports_sort,
+            )]
+        } else if !preferences.organize_imports_ignore_case.is_unknown() {
+            vec![get_organize_imports_string_comparer(
+                preferences,
+                preferences.organize_imports_ignore_case.is_true(),
+            )]
+        } else {
+            vec![
+                get_organize_imports_string_comparer(preferences, true),
+                get_organize_imports_string_comparer(preferences, false),
+            ]
+        };
 
     let type_orders_to_test: Vec<OrganizeImportsTypeOrder> =
         if preferences.organize_imports_type_order != OrganizeImportsTypeOrder::AUTO {

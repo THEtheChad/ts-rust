@@ -698,14 +698,13 @@ fn find_expando_function(ch: &mut Checker, node: Node) -> Node {
         }
     }
 
-    let expression: Node;
-    if is_property_access_expression(assignment_target) {
-        expression = assignment_target.expression();
+    let expression: Node = if is_property_access_expression(assignment_target) {
+        assignment_target.expression()
     } else if is_element_access_expression(assignment_target) {
-        expression = assignment_target.expression();
+        assignment_target.expression()
     } else {
         return Node::NIL;
-    }
+    };
 
     let target_type = ch.get_type_at_location(expression);
     if target_type.is_nil() {
@@ -1047,57 +1046,57 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
                 }
 
                 // Build property access expression
-                let access_expr: Node;
                 let property_name = be.property_name();
-                if property_name.is_some() && is_computed_property_name(property_name) {
-                    // Handle computed property names: create a temp variable for the computed expression
-                    let computed_expression = property_name.expression();
-                    let identifier_for_computed_property = self
-                        .change_tracker
-                        .emit_context
-                        .factory()
-                        .new_generated_name_for_node(computed_expression);
-                    let factory = self.change_tracker.node_factory();
-                    let comp_var_decl = factory.new_variable_declaration(
-                        identifier_for_computed_property,
-                        Node::NIL,
-                        Node::NIL,
-                        computed_expression,
-                    );
-                    let comp_var_decl_list = factory.new_variable_declaration_list(
-                        factory.new_node_list(&[comp_var_decl]),
-                        NodeFlags::CONST,
-                    );
-                    let comp_var_stmt =
-                        factory.new_variable_statement(ModifierList::NIL, comp_var_decl_list);
-                    new_nodes.push(comp_var_stmt);
-                    access_expr = factory.new_element_access_expression(
-                        base_expr,
-                        Node::NIL,
-                        identifier_for_computed_property,
-                        NodeFlags::NONE,
-                    );
-                } else if property_name.is_some() {
-                    // Use property name text (handles identifiers, string literals, numeric literals)
-                    let prop_text = property_name.text();
-                    let factory = self.change_tracker.node_factory();
-                    access_expr = factory.new_property_access_expression(
-                        base_expr,
-                        Node::NIL,
-                        factory.new_identifier(prop_text),
-                        NodeFlags::NONE,
-                    );
-                } else if is_identifier(name) {
-                    let factory = self.change_tracker.node_factory();
-                    access_expr = factory.new_property_access_expression(
-                        base_expr,
-                        Node::NIL,
-                        factory.new_identifier(name.text()),
-                        NodeFlags::NONE,
-                    );
-                } else {
-                    continue;
-                }
+                let access_expr: Node =
+                    if property_name.is_some() && is_computed_property_name(property_name) {
+                        // Handle computed property names: create a temp variable for the computed expression
+                        let computed_expression = property_name.expression();
+                        let identifier_for_computed_property = self
+                            .change_tracker
+                            .emit_context
+                            .factory()
+                            .new_generated_name_for_node(computed_expression);
+                        let factory = self.change_tracker.node_factory();
+                        let comp_var_decl = factory.new_variable_declaration(
+                            identifier_for_computed_property,
+                            Node::NIL,
+                            Node::NIL,
+                            computed_expression,
+                        );
+                        let comp_var_decl_list = factory.new_variable_declaration_list(
+                            factory.new_node_list(&[comp_var_decl]),
+                            NodeFlags::CONST,
+                        );
+                        let comp_var_stmt =
+                            factory.new_variable_statement(ModifierList::NIL, comp_var_decl_list);
+                        new_nodes.push(comp_var_stmt);
+                        factory.new_element_access_expression(
+                            base_expr,
+                            Node::NIL,
+                            identifier_for_computed_property,
+                            NodeFlags::NONE,
+                        )
+                    } else if property_name.is_some() {
+                        // Use property name text (handles identifiers, string literals, numeric literals)
+                        let prop_text = property_name.text();
+                        let factory = self.change_tracker.node_factory();
+                        factory.new_property_access_expression(
+                            base_expr,
+                            Node::NIL,
+                            factory.new_identifier(prop_text),
+                            NodeFlags::NONE,
+                        )
+                    } else if is_identifier(name) {
+                        let factory = self.change_tracker.node_factory();
+                        factory.new_property_access_expression(
+                            base_expr,
+                            Node::NIL,
+                            factory.new_identifier(name.text()),
+                            NodeFlags::NONE,
+                        )
+                    } else {
+                        continue;
+                    };
 
                 if is_binding_pattern(name) {
                     self.extract_binding_elements(name, access_expr, new_nodes, enclosing_var_stmt);

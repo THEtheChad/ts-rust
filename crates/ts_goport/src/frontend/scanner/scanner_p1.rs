@@ -1637,14 +1637,13 @@ impl<'a> Scanner<'a> {
             return;
         }
         pos += 1;
-        let kind;
-        if text[pos..].starts_with(b"ts-expect-error") {
-            kind = CommentDirectiveKind::EXPECT_ERROR;
+        let kind = if text[pos..].starts_with(b"ts-expect-error") {
+            CommentDirectiveKind::EXPECT_ERROR
         } else if text[pos..].starts_with(b"ts-ignore") {
-            kind = CommentDirectiveKind::IGNORE;
+            CommentDirectiveKind::IGNORE
         } else {
             return;
-        }
+        };
         // Go: append(s.commentDirectives, ...) on the state's slice header.
         let len = self.scanner_state.comment_directives_len;
         self.comment_directives.truncate(len);

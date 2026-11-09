@@ -329,23 +329,21 @@ impl SuperAccessState {
     // PORT: Go passes `s.superAccessVisitor` as `visitor`; it is built here.
     fn substitute_call_expression_with_super_access(&mut self, call: Node) -> Node {
         let expression = call.expression();
-        let target;
 
-        if is_property_access_expression(expression) {
+        let target = if is_property_access_expression(expression) {
             // super.x(args) → _super.x.call(this, args)
-            target = self.factory().new_property_access_expression(
+            self.factory().new_property_access_expression(
                 self.super_binding,
                 Node::NIL,
                 expression.name(),
                 NodeFlags::NONE,
-            );
+            )
         } else if is_element_access_expression(expression) {
             // super[x](args) → _superIndex(x).call(this, args) or _superIndex(x).value.call(this, args)
-            target =
-                self.create_super_element_access_in_async_method(expression.argument_expression());
+            self.create_super_element_access_in_async_method(expression.argument_expression())
         } else {
             return self.with_super_access_visitor(|v| v.visit_each_child(call));
-        }
+        };
 
         let ec = self
             .emit_context

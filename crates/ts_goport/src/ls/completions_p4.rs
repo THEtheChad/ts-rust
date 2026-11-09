@@ -1487,18 +1487,16 @@ impl LanguageService {
                     if !tracker.has_value(&value) {
                         match value {
                             LiteralValue::PseudoBigInt(mut v) => {
-                                let big_int: Node;
-                                if v.negative {
+                                let big_int: Node = if v.negative {
                                     v.negative = false;
-                                    big_int = factory.new_prefix_unary_expression(
+                                    factory.new_prefix_unary_expression(
                                         SyntaxKind::MinusToken,
                                         factory
                                             .new_big_int_literal(format!("{v}n"), TokenFlags::NONE),
-                                    );
+                                    )
                                 } else {
-                                    big_int = factory
-                                        .new_big_int_literal(format!("{v}n"), TokenFlags::NONE);
-                                }
+                                    factory.new_big_int_literal(format!("{v}n"), TokenFlags::NONE)
+                                };
                                 elements.push(big_int);
                             }
                             LiteralValue::Number(v) => {

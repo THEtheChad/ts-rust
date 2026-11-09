@@ -1057,14 +1057,13 @@ fn match_string(text: &str, pos: &mut usize, expected: &str) -> bool {
 // Go: printer/utilities.go:767 matchQuotedString
 fn match_quoted_string(text: &str, pos: &mut usize) -> bool {
     let mut text_pos = *pos;
-    let quote_char;
-    if match_rune(text, &mut text_pos, '\'') {
-        quote_char = '\'';
+    let quote_char = if match_rune(text, &mut text_pos, '\'') {
+        '\''
     } else if match_rune(text, &mut text_pos, '"') {
-        quote_char = '"';
+        '"'
     } else {
         return false;
-    }
+    };
     while text_pos < text.len() {
         let (ch, size) = decode_rune_in_string(text, text_pos);
         text_pos += size;

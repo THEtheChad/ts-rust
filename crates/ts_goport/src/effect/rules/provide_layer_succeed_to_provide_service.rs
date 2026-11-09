@@ -116,15 +116,16 @@ fn inline_single_service_layer(
         return None;
     }
     let transformation = &flow.transformations[0];
-    let replacement;
-    if tp.is_node_reference_to_effect_layer_module_api(transformation.callee, member!("succeed")) {
-        replacement = "provideService".to_string();
+    let replacement = if tp
+        .is_node_reference_to_effect_layer_module_api(transformation.callee, member!("succeed"))
+    {
+        "provideService".to_string()
     } else if tp
         .is_node_reference_to_effect_layer_module_api(transformation.callee, member!("effect"))
     {
-        replacement = "provideServiceEffect".to_string();
+        "provideServiceEffect".to_string()
     } else {
         return None;
-    }
+    };
     Some((transformation.args[0], flow.subject.node, replacement))
 }

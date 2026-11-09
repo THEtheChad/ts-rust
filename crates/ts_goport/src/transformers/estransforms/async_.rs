@@ -1010,8 +1010,7 @@ impl AsyncTransformer {
                 .substitute_super_accesses_in_body(async_body);
         }
 
-        let result;
-        if !is_arrow {
+        let result = if !is_arrow {
             ec.start_variable_environment();
 
             // Minor optimization, emit `_super` helper to capture `super` access in an arrow.
@@ -1046,7 +1045,7 @@ impl AsyncTransformer {
                 }
             }
 
-            result = block;
+            block
         } else {
             let mut r = f.new_awaiter_helper(
                 has_lexical_this,
@@ -1069,8 +1068,8 @@ impl AsyncTransformer {
                     block.multi_line(),
                 );
             }
-            result = r;
-        }
+            r
+        };
 
         self.enclosing_function_parameter_names = saved_enclosing_function_parameter_names;
         if !is_arrow {

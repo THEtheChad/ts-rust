@@ -1771,15 +1771,17 @@ impl Checker {
                 (n.key_type, n.value_type, n.is_readonly)
             };
             if key_type == new_key_type {
-                let result_value_type;
-                let result_is_readonly;
-                if union {
-                    result_value_type = self.get_union_type(&[value_type, new_value_type]);
-                    result_is_readonly = is_readonly || new_is_readonly;
+                let (result_value_type, result_is_readonly) = if union {
+                    (
+                        self.get_union_type(&[value_type, new_value_type]),
+                        is_readonly || new_is_readonly,
+                    )
                 } else {
-                    result_value_type = self.get_intersection_type(&[value_type, new_value_type]);
-                    result_is_readonly = is_readonly && new_is_readonly;
-                }
+                    (
+                        self.get_intersection_type(&[value_type, new_value_type]),
+                        is_readonly && new_is_readonly,
+                    )
+                };
                 index_infos[i] = self.new_index_info(
                     key_type,
                     result_value_type,

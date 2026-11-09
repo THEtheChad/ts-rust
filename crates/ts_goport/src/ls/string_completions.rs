@@ -2236,15 +2236,15 @@ impl LanguageService {
         // The prefix has two effective parts: the directory path and the base component after the filepath that is not a
         // full directory component. For example: directory/path/of/prefix/base*
         let normalized_prefix = tspath::resolve_path(prefix, &[]);
-        let normalized_prefix_directory;
-        let normalized_prefix_base;
-        if tspath::has_trailing_directory_separator(prefix) {
-            normalized_prefix_directory = normalized_prefix;
-            normalized_prefix_base = String::new();
-        } else {
-            normalized_prefix_directory = tspath::get_directory_path(&normalized_prefix);
-            normalized_prefix_base = tspath::get_base_file_name(&normalized_prefix);
-        }
+        let (normalized_prefix_directory, normalized_prefix_base) =
+            if tspath::has_trailing_directory_separator(prefix) {
+                (normalized_prefix, String::new())
+            } else {
+                (
+                    tspath::get_directory_path(&normalized_prefix),
+                    tspath::get_base_file_name(&normalized_prefix),
+                )
+            };
 
         let fragment_has_path = contains_slash(fragment);
         let mut fragment_directory = String::new();

@@ -1607,19 +1607,18 @@ impl Checker {
         let mut types: Vec<TypeId> = vec![TypeId::NIL; length];
         let mut infos: Vec<TupleElementInfo> = vec![TupleElementInfo::default(); length];
         for i in 0..length {
-            let flags: ElementFlags;
             let position = i as i32 + pos;
-            if rest_type.is_nil() || i < length - 1 {
+            let flags: ElementFlags = if rest_type.is_nil() || i < length - 1 {
                 types[i] = self.get_type_at_position(source, position);
-                flags = if position < min_argument_count {
+                if position < min_argument_count {
                     ElementFlags::REQUIRED
                 } else {
                     ElementFlags::OPTIONAL
-                };
+                }
             } else {
                 types[i] = rest_type;
-                flags = ElementFlags::VARIADIC;
-            }
+                ElementFlags::VARIADIC
+            };
             let labeled_declaration = self.get_nameable_declaration_at_position(source, position);
             infos[i] = TupleElementInfo {
                 flags,

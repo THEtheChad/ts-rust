@@ -382,21 +382,20 @@ fn delete_node_in_list(
     deleted_nodes_in_lists.insert(node);
 
     let start_pos = t.start_position_to_delete_node_in_list(source_file, node);
-    let end_pos: i32;
-    if index == containing_nodes.len() as i32 - 1 {
-        end_pos = t.get_adjusted_end_position(source_file, node, TrailingTriviaOption::NONE);
+    let end_pos: i32 = if index == containing_nodes.len() as i32 - 1 {
+        t.get_adjusted_end_position(source_file, node, TrailingTriviaOption::NONE)
     } else {
         let mut prev_node = Node::NIL;
         if index > 0 {
             prev_node = containing_nodes.get((index - 1) as usize);
         }
-        end_pos = t.end_position_to_delete_node_in_list(
+        t.end_position_to_delete_node_in_list(
             source_file,
             node,
             prev_node,
             containing_nodes.get((index + 1) as usize),
-        );
-    }
+        )
+    };
 
     t.replace_text_range_with_text(source_file, TextRange::new(start_pos, end_pos), "");
 }

@@ -1112,21 +1112,22 @@ impl<'a> Parser<'a> {
     ) -> Node {
         let name = self.parse_property_name();
         let question_token = self.parse_optional_token(SyntaxKind::QuestionToken);
-        let result;
-        if self.token == SyntaxKind::OpenParenToken || self.token == SyntaxKind::LessThanToken {
+        let result = if self.token == SyntaxKind::OpenParenToken
+            || self.token == SyntaxKind::LessThanToken
+        {
             // Method signatures don't exist in expression contexts.  So they have neither
             // [Yield] nor [Await]
             let type_parameters = self.parse_type_parameters();
             let parameters = self.parse_parameters(ParseFlags::TYPE);
             let return_type = self.parse_return_type(SyntaxKind::ColonToken, true /*isType*/);
-            result = self.factory.new_method_signature_declaration(
+            self.factory.new_method_signature_declaration(
                 modifiers,
                 name,
                 question_token,
                 type_parameters,
                 parameters,
                 return_type,
-            );
+            )
         } else {
             let type_node = self.parse_type_annotation();
             // Although type literal properties cannot not have initializers, we attempt
@@ -1136,14 +1137,14 @@ impl<'a> Parser<'a> {
             if self.token == SyntaxKind::EqualsToken {
                 initializer = self.parse_initializer();
             }
-            result = self.factory.new_property_signature_declaration(
+            self.factory.new_property_signature_declaration(
                 modifiers,
                 name,
                 question_token,
                 type_node,
                 initializer,
-            );
-        }
+            )
+        };
         self.parse_type_member_semicolon();
         let finished = self.finish_node(result, pos);
         self.with_js_doc(finished, jsdoc);

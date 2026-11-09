@@ -878,15 +878,14 @@ impl Checker {
             let cached = self.signature_links.get(iife).resolved_signature;
             let any_signature = self.any_signature;
             self.signature_links.get(iife).resolved_signature = any_signature;
-            let t;
-            if index_of_parameter < args.len() as i32 {
+            let t = if index_of_parameter < args.len() as i32 {
                 let arg_type = self.check_expression(args.get(index_of_parameter as usize));
-                t = self.get_widened_literal_type(arg_type);
+                self.get_widened_literal_type(arg_type)
             } else if parameter.initializer().is_some() {
-                t = TypeId::NIL;
+                TypeId::NIL
             } else {
-                t = self.undefined_widening_type;
-            }
+                self.undefined_widening_type
+            };
             self.signature_links.get(iife).resolved_signature = cached;
             return t;
         }

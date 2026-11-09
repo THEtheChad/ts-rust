@@ -1442,20 +1442,20 @@ impl Checker {
             if !local_flags.intersects(SymbolFlags::VARIABLE)
                 && !(is_in_js_file(node) && local_flags.intersects(SymbolFlags::VALUE_MODULE))
             {
-                let assignment_error: &'static Message;
-                if local_flags.intersects(SymbolFlags::ENUM) {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_an_enum;
-                } else if local_flags.intersects(SymbolFlags::CLASS) {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_a_class;
-                } else if local_flags.intersects(SymbolFlags::MODULE) {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_a_namespace;
-                } else if local_flags.intersects(SymbolFlags::FUNCTION) {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_a_function;
-                } else if local_flags.intersects(SymbolFlags::ALIAS) {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_an_import;
-                } else {
-                    assignment_error = diag::Cannot_assign_to_0_because_it_is_not_a_variable;
-                }
+                let assignment_error: &'static Message =
+                    if local_flags.intersects(SymbolFlags::ENUM) {
+                        diag::Cannot_assign_to_0_because_it_is_an_enum
+                    } else if local_flags.intersects(SymbolFlags::CLASS) {
+                        diag::Cannot_assign_to_0_because_it_is_a_class
+                    } else if local_flags.intersects(SymbolFlags::MODULE) {
+                        diag::Cannot_assign_to_0_because_it_is_a_namespace
+                    } else if local_flags.intersects(SymbolFlags::FUNCTION) {
+                        diag::Cannot_assign_to_0_because_it_is_a_function
+                    } else if local_flags.intersects(SymbolFlags::ALIAS) {
+                        diag::Cannot_assign_to_0_because_it_is_an_import
+                    } else {
+                        diag::Cannot_assign_to_0_because_it_is_not_a_variable
+                    };
                 let symbol_string = self.symbol_to_string(symbol);
                 self.error(node, assignment_error, args![symbol_string]);
                 return self.error_type;
@@ -1561,18 +1561,17 @@ impl Checker {
             || parent_kind == SyntaxKind::NonNullExpression
             || is_variable_declaration(declaration) && declaration.exclamation_token().is_some()
             || declaration.flags().intersects(NodeFlags::AMBIENT);
-        let initial_type;
-        if is_automatic_type_in_non_null {
-            initial_type = self.undefined_type;
+        let initial_type = if is_automatic_type_in_non_null {
+            self.undefined_type
         } else if assume_initialized && is_parameter {
-            initial_type = self.remove_optionality_from_declared_type(t, declaration);
+            self.remove_optionality_from_declared_type(t, declaration)
         } else if assume_initialized {
-            initial_type = t;
+            t
         } else if type_is_automatic {
-            initial_type = self.undefined_type;
+            self.undefined_type
         } else {
-            initial_type = self.get_optional_type(t, false /*isProperty*/);
-        }
+            self.get_optional_type(t, false /*isProperty*/)
+        };
         let flow_type = if is_automatic_type_in_non_null {
             let flow = self.get_flow_type_of_reference_ex(
                 node,

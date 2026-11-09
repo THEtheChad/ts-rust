@@ -1600,30 +1600,23 @@ impl GetCompletionDataState<'_> {
                             // (nil map), which is `None` in p2's set value.
                             symbol_can_be_referenced_at_type_location(s, c, None)
                         };
-                        let is_valid_access;
-                        if is_namespace_name {
+                        let is_valid_access = if is_namespace_name {
                             // At `namespace N.M/**/`, if this is the only declaration of `M`, don't include `M` as a completion.
                             let exported = self.type_checker.sym(exported_symbol);
-                            is_valid_access = exported.flags.intersects(SymbolFlags::NAMESPACE)
+                            exported.flags.intersects(SymbolFlags::NAMESPACE)
                                 && !exported
                                     .declarations
                                     .iter()
-                                    .all(|declaration| declaration.parent() == node.parent());
+                                    .all(|declaration| declaration.parent() == node.parent())
                         } else if is_rhs_of_import_declaration {
                             // Any kind is allowed when dotting off namespace in internal import equals declaration
-                            is_valid_access =
-                                is_valid_type_access(&mut *self.type_checker, exported_symbol)
-                                    || is_valid_value_access(
-                                        &mut *self.type_checker,
-                                        exported_symbol,
-                                    );
+                            is_valid_type_access(&mut *self.type_checker, exported_symbol)
+                                || is_valid_value_access(&mut *self.type_checker, exported_symbol)
                         } else if is_type_location || self.inside_js_doc_tag_type_expression {
-                            is_valid_access =
-                                is_valid_type_access(&mut *self.type_checker, exported_symbol);
+                            is_valid_type_access(&mut *self.type_checker, exported_symbol)
                         } else {
-                            is_valid_access =
-                                is_valid_value_access(&mut *self.type_checker, exported_symbol);
-                        }
+                            is_valid_value_access(&mut *self.type_checker, exported_symbol)
+                        };
                         if is_valid_access {
                             self.symbols.push(exported_symbol);
                         }

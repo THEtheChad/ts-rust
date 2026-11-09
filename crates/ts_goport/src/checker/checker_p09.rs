@@ -941,8 +941,7 @@ impl Checker {
             );
             return self.create_array_literal_type(tuple);
         }
-        let element_type;
-        if !element_types.is_empty() {
+        let element_type = if !element_types.is_empty() {
             for i in 0..element_types.len() {
                 if element_infos[i].flags.intersects(ElementFlags::VARIADIC) {
                     let e = element_types[i];
@@ -960,15 +959,14 @@ impl Checker {
                     };
                 }
             }
-            element_type =
-                self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL);
+            self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL)
         } else {
-            element_type = if self.strict_null_checks {
+            if self.strict_null_checks {
                 self.implicit_never_type
             } else {
                 self.undefined_widening_type
-            };
-        }
+            }
+        };
         let array_type = self.create_array_type_ex(element_type, in_const_context);
         self.create_array_literal_type(array_type)
     }

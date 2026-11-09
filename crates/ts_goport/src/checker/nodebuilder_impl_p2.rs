@@ -912,7 +912,6 @@ impl Checker {
         if declaration.question_token().is_some() {
             question_token = e.factory.new_token(declaration.question_token().kind());
         }
-        let appropriate_constraint_type_node;
         let mut new_type_variable = Node::NIL;
         let mut template_type = self.get_template_type_from_mapped_type(t);
         let type_parameter = self.get_type_parameter_from_mapped_type(t);
@@ -944,46 +943,46 @@ impl Checker {
             needs_modifier_preserving_wrapper = !keyof_constrained;
         }
 
-        if self.is_mapped_type_with_keyof_constraint_declaration(t) {
-            // We have a { [P in keyof T]: X }
-            // We do this to ensure we retain the toplevel keyof-ness of the type which may be lost due to keyof distribution during `getConstraintTypeFromMappedType`
-            if nb_flags(b).intersects(NodeBuilderFlags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS)
-                && self.is_homomorphic_mapped_type_with_non_homomorphic_instantiation(t)
-            {
+        let appropriate_constraint_type_node =
+            if self.is_mapped_type_with_keyof_constraint_declaration(t) {
+                // We have a { [P in keyof T]: X }
+                // We do this to ensure we retain the toplevel keyof-ness of the type which may be lost due to keyof distribution during `getConstraintTypeFromMappedType`
+                if nb_flags(b).intersects(NodeBuilderFlags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS)
+                    && self.is_homomorphic_mapped_type_with_non_homomorphic_instantiation(t)
+                {
+                    let new_symbol = self.new_symbol(SymbolFlags::TYPE_PARAMETER, "T");
+                    let new_constraint_param = self.new_type_parameter(new_symbol);
+                    let name = self.type_parameter_to_name(b, new_constraint_param);
+                    let target = self.ty(t).target();
+                    new_type_variable = e.factory.new_type_reference_node(name, NodeList::NIL);
+                    let target_template = self.get_template_type_from_mapped_type(target);
+                    let target_type_parameter = self.get_type_parameter_from_mapped_type(target);
+                    let target_modifiers = self.get_modifiers_type_from_mapped_type(target);
+                    let mapper = self.new_type_mapper(
+                        &[target_type_parameter, target_modifiers],
+                        &[type_parameter, new_constraint_param],
+                    );
+                    template_type = self.instantiate_type(target_template, mapper);
+                }
+                let mut index_target = new_type_variable;
+                if index_target.is_nil() {
+                    let modifiers_type = self.get_modifiers_type_from_mapped_type(t);
+                    index_target = self.type_to_type_node(b, modifiers_type);
+                }
+                e.factory
+                    .new_type_operator_node(SyntaxKind::KeyOfKeyword, index_target)
+            } else if needs_modifier_preserving_wrapper {
+                // So, step 1: new type variable
                 let new_symbol = self.new_symbol(SymbolFlags::TYPE_PARAMETER, "T");
-                let new_constraint_param = self.new_type_parameter(new_symbol);
-                let name = self.type_parameter_to_name(b, new_constraint_param);
-                let target = self.ty(t).target();
+                let new_param = self.new_type_parameter(new_symbol);
+                let name = self.type_parameter_to_name(b, new_param);
                 new_type_variable = e.factory.new_type_reference_node(name, NodeList::NIL);
-                let target_template = self.get_template_type_from_mapped_type(target);
-                let target_type_parameter = self.get_type_parameter_from_mapped_type(target);
-                let target_modifiers = self.get_modifiers_type_from_mapped_type(target);
-                let mapper = self.new_type_mapper(
-                    &[target_type_parameter, target_modifiers],
-                    &[type_parameter, new_constraint_param],
-                );
-                template_type = self.instantiate_type(target_template, mapper);
-            }
-            let mut index_target = new_type_variable;
-            if index_target.is_nil() {
-                let modifiers_type = self.get_modifiers_type_from_mapped_type(t);
-                index_target = self.type_to_type_node(b, modifiers_type);
-            }
-            appropriate_constraint_type_node = e
-                .factory
-                .new_type_operator_node(SyntaxKind::KeyOfKeyword, index_target);
-        } else if needs_modifier_preserving_wrapper {
-            // So, step 1: new type variable
-            let new_symbol = self.new_symbol(SymbolFlags::TYPE_PARAMETER, "T");
-            let new_param = self.new_type_parameter(new_symbol);
-            let name = self.type_parameter_to_name(b, new_param);
-            new_type_variable = e.factory.new_type_reference_node(name, NodeList::NIL);
-            // step 2: make that new type variable itself the constraint node, making the mapped type `{[K in T_1]: Template}`
-            appropriate_constraint_type_node = new_type_variable;
-        } else {
-            let constraint_type = self.get_constraint_type_from_mapped_type(t);
-            appropriate_constraint_type_node = self.type_to_type_node(b, constraint_type);
-        }
+                // step 2: make that new type variable itself the constraint node, making the mapped type `{[K in T_1]: Template}`
+                new_type_variable
+            } else {
+                let constraint_type = self.get_constraint_type_from_mapped_type(t);
+                self.type_to_type_node(b, constraint_type)
+            };
 
         // nameType and templateType nodes have to be in the new scope
         // PORT: Go passes nil expandedParams, originalParameters and mapper;

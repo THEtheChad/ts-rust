@@ -453,10 +453,7 @@ fn as_type_unexported<T: Any + Clone>(err: &GoError) -> Option<T> {
             return Some(e);
         }
         match err.unwrapped() {
-            Unwrapped::One(u) => match u {
-                Some(u) => err = u,
-                None => return None,
-            },
+            Unwrapped::One(u) => err = u?,
             Unwrapped::Many(errs) => {
                 for err in &errs {
                     if let Some(x) = as_type_unexported::<T>(err) {

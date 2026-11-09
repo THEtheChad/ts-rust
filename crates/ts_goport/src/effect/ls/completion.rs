@@ -101,40 +101,45 @@ pub fn parse_accessed_expression_for_completion(
         return None;
     }
 
-    let accessed_object;
-    let outer_node;
-    let replacement_start;
-    let replacement_length;
-
     let parent = preceding_token.parent();
-    if is_identifier(preceding_token) && parent.is_some() && is_property_access_expression(parent) {
-        // extends Schema.Tag|
-        let span_start = astnav::get_start_of_node(parent, sf, false);
-        replacement_start = span_start;
-        replacement_length = preceding_token.end() - span_start;
-        accessed_object = parent.expression();
-        outer_node = parent;
-    } else if is_token_kind(preceding_token.kind())
-        && preceding_token.kind() == SyntaxKind::DotToken
-        && parent.is_some()
-        && is_property_access_expression(parent)
-    {
-        // extends Schema.|
-        let span_start = astnav::get_start_of_node(parent, sf, false);
-        replacement_start = span_start;
-        replacement_length = preceding_token.end() - span_start;
-        accessed_object = parent.expression();
-        outer_node = parent;
-    } else if is_identifier(preceding_token) && parent.is_some() {
-        // extends Schema|
-        let span_start = astnav::get_start_of_node(preceding_token, sf, false);
-        replacement_start = span_start;
-        replacement_length = preceding_token.end() - span_start;
-        accessed_object = preceding_token;
-        outer_node = preceding_token;
-    } else {
-        return None;
-    }
+    let (replacement_start, replacement_length, accessed_object, outer_node) =
+        if is_identifier(preceding_token)
+            && parent.is_some()
+            && is_property_access_expression(parent)
+        {
+            // extends Schema.Tag|
+            let span_start = astnav::get_start_of_node(parent, sf, false);
+            (
+                span_start,
+                preceding_token.end() - span_start,
+                parent.expression(),
+                parent,
+            )
+        } else if is_token_kind(preceding_token.kind())
+            && preceding_token.kind() == SyntaxKind::DotToken
+            && parent.is_some()
+            && is_property_access_expression(parent)
+        {
+            // extends Schema.|
+            let span_start = astnav::get_start_of_node(parent, sf, false);
+            (
+                span_start,
+                preceding_token.end() - span_start,
+                parent.expression(),
+                parent,
+            )
+        } else if is_identifier(preceding_token) && parent.is_some() {
+            // extends Schema|
+            let span_start = astnav::get_start_of_node(preceding_token, sf, false);
+            (
+                span_start,
+                preceding_token.end() - span_start,
+                preceding_token,
+                preceding_token,
+            )
+        } else {
+            return None;
+        };
 
     // Skip if accessed object is inside an import declaration
     let import_decl = find_ancestor(accessed_object, is_import_declaration);

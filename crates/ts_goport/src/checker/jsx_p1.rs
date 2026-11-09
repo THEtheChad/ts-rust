@@ -539,30 +539,30 @@ impl Checker {
                 return reported_error;
             }
             let more_than_one_real_children = valid_children.len() > 1;
-            let array_like_target_parts;
-            let non_array_like_target_parts;
             let iterable_type = (self.get_global_iterable_type.clone())(self);
-            if iterable_type != self.empty_generic_type {
+            let (array_like_target_parts, non_array_like_target_parts) = if iterable_type
+                != self.empty_generic_type
+            {
                 let any_type = self.any_type;
                 let any_iterable = self.create_iterable_type(any_type);
-                array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                (
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_type_assignable_to(t, any_iterable)
-                    });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                    }),
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         !c.is_type_assignable_to(t, any_iterable)
-                    });
+                    }),
+                )
             } else {
-                array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                (
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         c.is_array_or_tuple_like_type(t)
-                    });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
+                    }),
+                    self.filter_type(children_target_type, &mut |c: &mut Checker, t: TypeId| {
                         !c.is_array_or_tuple_like_type(t)
-                    });
-            }
+                    }),
+                )
+            };
             // PORT: Go `getInvalidTextualChildDiagnostic` is a closure that computes
             // the message and args once, on first call. The cache is shared through
             // `Rc<RefCell<..>>` so the returned `Rc<dyn Fn>` can be stored in
@@ -1561,20 +1561,19 @@ impl Checker {
                 // Go `links := c.valueSymbolLinks.Get(childrenPropSymbol)` gives the id here.
                 self.value_symbol_links
                     .get_by_id(&self.symbols, children_prop_symbol);
-                let resolved_type;
-                if child_types.len() == 1 {
-                    resolved_type = child_types[0];
+                let resolved_type = if child_types.len() == 1 {
+                    child_types[0]
                 } else if children_contextual_type.is_some()
                     && self.some_type(
                         children_contextual_type,
                         &mut |c: &mut Checker, t: TypeId| c.is_tuple_like_type(t),
                     )
                 {
-                    resolved_type = self.create_tuple_type(&child_types);
+                    self.create_tuple_type(&child_types)
                 } else {
                     let union = self.get_union_type(&child_types);
-                    resolved_type = self.create_array_type(union);
-                }
+                    self.create_array_type(union)
+                };
                 self.value_symbol_links
                     .get_by_id(&self.symbols, children_prop_symbol)
                     .resolved_type = resolved_type;

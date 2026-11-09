@@ -535,10 +535,7 @@ impl IncludeProcessor {
             redirects_file
         } else {
             source_file = program.get_source_file_by_path(file_path);
-            match &source_file {
-                None => return None,
-                Some(source_file) => &**source_file,
-            }
+            &**source_file.as_ref()?
         };
         let mut result: Vec<Diagnostic> = Vec::new();
         let source = program.get_source_of_project_reference_if_output_included(file);

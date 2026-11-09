@@ -511,14 +511,14 @@ impl Checker {
                     diag::The_right_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type,
                     true, /*isAwaitValid*/
                 );
-                let result_type;
                 // If both are any or unknown, allow operation; assume it will resolve to number
-                if self.is_type_assignable_to_kind(left_type, TypeFlags::ANY_OR_UNKNOWN)
+                let result_type = if self
+                    .is_type_assignable_to_kind(left_type, TypeFlags::ANY_OR_UNKNOWN)
                     && self.is_type_assignable_to_kind(right_type, TypeFlags::ANY_OR_UNKNOWN)
                     || !self.maybe_type_of_kind(left_type, TypeFlags::BIG_INT_LIKE)
                         && !self.maybe_type_of_kind(right_type, TypeFlags::BIG_INT_LIKE)
                 {
-                    result_type = self.number_type;
+                    self.number_type
                 } else if self.both_are_big_int_like(left_type, right_type) {
                     match operator {
                         SyntaxKind::GreaterThanGreaterThanGreaterThanToken
@@ -539,7 +539,7 @@ impl Checker {
                         }
                         _ => {}
                     }
-                    result_type = self.bigint_type;
+                    self.bigint_type
                 } else {
                     self.report_operator_error(
                         left_type,
@@ -550,8 +550,8 @@ impl Checker {
                             c.both_are_big_int_like(l, r)
                         }),
                     );
-                    result_type = self.error_type;
-                }
+                    self.error_type
+                };
                 if left_ok && right_ok {
                     self.check_assignment_operator(left, operator, right, left_type, result_type);
                     match operator {

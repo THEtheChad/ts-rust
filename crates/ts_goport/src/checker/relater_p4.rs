@@ -1558,8 +1558,7 @@ impl Checker {
                     // In many ways, this comparison is a deferred version of what `getIndexTypeForMappedType` does to actually resolve the keys for _non_-generic types
                     let name_type = self.get_name_type_from_mapped_type(target_type);
                     let constraint_type = self.get_constraint_type_from_mapped_type(target_type);
-                    let target_keys;
-                    if name_type.is_some()
+                    let target_keys = if name_type.is_some()
                         && self.is_mapped_type_with_keyof_constraint_declaration(target_type)
                     {
                         // we need to get the apparent mappings and union them with the generic mappings, since some properties may be
@@ -1567,12 +1566,12 @@ impl Checker {
                         let mapped_keys =
                             self.get_apparent_mapped_type_keys(name_type, target_type);
                         // We still need to include the non-apparent (and thus still generic) keys in the target side of the comparison (in case they're in the source side)
-                        target_keys = self.get_union_type(&[mapped_keys, name_type]);
+                        self.get_union_type(&[mapped_keys, name_type])
                     } else if name_type.is_some() {
-                        target_keys = name_type;
+                        name_type
                     } else {
-                        target_keys = constraint_type;
-                    }
+                        constraint_type
+                    };
                     if self.is_related_to(
                         r,
                         source,

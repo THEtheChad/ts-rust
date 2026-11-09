@@ -945,14 +945,13 @@ fn create_dummy_parameters(
             question_token = factory.new_token(SyntaxKind::QuestionToken);
         }
 
-        let type_node: Node;
-        if in_js {
-            type_node = Node::NIL;
+        let type_node: Node = if in_js {
+            Node::NIL
         } else if (i as usize) < types.len() && types[i as usize].is_some() {
-            type_node = types[i as usize];
+            types[i as usize]
         } else {
-            type_node = factory.new_keyword_type_node(SyntaxKind::UnknownKeyword);
-        }
+            factory.new_keyword_type_node(SyntaxKind::UnknownKeyword)
+        };
         parameters.push(factory.new_parameter_declaration(
             ModifierList::NIL, /*modifiers*/
             Node::NIL,         /*dotDotDotToken*/

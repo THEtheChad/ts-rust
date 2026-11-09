@@ -1364,32 +1364,31 @@ impl Checker {
             .any(|&info| self.index_info(info).key_type == self.string_type);
         let mut result = Ternary::TRUE;
         for &target_info in &index_infos {
-            let related: Ternary;
             let target_value_type = self.index_info(target_info).value_type;
-            if relation != RelationKind::StrictSubtype
+            let related: Ternary = if relation != RelationKind::StrictSubtype
                 && !source_is_primitive
                 && target_has_string_index
                 && self.ty(target_value_type).flags.intersects(TypeFlags::ANY)
             {
-                related = Ternary::TRUE;
+                Ternary::TRUE
             } else if self.is_generic_mapped_type(source) && target_has_string_index {
                 let template = self.get_template_type_from_mapped_type(source);
-                related = self.is_related_to(
+                self.is_related_to(
                     r,
                     template,
                     target_value_type,
                     RecursionFlags::BOTH,
                     report_errors,
-                );
+                )
             } else {
-                related = self.type_related_to_index_info(
+                self.type_related_to_index_info(
                     r,
                     source,
                     target_info,
                     report_errors,
                     intersection_state,
-                );
-            }
+                )
+            };
             if related == Ternary::FALSE {
                 return Ternary::FALSE;
             }

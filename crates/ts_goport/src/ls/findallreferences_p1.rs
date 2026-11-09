@@ -1840,21 +1840,20 @@ pub fn is_declaration_of_symbol(symbols: &SymbolArena, node: Node, target: Symbo
         return false;
     }
 
-    let source;
     let decl = get_declaration_from_name(node);
-    if decl.is_some() {
-        source = decl;
+    let source = if decl.is_some() {
+        decl
     } else if node.kind() == SyntaxKind::DefaultKeyword {
-        source = node.parent();
+        node.parent()
     } else if is_literal_computed_property_declaration_name(node) {
-        source = node.parent().parent();
+        node.parent().parent()
     } else if node.kind() == SyntaxKind::ConstructorKeyword
         && is_constructor_declaration(node.parent())
     {
-        source = node.parent().parent();
+        node.parent().parent()
     } else {
-        source = Node::NIL;
-    }
+        Node::NIL
+    };
 
     // !!!
     // const commonjsSource = source && isBinaryExpression(source) ? source.left as unknown as Declaration : undefined;

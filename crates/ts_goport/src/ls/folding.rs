@@ -339,14 +339,13 @@ fn visit_node(
         // PORT: Go reads the `Members` field of ClassDeclaration,
         // ClassExpression or InterfaceDeclaration; `member_list()` is that
         // field for each of them.
-        let members;
-        if is_class_declaration(n) {
-            members = n.member_list();
+        let members = if is_class_declaration(n) {
+            n.member_list()
         } else if is_class_expression(n) {
-            members = n.member_list();
+            n.member_list()
         } else {
-            members = n.member_list();
-        }
+            n.member_list()
+        };
         if members.is_some() {
             folding_range.extend(add_outlining_for_leading_comments_for_pos(
                 ctx,

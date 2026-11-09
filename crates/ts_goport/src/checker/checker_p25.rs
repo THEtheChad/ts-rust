@@ -712,29 +712,28 @@ impl Checker {
         let mut new_element_infos = element_infos.clone();
         for (i, &e) in element_types.iter().enumerate() {
             let flags = element_infos[i].flags;
-            let mapped: TypeId;
-            if (i as i32) < fixed_length {
+            let mapped: TypeId = if (i as i32) < fixed_length {
                 let key = self.get_string_literal_type(&i.to_string());
-                mapped = self.instantiate_mapped_type_template(
+                self.instantiate_mapped_type_template(
                     mapped_type,
                     key,
                     flags.intersects(ElementFlags::OPTIONAL),
                     fixed_mapper,
-                );
+                )
             } else if flags.intersects(ElementFlags::VARIADIC) {
                 let prepended = self.prepend_type_mapping(type_variable, e, m);
-                mapped = self.instantiate_type(mapped_type, prepended);
+                self.instantiate_type(mapped_type, prepended)
             } else {
                 let array_type = self.create_array_type(e);
                 let prepended = self.prepend_type_mapping(type_variable, array_type, m);
                 let instantiated = self.instantiate_type(mapped_type, prepended);
                 let element = self.get_element_type_of_array_type(instantiated);
-                mapped = if element.is_nil() {
+                if element.is_nil() {
                     self.unknown_type
                 } else {
                     element
-                };
-            }
+                }
+            };
             if modifiers.intersects(MappedTypeModifiers::INCLUDE_OPTIONAL) {
                 if flags.intersects(ElementFlags::REQUIRED) {
                     new_element_infos[i].flags = ElementFlags::OPTIONAL;
