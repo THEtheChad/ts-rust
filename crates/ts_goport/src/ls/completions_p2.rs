@@ -1742,22 +1742,22 @@ pub fn get_filter_text(
         return dot_accessor.to_string() + &trim_element_access(insert_text);
     }
 
-    if insert_text.starts_with("?.") {
+    if let Some(rest) = insert_text.strip_prefix("?.") {
         // Handle this case like the case above:
         // ```
         // const xyz = { 'ab c': 1 } | undefined;
         // xyz.ab|
         // ```
         // filterText should be `.ab c` instead of `?.['ab c']`.
-        if insert_text.starts_with("?.[") {
-            return dot_accessor.to_string() + &trim_element_access(&insert_text[2..]);
+        if rest.starts_with('[') {
+            return dot_accessor.to_string() + &trim_element_access(rest);
         } else {
             // ```
             // const xyz = { abc: 1 } | undefined;
             // xyz.ab|
             // ```
             // filterText should be `.abc` instead of `?.abc.
-            return dot_accessor.to_string() + &insert_text[2..];
+            return dot_accessor.to_string() + rest;
         }
     }
 
