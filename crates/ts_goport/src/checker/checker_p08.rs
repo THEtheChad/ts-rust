@@ -1498,26 +1498,26 @@ impl Checker {
                 );
                 return;
             }
-            let message = if facts.intersects(TypeFacts::IS_UNDEFINED) {
-                if facts.intersects(TypeFacts::IS_NULL) {
-                    diag::X_0_is_possibly_null_or_undefined
-                } else {
-                    diag::X_0_is_possibly_undefined
-                }
-            } else {
-                diag::X_0_is_possibly_null
-            };
+            let message = if_else(
+                facts.intersects(TypeFacts::IS_UNDEFINED),
+                if_else(
+                    facts.intersects(TypeFacts::IS_NULL),
+                    diag::X_0_is_possibly_null_or_undefined,
+                    diag::X_0_is_possibly_undefined,
+                ),
+                diag::X_0_is_possibly_null,
+            );
             self.error(node, message, args![node_text]);
         } else {
-            let message = if facts.intersects(TypeFacts::IS_UNDEFINED) {
-                if facts.intersects(TypeFacts::IS_NULL) {
-                    diag::Object_is_possibly_null_or_undefined
-                } else {
-                    diag::Object_is_possibly_undefined
-                }
-            } else {
-                diag::Object_is_possibly_null
-            };
+            let message = if_else(
+                facts.intersects(TypeFacts::IS_UNDEFINED),
+                if_else(
+                    facts.intersects(TypeFacts::IS_NULL),
+                    diag::Object_is_possibly_null_or_undefined,
+                    diag::Object_is_possibly_undefined,
+                ),
+                diag::Object_is_possibly_null,
+            );
             self.error(node, message, args![]);
         }
     }
