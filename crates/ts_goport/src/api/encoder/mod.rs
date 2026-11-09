@@ -3,6 +3,9 @@
 pub mod decoder;
 pub mod decoder_generated;
 pub mod encoder;
+// The port of Go's generated encoder keeps Go's `<< 0` flag bits and its
+// one-case switches.
+#[allow(clippy::identity_op, clippy::single_match)]
 pub mod encoder_generated;
 pub mod stringtable;
 
