@@ -2003,35 +2003,7 @@ impl Checker {
     // instantiations is not infinitely expanding. Effectively, we will generate a false positive when two types are
     // structurally equal to at least maxDepth levels, but unequal at some level beyond that.
     pub fn is_deeply_nested_type(&mut self, t: TypeId, stack: &[TypeId], max_depth: i32) -> bool {
-        if stack.len() as i32 >= max_depth {
-            let target = self.get_recursion_identity_target(t);
-            if self.ty(target).flags.intersects(TypeFlags::INTERSECTION) {
-                for i in 0..self.ty(target).types().len() {
-                    if self.is_deeply_nested_type(self.type_at(target, i), stack, max_depth) {
-                        return true;
-                    }
-                }
-            } else {
-                let identity = self.get_recursion_identity_from_target(target);
-                let mut count: i32 = 0;
-                let mut last_type_id = TypeId(0);
-                for &t in stack {
-                    if self.has_matching_recursion_identity(t, identity) {
-                        // We only count occurrences with a higher type id than the previous occurrence, since higher
-                        // type ids are an indicator of newer instantiations caused by recursion.
-                        let id = t;
-                        if id >= last_type_id {
-                            count += 1;
-                            if count >= max_depth {
-                                return true;
-                            }
-                        }
-                        last_type_id = id;
-                    }
-                }
-            }
-        }
-        false
+        self.is_deeply_nested_type_with_ids(t, RecursionKey::NONE, stack, &[], max_depth)
     }
 
     // PORT: perf. The recursion id kept for each entry of the relater stacks
@@ -2058,9 +2030,11 @@ impl Checker {
         RecursionKey::new(Some(self.get_recursion_identity_from_target(t)))
     }
 
-    // PORT: perf. `is_deeply_nested_type` for the relater stacks, which keep
-    // recursion keys (`is_deeply_nested_relater_type`). `ids[i]` is
-    // `stack_recursion_key(stack[i])`. An entry with a key is compared
+    // PORT: perf. `is_deeply_nested_type` for stacks that keep recursion keys
+    // (the relater's, `is_deeply_nested_relater_type`). `ids` holds
+    // `stack_recursion_key(stack[i])` for a prefix of `stack` (empty for
+    // `is_deeply_nested_type`); the entries past it count as `RecursionKey::NONE`.
+    // An entry with a key is compared
     // directly: keys are equal only when their ids are equal. `probe_key` is
     // `stack_recursion_key(t)` when the caller has it, else
     // `RecursionKey::NONE`. A probe with a key is its own recursion identity
@@ -2077,7 +2051,7 @@ impl Checker {
         ids: &[RecursionKey],
         max_depth: i32,
     ) -> bool {
-        debug_assert_eq!(stack.len(), ids.len());
+        debug_assert!(ids.len() <= stack.len());
         debug_assert!(probe_key == RecursionKey::NONE || probe_key == self.stack_recursion_key(t));
         if stack.len() as i32 >= max_depth {
             let (identity, key) = if probe_key != RecursionKey::NONE {
@@ -2106,7 +2080,11 @@ impl Checker {
             };
             let mut count: i32 = 0;
             let mut last_type_id = TypeId(0);
-            for (&t, &entry_key) in stack.iter().zip(ids) {
+            let keys = ids
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(RecursionKey::NONE));
+            for (&t, entry_key) in stack.iter().zip(keys) {
                 let matching = if entry_key != RecursionKey::NONE {
                     entry_key == key
                 } else {
