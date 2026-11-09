@@ -1646,6 +1646,9 @@ pub fn get_argument_index_for_template_piece(
 }
 
 // Go: ls/signaturehelp.go:1058 getAdjustedNode
+// The predicate keeps Go's redundant branches (the binding cases return
+// false, as the fallback does).
+#[allow(clippy::needless_bool, clippy::if_same_then_else)]
 pub fn get_adjusted_node(node: Node) -> Node {
     match node.kind() {
         SyntaxKind::OpenParenToken | SyntaxKind::CommaToken => node,
