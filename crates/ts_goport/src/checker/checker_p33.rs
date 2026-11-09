@@ -319,9 +319,9 @@ impl Checker {
             kind,
             SyntaxKind::JsxOpeningElement | SyntaxKind::JsxSelfClosingElement
         ) {
-            if node.attributes().properties().len() != 0
+            if !node.attributes().properties().is_empty()
                 || (kind == SyntaxKind::JsxOpeningElement
-                    && node.parent().children().nodes().len() != 0)
+                    && !node.parent().children().nodes().is_empty())
             {
                 return EffectiveArgs::Owned(vec![node.attributes()]);
             }

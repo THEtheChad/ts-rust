@@ -22,7 +22,7 @@ pub fn is_require_call(node: Node, require_string_literal_like_argument: bool) -
 pub fn is_require_variable_statement(node: Node) -> bool {
     if is_variable_statement(node) {
         let declarations = node.declaration_list().declarations().nodes();
-        if declarations.len() > 0 {
+        if !declarations.is_empty() {
             return declarations
                 .iter()
                 .all(|d| is_variable_declaration_initialized_to_require(d));
@@ -518,7 +518,7 @@ pub fn is_class_or_type_element(node: Node) -> bool {
 // Go: ast/utilities.go:3211 GetClassExtendsHeritageElement
 pub fn get_class_extends_heritage_element(node: Node) -> Node {
     let heritage_elements = get_heritage_elements(node, SyntaxKind::ExtendsKeyword);
-    if heritage_elements.len() > 0 {
+    if !heritage_elements.is_empty() {
         return heritage_elements[0];
     }
     Node::NIL
@@ -532,7 +532,7 @@ pub fn is_type_keyword_token(node: Node) -> bool {
 // Go: ast/utilities.go:3224 IsJSDocSingleCommentNodeList
 // See `IsJSDocSingleCommentNode`.
 pub fn is_js_doc_single_comment_node_list(node_list: NodeList) -> bool {
-    if node_list.is_nil() || node_list.nodes().len() == 0 {
+    if node_list.is_nil() || node_list.nodes().is_empty() {
         return false;
     }
     let parent = node_list.nodes().get(0).parent();
@@ -812,7 +812,7 @@ pub fn create_modifiers_from_modifier_flags(
 // Go: ast/utilities.go:3421 GetThisParameter
 pub fn get_this_parameter(signature: Node) -> Node {
     // callback tags do not currently support this parameters
-    if signature.parameters().len() != 0 {
+    if !signature.parameters().is_empty() {
         let this_parameter = signature.parameters().get(0);
         if is_this_parameter(this_parameter) {
             return this_parameter;

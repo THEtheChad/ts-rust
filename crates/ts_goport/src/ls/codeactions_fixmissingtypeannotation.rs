@@ -863,7 +863,7 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
         }
 
         let heritage_types = extends_clause.types();
-        if heritage_types.is_nil() || heritage_types.nodes().len() == 0 {
+        if heritage_types.is_nil() || heritage_types.nodes().is_empty() {
             return String::new();
         }
         let heritage_expression = heritage_types.nodes().get(0);
@@ -1688,7 +1688,7 @@ impl<'a> IsolatedDeclarationsFixer<'a> {
         {
             let type_args = self.checker.get_type_arguments_exported(t);
             let node_type_args = type_node.type_arguments();
-            if !type_args.is_empty() && node_type_args.len() > 0 {
+            if !type_args.is_empty() && !node_type_args.is_empty() {
                 let cutoff = end_of_required_type_parameters(self.checker, t);
                 if (cutoff as usize) < node_type_args.len() {
                     // Trim trailing default type arguments

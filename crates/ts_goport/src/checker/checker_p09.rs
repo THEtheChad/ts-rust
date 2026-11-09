@@ -1142,7 +1142,7 @@ impl Checker {
         let initializer = node.initializer();
         if is_variable_declaration_list(initializer) {
             let declarations = initializer.declarations().nodes();
-            if declarations.len() > 0 {
+            if !declarations.is_empty() {
                 let variable = declarations.get(0);
                 if !variable.is_nil() && !is_binding_pattern(variable.name()) {
                     return self.get_symbol_of_declaration(variable);

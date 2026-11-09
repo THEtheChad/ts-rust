@@ -353,7 +353,7 @@ fn get_symbol_kind_of_constructor_property_method_accessor_function_or_var(
             Some(c) => {
                 let t = c.get_type_of_symbol_at_location(symbol, location);
                 let t = c.get_non_nullable_type(t);
-                c.get_call_signatures(t).len() > 0
+                !c.get_call_signatures(t).is_empty()
             }
         }
     {
@@ -447,7 +447,7 @@ fn get_symbol_kind_of_constructor_property_method_accessor_function_or_var(
                     .checker()
                     .expect("checked TypeChecker::Checker above");
                 let type_of_union_property = c.get_type_of_symbol_at_location(symbol, location);
-                if c.get_call_signatures(type_of_union_property).len() > 0 {
+                if !c.get_call_signatures(type_of_union_property).is_empty() {
                     return ScriptElementKind::MEMBER_FUNCTION_ELEMENT;
                 }
                 return ScriptElementKind::MEMBER_VARIABLE_ELEMENT;

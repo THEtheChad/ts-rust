@@ -251,7 +251,7 @@ impl PseudoChecker {
             return node.type_();
         }
         let parameters = node.parameter_list();
-        if parameters.is_nil() || parameters.nodes().len() < 1 {
+        if parameters.is_nil() || parameters.nodes().is_empty() {
             return Node::NIL;
         }
         let p = parameters.nodes().get(0);

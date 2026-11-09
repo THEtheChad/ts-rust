@@ -45,8 +45,8 @@ pub fn delete_declaration(
                 .iter()
                 .find(|&s| is_any_import_syntax(s))
                 .unwrap_or(Node::NIL);
-            let is_first_import =
-                imports.len() > 0 && node == imports.get(0).parent() || node == first_import_syntax;
+            let is_first_import = !imports.is_empty() && node == imports.get(0).parent()
+                || node == first_import_syntax;
             // For first import, leave header comment in place, otherwise only delete JSDoc comments
             let mut leading_trivia = LeadingTriviaOption::START_LINE;
             if is_first_import {
@@ -493,5 +493,5 @@ fn has_js_doc_nodes(node: Node) -> bool {
     }
     // nil is ok for JSDoc - it will return empty slice if not available
     let jsdocs = node.js_doc(Node::NIL);
-    jsdocs.len() > 0
+    !jsdocs.is_empty()
 }

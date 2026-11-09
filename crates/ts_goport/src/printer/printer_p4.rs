@@ -787,7 +787,7 @@ impl Printer {
         let indented = self.write_line_separators_and_indent_before(node.tag_name(), node);
         self.emit_jsx_tag_name(node.tag_name());
         self.emit_type_arguments(node, node.type_argument_list());
-        if node.attributes().properties().len() > 0 {
+        if !node.attributes().properties().is_empty() {
             self.write_space();
         }
         self.emit_jsx_attributes(node.attributes());

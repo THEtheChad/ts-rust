@@ -807,7 +807,7 @@ impl DeclarationTransformer {
 
         if kind == SyntaxKind::HeritageClause {
             let types = input.types().nodes();
-            if types.len() == 0 || (types.len() == 1 && node_is_missing(types.get(0))) {
+            if types.is_empty() || (types.len() == 1 && node_is_missing(types.get(0))) {
                 return Node::NIL;
             }
         }

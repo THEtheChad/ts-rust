@@ -18,7 +18,7 @@ impl Checker {
 
     // Go: checker/checker.go:23782 checkNoTypeArguments
     pub fn check_no_type_arguments(&mut self, node: Node, symbol: SymbolId) -> bool {
-        if node.type_arguments().len() != 0 {
+        if !node.type_arguments().is_empty() {
             let type_name = if symbol.is_some() {
                 self.symbol_to_string(symbol)
             } else {
@@ -216,7 +216,7 @@ impl Checker {
         let tuple_target = self.get_tuple_target_type(&n.infos, readonly);
         if tuple_target == self.empty_generic_type {
             return self.empty_object_type;
-        } else if n.types.len() != 0 {
+        } else if !n.types.is_empty() {
             return self.create_type_reference_ex(tuple_target, &n.types, object_flags);
         }
         tuple_target
@@ -605,7 +605,7 @@ impl Checker {
         }
         let t = self.get_declared_type_of_symbol(symbol);
         let type_parameters = self.type_alias_links.get(symbol).type_parameters.clone();
-        if type_parameters.len() != 0 {
+        if !type_parameters.is_empty() {
             let num_type_arguments = type_arguments.len() as i32;
             let min_type_argument_count = self.get_min_type_argument_count(&type_parameters);
             if num_type_arguments < min_type_argument_count
@@ -926,7 +926,7 @@ impl Checker {
                             .first()
                             .copied()
                             .unwrap_or_default();
-                        if signature.is_some() && self.sig(signature).type_parameters.len() != 0 {
+                        if signature.is_some() && !self.sig(signature).type_parameters.is_empty() {
                             outer_type_parameters
                                 .extend(self.sig(signature).type_parameters.iter().copied());
                             return outer_type_parameters;
@@ -1078,7 +1078,7 @@ impl Checker {
             if self.pop_type_resolution() {
                 let type_parameters =
                     self.get_local_type_parameters_of_class_or_interface_or_type_alias(symbol);
-                if type_parameters.len() != 0 {
+                if !type_parameters.is_empty() {
                     // Initialize the instantiation cache for generic type aliases. The declared type corresponds to
                     // an instantiation of the type alias with the type parameters supplied as type arguments.
                     let key = get_type_list_key(&type_parameters);
@@ -1136,7 +1136,7 @@ impl Checker {
                     }
                 }
             }
-            let enum_type = if member_type_list.len() != 0 {
+            let enum_type = if !member_type_list.is_empty() {
                 self.get_union_type_ex(
                     &member_type_list,
                     UnionReduction::LITERAL,
@@ -1531,7 +1531,7 @@ impl Checker {
                 some
             }) && self.is_deferred_type_reference_node(node, false)
             {
-                if node.kind() == SyntaxKind::TupleType && node.elements().len() == 0 {
+                if node.kind() == SyntaxKind::TupleType && node.elements().is_empty() {
                     resolved_type = target;
                 } else {
                     resolved_type = self.create_deferred_type_reference(

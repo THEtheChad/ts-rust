@@ -891,7 +891,7 @@ impl Checker {
         right_is_this: bool,
     ) -> TypeId {
         let properties = node.property_list();
-        if self.strict_null_checks && properties.nodes().len() == 0 {
+        if self.strict_null_checks && properties.nodes().is_empty() {
             return self.check_non_null_type(source_type, node);
         }
         for i in 0..properties.nodes().len() {

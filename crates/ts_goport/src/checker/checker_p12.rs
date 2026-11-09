@@ -111,7 +111,7 @@ impl Checker {
             }
             target_parameter_count += 1;
         }
-        if parameters.len() != 0 && is_this_parameter(parameters.get(0)) {
+        if !parameters.is_empty() && is_this_parameter(parameters.get(0)) {
             target_parameter_count -= 1;
         }
         !self.has_effective_rest_parameter(signature)

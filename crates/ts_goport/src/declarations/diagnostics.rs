@@ -678,7 +678,7 @@ fn create_accessor_type_error(node: Node) -> Diagnostic {
     let get_accessor = all_declarations.get_accessor;
     let set_accessor = all_declarations.set_accessor;
     let mut target_node = node;
-    if is_set_accessor_declaration(node) && node.parameters().len() > 0 {
+    if is_set_accessor_declaration(node) && !node.parameters().is_empty() {
         target_node = node.parameters().get(0);
     }
     let mut diag = create_diagnostic_for_node(

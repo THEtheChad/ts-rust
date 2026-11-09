@@ -460,7 +460,7 @@ impl Tracker {
                 }
                 // If no `)`, is an arrow function `x => x`, so use the end of the first parameter
                 let params = node.parameters();
-                if params.len() == 0 {
+                if params.is_empty() {
                     return false;
                 }
                 end_node = params.get(0);
@@ -510,7 +510,7 @@ impl Tracker {
             return;
         }
         let params = arrow_func.parameters();
-        if params.len() == 0 {
+        if params.is_empty() {
             return;
         }
         let first_param = params.get(0);
@@ -1194,7 +1194,7 @@ impl Tracker {
         let is_object_literal = is_object_literal_expression(node);
         let is_json = is_json_source_file(source_file);
 
-        let has_members = members.is_some() && members.nodes().len() > 0;
+        let has_members = members.is_some() && !members.nodes().is_empty();
 
         let insert_trailing_comma = is_object_literal && (has_members || !is_json);
         let insert_leading_comma =
@@ -1250,7 +1250,7 @@ impl Tracker {
             }
 
             let members = get_members_or_properties(state.node);
-            let is_empty = members.is_nil() || members.nodes().len() == 0;
+            let is_empty = members.is_nil() || members.nodes().is_empty();
             let is_single_line =
                 positions_are_on_same_line(open_brace.end(), close_brace.end(), state.source_file);
 

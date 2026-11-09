@@ -449,7 +449,7 @@ impl<'a> MissingMemberFixer<'a> {
             signature_declaration.type_()
         };
 
-        if type_parameters.is_some() && type_parameters.nodes().len() > 0 {
+        if type_parameters.is_some() && !type_parameters.nodes().is_empty() {
             let mut nodes: Vec<Node> = Vec::with_capacity(type_parameters.nodes().len());
             for tp in type_parameters.nodes().iter() {
                 if tp.is_nil() {

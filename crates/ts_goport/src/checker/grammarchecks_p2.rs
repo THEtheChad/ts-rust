@@ -255,7 +255,7 @@ impl Checker {
             } else {
                 prop.modifier_nodes()
             };
-            if modifiers.len() != 0 {
+            if !modifiers.is_empty() {
                 if can_have_modifiers(prop) {
                     for m in modifiers.iter() {
                         if is_modifier(m)
@@ -594,7 +594,7 @@ impl Checker {
                 //      for (let of [1,2,3]) {} // this is invalid ES6 syntax
                 //      for (let in [1,2,3]) {} // this is invalid ES6 syntax
                 // We will then want to skip on grammar checking on variableList declaration
-                if declarations.len() == 0 {
+                if declarations.is_empty() {
                     return false;
                 }
 
@@ -1221,7 +1221,7 @@ impl Checker {
             return true;
         }
 
-        if declarations.nodes().len() == 0 {
+        if declarations.nodes().is_empty() {
             return self.grammar_error_at_pos(
                 declaration_list,
                 declarations.pos(),

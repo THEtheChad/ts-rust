@@ -1017,9 +1017,9 @@ impl Checker {
             return false;
         }
         let then_type = self.get_type_with_facts(then_function, TypeFacts::NE_UNDEFINED_OR_NULL);
-        self.get_signatures_of_type(then_type, SignatureKind::CALL)
-            .len()
-            != 0
+        !self
+            .get_signatures_of_type(then_type, SignatureKind::CALL)
+            .is_empty()
     }
 
     // Go: checker/checker.go:32102 getAwaitedTypeOfPromise

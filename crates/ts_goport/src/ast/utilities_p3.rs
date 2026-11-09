@@ -1227,7 +1227,7 @@ static CONST_NAME: std::sync::LazyLock<Name> = std::sync::LazyLock::new(|| Name:
 // PERF: U1 (a). Compares name ids (`Node::text_is`), with no text load.
 pub fn is_const_type_reference(node: Node) -> bool {
     is_type_reference_node(node)
-        && node.type_arguments().len() == 0
+        && node.type_arguments().is_empty()
         && is_identifier(node.type_name())
         && node.type_name().text_is(&CONST_NAME)
 }
@@ -1714,7 +1714,7 @@ pub fn for_each_dynamic_import_or_require_call(
                 return true;
             }
         } else if is_import_call(node)
-            && node.arguments().len() > 0
+            && !node.arguments().is_empty()
             && (!require_string_literal_like_argument
                 || is_string_literal_like(node.arguments().get(0)))
         {

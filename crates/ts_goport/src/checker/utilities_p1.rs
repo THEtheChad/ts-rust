@@ -109,7 +109,7 @@ impl Checker {
 // Go: checker/utilities.go:76 isEmptyObjectLiteral
 // PORT: renamed; `is_empty_object_literal` is `ast.IsEmptyObjectLiteral` (same body).
 pub fn checker_is_empty_object_literal(expression: Node) -> bool {
-    is_object_literal_expression(expression) && expression.properties().len() == 0
+    is_object_literal_expression(expression) && expression.properties().is_empty()
 }
 
 // PORT: Go `type AssignmentKind int32` with its consts is `flags::AssignmentKind`
@@ -181,7 +181,7 @@ pub fn is_compound_like_assignment(assignment: Node) -> bool {
 // PORT: renamed; `is_const_type_reference` is `ast.IsConstTypeReference` (same body).
 pub fn checker_is_const_type_reference(node: Node) -> bool {
     is_type_reference_node(node)
-        && node.type_arguments().len() == 0
+        && node.type_arguments().is_empty()
         && is_identifier(node.type_name())
         && node.type_name().text() == "const"
 }
@@ -478,7 +478,7 @@ fn find_parameter_index(node: Node) -> i32 {
 // Go: checker/utilities.go:330 isEmptyArrayLiteral
 // PORT: renamed; `is_empty_array_literal` is `ast.IsEmptyArrayLiteral` (same body).
 pub fn checker_is_empty_array_literal(expression: Node) -> bool {
-    is_array_literal_expression(expression) && expression.elements().len() == 0
+    is_array_literal_expression(expression) && expression.elements().is_empty()
 }
 
 // Go: checker/utilities.go:334 declarationBelongsToPrivateAmbientMember

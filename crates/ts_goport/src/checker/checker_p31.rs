@@ -538,7 +538,7 @@ impl Checker {
                             let initializer = for_node.initializer();
                             let expression = for_node.expression();
                             if is_variable_declaration_list(initializer)
-                                && initializer.declarations().nodes().len() == 0
+                                && initializer.declarations().nodes().is_empty()
                                 && expression.is_some()
                                 && (location == expression
                                     || is_node_descendant_of(location, expression))

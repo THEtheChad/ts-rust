@@ -1388,7 +1388,7 @@ impl ApiStabilityAnalysis {
         if node.is_nil() || node.kind() != SyntaxKind::TypeReference {
             return TypeId::NIL;
         }
-        if node.type_arguments().len() != 0 {
+        if !node.type_arguments().is_empty() {
             return TypeId::NIL;
         }
         let symbol = self.symbol_at_type_name_node(tp, node.type_name());
@@ -1906,7 +1906,7 @@ impl ApiStabilityAnalysis {
             }
             SyntaxKind::TupleType => {
                 let elements = node.elements();
-                if elements.len() == 0 {
+                if elements.is_empty() {
                     return;
                 }
                 let represented_elements = self.represented_tuple_arguments(tp, represented);
@@ -2137,7 +2137,7 @@ impl ApiStabilityAnalysis {
         represented: TypeId,
         subst: &ApiStabilitySubstitution,
     ) {
-        if arguments.is_nil() || arguments.nodes().len() == 0 {
+        if arguments.is_nil() || arguments.nodes().is_empty() {
             return;
         }
         let represented_arguments = self.represented_type_arguments(tp, represented);
@@ -3378,7 +3378,7 @@ pub fn api_stability_symbol_declares_heritage(c: &Checker, symbol: SymbolId) -> 
                 continue;
             }
             let types = clause.types();
-            if types.is_some() && types.nodes().len() != 0 {
+            if types.is_some() && !types.nodes().is_empty() {
                 return true;
             }
         }

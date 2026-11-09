@@ -618,7 +618,7 @@ impl Checker {
             }
         }
 
-        if argument_nodes.len() == 0 || argument_nodes.len() > 2 {
+        if argument_nodes.is_empty() || argument_nodes.len() > 2 {
             return self.grammar_error_on_node(
                 node,
                 diag::Dynamic_imports_can_only_accept_a_module_specifier_and_an_optional_set_of_attributes_as_arguments,

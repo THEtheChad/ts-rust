@@ -51,7 +51,7 @@ impl Checker {
     pub fn check_type_reference_or_import(&mut self, node: Node) {
         let t = self.get_type_from_type_node(node);
         if !self.is_error_type(t) {
-            if node.type_arguments().len() != 0 {
+            if !node.type_arguments().is_empty() {
                 let type_parameters = self.get_type_parameters_for_type_reference_or_import(node);
                 if !type_parameters.is_empty() {
                     self.check_type_argument_constraints(node, &type_parameters);
