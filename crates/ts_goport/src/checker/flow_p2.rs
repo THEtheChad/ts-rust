@@ -323,21 +323,9 @@ impl Checker {
         if witnesses.is_empty() {
             return t;
         }
-        let clauses = data
-            .switch_statement
-            .case_block()
-            .clauses()
-            .nodes()
-            .to_vec();
-        // Equal start and end denotes implicit fallthrough; undefined marks explicit default clause.
-        let default_index = clauses
-            .iter()
-            .position(|clause| clause.kind() == SyntaxKind::DefaultClause)
-            .map_or(-1, |i| i as i32);
+        let (_, has_default_clause) = switch_clauses_and_default(data);
         let clause_start = data.clause_start;
         let clause_end = data.clause_end;
-        let has_default_clause = clause_start == clause_end
-            || (default_index >= clause_start && default_index < clause_end);
         if has_default_clause {
             // In the default clause we filter constituents down to those that are not-equal to all handled cases.
             let not_equal_facts =
@@ -367,20 +355,9 @@ impl Checker {
         mut t: TypeId,
         data: &FlowSwitchClauseData,
     ) -> TypeId {
-        let clauses = data
-            .switch_statement
-            .case_block()
-            .clauses()
-            .nodes()
-            .to_vec();
-        let default_index = clauses
-            .iter()
-            .position(|clause| clause.kind() == SyntaxKind::DefaultClause)
-            .map_or(-1, |i| i as i32);
+        let (clauses, has_default_clause) = switch_clauses_and_default(data);
         let clause_start = data.clause_start;
         let clause_end = data.clause_end;
-        let has_default_clause = clause_start == clause_end
-            || (default_index >= clause_start && default_index < clause_end);
         // First, narrow away all of the cases that preceded this set of cases.
         for i in 0..clause_start as usize {
             let clause = clauses[i];
@@ -1985,4 +1962,23 @@ impl Checker {
         }
         node
     }
+}
+
+/// The clauses of `data`'s switch, and whether its clause range takes the default path.
+/// Go's narrowTypeBySwitchOnTypeOf and narrowTypeBySwitchOnTrue compute both the same way.
+fn switch_clauses_and_default(data: &FlowSwitchClauseData) -> (Vec<Node>, bool) {
+    let clauses = data
+        .switch_statement
+        .case_block()
+        .clauses()
+        .nodes()
+        .to_vec();
+    // Equal start and end denotes implicit fallthrough; undefined marks explicit default clause.
+    let default_index = clauses
+        .iter()
+        .position(|clause| clause.kind() == SyntaxKind::DefaultClause)
+        .map_or(-1, |i| i as i32);
+    let has_default_clause = data.clause_start == data.clause_end
+        || (default_index >= data.clause_start && default_index < data.clause_end);
+    (clauses, has_default_clause)
 }
