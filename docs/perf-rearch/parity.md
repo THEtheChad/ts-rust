@@ -57,7 +57,9 @@ PARITY FAIL on any of:
 A grandfather entry (`parity_grandfather.py`) pins its item by structured evidence: its status and
 rsFailure, the case's content identity, Go's cached result (status, outcome, panic line), the
 attempt labels each mode makes, and the fingerprint every tsc-rs attempt must have (outcome, exit
-code, sha256 of stdout, stderr and the written files, inputs intact). Entries exist for fuzz and
+code, sha256 of stdout, of stderr in its site form and of the written files, inputs intact). The site
+form replaces only the Rust line number of the port-site line that tsc-rs prints in place of Go's
+goroutine trace (lane H6, "Grandfather pins without Rust line numbers"). Entries exist for fuzz and
 corpus items, the tiers whose rows carry that evidence. Every excused item is printed with its
 reason (`GRANDFATHERED`). Only one gate runs at a time, under a lock: the scratch paths are fixed,
 so the paths in the output agree with the cached Go results. The test tier builds and tests the
@@ -1830,6 +1832,113 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   the script made it after each run, but a change a server makes and undoes inside its own run is not
   seen there (the script writes the same dir; inotify cannot tell the writers apart).
 
+## Grandfather pins without Rust line numbers (lane H6, 2026-11-09)
+
+Nine grandfather entries are cases where tsc-rs reproduces Go's crash on purpose: `fuzz/1:795`, `3909`,
+`4134`, `4327`, `16682`, `17373`, `18749`, `19954` and `20483`. Where Go prints its goroutine trace,
+tsc-rs prints one port-site line with its own Rust `file:line`
+(`crates/ts_goport/src/gopanic.rs`: `print_go_panic`, `go_fatal_newosproc`, through `go_site_file`):
+
+```
+panic: strings: negative Repeat count
+
+	crates/ts_goport/src/execute/tsc/diagnostics.rs:1383
+```
+
+Version 2 of the grandfather file pinned the sha256 of that stderr, so a source line added or removed
+above the call changed the hash: the item became KNOWN-BAD not as pinned and the gate failed (lane
+Q4 kept old line numbers by hand to avoid it). The contract of these items is the same panic line,
+the same exit code, the same stdout and the same written files; the Rust line number is not output Go
+has.
+
+**The site form** (`parity_grandfather.stderr_site`). tsc-rs's stderr with the line number of the
+site line replaced by `<line>`, applied only when stderr ends with the Go panic block exactly as
+`gopanic.rs` prints it:
+
+```
+^(panic: |fatal error: )<rest of line>\n    a Go panic line, or fatal error: newosproc
+(<non-blank line>\n)*                       more panic lines ([recovered]), the signal line, ...
+\n                                          one blank line
+\t<[A-Za-z0-9_./-]+>.rs:<digits>\n\Z        the site line, the last line of stderr
+```
+
+Only the digits are replaced. The file path, the panic lines, the signal line and every other byte
+stay in the hash, and the exit code, stdout and written files are pinned beside it as before. Any
+other stderr (a site line that is not last, no blank line before it, no panic line, a Go trace, the
+`tsgo: panic at <file>:<line>` hook line of a Rust panic) is hashed as it is.
+
+**Where it applies.** `parity_fuzz.py` records `stderrSite` (the sha256 of the site form) on every
+tsc-rs attempt of the fuzz and corpus tiers, beside the raw `stderr` hash, which stays for
+diagnosis. A grandfather entry's `attempt` pins `stderrSite` instead of `stderr`; `regen` (pinning)
+and `match` (comparing, in `parity_compare.py`) both read the row's field, so one function makes
+both sides. No cache changes: tsc-rs results are never cached, and Go's evidence never hashed
+stderr (a Go trace holds addresses).
+
+**Version.** The grandfather file is version 3. A version 2 file is INVALID, `regen` refuses an
+evidence row without `stderrSite` (a harness before H6), and `match` never matches one, so a raw
+hash is never compared with a site-form hash. A later change to the form bumps the version again.
+
+### Re-pinning
+
+```sh
+B=~/.cache/perf-rearch/bins/tsgo-head-e81a14807-rel R=~/.cache/perf-rearch/parity/runs
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode full  --out $R/h6-gf-evidence-e81a14807-full
+scripts/perf-rearch/parity_grandfather.py evidence $B --mode quick --out $R/h6-gf-evidence-e81a14807-quick
+scripts/perf-rearch/parity_grandfather.py regen --full $R/h6-gf-evidence-e81a14807-full \
+    --quick $R/h6-gf-evidence-e81a14807-quick --old $R/head-e81a14807-full-combined
+```
+
+(under the gate lock, `~/.cache/perf-rearch/parity/.lock`). Every one of the 36 entries had to be
+regenerated, since the attempt key changed. Against the version 2 file:
+
+- **The nine crash copies** change only `attempt.stderrSite`. The raw stderr of every evidence
+  attempt still equals the version 2 pin, so the binary's output did not move; only the form did.
+
+  | items | site | v2 `stderr` | v3 `stderrSite` |
+  |---|---|---|---|
+  | 795, 18749 | `frontend/tsoptions/tsconfig_p2.rs` (nil dereference, signal line) | `7c3b7b895e432b8d` | `fc47757c74f48255` |
+  | 16682 | `ast/node.rs` (nil dereference, repanicked) | `6f73fad48b9a7140` | `83dac7be3f1572c1` |
+  | 3909, 4134, 4327, 17373, 19954, 20483 | `execute/tsc/diagnostics.rs` (`go_repeat`) | `b06e51ae2e238e26` | `8e984e210c4a994e` |
+
+- **The other 27** (timeouts and the `fuzz/1:5391` output DIFF) have no site line: `stderrSite`
+  equals the old raw hash, and every fingerprint is the same.
+- Reasons, input identities, Go's evidence (`go`: status, outcome, panic line, stdout and written
+  hashes) and attempt lists are unchanged for all 36; only `evidence` names the new runs. Go's
+  results came from the cache (0 entries published).
+
+### Negative controls
+
+`parity_h6_test.py` (34 checks, `H6 SELFTEST OK`):
+
+- **form:** each `gopanic.rs` text (a panic, with the signal line, repanicked, `fatal error:
+  newosproc`) has only its number replaced and gives the same form at another line; nine texts stay
+  unchanged (site line not last, no blank line, no panic line, a blank line inside the block, a Go
+  path, no final newline, a Go trace, the Rust hook line, a site line inside other output).
+- **pin:** the real fuzz tier (`parity_fuzz.run_case`, fake Go and tsc-rs) makes the evidence row;
+  regen's entry builder pins it; tsc-rs changes and the case runs again. The same crash at another
+  line of the same file MATCHes the pin (and its raw stderr hash differs: version 2 failed there).
+  Another file, another panic line, an extra stderr line before the block, one after the site line,
+  an added signal line and another exit code do not.
+- **compare:** through `parity_compare`, the moved line is GRANDFATHERED (PARITY OK) and another
+  file is KNOWN-BAD (PARITY FAIL); a version 2 file is GRANDFATHER INVALID; regen refuses and match
+  rejects a row without `stderrSite`.
+
+`parity_h4_test.py` follows the new attempt key and version (`H4 SELFTEST OK`).
+`parity_referees_test.py` fails one check, `lsp keys` (`session_material() missing 1 required
+positional argument: 'node'`), on `perf/first-principles` as well: it is not from this lane.
+
+**Real probe.** A scratch worktree of `perf/first-principles` (`8e08084c3`; the crates equal
+`e81a14807`) with one blank line added above `go_repeat` in `execute/tsc/diagnostics.rs`, built
+with `run-cargo-capped.sh build --release` (`tsgo-h6-probe-blankline`, sha256 `8ae64cf4ee4b…`),
+ran the nine cases (`runs/h6-probe-blankline-full`, `-quick`). The six `go_repeat` cases now print
+`diagnostics.rs:1384`; their raw stderr no longer equals the version 2 pin, and all nine MATCH the
+version 3 pins in full mode (and `795` in quick, the only one of the nine in the quick manifest).
+The scratch worktree and its branch were deleted.
+
+### Gate run
+
+GATE_PLACEHOLDER
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
@@ -1842,6 +1951,7 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   `parity_grandfather.py`: its schema, matcher, evidence runs and `regen`.
 - `parity_h4_test.py` and `vendor/lspdiff/selftest/h4-selftest.mjs`: lane H4's negative controls
   (about 1 minute together; the JS file also has lane ND2's and H5's).
+- `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
 - `ata_typings.py`: builds and checks the frozen typings store (`build`, `check`, `path`);
   `ata-typings.json`: its manifest (hash, versions, every file's sha256; the store itself is in
   `~/.cache/perf-rearch/ata-typings/<sha>/`); `parity_h5_test.py`: lane H5's negative controls (unit
