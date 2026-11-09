@@ -1069,14 +1069,8 @@ impl Checker {
         let source_rest_type = self.get_non_array_rest_type(source);
         let target_rest_type = self.get_non_array_rest_type(target);
         if source_rest_type.is_some() || target_rest_type.is_some() {
-            self.instantiate_type(
-                if source_rest_type.is_some() {
-                    source_rest_type
-                } else {
-                    target_rest_type
-                },
-                report_unreliable_markers,
-            );
+            let rest_type = source_rest_type.get().unwrap_or(target_rest_type);
+            self.instantiate_type(rest_type, report_unreliable_markers);
         }
         let mut kind = SyntaxKind::Unknown;
         let target_declaration = self.sig(target).declaration;
@@ -1287,24 +1281,15 @@ impl Checker {
                     // method. The markers are elided in the final diagnostic chain and never actually reported.
                     let source_is_construct =
                         self.sig(source).flags.intersects(SignatureFlags::CONSTRUCT);
-                    let message: &'static crate::diagnostics::Message = if self
-                        .sig(source)
-                        .parameters
-                        .is_empty()
-                        && self.sig(target).parameters.is_empty()
-                    {
-                        if source_is_construct {
-                            diag::Construct_signatures_with_no_arguments_have_incompatible_return_types_0_and_1
-                        } else {
-                            diag::Call_signatures_with_no_arguments_have_incompatible_return_types_0_and_1
-                        }
-                    } else {
-                        if source_is_construct {
-                            diag::Construct_signature_return_types_0_and_1_are_incompatible
-                        } else {
-                            diag::Call_signature_return_types_0_and_1_are_incompatible
-                        }
-                    };
+                    let no_arguments = self.sig(source).parameters.is_empty()
+                        && self.sig(target).parameters.is_empty();
+                    let message: &'static crate::diagnostics::Message =
+                        match (no_arguments, source_is_construct) {
+                            (true, true) => diag::Construct_signatures_with_no_arguments_have_incompatible_return_types_0_and_1,
+                            (true, false) => diag::Call_signatures_with_no_arguments_have_incompatible_return_types_0_and_1,
+                            (false, true) => diag::Construct_signature_return_types_0_and_1_are_incompatible,
+                            (false, false) => diag::Call_signature_return_types_0_and_1_are_incompatible,
+                        };
                     let source_str = self.type_to_string_exported(source_return_type);
                     let target_str = self.type_to_string_exported(target_return_type);
                     let reporter = error_reporter.expect("call of nil func");
