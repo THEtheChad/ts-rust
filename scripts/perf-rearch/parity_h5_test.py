@@ -7,7 +7,8 @@ usage: python3 -I scripts/perf-rearch/parity_h5_test.py [--e2e BIN] [--keep]
 
 Unit checks (a second): the typings store's hash is in the key, a key of another store never reads
 the old Go cache, its priors, refills or Go-variant record; the store's content hash moves with any
-byte; the tripwire sees reads through a bind mount in a nested namespace.
+byte; the tripwire sees reads through a bind mount in a nested namespace; an entry made in an ancestor
+dir of a project (a package.json, node_modules) is seen and changes the key.
 --e2e BIN (a tsc-rs binary; minutes, takes the gate lock): through the real lsp tier,
   - a tsc-rs that reads the real ~/.cache/typescript (an absolute path, or ATA with XDG_CACHE_HOME
     pointing at the real ~/.cache) makes its session ERROR, and no Go log of that tier is published;
@@ -96,6 +97,24 @@ def unit_checks(root):
     (s2 / 'node_modules/@types/x/index.d.ts').write_text('export {};\n ')
     check('store hash: the same content at another path has the same hash', h1 == h2)
     check('store hash: one more byte changes it', A.content_sha(s2) != h1)
+    # Ancestor dirs: what a server looks up above its project is keyed and watched.
+    proj = root / 'up/a/proj'
+    proj.mkdir(parents=True)
+    dirs = L.ancestor_dirs(proj)
+    st0 = L.ancestors_state(dirs)
+    with W.Watch(dirs, keep=lambda p: os.path.basename(p) in L.ANCESTOR_NAMES, recursive=False) as w:
+        (root / 'up/a/unrelated.txt').write_text('x')
+        quiet = list(w.all_events())
+    with W.Watch(dirs, keep=lambda p: os.path.basename(p) in L.ANCESTOR_NAMES, recursive=False) as w:
+        (root / 'up/package.json').write_text('{}')
+        seen = w.all_events()
+    st1 = L.ancestors_state(dirs)
+    check('ancestors: a package.json made above the project is seen while the tier runs', any('up/package.json' in e for e in seen), seen)
+    check('ancestors: control: another file there is not', quiet == [], quiet)
+    check('ancestors: and the key changes with it', I.json_hash(m('1' * 64) | {'ancestors': st0}) != I.json_hash(m('1' * 64) | {'ancestors': st1})
+          and str(root / 'up/package.json') in st1 and not st0, (st0, st1))
+    real = L.ancestors_state(L.ancestor_dirs(L.SANDBOX_HOME / '.cache/typescript/7.1', *[os.path.expanduser(p[0]) for p in L.PROJECTS.values()]))
+    check('ancestors: none of the real projects\' ancestor dirs holds such an entry now', real == {}, real)
     # The tripwire: reads through a read-only bind in a nested namespace are seen, its own listing is not.
     baits = L.make_baits(root / 'guard')
     bait, real = next((b, r) for b, r in baits if r == HOME / '.cache/typescript')

@@ -83,12 +83,14 @@ def _describe(mask):
 class Watch:
     """Watches every directory under `roots` (a {root: label} dict or a list) until close()."""
 
-    def __init__(self, roots, mask=CHANGES, keep=None):
+    def __init__(self, roots, mask=CHANGES, keep=None, recursive=True):
         """keep(path): when given, only events on paths it accepts count, and all of them are listed in
-        `events` (a process's events on its input files). A WatchError (no inotify instance, the watch
+        `events` (a process's events on its input files). recursive=False watches each root dir alone
+        (its entries, not the dirs under it). A WatchError (no inotify instance, the watch
         limit) leaves nothing behind: the instance, its watches and the stop pipe are closed."""
         self.mask = mask
         self.keep = keep
+        self.recursive = recursive
         self.events = []
         self.wd = {}  # wd -> (root, directory)
         self.first = {}  # root -> the first event under it
@@ -123,6 +125,8 @@ class Watch:
 
     def _add_tree(self, root, top):
         self._add(root, top)
+        if not self.recursive:
+            return
         stack = [top]
         while stack:
             d = stack.pop()
@@ -185,7 +189,7 @@ class Watch:
                 continue
             path = os.path.join(d, name) if name else d
             self._mark(root, f'{_describe(mask & (self.mask | IN_Q_OVERFLOW))} {path}', path)
-            if mask & IN_ISDIR and mask & (IN_CREATE | IN_MOVED_TO):
+            if mask & IN_ISDIR and mask & (IN_CREATE | IN_MOVED_TO) and self.recursive:
                 try:
                     self._add_tree(root, path)
                 except WatchError as e:

@@ -239,6 +239,34 @@ def outer(binds):
             *[x for b in binds for x in b]]
 
 
+# The names a server looks up in every ancestor dir of its project and of its typings location (module
+# resolution and the default typeRoots walk up to /, the config search, Yarn PnP): not in any snapshot.
+# Their state (absent, or their content hash) is in the key of every session (ancestors_state), and the
+# ancestor dirs are watched for them while the tier runs (any create, delete or change: ERROR).
+ANCESTOR_NAMES = ('node_modules', 'package.json', 'tsconfig.json', 'jsconfig.json', '.pnp.cjs', '.pnp.js', 'bower_components')
+
+
+def ancestor_dirs(*paths):
+    out = set()
+    for p in paths:
+        p = Path(os.path.realpath(p))
+        out.update(str(a) for a in p.parents)
+    return sorted(out)
+
+
+def ancestors_state(dirs):
+    """{dir/name: content hash} of every ANCESTOR_NAMES entry in dirs (an absent one is not listed)."""
+    out = {}
+    for d in dirs:
+        for n in ANCESTOR_NAMES:
+            p = os.path.join(d, n)
+            if os.path.isdir(p) and not os.path.islink(p):
+                out[p] = inputs.tree_hash(p)
+            elif os.path.lexists(p):
+                out[p] = inputs._file_sha(p) if os.path.isfile(p) and not os.path.islink(p) else f'link {os.readlink(p)}'
+    return out
+
+
 def make_baits(dir_):
     """A session's bait dirs (fresh): [(bait, guarded path)] for every GUARDED dir that exists."""
     inputs.remove_tree(dir_)
@@ -272,12 +300,13 @@ def uses_frozen_typings(sess, info):
     return bool(sess.get('scenario')) and sc.get('ata') and sc.get('typings') == 'frozen'
 
 
-def session_material(sess, root, project_snap, typings, sources_sha, info, node, extra=()):
+def session_material(sess, root, project_snap, typings, sources_sha, info, node, extra=(), ancestors=None):
     """The key material of a session's Go (or JS) logs (see the top comment). A fixture session's root
     is its scratch dir, rewritten from fixtures.mjs (in the sources) before every server run, so it has
     no snapshot. typings: the frozen store's content hash, for the sessions whose ATA installs from it."""
     material = {'version': CACHE_VERSION, 'session': sess, 'root': str(root), 'sources': sources_sha,
-                'settings': info['settings'], 'node': node, 'home': str(SANDBOX_HOME), 'extra': list(extra)}
+                'settings': info['settings'], 'node': node, 'home': str(SANDBOX_HOME), 'ancestors': ancestors or {},
+                'extra': list(extra)}
     if project_snap is not None:
         material.update(real=project_snap.label, tree=project_snap.hash)
     if typings is not None:
@@ -378,6 +407,9 @@ def main():
     with ThreadPoolExecutor(4) as pool:  # every snapshot before the first session, then the watch
         errs = dict(zip(sorted(need), pool.map(lambda r: _snapshot_error(snaps, r), sorted(need))))
     snaps.watch()
+    up_dirs = ancestor_dirs(SANDBOX_HOME / '.cache/typescript/7.1', *[r for r in roots.values() if r is not None])
+    up_watch = parity_watch.Watch(up_dirs, keep=lambda p: os.path.basename(p) in ANCESTOR_NAMES, recursive=False)
+    up_state = ancestors_state(up_dirs)
     snap_secs = round(time.monotonic() - snap_start, 1)
     print(f'lsp: {len(snaps.snaps)} snapshots in {snap_secs}s; {snaps.watch_error or "watched with inotify"}', flush=True)
     if store is not None and str(store) in snaps.snaps:  # the snapshot must be the manifest's content
@@ -414,8 +446,8 @@ def main():
         baits = make_baits(HOME / f'.cache/perf-rearch/parity/scratch/lsp-guard/{name}')
         binds += [(str(b), str(real)) for b, real in baits]
         runs_go = go_runs(sess)
-        material = session_material(sess, root, project_snap, typings, src_sha, info, node, [f'g{runs_go}'])
-        js_material = session_material(sess, root, project_snap, typings, js_src_sha, info, node)
+        material = session_material(sess, root, project_snap, typings, src_sha, info, node, [f'g{runs_go}'], up_state)
+        js_material = session_material(sess, root, project_snap, typings, js_src_sha, info, node, (), up_state)
         key = f'{name}-{inputs.json_hash(material)[:24]}'
         js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
         go_dir = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}'
@@ -503,6 +535,13 @@ def main():
             print(line, flush=True)
     verify_start = time.monotonic()
     changed = snaps.verify()
+    up_events = up_watch.all_events()
+    up_watch.close()
+    if up_events or ancestors_state(up_dirs) != up_state:  # a lookup of every session saw another state than its key
+        why = f'an ancestor dir changed while the tier ran: {(up_events or ["state"])[0]}'
+        changed['ancestors'] = why
+        for k in [k for k in items if k.startswith('lsp/')]:
+            items[k] = {'status': 'ERROR', 'detail': why, 'was': items[k]}
     verify_secs = round(time.monotonic() - verify_start, 1)
     for sess in chosen:
         sinfo = sessions_info.get(sess['name'], {})
@@ -527,7 +566,7 @@ def main():
         print(f'lsp: {stage.publish()} cache files published', flush=True)
     counts = Counter(v['status'] for v in items.values())
     summary = {'tier': args.tier, 'rs': args.rs, 'goSha': go_sha, 'counts': dict(counts), 'sessions': sessions_info,
-               'inputs': snaps.hashes, 'node': node, 'typingsStore': (manifest['sha'] if store is not None else None), 'snapshots': {r: x.as_json() for r, x in snaps.snaps.items()},
+               'inputs': snaps.hashes, 'node': node, 'ancestors': up_state, 'typingsStore': (manifest['sha'] if store is not None else None), 'snapshots': {r: x.as_json() for r, x in snaps.snaps.items()},
                'watch': snaps.watch_error or 'inotify', 'changed': changed, 'settings': info['settings'],
                'secs': {'snapshots': snap_secs, 'verify': verify_secs},
                **({'jsError': js_error} if js_error else {}), 'wallSecs': round(time.monotonic() - t0, 1)}
