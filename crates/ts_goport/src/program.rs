@@ -627,27 +627,22 @@ fn emit_thread_count() -> usize {
     if cfg!(target_family = "wasm") {
         return 0;
     }
-    static SET: OnceLock<Option<usize>> = OnceLock::new();
-    let set = *SET.get_or_init(|| {
-        std::env::var("GOPORT_EMIT_THREADS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-    });
-    set.unwrap_or_else(|| {
-        let cores = available_cores();
-        let checkers = checker_count();
-        if cores <= checkers {
-            return 0;
-        }
-        if cores >= WIDE_CORES
-            && let Some(physical) = physical_core_count()
-            && physical < cores
-        {
-            return physical.saturating_sub(checkers);
-        }
-        cores
-    })
-    .min(MAX_EMIT_THREADS)
+    crate::tuning::emit_threads()
+        .unwrap_or_else(|| {
+            let cores = available_cores();
+            let checkers = checker_count();
+            if cores <= checkers {
+                return 0;
+            }
+            if cores >= WIDE_CORES
+                && let Some(physical) = physical_core_count()
+                && physical < cores
+            {
+                return physical.saturating_sub(checkers);
+            }
+            cores
+        })
+        .min(MAX_EMIT_THREADS)
 }
 
 /// Makes the emit pool of the current program with `count` threads.
@@ -2002,10 +1997,7 @@ fn bind_thread_count(files: usize) -> usize {
     if let Some(count) = TEST_BIND_THREADS.get() {
         return count;
     }
-    if let Some(count) = std::env::var("GOPORT_BIND_THREADS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-    {
+    if let Some(count) = crate::tuning::bind_threads() {
         return count;
     }
     let large = LARGE_LOAD.get() || files >= WIDE_BIND_FILES && wide_cores();

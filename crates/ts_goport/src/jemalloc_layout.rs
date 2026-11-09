@@ -30,7 +30,7 @@
 //!   (`thp_guard::WATCH_FOR`), or sooner when it turns THP off or cannot
 //!   read `/proc/buddyinfo`; then its arena can lose its last thread, as
 //!   without the watcher. Without the watcher (LSP, API, watch mode,
-//!   `GOPORT_THP_GUARD=0` or `start`), one arena can still lose its last
+//!   `GOPORT_THP_GUARD=0`), one arena can still lose its last
 //!   parse worker; jemlayout1 measured the same faults there as with the
 //!   watcher. Before this, only the watcher kept the fourth arena, by
 //!   chance.
@@ -50,7 +50,7 @@
 //! After a jemalloc update, check both behaviors again:
 //! - A: `tcache_destroy` and `arena_migrate` still purge all when
 //!   `arena_nthreads_get` is 0. `strace -f -e trace=madvise` of a query
-//!   check with `GOPORT_THP_GUARD=start GOPORT_LAUNCH=0` (no watcher):
+//!   check with `GOPORT_THP_GUARD=0 GOPORT_LAUNCH=0` (no watcher):
 //!   jemlayout1 saw 80 `MADV_DONTNEED` calls below 4 MiB without the
 //!   layout and 11 with it.
 //! - B: exp_grow.h still grows in these steps. `strace -f -e trace=mmap` of

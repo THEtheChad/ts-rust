@@ -1429,7 +1429,7 @@ the `unstripped-tsc-<platform>` artifact (90 days). The tsc has no DWARF, so
 its frame names come only from the symbol table.
 
 The API and IPC panic answers (`panic: <value>`, then the stack), the LSP log
-of a recovered panic and `GOPORT_TRACE` output print the stack with
+of a recovered panic and `GOPORT_TRACE` output (a `diagnostics` build) print the stack with
 `gostd::backtrace::text`. When every frame has a name, this is std's short
 text, as before. A frame with no name prints its return address, and one line
 before the frames identifies the binary:

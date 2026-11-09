@@ -641,14 +641,11 @@ fn worker_count() -> usize {
     if cfg!(target_family = "wasm") {
         return 0;
     }
-    std::env::var("GOPORT_RESOLVE_AHEAD_THREADS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| {
-            crate::program::ThreadBudget::current()
-                .parse_threads(false)
-                .saturating_sub(1)
-        })
+    crate::tuning::resolve_ahead_threads().unwrap_or_else(|| {
+        crate::program::ThreadBudget::current()
+            .parse_threads(false)
+            .saturating_sub(1)
+    })
 }
 
 /// The workers of the process, once a load started them

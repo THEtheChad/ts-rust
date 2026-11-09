@@ -1022,6 +1022,9 @@ fn build_program(
     let replaced = previous
         .as_ref()
         .and_then(|old| replaced_files(np, &old.np, &old.tables));
+    // The version-table checks (`check_version_tables`) are compiled only
+    // in debug and `diagnostics` builds.
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
     let check = check_version_tables() && replaced.is_some();
 
     // PERF: the publish keeps the parse of each new file, so each
@@ -1047,6 +1050,7 @@ fn build_program(
         Some(replaced) => new_files(replaced.iter().map(|r| r.file)),
         None => new_files(files.iter()),
     };
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
     if check {
         let all = new_files(files.iter());
         assert!(
@@ -1078,8 +1082,11 @@ fn build_program(
             );
         };
         match &replaced {
-            Some(replaced) if !check => replaced.iter().for_each(|r| assert_published(r.file)),
-            _ => files.iter().for_each(assert_published),
+            // The checks look at every file.
+            #[cfg(any(debug_assertions, feature = "diagnostics"))]
+            Some(_) if check => files.iter().for_each(assert_published),
+            Some(replaced) => replaced.iter().for_each(|r| assert_published(r.file)),
+            None => files.iter().for_each(assert_published),
         }
     };
     // PERF (serialgap1): a program that needs its full tables builds their
@@ -1124,6 +1131,7 @@ fn build_program(
             // Go computes it from the file names and the options, which a
             // program that replaces files in place keeps.
             let common_source_directory = old.common_source_directory;
+            #[cfg(any(debug_assertions, feature = "diagnostics"))]
             if check {
                 let full = full_tables(np, previous_shared);
                 assert_same_tables(&tables, &full);
@@ -1164,16 +1172,27 @@ fn build_program(
     program
 }
 
-/// True in debug builds, or when `GOPORT_CHECK_VERSION_TABLES=1`:
-/// `build_program` builds the tables of a version that starts from the
-/// tables of an older one (`reused_tables`) again from its files alone
-/// (`full_tables`), and panics when they differ. Read once.
+/// True in debug builds, or in a `diagnostics` feature build with
+/// `GOPORT_CHECK_VERSION_TABLES=1`: `build_program` builds the tables of a
+/// version that starts from the tables of an older one (`reused_tables`)
+/// again from its files alone (`full_tables`), and panics when they differ.
+/// Read once. A release build without `diagnostics` compiles none of the
+/// checks: this function, `full_tables`, `assert_same_tables`,
+/// `GoSharedState::assert_same`, `assert_include_diagnostics`,
+/// `assert_same_include_diagnostics` and their call sites.
+#[cfg(feature = "diagnostics")]
 fn check_version_tables() -> bool {
     static CHECK: OnceLock<bool> = OnceLock::new();
     *CHECK.get_or_init(|| {
         cfg!(debug_assertions)
             || std::env::var("GOPORT_CHECK_VERSION_TABLES").is_ok_and(|v| v == "1")
     })
+}
+
+/// A debug build without `diagnostics` always checks.
+#[cfg(all(debug_assertions, not(feature = "diagnostics")))]
+fn check_version_tables() -> bool {
+    true
 }
 
 /// The version that a new program version was updated from, while it is
@@ -1277,7 +1296,8 @@ fn replaced_files<'a>(
 
 /// The tables of `np` built from its files alone. `previous` is the
 /// frontend program and shared state of the version that `np` was updated
-/// from (`GoSharedState::new`).
+/// from (`GoSharedState::new`). Only for the checks.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
 fn full_tables(np: &NewProgram, previous: Option<(&NewProgram, &GoSharedState)>) -> VersionTables {
     full_tables_of(np, previous, TableParts::build(np, || ()))
 }
@@ -1346,6 +1366,7 @@ impl TableParts {
                 .map(|(path, file)| (path.as_str(), file.store))
                 .collect()
         } else {
+            #[cfg(any(debug_assertions, feature = "diagnostics"))]
             if check_version_tables() {
                 assert!(
                     paths
@@ -1480,6 +1501,7 @@ fn file_program_meta(np: &NewProgram, file: &ParsedSourceFile) -> FileProgramMet
 
 /// Panics when `tables`, which `reused_tables` made, differ from `full`,
 /// which `full_tables` made for the same program.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
 fn assert_same_tables(tables: &VersionTables, full: &VersionTables) {
     assert_eq!(
         tables.source_file_order, full.source_file_order,
@@ -2171,11 +2193,16 @@ impl GoSharedState {
     /// program of this state, once. `file_by_path` holds the slots of the
     /// program files (`VersionTables::file_by_path`).
     fn fill_include_diagnostics(&self, p: &NewProgram, file_by_path: &FxHashMap<String, usize>) {
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
         let mut built = false;
         self.include_diagnostics.get_or_init(|| {
-            built = true;
+            #[cfg(any(debug_assertions, feature = "diagnostics"))]
+            {
+                built = true;
+            }
             include_diagnostics_of(p, file_by_path)
         });
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
         if built && check_version_tables() {
             self.assert_include_diagnostics(p);
         }
@@ -2187,6 +2214,7 @@ impl GoSharedState {
     /// for both. The include processor diagnostics are not built yet;
     /// `fill_include_diagnostics` checks them against the frontend
     /// collection.
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
     fn assert_same(&self, full: &GoSharedState) {
         assert_eq!(self.references, full.references, "preserved references");
         let mut redirects: Vec<_> = self.redirects_for_resolution.keys().collect();
@@ -2207,6 +2235,7 @@ impl GoSharedState {
     /// Panics when the include processor diagnostics differ from those that
     /// Go `GetIncludeProcessorDiagnostics` reads for each program file of
     /// `p` (`include_diagnostics_of`).
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
     fn assert_include_diagnostics(&self, p: &NewProgram) {
         let collection = p.include_processor.get_diagnostics(p);
         let each_file: FxHashMap<usize, Vec<Diagnostic>> = p
@@ -2251,6 +2280,7 @@ fn include_diagnostics_of(
 
 /// Panics when two maps of include processor diagnostics by file id differ.
 // PORT: `Diagnostic` has no `==`; the debug text holds every field.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
 fn assert_same_include_diagnostics(
     diagnostics: &FxHashMap<usize, Vec<Diagnostic>>,
     expected: &FxHashMap<usize, Vec<Diagnostic>>,

@@ -51,7 +51,7 @@ fn a_printed_panic_with_no_stderr_reader_does_not_abort() {
         "control: the hook must print the panic:\n{stderr}"
     );
     // No reader: the same exit, not SIGABRT. GOPORT_TRACE adds the
-    // backtrace write.
+    // backtrace write in a `diagnostics` build.
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
     let (status, _) = run("closed", Stdio::from(writer), true);

@@ -75,12 +75,11 @@
 //! made 26 to 354 opens per run (syscut1: TypeORM, VS Code single
 //! threaded).
 //!
-//! `GOPORT_THP_GUARD` selects the mode: `0` does nothing (THP stays on, also
-//! with free page reporting), `force` always turns THP off, `start` does the
-//! start check but starts no watcher, and any other value (or no value)
-//! does both. `GOPORT_THP_GUARD_MIB` changes the limit of both (a value
-//! that does not parse keeps the default). `GOPORT_THP_GUARD_DEBUG=1`
-//! prints each decision and its inputs as one line on stderr.
+//! Knobs (`tuning`): `GOPORT_THP_GUARD=0` turns the guard off (THP stays
+//! on, also with free page reporting), and `GOPORT_THP_GUARD_MIB` changes
+//! the limit of both parts (a value that does not parse keeps the default).
+//! In a `diagnostics` feature build, `GOPORT_THP_GUARD_DEBUG=1` prints each
+//! decision and its inputs as one line on stderr.
 
 use std::time::Duration;
 
@@ -133,6 +132,32 @@ const PAGE_BYTES: u64 = 4096;
 /// with `CONFIG_PAGE_REPORTING` (Linux 5.14 and later).
 const PAGE_REPORTING_ORDER: &str = "/sys/module/page_reporting/parameters/page_reporting_order";
 
+/// `GOPORT_THP_GUARD_DEBUG=1` (a `diagnostics` feature build only): each
+/// decision of the guard and its inputs as one `goport thp_guard:` line on
+/// stderr. Without the feature the guard prints nothing and keeps nothing
+/// for it.
+#[cfg(all(feature = "diagnostics", target_os = "linux", target_arch = "x86_64"))]
+mod debug {
+    /// Prints `args` as one `goport thp_guard:` line on stderr when
+    /// `GOPORT_THP_GUARD_DEBUG` is set and not `0` (read once).
+    pub(super) fn say(args: std::fmt::Arguments<'_>) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *ON.get_or_init(|| std::env::var_os("GOPORT_THP_GUARD_DEBUG").is_some_and(|v| v != "0"))
+        {
+            eprintln!("goport thp_guard: {args}");
+        }
+    }
+}
+
+/// `debug::say` of `format_args!(...)` in a `diagnostics` feature build;
+/// nothing otherwise (the arguments are not evaluated).
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "diagnostics")]
+        debug::say(format_args!($($arg)*));
+    }};
+}
+
 /// Call first in `main`, before the first heap allocation: jemalloc maps
 /// and touches its first memory at that allocation. The start check
 /// allocates nothing (stack buffers only). Setting a `GOPORT_THP_GUARD*`
@@ -140,7 +165,7 @@ const PAGE_REPORTING_ORDER: &str = "/sys/module/page_reporting/parameters/page_r
 /// watcher thread start allocate, after the start check.
 ///
 /// Checks, in order, and stops at the first that says to keep THP:
-/// 1. `GOPORT_THP_GUARD` (see the module comment).
+/// 1. `GOPORT_THP_GUARD=0` (`tuning::thp_guard_off`).
 /// 2. `PR_GET_THP_DISABLE`: THP is already off (the parent turned it off,
 ///    or this run is the exec of `set_malloc_tunables`: the flag stays set
 ///    across `execve`).
@@ -167,28 +192,13 @@ pub fn thp_guard() -> bool {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         use nix::sys::prctl::{get_thp_disable, set_thp_disable};
-        let debug = std::env::var_os("GOPORT_THP_GUARD_DEBUG").is_some_and(|v| v != "0");
-        let watcher = match std::env::var_os("GOPORT_THP_GUARD") {
-            Some(mode) if mode == "0" => {
-                say(debug, format_args!("THP kept (GOPORT_THP_GUARD=0)"));
-                return true;
-            }
-            Some(mode) if mode == "force" => {
-                let ok = set_thp_disable(true).is_ok();
-                say(
-                    debug,
-                    format_args!("THP off (GOPORT_THP_GUARD=force, prctl ok {ok})"),
-                );
-                return !ok;
-            }
-            Some(mode) => mode != "start",
-            None => true,
-        };
-        let min_free_mib: u64 = std::env::var_os("GOPORT_THP_GUARD_MIB")
-            .and_then(|mib| mib.to_str()?.parse().ok())
-            .unwrap_or(DEFAULT_MIN_FREE_MIB);
+        if crate::tuning::thp_guard_off() {
+            say!("THP kept (GOPORT_THP_GUARD=0)");
+            return true;
+        }
+        let min_free_mib = crate::tuning::thp_guard_min_free_mib().unwrap_or(DEFAULT_MIN_FREE_MIB);
         if get_thp_disable().unwrap_or(true) {
-            say(debug, format_args!("THP already off at start"));
+            say!("THP already off at start");
             return false;
         }
         let mut enabled = [0; 128];
@@ -202,17 +212,11 @@ pub fn thp_guard() -> bool {
                 .as_ref()
                 .and_then(|file| read_from_start(file, &mut buddyinfo)),
         ) else {
-            say(
-                debug,
-                format_args!("THP kept (a THP file or /proc/buddyinfo cannot be read)"),
-            );
+            say!("THP kept (a THP file or /proc/buddyinfo cannot be read)");
             return true;
         };
         let Some(free) = free_huge_bytes(buddyinfo) else {
-            say(
-                debug,
-                format_args!("THP kept (/proc/buddyinfo does not parse)"),
-            );
+            say!("THP kept (/proc/buddyinfo does not parse)");
             return true;
         };
         let mut order = [0; 16];
@@ -226,30 +230,26 @@ pub fn thp_guard() -> bool {
             min_free,
         );
         let failed = step == Start::Off && set_thp_disable(true).is_err();
-        let no_watcher = step == Start::Watch && watcher && long_running();
+        let no_watcher = step == Start::Watch && long_running();
         let watching = step == Start::Watch
-            && watcher
             && !no_watcher
-            && buddyinfo_file.is_some_and(|file| start_watcher(file, min_free, free, debug));
+            && buddyinfo_file.is_some_and(|file| start_watcher(file, min_free, free));
         let huge = failed || huge_pages(step, enabled, free, min_free);
-        say(
-            debug,
-            format_args!(
-                "THP {} (enabled {}, defrag {}, page_reporting_order {}, {} MiB free in 2 MiB blocks, limit {min_free_mib} MiB{}{}{}{})",
-                if step == Start::Off { "off" } else { "kept" },
-                selected_mode(enabled).unwrap_or("?"),
-                selected_mode(defrag).unwrap_or("?"),
-                order.map_or("?", str::trim),
-                free >> 20,
-                if failed { ", prctl failed" } else { "" },
-                if watching { ", watcher started" } else { "" },
-                if no_watcher {
-                    ", no watcher: watch, LSP or API mode"
-                } else {
-                    ""
-                },
-                if huge { "" } else { ", 4 KiB pages" },
-            ),
+        say!(
+            "THP {} (enabled {}, defrag {}, page_reporting_order {}, {} MiB free in 2 MiB blocks, limit {min_free_mib} MiB{}{}{}{})",
+            if step == Start::Off { "off" } else { "kept" },
+            selected_mode(enabled).unwrap_or("?"),
+            selected_mode(defrag).unwrap_or("?"),
+            order.map_or("?", str::trim),
+            free >> 20,
+            if failed { ", prctl failed" } else { "" },
+            if watching { ", watcher started" } else { "" },
+            if no_watcher {
+                ", no watcher: watch, LSP or API mode"
+            } else {
+                ""
+            },
+            if huge { "" } else { ", 4 KiB pages" },
         );
         huge
     }
@@ -278,25 +278,17 @@ pub fn long_running() -> bool {
     }
 }
 
-/// Prints `args` as one `goport thp_guard:` line on stderr when `debug`.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn say(debug: bool, args: std::fmt::Arguments<'_>) {
-    if debug {
-        eprintln!("goport thp_guard: {args}");
-    }
-}
-
 /// Starts the `watch` thread on `file`, the open `/proc/buddyinfo`. `free`
 /// is the start check's read. False when the thread cannot start. The
 /// buddyinfo buffer is made here, on the heap: glibc puts the static TLS
 /// (79 to 99 KiB in perf13b) at the top of each thread stack, so a small
 /// stack (a 128 KiB one, or `RUST_MIN_STACK`) had too little room for it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn start_watcher(file: std::fs::File, min_free: u64, free: u64, debug: bool) -> bool {
+fn start_watcher(file: std::fs::File, min_free: u64, free: u64) -> bool {
     let buddyinfo = vec![0; BUDDYINFO_BYTES];
     std::thread::Builder::new()
         .name("thp-guard".into())
-        .spawn(move || watch(&file, min_free, next_poll(free, min_free), debug, buddyinfo))
+        .spawn(move || watch(&file, min_free, next_poll(free, min_free), buddyinfo))
         .is_ok()
 }
 
@@ -304,50 +296,42 @@ fn start_watcher(file: std::fs::File, min_free: u64, free: u64, debug: bool) -> 
 /// `/proc/buddyinfo`) into `buddyinfo` and follows `watch_step`, again and
 /// again. It turns THP off at most once, then ends. It allocates nothing.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn watch(
-    file: &std::fs::File,
-    min_free: u64,
-    mut wait: Duration,
-    debug: bool,
-    mut buddyinfo: Vec<u8>,
-) {
+fn watch(file: &std::fs::File, min_free: u64, mut wait: Duration, mut buddyinfo: Vec<u8>) {
     let start = std::time::Instant::now();
+    #[cfg(feature = "diagnostics")]
     let mut reads = 0u32;
     loop {
         std::thread::sleep(wait);
         let free = read_from_start(file, &mut buddyinfo).and_then(free_huge_bytes);
         let elapsed = start.elapsed();
-        reads += 1;
+        #[cfg(feature = "diagnostics")]
+        {
+            reads += 1;
+        }
         match (watch_step(elapsed, free, min_free), free) {
             (Watch::Wait(next), _) => wait = next,
             (Watch::Off, free) => {
                 let ok = nix::sys::prctl::set_thp_disable(true).is_ok();
-                return say(
-                    debug,
-                    format_args!(
-                        "THP off by the watcher after {} ms and {reads} reads ({} MiB free in 2 MiB blocks, prctl ok {ok})",
-                        elapsed.as_millis(),
-                        free.unwrap_or(0) >> 20,
-                    ),
+                say!(
+                    "THP off by the watcher after {} ms and {reads} reads ({} MiB free in 2 MiB blocks, prctl ok {ok})",
+                    elapsed.as_millis(),
+                    free.unwrap_or(0) >> 20,
                 );
+                return;
             }
             (Watch::Stop, None) => {
-                return say(
-                    debug,
-                    format_args!(
-                        "watcher stopped, THP kept (/proc/buddyinfo cannot be read or does not parse)"
-                    ),
+                say!(
+                    "watcher stopped, THP kept (/proc/buddyinfo cannot be read or does not parse)"
                 );
+                return;
             }
             (Watch::Stop, Some(free)) => {
-                return say(
-                    debug,
-                    format_args!(
-                        "watcher stopped after {} s and {reads} reads, THP kept ({} MiB free in 2 MiB blocks)",
-                        elapsed.as_secs(),
-                        free >> 20,
-                    ),
+                say!(
+                    "watcher stopped after {} s and {reads} reads, THP kept ({} MiB free in 2 MiB blocks)",
+                    elapsed.as_secs(),
+                    free >> 20,
                 );
+                return;
             }
         }
     }
