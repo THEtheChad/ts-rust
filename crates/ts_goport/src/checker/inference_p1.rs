@@ -1427,12 +1427,8 @@ impl Checker {
                     if !sort {
                         self.infer_from_types(n, s, t);
                     }
-                    if !matched_sources.contains(&s) {
-                        matched_sources.push(s);
-                    }
-                    if !matched_targets.contains(&t) {
-                        matched_targets.push(t);
-                    }
+                    append_if_unique(&mut matched_sources, s);
+                    append_if_unique(&mut matched_targets, t);
                 }
             }
         }
@@ -1489,19 +1485,10 @@ impl Checker {
             let mut target_slot = NormalizedSlot::EMPTY;
             for (i, &s) in sources.iter().enumerate() {
                 let slots = (&mut source_slots[i], &mut target_slot);
-                let matched = if base {
-                    self.is_type_or_base_identical_to(s, t, slots)
-                } else {
-                    self.is_type_identical_in_matching(s, t, slots)
-                };
-                if matched {
+                if self.is_identical_in_matching(base, s, t, slots) {
                     self.infer_from_types(n, s, t);
-                    if !matched_sources.contains(&s) {
-                        matched_sources.push(s);
-                    }
-                    if !matched_targets.contains(&t) {
-                        matched_targets.push(t);
-                    }
+                    append_if_unique(&mut matched_sources, s);
+                    append_if_unique(&mut matched_targets, t);
                 }
             }
         }
@@ -1509,6 +1496,23 @@ impl Checker {
             Self::unmatched_types(sources, &matched_sources),
             Self::unmatched_types(targets, &matched_targets),
         )
+    }
+
+    /// The matcher of `infer_from_identical_types`: Go's isTypeOrBaseIdenticalTo when `base`,
+    /// else isTypeIdenticalTo, with the pair's normalization slots.
+    #[inline]
+    fn is_identical_in_matching(
+        &mut self,
+        base: bool,
+        source: TypeId,
+        target: TypeId,
+        slots: (&mut NormalizedSlot, &mut NormalizedSlot),
+    ) -> bool {
+        if base {
+            self.is_type_or_base_identical_to(source, target, slots)
+        } else {
+            self.is_type_identical_in_matching(source, target, slots)
+        }
     }
 
     // Go: checker/inference.go:411-416 inferFromMatchingTypes: the tail. It copies the list once, without the
@@ -2899,5 +2903,14 @@ mod tests {
         assert!(stack.set_ids.is_empty());
         stack.push_ids(TypeId(4), StackIds::One(a), 0);
         assert_eq!(stack.top_deeply_nested(2), Some(true));
+    }
+}
+
+/// Go's `core.AppendIfUnique` on the short matched lists of `infer_from_matching_types`.
+// Go: core/core.go:380 AppendIfUnique
+#[inline]
+fn append_if_unique(list: &mut SmallVec<[TypeId; 8]>, t: TypeId) {
+    if !list.contains(&t) {
+        list.push(t);
     }
 }
