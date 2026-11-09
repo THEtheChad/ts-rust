@@ -1199,12 +1199,11 @@ impl Checker {
             if is_template_expression(template) {
                 // If a tagged template expression lacks a tail literal, the call is incomplete.
                 // Specifically, a template only can end in a TemplateTail or a Missing literal.
-                let spans = template.template_spans().nodes();
-                let last_span = if spans.is_empty() {
-                    Node::NIL
-                } else {
-                    spans.get(spans.len() - 1)
-                };
+                let last_span = template
+                    .template_spans()
+                    .nodes()
+                    .last()
+                    .unwrap_or(Node::NIL);
                 // we should always have at least one span.
                 call_is_incomplete = node_is_missing(last_span.literal())
                     || is_unterminated_literal(last_span.literal());
@@ -1223,16 +1222,8 @@ impl Checker {
             if call_is_incomplete {
                 return true;
             }
-            arg_count = if effective_minimum_arguments == 0 {
-                args.len() as i32
-            } else {
-                1
-            };
-            effective_parameter_count = if args.is_empty() {
-                effective_parameter_count
-            } else {
-                1
-            }; // class may have argumentless ctor functions - still resolve ctor and compare vs props member type
+            arg_count = if_else(effective_minimum_arguments == 0, args.len() as i32, 1);
+            effective_parameter_count = if_else(args.is_empty(), effective_parameter_count, 1); // class may have argumentless ctor functions - still resolve ctor and compare vs props member type
             effective_minimum_arguments = effective_minimum_arguments.min(1); // sfc may specify context argument - handled by framework and not typechecked
         } else if is_new_expression(node) && node.argument_list().is_nil() {
             // This only happens when we have something of the form: 'new C'
