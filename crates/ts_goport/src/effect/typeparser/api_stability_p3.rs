@@ -641,81 +641,109 @@ impl ApiStabilityAnalysis {
         self.record_symbol(tp, surface, source_symbol);
         if instantiated {
             let empty = ApiStabilitySubstitution::default();
-            if self.collect_resolved_member_table_if_materialized(
-                tp,
-                surface,
-                t,
-                source_symbol,
-                &empty,
-            ) {
-            } else if self.member_table_resolution_is_safe(tp, t, &current) {
-                self.note_materializing_read();
-                for member in tp.checker.get_properties_of_type_exported(t) {
-                    if member.is_nil()
-                        || tp
-                            .checker
-                            .sym(member)
-                            .flags
-                            .intersects(SymbolFlags::TYPE_PARAMETER)
-                        || api_stability_symbol_is_non_public(tp.checker, member)
-                    {
-                        continue;
-                    }
-                    let boundary = self.inherited_child_boundary_symbol(tp, member, source_symbol);
-                    if boundary.is_some() {
-                        self.record_symbol(tp, surface, boundary);
-                        continue;
-                    }
-                    let child = self.member_surface(tp, member, &empty);
-                    surface.merge(child);
-                }
-            } else if source_symbol.is_some() && tp.checker.sym(source_symbol).members.is_some() {
-                let members = tp.checker.sym(source_symbol).members;
-                self.collect_resolved_member_table(tp, surface, members, source_symbol, &current);
-                if self.symbol_has_late_bound_members(tp, source_symbol) {
-                    surface.block();
-                }
-            } else {
-                surface.block();
-            }
+            self.collect_instantiated_anonymous_members(tp, surface, t, source_symbol, &current);
             self.collect_anonymous_index_infos(tp, surface, t, source, &empty, &current);
             self.collect_function_signatures(tp, surface, t, source, &current);
             return;
         }
         if source_symbol.is_some() {
-            let members = tp.checker.sym(source_symbol).members;
-            if self.collect_resolved_member_table_if_materialized(
-                tp,
-                surface,
-                source,
-                source_symbol,
-                &current,
-            ) {
-            } else if members.is_some() {
-                self.collect_resolved_member_table(tp, surface, members, source_symbol, &current);
-                if self.symbol_has_late_bound_members(tp, source_symbol) {
-                    surface.block();
-                }
-            } else if self.member_table_resolution_is_safe(tp, source, &current) {
-                let members = self.materialized_members_of_symbol(tp.checker, source_symbol);
-                if members.is_some() {
-                    self.collect_resolved_member_table(
-                        tp,
-                        surface,
-                        members,
-                        source_symbol,
-                        &current,
-                    );
-                }
-                // A function-like symbol has no member table of its own; its call
-                // signatures are declared directly on the symbol and are read by
-                // collectFunctionSignatures.
-            } else {
-                surface.block();
-            }
+            self.collect_declared_anonymous_members(tp, surface, source, source_symbol, &current);
         }
         self.collect_anonymous_index_infos(tp, surface, t, source, &current, &current);
         self.collect_function_signatures(tp, surface, t, source, &current);
+    }
+
+    /// The members of the instantiated anonymous type `t` (of the source
+    /// symbol `source_symbol`): its materialized member table, else its
+    /// properties when the guard allows resolving them, else the source
+    /// symbol's own member table. Blocks the surface when none is readable.
+    fn collect_instantiated_anonymous_members(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        t: TypeId,
+        source_symbol: SymbolId,
+        current: &ApiStabilitySubstitution,
+    ) {
+        let empty = ApiStabilitySubstitution::default();
+        if self.collect_resolved_member_table_if_materialized(tp, surface, t, source_symbol, &empty)
+        {
+            return;
+        }
+        if self.member_table_resolution_is_safe(tp, t, current) {
+            self.note_materializing_read();
+            for member in tp.checker.get_properties_of_type_exported(t) {
+                if member.is_nil()
+                    || tp
+                        .checker
+                        .sym(member)
+                        .flags
+                        .intersects(SymbolFlags::TYPE_PARAMETER)
+                    || api_stability_symbol_is_non_public(tp.checker, member)
+                {
+                    continue;
+                }
+                let boundary = self.inherited_child_boundary_symbol(tp, member, source_symbol);
+                if boundary.is_some() {
+                    self.record_symbol(tp, surface, boundary);
+                    continue;
+                }
+                let child = self.member_surface(tp, member, &empty);
+                surface.merge(child);
+            }
+            return;
+        }
+        if source_symbol.is_some() && tp.checker.sym(source_symbol).members.is_some() {
+            let members = tp.checker.sym(source_symbol).members;
+            self.collect_resolved_member_table(tp, surface, members, source_symbol, current);
+            if self.symbol_has_late_bound_members(tp, source_symbol) {
+                surface.block();
+            }
+            return;
+        }
+        surface.block();
+    }
+
+    /// The members of the uninstantiated anonymous type `source` of the
+    /// symbol `source_symbol`: its materialized member table, else the
+    /// symbol's member table, else the members materialized when the guard
+    /// allows it. Blocks the surface when none is readable.
+    fn collect_declared_anonymous_members(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        source: TypeId,
+        source_symbol: SymbolId,
+        current: &ApiStabilitySubstitution,
+    ) {
+        let members = tp.checker.sym(source_symbol).members;
+        if self.collect_resolved_member_table_if_materialized(
+            tp,
+            surface,
+            source,
+            source_symbol,
+            current,
+        ) {
+            return;
+        }
+        if members.is_some() {
+            self.collect_resolved_member_table(tp, surface, members, source_symbol, current);
+            if self.symbol_has_late_bound_members(tp, source_symbol) {
+                surface.block();
+            }
+            return;
+        }
+        if self.member_table_resolution_is_safe(tp, source, current) {
+            let members = self.materialized_members_of_symbol(tp.checker, source_symbol);
+            if members.is_some() {
+                self.collect_resolved_member_table(tp, surface, members, source_symbol, current);
+            }
+            // A function-like symbol has no member table of its own; its call
+            // signatures are declared directly on the symbol and are read by
+            // collectFunctionSignatures.
+            return;
+        }
+        surface.block();
     }
 
     // Go: typeparser/api_stability.go apiStabilityAnalysis.collectResolvedMemberTableIfMaterialized
@@ -846,43 +874,15 @@ impl ApiStabilityAnalysis {
                     tp.checker, t, kind,
                 );
             if ok {
-                for signature in signatures {
-                    if self.child_signature_boundary(tp, surface, signature, owner) {
-                        continue;
-                    }
-                    let child = self.signature_surface(tp, signature, subst);
-                    surface.merge(child);
-                }
+                self.merge_signature_surfaces(tp, surface, signatures, owner, subst);
                 continue;
             }
             if source.is_nil() || tp.checker.ty(source).symbol().is_nil() {
                 surface.block();
                 continue;
             }
-            let internal = if kind == SignatureKind::CONSTRUCT {
-                INTERNAL_SYMBOL_NAME_NEW
-            } else {
-                INTERNAL_SYMBOL_NAME_CALL
-            };
-            let symbol = tp.checker.ty(source).symbol();
-            let mut member = tp
-                .checker
-                .symbols
-                .get(tp.checker.sym(symbol).members, internal);
-            if member.is_nil()
-                && kind == SignatureKind::CALL
-                && tp.checker.sym(symbol).flags.intersects(
-                    SymbolFlags::FUNCTION
-                        | SymbolFlags::METHOD
-                        | SymbolFlags::GET_ACCESSOR
-                        | SymbolFlags::SET_ACCESSOR
-                        | SymbolFlags::ACCESSOR,
-                )
-            {
-                // A function or accessor declaration keeps its call signatures on
-                // its own symbol rather than in a member table.
-                member = symbol;
-            }
+            let member =
+                declared_signature_member(tp.checker, tp.checker.ty(source).symbol(), kind);
             if member.is_nil() {
                 continue;
             }
@@ -890,13 +890,27 @@ impl ApiStabilityAnalysis {
                 surface.block();
                 continue;
             }
-            for signature in self.materialized_signatures_of_symbol(tp.checker, member) {
-                if self.child_signature_boundary(tp, surface, signature, owner) {
-                    continue;
-                }
-                let child = self.signature_surface(tp, signature, subst);
-                surface.merge(child);
+            let signatures = self.materialized_signatures_of_symbol(tp.checker, member);
+            self.merge_signature_surfaces(tp, surface, signatures, owner, subst);
+        }
+    }
+
+    /// Merges the surface of each of `signatures` that is not a child
+    /// boundary of `owner`.
+    fn merge_signature_surfaces(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        signatures: impl IntoIterator<Item = SignatureId>,
+        owner: SymbolId,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        for signature in signatures {
+            if self.child_signature_boundary(tp, surface, signature, owner) {
+                continue;
             }
+            let child = self.signature_surface(tp, signature, subst);
+            surface.merge(child);
         }
     }
 
@@ -3487,4 +3501,31 @@ pub fn api_stability_signature_is_non_public(c: &Checker, signature: SignatureId
     }
     get_combined_modifier_flags(declaration)
         .intersects(ModifierFlags::PRIVATE | ModifierFlags::PROTECTED)
+}
+
+/// The symbol that holds the `kind` signatures of `symbol`: its `__call` or
+/// `__new` member, or for call signatures of a function, method or accessor
+/// declaration, the symbol itself. Nil when there is none.
+fn declared_signature_member(c: &Checker, symbol: SymbolId, kind: SignatureKind) -> SymbolId {
+    let internal = if kind == SignatureKind::CONSTRUCT {
+        INTERNAL_SYMBOL_NAME_NEW
+    } else {
+        INTERNAL_SYMBOL_NAME_CALL
+    };
+    let member = c.symbols.get(c.sym(symbol).members, internal);
+    if member.is_nil()
+        && kind == SignatureKind::CALL
+        && c.sym(symbol).flags.intersects(
+            SymbolFlags::FUNCTION
+                | SymbolFlags::METHOD
+                | SymbolFlags::GET_ACCESSOR
+                | SymbolFlags::SET_ACCESSOR
+                | SymbolFlags::ACCESSOR,
+        )
+    {
+        // A function or accessor declaration keeps its call signatures on
+        // its own symbol rather than in a member table.
+        return symbol;
+    }
+    member
 }
