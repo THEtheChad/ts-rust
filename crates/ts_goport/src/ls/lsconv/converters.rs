@@ -788,13 +788,14 @@ pub fn file_name_to_document_uri(file_name: &str) -> lsproto::DocumentUri {
     lsproto::DocumentUri(format!("file://{volume}{}", parts.join("/")))
 }
 
-// Go: lsp/lsproto/lsp.go:85 DynamicFileNameToDocumentUri (ts#64544)
-// PORT: Go has it in lsproto. The server lane owns `lsp/lsproto/lsp.rs`, so
-// the ls lane keeps this copy until lsproto has it. It decodes both the
-// encoded names (`^/~ts-uri~/...`) and the literal names that
-// `DocumentUri::file_name` gives before its ts#64544 part.
+// Go: lsp/lsproto/lsp.go:97 dynamicFileNameToDocumentUri (ts#64544)
+// PORT: the body of Go `dynamicFileNameToDocumentUri` with strict = false,
+// and the panic of its `DynamicFileNameToDocumentUri` wrapper (lsp.go:85),
+// which is how the ls calls it. Go has it in lsproto. The server lane owns
+// `lsp/lsproto/lsp.rs`, so the ls lane keeps this copy until lsproto has it.
+// It decodes both the encoded names (`^/~ts-uri~/...`) and the literal names
+// that `DocumentUri::file_name` gives before its ts#64544 part.
 fn dynamic_file_name_to_document_uri(file_name: &str) -> lsproto::DocumentUri {
-    // Go: lsp/lsproto/lsp.go:97 dynamicFileNameToDocumentUri, strict = false
     let encoded = tspath::is_encoded_dynamic_file_name(file_name);
     let start = if encoded {
         tspath::DYNAMIC_URI_FILE_NAME_PREFIX.len()
