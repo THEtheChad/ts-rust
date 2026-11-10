@@ -152,6 +152,18 @@ def session_sha():
     return hashlib.sha256(Path(session.__file__).read_bytes()).hexdigest()[:16]
 
 
+def command_identity(cmd):
+    """sha256 of a server command (a binary, or a command line such as a self-test's proxy): every word
+    that names a file by its content, every other word as it is. A binary's identity is its own sha256,
+    so the cache dir is the other tiers' go-cache/<go sha>/."""
+    if os.path.isfile(str(cmd)):
+        return parity_lsp.sha256_file(str(cmd))
+    h = hashlib.sha256()
+    for word in str(cmd).split(' '):
+        h.update((parity_lsp.sha256_file(word) if os.path.isfile(word) else 'arg ' + word).encode() + b'\0')
+    return h.hexdigest()
+
+
 # ---- inputs ---------------------------------------------------------------------------------
 
 def fixture_snapshot(sc):
@@ -202,7 +214,8 @@ def check_fixture(tree, files):
 def material(sc, fixture_hash, ancestors, go_sha):
     return {'version': CACHE_VERSION, 'scenario': sc, 'root': session.root_of(sc), 'fixture': fixture_hash,
             'session': session_sha(), 'protocol': session.PROTOCOL, 'home': str(session.SANDBOX_HOME),
-            'virtualRootExists': os.path.lexists(session.VIRTUAL), 'ancestors': ancestors, 'go': go_sha, 'goRuns': GO_RUNS}
+            'virtualRootExists': os.path.lexists(session.VIRTUAL), 'ancestors': ancestors, 'go': go_sha, 'goRuns': GO_RUNS,
+            'timeouts': [session.REQUEST_TIMEOUT, session.EXIT_TIMEOUT]}
 
 
 # ---- comparing ------------------------------------------------------------------------------
@@ -313,7 +326,7 @@ def judge(go_runs, rs_runs, confirm):
 class Tier:
     def __init__(self, args):
         self.args = args
-        self.go_sha = parity_lsp.sha256_file(args.go)
+        self.go_sha = command_identity(args.go)
         self.stage = inputs.Stage('api')
         self.cache = STATE / 'go-cache' / self.go_sha[:16] / 'api'
 
@@ -491,7 +504,7 @@ def main():
             sc = find_scenario(argv[1])
             go = argv[argv.index('--go') + 1] if '--go' in argv else str(GO)
             fh = fixture_snapshot(sc)[1] if sc.get('disk') is not None else None
-            print(json.dumps(material(sc, fh, {}, parity_lsp.sha256_file(go)), indent=1, sort_keys=True))
+            print(json.dumps(material(sc, fh, {}, command_identity(go)), indent=1, sort_keys=True))
             return 0
         return main_tier(argv)
     except ArtifactError as e:

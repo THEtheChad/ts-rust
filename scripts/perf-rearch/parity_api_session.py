@@ -65,7 +65,7 @@ VIRTUAL = '/parity-api'
 # request and answer shapes of the pin's internal/api/proto.go (protocol 5 in scripts/goport/api_oracle.py's
 # numbering). Keyed: a change to it is a change to every answer.
 PROTOCOL = 'jsonrpc-async; tsc 3e9236361fa9 internal/api protocol 5'
-REQUEST_TIMEOUT = 60
+REQUEST_TIMEOUT = int(os.environ.get('PARITY_API_REQUEST_TIMEOUT', '60'))  # lowered only by parity_h7_test.py; keyed
 EXIT_TIMEOUT = 10
 PER_PROJECT = ['getSourceFileNames', 'getConfigFileNames', 'getConfigFileParsingDiagnostics', 'getProgramDiagnostics',
                'getGlobalDiagnostics', 'getSyntacticDiagnostics', 'getSemanticDiagnostics', 'getSuggestionDiagnostics',
