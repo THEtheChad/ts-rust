@@ -59,7 +59,7 @@ All the helpers are `#[inline(always)]`. The ranking sums the four
 | 24 | check_identifier | checker_p12 | 84 / 72 | 81 | the PERF chkA handling of Go's `isEvolvingArrayOperationTarget` call moved to `is_evolving_array_operation_target_of_automatic` (own, 2, `#[inline]`). The rest (Δ 9) is Go's two `switch`es written as `if` chains | 172b35af1 |
 | 25 | get_narrowed_type_of_symbol | checker_p15 | 69 / 57 | 56 | `position().map_or` for Go's `slices.Index`, `if_else` | 24626f5ef |
 | 26 | elaborate_iterable_or_array_like_target_elementwise | jsx_p1 | 50 / 38 | 38 | `or_else_symbol` | 38188090c |
-| 27 | get_instantiation_expression_type | checker_p12 | 35 / 23 | 27 (row) | the getInstantiatedSignatures closure uses filter/map for Go's Filter/SameMap; `if_else` | 778caa5eb |
+| 27 | get_instantiation_expression_type | checker_p12 | 35 / 23 | 29 (row) | the getInstantiatedSignatures closure uses filter/map for Go's Filter/SameMap. Round 2: the `errorType` pick is Go's `if`/`else` again (Go has no `core.IfElse` there) | 778caa5eb, de34688c3 |
 | 28 | report_non_exported_member | checker_p17 | 29 / 17 | 17 | `find` for Go's findInMap, `if_else` | 4a9bdbd16 |
 | 29 | check_grammar_variable_declaration_list | grammarchecks_p2 | 25 / 13 | 13 | `if_else` | 0859a8fa5 |
 | 30 | get_suggested_import_source | checker_p17 | 18 / 6 | 8 | `if_else` | 51b80394a |
@@ -68,7 +68,7 @@ All the helpers are `#[inline(always)]`. The ranking sums the four
 | 33 | check_grammar_for_use_strict_simple_parameter_list | grammarchecks_p1 | 35 / 24 | 24 | the in-place statement walk (PERF portonly1) moved into `find_use_strict_prologue_in_list`, marked as Go `binder.FindUseStrictPrologue` | 1cdfe3d2b |
 | 34 | discriminate_contextual_type_by_jsx_attributes | jsx_p1 | 23 / 12 | 13 | the two keep/push loops became `filter` with Go's closure bodies | fa03bc4d2 |
 | 35 | some_signature | checker_p10 | 18 / 7 | 6 | `any` | a7931be4e |
-| 36 | get_suggested_import_extension | checker_p17 | 12 / 1 | 0 | Go's `switch true` over 9 probed files is now a table in Go's case order | 1d5410828 |
+| 36 | get_suggested_import_extension | checker_p17 | 12 / 1 | 9 | Round 1 made Go's `switch true` a table (cognitive 0). Round 2 put back the chain of tests: the Go helper idioms rule keeps a tagless switch as a chain, and its residue (Δ 8) is accepted. The `.tsx` case keeps `if_else` for Go's `core.IfElse` | 1d5410828, b121947b5 |
 | 37 | check_variable_like_declaration | checker_p07 | 118 / 108 | 106 | `if_else`, Some | 30e256507 |
 | 38 | check_array_literal_destructuring_element_assignment | checker_p14 | 33 / 23 | 23 | `if_else`, `or_else_type` | 26e56a09d |
 | 39 | get_declaration_file_extension (tspath_p17) | checker_p17 | 10 / 0 | 0 | see duplication | aeb462d87 |
@@ -115,7 +115,14 @@ The rows still at Δ 8–9 in these files (`check_identifier`,
 Go's `switch` statements written as `if`/`else if` chains. Go counts a
 `switch` once; Rust counts each arm.
 
-## Evidence (head c07e169c4 code; base f59c229c5)
+## Round 2 (Astra: ACCEPT WITH FIXES on b74ac373a)
+
+Astra checked all 61 `if_else` and 36 `or_else_*` uses against Go. Two of
+them break root's "Go helper idioms" rule (`w2-brief.md`), and both were
+reverted: rows 27 and 36. The branch is rebased onto perf/first-principles
+3d4c5edb1, which has W2-CA. The evidence for round 2 is at the end.
+
+## Evidence, round 1 (head c07e169c4 code; base f59c229c5)
 
 - **Lane files, Go-relative** (`quality.sh ranking`): 39 port targets with
   Σ Δ 615 → 0 targets; Σ positive Δ 1,225 → 679; own code over 25: 2
