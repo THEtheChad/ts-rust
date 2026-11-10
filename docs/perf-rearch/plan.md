@@ -1445,3 +1445,14 @@ once a **reconciliation step** is built and tested.
     real branch has a descriptive name. Root resolves the branch from the
     head commit before merging.
 - **W2-EF2 started:** the 24 Effect rows still over 25.
+- **W2-CC finished** (`t3/checker-quality-code-reduction`, head
+  `2a9b5bacf`, 51 commits).
+  - **Port bloat:** rows with Δ ≥ 10 in its files went 45 → 5 (Σ 686 → 54).
+    It also applied `if_else` in 16 rows, following the idiom rule.
+  - **Checks:** parity full OK, single-threaded icount at or below base,
+    GATING OK.
+  - **Astra review:** running.
+  - **Root's follow-ups:**
+    - `icount_ab.sh` now gets a private scratch dir per run, so concurrent
+      lanes no longer delete each other's output.
+    - After the merge, remove CC's base worktree and its 5 helper worktrees.
