@@ -520,11 +520,21 @@ pub fn update_program(
     (result, new_file, outcome)
 }
 
-/// Not in Go: the number of programs that `new_program` or
-/// `update_program` made on this thread and `release_program` has not
-/// released. Tests check that no program is left behind with it.
-pub fn registered_programs() -> usize {
-    PROGRAM_CHECKERS.with(|programs| programs.borrow().len())
+#[cfg(feature = "diagnostics")]
+pub use programs_diag::registered_programs;
+
+/// The program count of this thread, for the reuse stats
+/// (`project::reuse_verify`) and tests: a `diagnostics` feature build only.
+#[cfg(feature = "diagnostics")]
+mod programs_diag {
+    use super::PROGRAM_CHECKERS;
+
+    /// Not in Go: the number of programs that `new_program` or
+    /// `update_program` made on this thread and `release_program` has not
+    /// released. Tests check that no program is left behind with it.
+    pub fn registered_programs() -> usize {
+        PROGRAM_CHECKERS.with(|programs| programs.borrow().len())
+    }
 }
 
 /// Go drops a program when no snapshot uses it (`programCounter.Deref`

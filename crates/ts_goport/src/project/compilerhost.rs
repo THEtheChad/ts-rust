@@ -638,37 +638,15 @@ impl compiler::CompilerHost for CompilerHost {
                     .and_then(|read| read.as_ref().map(|(_, text)| text.clone()))
             }) as crate::frontend::module::AheadText
         };
+        #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
+        let scratch = resolve_ahead_verify::scratch(self.source_fs.to_path.clone(), files.clone());
         let accept = {
             let source_fs = self.source_fs.clone();
-            let files = files.clone();
             Rc::new(move |_answer: AheadAnswer<'_>, calls: &[AheadCall]| {
                 accept_ahead_answer(&source_fs, &files, &load, calls)
             })
         };
         let keys = self.resolution_keys.clone();
-        let scratch = cfg!(debug_assertions).then(|| {
-            let to_path = self.source_fs.to_path.clone();
-            Rc::new(move || {
-                let fs = new_source_fs(true, files.clone(), to_path.clone());
-                let tracked = fs.clone();
-                compiler::resolve_ahead::ScratchFs {
-                    fs,
-                    tracked: Box::new(move || {
-                        let seen = tracked
-                            .seen_files
-                            .borrow()
-                            .as_ref()
-                            .map(|seen| seen.borrow().keys().cloned().collect());
-                        let missing = tracked
-                            .missing_directories
-                            .as_ref()
-                            .map(|missing| missing.borrow().clone());
-                        (seen.unwrap_or_default(), missing.unwrap_or_default())
-                    }),
-                    to_path: to_path.clone(),
-                }
-            }) as Rc<dyn Fn() -> compiler::resolve_ahead::ScratchFs>
-        });
         Some(compiler::resolve_ahead::ResolveAheadHost {
             previous_keys: self.resolution_keys.borrow().clone(),
             view: compiler::resolve_ahead::WorkerView {
@@ -683,6 +661,7 @@ impl compiler::CompilerHost for CompilerHost {
             package_json_text,
             keep_keys: Box::new(move |new_keys| *keys.borrow_mut() = Some(new_keys)),
             share: self.kept_share.borrow().clone()?,
+            #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
             scratch,
         })
     }
@@ -904,4 +883,44 @@ fn group_key(group: &Arc<[AheadCall]>) -> usize {
 
 fn shared_key(call: &Arc<AheadCall>) -> usize {
     Arc::as_ptr(call) as usize
+}
+
+/// Debug builds: the tracking view of the host's file system that resolve
+/// ahead checks each taken answer on (`ResolveAheadHost::scratch`,
+/// `resolve_ahead::resolve_ahead_verify`). Compiled in debug and
+/// `diagnostics` builds, made in debug builds only. Not under rustdoc's
+/// doctest collection, which compiles this crate with `debug_assertions`
+/// against a release `goport_core` that has no `resolve_ahead_verify`.
+#[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
+mod resolve_ahead_verify {
+    use super::*;
+    use crate::frontend::compiler::resolve_ahead::resolve_ahead_verify::ScratchFs;
+
+    pub(super) fn scratch(
+        to_path: Rc<dyn Fn(&str) -> tspath::Path>,
+        files: Rc<dyn FileSource>,
+    ) -> Option<Rc<dyn Fn() -> ScratchFs>> {
+        cfg!(debug_assertions).then(|| {
+            Rc::new(move || {
+                let fs = new_source_fs(true, files.clone(), to_path.clone());
+                let tracked = fs.clone();
+                ScratchFs {
+                    fs,
+                    tracked: Box::new(move || {
+                        let seen = tracked
+                            .seen_files
+                            .borrow()
+                            .as_ref()
+                            .map(|seen| seen.borrow().keys().cloned().collect());
+                        let missing = tracked
+                            .missing_directories
+                            .as_ref()
+                            .map(|missing| missing.borrow().clone());
+                        (seen.unwrap_or_default(), missing.unwrap_or_default())
+                    }),
+                    to_path: to_path.clone(),
+                }
+            }) as Rc<dyn Fn() -> ScratchFs>
+        })
+    }
 }

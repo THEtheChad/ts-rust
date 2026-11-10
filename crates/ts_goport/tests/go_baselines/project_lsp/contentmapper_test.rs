@@ -1580,15 +1580,19 @@ child_test! {
             &old_program.processed_files.resolved_modules,
             &full.processed_files.resolved_modules
         ));
-        let reused = ts_goport::program::reuse_verify::dump(&new_program);
-        let rebuilt = ts_goport::program::reuse_verify::dump(&full);
-        if reused != rebuilt {
-            let line = reused.lines().zip(rebuilt.lines()).position(|(a, b)| a != b);
-            panic!(
-                "the reused program differs from a full build at line {line:?}:\n{reused}\n----\n{rebuilt}"
-            );
+        // The reuse dump is in a `diagnostics` feature build only.
+        #[cfg(feature = "diagnostics")]
+        {
+            let reused = ts_goport::program::reuse_verify::dump(&new_program);
+            let rebuilt = ts_goport::program::reuse_verify::dump(&full);
+            if reused != rebuilt {
+                let line = reused.lines().zip(rebuilt.lines()).position(|(a, b)| a != b);
+                panic!(
+                    "the reused program differs from a full build at line {line:?}:\n{reused}\n----\n{rebuilt}"
+                );
+            }
+            assert!(reused.contains("to import 'importHelpers' as specified in compilerOptions"));
         }
-        assert!(reused.contains("to import 'importHelpers' as specified in compilerOptions"));
         full_session.close();
         session.close();
     }
@@ -1631,7 +1635,9 @@ fn with_box(owned: &[(String, String)]) -> Vec<(&str, &str)> {
 
 /// Not a Go port (perf/first-principles A1): the reuse dump
 /// (`reuse_verify::dump`) of the program of `MAIN_URI` in a new session on
-/// `owned`, a full build of those inputs.
+/// `owned`, a full build of those inputs. The dump is in a `diagnostics`
+/// feature build only.
+#[cfg(feature = "diagnostics")]
 fn fresh_session_dump(owned: &[(String, String)], main_text: &str) -> String {
     let (session, _utils) = new_session(
         files(&with_box(owned)),
@@ -1644,6 +1650,7 @@ fn fresh_session_dump(owned: &[(String, String)], main_text: &str) -> String {
     dump
 }
 
+#[cfg(feature = "diagnostics")]
 fn assert_same_dump(reused: &str, full: &str) {
     if reused != full {
         let line = reused.lines().zip(full.lines()).position(|(a, b)| a != b);
@@ -1756,6 +1763,7 @@ child_test! {
             &new_program.processed_files.resolved_modules
         ), "a new implied format builds again");
         assert!(dual_target(&new_program).ends_with("/cjs.d.cts"), "{}", dual_target(&new_program));
+        #[cfg(feature = "diagnostics")]
         assert_same_dump(
             &ts_goport::program::reuse_verify::dump(&new_program),
             &fresh_session_dump(&more(CJS), "export const m = 1;\n"),
@@ -1805,6 +1813,7 @@ child_test! {
             &new_program.processed_files.resolved_modules
         ), "a load with mapper failures builds again");
         assert!(new_program.processed_files.content_mapper_diagnostics.is_empty());
+        #[cfg(feature = "diagnostics")]
         assert_same_dump(
             &ts_goport::program::reuse_verify::dump(&new_program),
             &fresh_session_dump(&boxes(FIXED), "export const m = 1;\n"),

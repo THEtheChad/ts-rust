@@ -5,7 +5,9 @@
 //! import (JSX runtime or `importHelpers`); the port reuses the old program
 //! when the synthetic imports stay the same. In a `diagnostics` feature
 //! build, `GOPORT_VERIFY_REUSE=1` checks each such reuse against a full
-//! build of the same inputs. `dump` is in every build (tests use it).
+//! build of the same inputs. The whole module, `dump` included, is in a
+//! `diagnostics` feature build only (program.rs declares it under the
+//! feature), so the tests that use `dump` run in that build.
 //! This module has the mode, the report and the canonical dump; the
 //! project system makes the request and runs the child
 //! (`project::reuse_verify`):
@@ -49,10 +51,8 @@ use crate::frontend::bundled;
 use crate::frontend::compiler::{NewProgram, ProgramOptions};
 use crate::frontend::prelude::*;
 use std::fmt::Write as _;
-#[cfg(feature = "diagnostics")]
 use std::io::Write;
 
-#[cfg(feature = "diagnostics")]
 /// Which reuses the verify mode checks (`GOPORT_VERIFY_REUSE`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -63,22 +63,18 @@ pub enum Mode {
     All,
 }
 
-#[cfg(feature = "diagnostics")]
 static MODE: std::sync::OnceLock<(Mode, bool)> = std::sync::OnceLock::new();
 
-#[cfg(feature = "diagnostics")]
 /// The verify mode, read once.
 pub fn mode() -> Mode {
     MODE.get_or_init(read_mode).0
 }
 
-#[cfg(feature = "diagnostics")]
 /// A difference or an error panics (`GOPORT_VERIFY_REUSE=panic|all-panic`).
 pub fn panics() -> bool {
     MODE.get_or_init(read_mode).1
 }
 
-#[cfg(feature = "diagnostics")]
 fn read_mode() -> (Mode, bool) {
     match std::env::var("GOPORT_VERIFY_REUSE").as_deref() {
         Ok("1") => (Mode::Synthetic, false),
@@ -89,7 +85,6 @@ fn read_mode() -> (Mode, bool) {
     }
 }
 
-#[cfg(feature = "diagnostics")]
 /// Writes `line` to stderr and appends it to `GOPORT_VERIFY_REUSE_LOG`.
 pub fn report(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
@@ -103,7 +98,6 @@ pub fn report(line: &str) {
     }
 }
 
-#[cfg(feature = "diagnostics")]
 /// `None` when `reused` and `full` are equal, else where they first differ
 /// and the files that keep both (`GOPORT_VERIFY_REUSE_DIR`).
 pub fn compare(reused: &str, full: &str) -> Option<String> {

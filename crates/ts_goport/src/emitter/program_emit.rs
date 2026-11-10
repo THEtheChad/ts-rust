@@ -180,7 +180,8 @@ fn emit_results_with(
         Some(results) => results,
         None => run_emit_jobs(source_files.clone(), move |source_file| {
             let result = wrap(&|| emit_source_file(source_file, &target));
-            log_checker_emit(source_file);
+            #[cfg(feature = "diagnostics")]
+            crate::program::checker_call_log_diag::checker_call_log_emit(source_file);
             result
         }),
     };
@@ -189,17 +190,6 @@ fn emit_results_with(
         apply_deferred_outcomes(&source_files, &mut results, serial.take());
     }
     results
-}
-
-/// Adds the emit of `source_file` to the checker call log
-/// (`program::checker_call_log_event_here`), after its checker part.
-fn log_checker_emit(source_file: Node) {
-    crate::program::checker_call_log_event_here(|| {
-        format!(
-            "emit {}",
-            crate::program::checker_call_log_file(source_file)
-        )
-    });
 }
 
 /// PORT: not in Go (perf). True when plain `tsc -p` (a `*compiler.Program`,
@@ -228,11 +218,44 @@ pub struct StartedPlainEmit {
     write_file: WriteFile,
     /// The writes that the emit jobs made.
     writes: Arc<DeferredWrites>,
-    /// `program::bind_thread_fingerprint` of this thread after the start.
-    /// The emit pool starts from a copy of this thread's state, so until
-    /// the wait this thread must not change it, else the pool would start
-    /// from other state than in the emit after the check.
-    fingerprint: (usize, (u64, u64), u64, usize),
+    /// The state of this thread after the start (`early_emit_verify`).
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
+    fingerprint: early_emit_verify::Fingerprint,
+}
+
+/// Debug and `diagnostics` builds: checks that the loading thread kept its
+/// state during the early emit. The emit pool starts from a copy of this
+/// thread's state (`program::bind_thread_fingerprint`), so until the wait
+/// this thread must not change it, else the pool would start from other
+/// state than in the emit after the check.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
+mod early_emit_verify {
+    /// `program::bind_thread_fingerprint` of this thread at the start.
+    pub(super) struct Fingerprint((usize, (u64, u64), u64, usize));
+
+    impl Fingerprint {
+        pub(super) fn now() -> Self {
+            Fingerprint(crate::program::bind_thread_fingerprint())
+        }
+
+        /// At the wait: a debug build panics when the state changed; with
+        /// the checker call log on, a `diagnostics` build says so on stderr.
+        pub(super) fn check(&self) {
+            if crate::program::bind_thread_fingerprint() == self.0 {
+                return;
+            }
+            debug_assert!(
+                false,
+                "the loading thread changed its state during the early emit"
+            );
+            #[cfg(feature = "diagnostics")]
+            if crate::program::checker_call_log_diag::checker_call_log_enabled() {
+                eprintln!(
+                    "GOPORT_CHECKER_CALL_LOG: the loading thread changed its state during the early emit"
+                );
+            }
+        }
+    }
 }
 
 enum PendingPlainFiles {
@@ -651,7 +674,8 @@ pub fn start_plain_emit(options: &EmitOptions) -> Option<StartedPlainEmit> {
             &source_files,
             move |source_file| {
                 let result = plain_emit_wrap(&|| emit_source_file(source_file, &target));
-                log_checker_emit(source_file);
+                #[cfg(feature = "diagnostics")]
+                crate::program::checker_call_log_diag::checker_call_log_emit(source_file);
                 result
             },
         )),
@@ -661,7 +685,8 @@ pub fn start_plain_emit(options: &EmitOptions) -> Option<StartedPlainEmit> {
         source_files,
         write_file,
         writes,
-        fingerprint: crate::program::bind_thread_fingerprint(),
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
+        fingerprint: early_emit_verify::Fingerprint::now(),
     })
 }
 
@@ -682,18 +707,8 @@ impl StartedPlainEmit {
                     .is_some_and(|write_file| Arc::ptr_eq(write_file, &self.write_file)),
             "the emit did not get the options of the emit that started with the check"
         );
-        let fingerprint = crate::program::bind_thread_fingerprint();
-        if fingerprint != self.fingerprint {
-            debug_assert!(
-                false,
-                "the loading thread changed its state during the early emit"
-            );
-            if crate::program::checker_call_log_enabled() {
-                eprintln!(
-                    "GOPORT_CHECKER_CALL_LOG: the loading thread changed its state during the early emit"
-                );
-            }
-        }
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
+        self.fingerprint.check();
         // Every check and global diagnostics read ended: the writes start.
         // `self.files` stays until the waiting writes are made, so a panic
         // in them closes the writes, cancels and drains the emit (drop).
@@ -1000,7 +1015,8 @@ pub fn start_emit_batch_with(
                     let _trace = trace_emit();
                     let target = &file_targets[&source_file];
                     let result = wrap(&|| emit_source_file(source_file, target));
-                    log_checker_emit(source_file);
+                    #[cfg(feature = "diagnostics")]
+                    crate::program::checker_call_log_diag::checker_call_log_emit(source_file);
                     result
                 },
             ))
@@ -1300,7 +1316,8 @@ fn start_emit_files_with_pool(
             way
         })
         .collect();
-    let twin_check = dts_twin_check();
+    #[cfg(feature = "diagnostics")]
+    let twin_check = dts_twin_check_verify::dts_twin_check();
 
     let mut pool_jobs = Vec::new();
     let mut js_emit_nodes = Vec::new();
@@ -1364,12 +1381,17 @@ fn start_emit_files_with_pool(
             );
             let output = match part.js_part {
                 Some(js_part) => emit_declaration_part(source_file, part.target, js_part, wrap),
-                None if twin_can_print(&part.target) => {
-                    emit_on_twin(source_file, &part.target, wrap, twin_check)
-                }
+                None if twin_can_print(&part.target) => emit_on_twin(
+                    source_file,
+                    &part.target,
+                    wrap,
+                    #[cfg(feature = "diagnostics")]
+                    twin_check,
+                ),
                 None => CheckerOutput::Done(wrap(&|| emit_source_file(source_file, &part.target))),
             };
-            log_checker_emit(source_file);
+            #[cfg(feature = "diagnostics")]
+            crate::program::checker_call_log_diag::checker_call_log_emit(source_file);
             output
         })
     }));
@@ -1505,14 +1527,20 @@ fn emit_declaration_part(
         emit_only: EmitOnly::Dts,
         ..target
     };
-    let check = dts_twin_check();
+    #[cfg(feature = "diagnostics")]
+    let check = dts_twin_check_verify::dts_twin_check();
     let twin_print: RefCell<Option<TwinPrint>> = RefCell::new(None);
     let dts = catch_unwind(AssertUnwindSafe(|| {
         wrap(&|| {
             let mut emitter = new_emitter(new_emit_host(source_file), source_file, &target, None);
             match emitter.transform_declaration_part(js_part.js_emit_nodes()) {
                 Some(print) => {
-                    *twin_print.borrow_mut() = Some(TwinPrint::declaration(emitter, print, check));
+                    *twin_print.borrow_mut() = Some(TwinPrint::declaration(
+                        emitter,
+                        print,
+                        #[cfg(feature = "diagnostics")]
+                        check,
+                    ));
                     EmitResult::default()
                 }
                 None => {
@@ -1591,7 +1619,7 @@ fn emit_on_twin(
     source_file: Node,
     target: &EmitterOptions,
     wrap: Wrap,
-    check: bool,
+    #[cfg(feature = "diagnostics")] check: bool,
 ) -> CheckerOutput {
     let twin_file: RefCell<Option<TwinFile>> = RefCell::new(None);
     let here = wrap(&|| {
@@ -1609,7 +1637,12 @@ fn emit_on_twin(
             match emitter.transform_js_part() {
                 Some(print) => {
                     js_emit_nodes = Some(print.emit_context.export_parse_emit_nodes());
-                    TwinPart::Print(TwinPrint::js(emitter, print, check))
+                    TwinPart::Print(TwinPrint::js(
+                        emitter,
+                        print,
+                        #[cfg(feature = "diagnostics")]
+                        check,
+                    ))
                 }
                 None => TwinPart::Done(emitter.emit_result),
             }
@@ -1619,7 +1652,12 @@ fn emit_on_twin(
                 let mut emitter =
                     new_emitter(host.clone(), source_file, &part_target(EmitOnly::Dts), None);
                 match emitter.transform_declaration_part(js_emit_nodes) {
-                    Some(print) => TwinPart::Print(TwinPrint::declaration(emitter, print, check)),
+                    Some(print) => TwinPart::Print(TwinPrint::declaration(
+                        emitter,
+                        print,
+                        #[cfg(feature = "diagnostics")]
+                        check,
+                    )),
                     None => TwinPart::Done(emitter.emit_result),
                 }
             }))
@@ -1719,29 +1757,21 @@ impl TwinFile {
     }
 }
 
+#[cfg(feature = "diagnostics")]
+pub use dts_twin_check_verify::set_dts_twin_check;
+
 /// PORT: not in Go (perf). The parts whose transforms run on a checker
 /// thread (the d.ts part of a split file, and the JS and d.ts parts of a
 /// file whose JS part needs the checker) print on the twin of the checker
 /// (`program::send_dts_twin_job`). The twins run only with the emit pool
 /// (`program::emit_pool_enabled`: not with `--singleThreaded` or a trace).
-/// True in check mode (`twin_check`, only in a `diagnostics` feature
-/// build): the checker prints each part too, and the twin panics when its
-/// text differs from the checker's.
-#[inline(always)]
-fn dts_twin_check() -> bool {
-    #[cfg(feature = "diagnostics")]
-    return twin_check::on();
-    #[cfg(not(feature = "diagnostics"))]
-    false
-}
-
+///
+/// This module is their check mode (`GOPORT_DTS_TWIN_CHECK=1`), in a
+/// `diagnostics` feature build only: the checker prints each part too, and
+/// the twin panics when its text differs from the checker's. Without the
+/// feature none of it is compiled, and the twins only print.
 #[cfg(feature = "diagnostics")]
-pub use twin_check::set_dts_twin_check;
-
-/// The check mode of the d.ts twins (`dts_twin_check`): a `diagnostics`
-/// feature build only.
-#[cfg(feature = "diagnostics")]
-mod twin_check {
+mod dts_twin_check_verify {
     use super::*;
 
     /// The twin check mode that `set_dts_twin_check` set: 0 for none, 1
@@ -1761,7 +1791,7 @@ mod twin_check {
 
     /// The check mode: `set_dts_twin_check`, else `GOPORT_DTS_TWIN_CHECK=1`
     /// (read once).
-    pub(super) fn on() -> bool {
+    pub(super) fn dts_twin_check() -> bool {
         static ENV: OnceLock<bool> = OnceLock::new();
         match SET.load(std::sync::atomic::Ordering::Relaxed) {
             1 => false,
@@ -1885,14 +1915,20 @@ pub fn js_twin_print_count() -> usize {
 
 impl TwinPrint {
     /// The print of `emitter` after `transform_js_part` returned `print`.
-    /// With `check`, it prints on this thread too and keeps the writes,
-    /// without writing.
-    fn js(emitter: Emitter, print: JsPrint, check: bool) -> Self {
+    /// With `check` (`dts_twin_check_verify`), it prints on this thread too
+    /// and keeps the writes, without writing.
+    fn js(emitter: Emitter, print: JsPrint, #[cfg(feature = "diagnostics")] check: bool) -> Self {
         let root = print.source_file;
-        let (tables, pack) = export_print(&print.emit_context, &[root], check);
+        let (tables, pack) = export_print(
+            &print.emit_context,
+            &[root],
+            #[cfg(feature = "diagnostics")]
+            check,
+        );
         #[cfg(feature = "diagnostics")]
-        let expected = check
-            .then(|| twin_check::record_print(&emitter, |recorder| recorder.finish_js_part(print)));
+        let expected = check.then(|| {
+            dts_twin_check_verify::record_print(&emitter, |recorder| recorder.finish_js_part(print))
+        });
         JS_TWIN_PRINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self::from_parts(
             emitter,
@@ -1906,9 +1942,13 @@ impl TwinPrint {
     }
 
     /// The print of `emitter` after `transform_declaration_part` returned
-    /// `print`. With `check`, it prints on this thread too and keeps the
-    /// writes, without writing.
-    fn declaration(emitter: Emitter, print: DeclarationPrint, check: bool) -> Self {
+    /// `print`. With `check` (`dts_twin_check_verify`), it prints on this
+    /// thread too and keeps the writes, without writing.
+    fn declaration(
+        emitter: Emitter,
+        print: DeclarationPrint,
+        #[cfg(feature = "diagnostics")] check: bool,
+    ) -> Self {
         let root = print.source_file;
         let tree = TwinTree::Declaration {
             content_mapped_source: print.content_mapped_source,
@@ -1918,11 +1958,14 @@ impl TwinPrint {
         let (tables, pack) = export_print(
             &print.emit_context,
             &[root, print.content_mapped_source],
+            #[cfg(feature = "diagnostics")]
             check,
         );
         #[cfg(feature = "diagnostics")]
         let expected = check.then(|| {
-            twin_check::record_print(&emitter, |recorder| recorder.finish_declaration_part(print))
+            dts_twin_check_verify::record_print(&emitter, |recorder| {
+                recorder.finish_declaration_part(print)
+            })
         });
         Self::from_parts(
             emitter,
@@ -2007,7 +2050,7 @@ impl TwinPrint {
         #[cfg(feature = "diagnostics")]
         let write_file = match &expected {
             None => self.write_file,
-            Some(expected) => Some(twin_check::checked_write_file(
+            Some(expected) => Some(dts_twin_check_verify::checked_write_file(
                 self.write_file,
                 Arc::clone(expected),
             )),
@@ -2061,12 +2104,12 @@ impl TwinPrint {
 
 /// The side tables of `emit_context` after its transforms, and a copy of
 /// the synthetic nodes that `roots` and the tables reach (`PrintPack`).
-/// With `check` the tables are copied, so the checker can print too; else
-/// they move out.
+/// With `check` (`dts_twin_check_verify`) the tables are copied, so the
+/// checker can print too; else they move out.
 fn export_print(
     emit_context: &EmitContext,
     roots: &[Node],
-    check: bool,
+    #[cfg(feature = "diagnostics")] check: bool,
 ) -> (PrintTables, PrintPack) {
     #[cfg(feature = "diagnostics")]
     let tables = if check {
@@ -2074,12 +2117,8 @@ fn export_print(
     } else {
         emit_context.take_print_tables()
     };
-    // `check` is always false without the diagnostics feature.
     #[cfg(not(feature = "diagnostics"))]
-    let tables = {
-        let _ = check;
-        emit_context.take_print_tables()
-    };
+    let tables = emit_context.take_print_tables();
     let mut roots = roots.to_vec();
     tables.for_each_value_node(|n| roots.push(n));
     let pack = export_print_pack(&roots, |n, more| {

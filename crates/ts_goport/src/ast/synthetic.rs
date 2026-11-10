@@ -1655,16 +1655,27 @@ pub fn synthetic_slot_count() -> usize {
     ARENA.with(|a| a.borrow().slots_made)
 }
 
-/// The number of synthetic slots on this thread whose owner is not freed.
-#[must_use]
-pub fn synthetic_live_slot_count() -> usize {
-    ARENA.with(|a| {
-        a.borrow()
-            .slots
-            .iter()
-            .map(|(_, chunk)| chunk.slots.len())
-            .sum()
-    })
+#[cfg(any(test, feature = "diagnostics"))]
+pub use synthetic_diag::synthetic_live_slot_count;
+
+/// The live slot count of the synthetic arena, for the reuse stats
+/// (`project::reuse_verify`) and tests: a `diagnostics` feature build (or
+/// this crate's unit tests) only.
+#[cfg(any(test, feature = "diagnostics"))]
+mod synthetic_diag {
+    use super::ARENA;
+
+    /// The number of synthetic slots on this thread whose owner is not freed.
+    #[must_use]
+    pub fn synthetic_live_slot_count() -> usize {
+        ARENA.with(|a| {
+            a.borrow()
+                .slots
+                .iter()
+                .map(|(_, chunk)| chunk.slots.len())
+                .sum()
+        })
+    }
 }
 
 /// Makes `seed` the synthetic nodes of this thread. Every chunk of the seed
