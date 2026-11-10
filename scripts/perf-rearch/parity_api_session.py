@@ -1,50 +1,66 @@
 """One API session of the parity gate's api tier (lane H7): a `tsgo --api --async` process (JSON-RPC
-with Content-Length framing, Go cmd/tsc/api.go), scripted by a scenario, in a hermetic sandbox.
+with Content-Length framing, Go cmd/tsc/api.go), scripted by a scenario, in a sealed sandbox.
 
-Everything here decides what a server is asked and what it can see, so the sha of this file is in the
-key of every cached Go session (parity_api.py). The diff, the referees and the reporting live in
-parity_api.py and do not change a cached answer.
+Everything here and in parity_api_init.py decides what a server is asked and what it can see, so the
+sha of both files is in the key of every cached Go session (parity_api.py SOURCES). The diff, the
+referees and the reporting live in parity_api.py and do not change a cached answer.
 
 A scenario (parity-api-scenarios.json) is:
   name          the item is api/<name> (a quick run runs the scenarios the quick manifest names)
   about         what it covers (free text, keyed like everything else)
   caseSensitive true or false: --useCaseSensitiveFileNames=<value>; absent: the OS default (Linux: true)
-  fs            the createSnapshot fileSystem, always {kind: "full"} (canonical and total, Go
-                requestfilesystem.KindFull: the session reads no disk for it), with files and optional
-                directories and symlinks (a symlink with host: true is refused: it would read the disk)
-  disk          {path: text}: a fixture written read-only to a content-hashed snapshot and mounted (an
-                overlay, as the cli tier) at the scenario's disk root, for the requests that use the
-                host filesystem (the build orchestrator). The upper dir is what the session wrote
-  createPrograms, openProjects   the createSnapshot changes (with fs or disk)
+  fs            the createSnapshot fileSystem: {kind: "full"} (canonical and total, Go
+                requestfilesystem.KindFull: the session reads nothing else for it) or, only with a disk
+                fixture, {kind: "layer"} (it falls back to the host filesystem, which in the sandbox is the
+                fixture and nothing of the real host); files, and optional directories and symlinks
+                (host: true is refused)
+  disk          {path: text | {"symlink": relative target}}: a fixture written read-only to a
+                content-hashed snapshot and mounted (an overlay) at the scenario's disk root, for the
+                requests that use the host filesystem (the build orchestrator, layer filesystems)
+  createPrograms, openProjects   the createSnapshot changes
   requests      per project of the createSnapshot answer, in its order: the methods to call with
                 {snapshot, project} (default PER_PROJECT)
+  updates       a list of {changes, requests?, release?}: updateSnapshot {snapshot: the current one,
+                changes}, then the requests per project of its answer (default: the projects so far),
+                then, with release: true, release of the snapshot it replaced
   build         a list of build-orchestrator steps: {"create": {rootNames, cwd?, compilerOptions?,
-                buildOptions?}} then {"build": project}, {"buildReferences": project}, {"clean": project}
+                buildOptions?}} first, then {"build": project}, {"buildReferences": project},
+                {"clean": project} and {"dispose": null} in any order
 In every string, @ROOT@ is the scenario's root: VIRTUAL/<name> for an in-memory scenario (a path that does
-not exist on disk), SCRATCH/<name>/root for a scenario with a disk fixture. The server runs with
+not exist in the sandbox), SCRATCH/<name>/root for a scenario with a disk fixture. The server runs with
 --cwd @ROOT@. Dynamic names (^/~ts-uri~/...) are written out as they are.
 
-The session (run_session): initialize, createSnapshot, the per-project requests, the build steps, then
-stdin closed and the server must exit 0 by itself within EXIT_TIMEOUT. Every request has
-REQUEST_TIMEOUT. The transcript holds every request as sent and its raw answer (result or error), the
-exit, a stderr summary (sha, bytes, the first CRASH_RE line) and the files the session wrote to its
-disk fixture (sha256, or "deleted" for a whiteout). failure says why the session is not clean:
-  crash      the process died, exited non-zero, was killed after the exit wait, or printed a crash line
+The session (run_session): initialize, createSnapshot, the per-project requests, the updates, the build
+steps; then stdin is closed, the server must exit 0 by itself within EXIT_TIMEOUT, and both of its
+output streams must reach EOF. Every request has REQUEST_TIMEOUT. The transcript holds, per request,
+the request as sent and the answer's whole message as raw bytes (the JSON-RPC envelope included),
+compared byte for byte, and after every request the state of the session's storage (`fs`: every file of
+the fixture's overlay upper dir and of the private home, sha256 or "deleted"/"dir"/"link ..."), so a
+file written and then removed between two requests is seen. Then the exit, a stderr summary (sha, bytes,
+the first CRASH_RE line, the site-form sha) and the final storage state. failure says why it is not
+clean:
+  crash      the server died, exited non-zero, was killed after the exit wait, printed a crash line,
+             closed its output before an answer, left a process behind it (a survivor, killed then),
+             or held its output open after it ended
   timeout    a request had no answer in time
-  malformed  a frame that is not Content-Length JSON-RPC, an answer to no request, a server request
-             (no callbacks are enabled), or bytes after the last frame
+  malformed  a frame that is not Content-Length JSON (a duplicate key, NaN, a header other than
+             Content-Length/Content-Type), an envelope that is not exactly {"jsonrpc": "2.0", "id": <the
+             request's integer id>, "result"} or {..., "error": {"code": <integer>, "message": <string>,
+             "data"?}}, a server request (no callbacks are enabled), or frames after the last answer
+  infra      the sandbox could not be made or the server could not be exec'd (a mount, the namespace,
+             a file that is not executable): the harness's failure, never the compiler's. The tier makes
+             the item ERROR and caches nothing.
 A transcript of a failed session keeps the answers it got.
 
-Sandbox (H5's design, as vendor/lspdiff/sandbox.mjs): the server runs in its own user, mount and network
-namespace (unshare -rmn: only a loopback that is down), with
-  - a private home, empty and new for every process, bound at SANDBOX_HOME (the same path every run),
-    HOME, the XDG dirs and TMPDIR under it, PATH=/usr/bin:/bin, LANG=C.UTF-8, and nothing else of this
-    environment (no GOPORT_*, no GO*, no NODE_OPTIONS);
-  - the bait dirs of the caller (parity_lsp.GUARDED: ~/.cache/typescript, ~/.npm, ~/.config) bound
-    read-only over the real dirs; the caller watches them for every access;
-  - the disk fixture, if any, as an overlay (lower: its read-only snapshot) at its root.
-The process's cwd is /. HOME_DIRS made in the home are not counted as writes; anything else written
-there is (`homeWrites`) and goes with the home.
+Sandbox (parity_api_init.py, PID 1 of a new user, mount, network and PID namespace): the user's files
+(/home), /tmp, /var/tmp, /run, /mnt, /media, /srv, /opt and /dev/shm are covered by empty tmpfs dirs with a
+fixed mtime, so nothing there (the real ~/.cache/typescript, ~/.npm, ~/.config, other lanes' trees) exists
+for the server, not even for stat; the whole tree is read-only; the only writable places are the private
+home (new and empty for every process, at SANDBOX_HOME) and the fixture's overlay, both read by the caller
+after every request. The command's files under a hidden dir are bound back read-only at their real paths.
+The server gets the environment of sandbox.mjs (PATH=/usr/bin:/bin, HOME, XDG dirs and TMPDIR in its home,
+LANG=C.UTF-8, nothing else), cwd /, no fd but 0, 1 and 2, and no network. When it ends, every process left
+in the namespace is a survivor (a failure) and is killed before anything is collected.
 """
 import hashlib
 import json
@@ -61,23 +77,29 @@ STATE = Path.home() / '.cache/perf-rearch/parity'
 SANDBOX_HOME = STATE / 'api-home'
 SCRATCH = STATE / 'scratch/api'
 VIRTUAL = '/parity-api'
+INIT = Path(__file__).resolve().parent / 'parity_api_init.py'
 # The wire protocol this harness speaks: JSON-RPC 2.0 over stdio (--async), Content-Length framing, the
 # request and answer shapes of the pin's internal/api/proto.go (protocol 5 in scripts/goport/api_oracle.py's
 # numbering). Keyed: a change to it is a change to every answer.
 PROTOCOL = 'jsonrpc-async; tsc 3e9236361fa9 internal/api protocol 5'
 REQUEST_TIMEOUT = int(os.environ.get('PARITY_API_REQUEST_TIMEOUT', '60'))  # lowered only by parity_h7_test.py; keyed
 EXIT_TIMEOUT = 10
+EOF_TIMEOUT = 10
 PER_PROJECT = ['getSourceFileNames', 'getConfigFileNames', 'getConfigFileParsingDiagnostics', 'getProgramDiagnostics',
                'getGlobalDiagnostics', 'getSyntacticDiagnostics', 'getSemanticDiagnostics', 'getSuggestionDiagnostics',
                'getDeclarationDiagnostics', 'emitToString', 'emit']
 SERVER_PATH = '/usr/bin:/bin'
 HOME_DIRS = ['.cache', '.config', '.local/share', '.local/state', 'tmp']
+HIDDEN = ['/home', '/tmp', '/var/tmp', '/run', '/mnt', '/media', '/srv', '/opt', '/dev/shm']
+FIXED_MTIME = 978307200  # 2001-01-01: every dir the sandbox makes, and every fixture file
+UNSHARE = ['unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '--kill-child', '--mount-proc', '--']
 # Crash lines on stderr (vendor/lspdiff/sandbox.mjs CRASH_RE): Go's panic, fatal error, goroutine trace
 # and signal lines; Rust's panic and stack overflow; an abort.
 CRASH_RE = re.compile(r"^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at "
                       r"|.*has overflowed its stack|Aborted\b|.*core dumped)")
-SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'build'}
-BUILD_STEPS = {'create', 'build', 'buildReferences', 'clean'}
+SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'updates', 'build'}
+BUILD_STEPS = {'create': 'createBuildOrchestrator', 'build': 'build', 'buildReferences': 'buildReferences',
+               'clean': 'cleanBuild', 'dispose': 'disposeBuildOrchestrator'}
 
 
 class ScenarioError(ValueError):
@@ -106,38 +128,65 @@ def expand(value, root):
     return value
 
 
+def _validate_fs(name, fs, disk):
+    if fs.get('kind') not in ('full', 'layer') or set(fs) - {'kind', 'files', 'directories', 'symlinks'}:
+        raise ScenarioError(f'{name}: fs is {{kind: "full" or "layer", files, directories?, symlinks?}}')
+    if fs['kind'] == 'layer' and disk is None:
+        raise ScenarioError(f'{name}: a layer filesystem falls back to the host: give a disk fixture')
+    if any(v.get('host') for v in (fs.get('symlinks') or {}).values()):
+        raise ScenarioError(f'{name}: a host symlink reads the disk')
+
+
+def _validate_disk(name, disk):
+    for p, v in disk.items():
+        if p.startswith('/') or '..' in p.split('/') or not p:
+            raise ScenarioError(f'{name}: disk paths are relative to the root')
+        if isinstance(v, dict):
+            t = v.get('symlink')
+            if set(v) != {'symlink'} or not isinstance(t, str) or t.startswith('/'):
+                raise ScenarioError(f'{name}: a disk symlink is {{"symlink": relative target}}')
+            depth = len(p.split('/')) - 1
+            if t.split('/').count('..') > depth or os.path.normpath(os.path.join(os.path.dirname(p), t)).startswith('..'):
+                raise ScenarioError(f'{name}: the symlink {p} leaves the fixture')
+        elif not isinstance(v, str):
+            raise ScenarioError(f'{name}: disk maps paths to texts or symlinks')
+
+
 def validate(sc):
     """Raises ScenarioError on a scenario this harness cannot run hermetically or exactly."""
-    name = sc.get('name', '?')
+    name = sc.get('name', '?') if isinstance(sc, dict) else '?'
     if not isinstance(sc, dict) or set(sc) - SCENARIO_KEYS or not {'name', 'about'} <= set(sc):
         raise ScenarioError(f'{name}: keys {sorted(sc) if isinstance(sc, dict) else sc}')
     if not re.match(r'^[a-z0-9][a-z0-9.-]*$', sc['name']):
         raise ScenarioError(f'{name}: bad name')
     if 'caseSensitive' in sc and not isinstance(sc['caseSensitive'], bool):
         raise ScenarioError(f'{name}: caseSensitive must be true or false')
-    fs = sc.get('fs')
-    if fs is not None:
-        if fs.get('kind') != 'full' or set(fs) - {'kind', 'files', 'directories', 'symlinks'}:
-            raise ScenarioError(f'{name}: fs must be {{kind: "full", files, directories?, symlinks?}} (a layer reads the disk)')
-        if any(v.get('host') for v in (fs.get('symlinks') or {}).values()):
-            raise ScenarioError(f'{name}: a host symlink reads the disk')
-    if sc.get('disk') is not None and not all(isinstance(v, str) for v in sc['disk'].values()):
-        raise ScenarioError(f'{name}: disk maps paths to texts')
-    if sc.get('disk') is not None and any(p.startswith('/') or '..' in p.split('/') for p in sc['disk']):
-        raise ScenarioError(f'{name}: disk paths are relative to the root')
-    if not (fs or sc.get('disk') is not None):
-        raise ScenarioError(f'{name}: no filesystem (fs or disk): the session would read the real disk')
-    if fs and sc.get('disk') is not None:
-        raise ScenarioError(f'{name}: fs or disk, not both')
+    disk = sc.get('disk')
+    if sc.get('fs') is not None:
+        _validate_fs(name, sc['fs'], disk)
+    if disk is not None:
+        _validate_disk(name, disk)
+    if not (sc.get('fs') or disk is not None):
+        raise ScenarioError(f'{name}: no filesystem (fs or disk)')
     for r in sc.get('requests') or []:
         if r not in PER_PROJECT:
             raise ScenarioError(f'{name}: unknown request {r}')
-    for step in sc.get('build') or []:
-        if len(step) != 1 or set(step) - BUILD_STEPS:
+    for u in sc.get('updates') or []:
+        if not isinstance(u, dict) or set(u) - {'changes', 'requests', 'release'} or 'changes' not in u:
+            raise ScenarioError(f'{name}: an update is {{changes, requests?, release?}}')
+        if (u['changes'].get('fileSystem') or {}).get('host'):
+            raise ScenarioError(f'{name}: bad update')
+        if u['changes'].get('fileSystem') is not None:
+            _validate_fs(name, u['changes']['fileSystem'], disk)
+        if any(r not in PER_PROJECT for r in u.get('requests') or []):
+            raise ScenarioError(f'{name}: unknown request in an update')
+    build = sc.get('build') or []
+    for step in build:
+        if not isinstance(step, dict) or len(step) != 1 or set(step) - set(BUILD_STEPS):
             raise ScenarioError(f'{name}: bad build step {step}')
-    if sc.get('build') and 'create' not in sc['build'][0]:
+    if build and 'create' not in build[0]:
         raise ScenarioError(f'{name}: the build steps start with create')
-    if sc.get('build') and sc.get('disk') is None:
+    if build and disk is None:
         raise ScenarioError(f'{name}: the build orchestrator uses the host filesystem: give a disk fixture')
 
 
@@ -149,36 +198,72 @@ def server_args(sc):
     return args
 
 
-def sandbox_argv(cmd, home, baits, overlay=None):
-    """unshare -rmn -- sh -c '<binds> && exec "$@"' ... cmd. baits: [(bait, real)]; overlay: (lower, upper,
-    work, target) or None."""
-    script, pos = [], []
-    for bait, real in baits:
-        b = len(pos)
-        script.append(f'mount --bind "${{{b + 1}}}" "${{{b + 2}}}" && mount -o remount,bind,ro "${{{b + 2}}}"')
-        pos += [str(bait), str(real)]
-    if overlay is not None:
-        b = len(pos)
-        script.append(f'mount -t overlay overlay -o "lowerdir=${{{b + 1}}},upperdir=${{{b + 2}}},workdir=${{{b + 3}}}" "${{{b + 4}}}"')
-        pos += [str(x) for x in overlay]
-    b = len(pos)
-    script.append(f'mount --bind "${{{b + 1}}}" "${{{b + 2}}}"')
-    pos += [str(home), str(SANDBOX_HOME)]
-    script += [f'shift {len(pos)}', 'exec "$@"']
-    return ['unshare', '-rmn', '--', 'sh', '-c', ' && '.join(script), 'api-sandbox', *pos, *cmd]
+def command(cmd):
+    """(argv, files): the server command with every word that names a file replaced by its realpath,
+    and those files that a hidden dir would cover (bound back read-only in the sandbox)."""
+    argv, files = [], []
+    for word in str(cmd).split(' '):
+        if os.path.isfile(word):
+            word = os.path.realpath(word)
+            if any(word.startswith(h + '/') for h in HIDDEN):
+                files.append(word)
+        argv.append(word)
+    return argv, files
 
+
+# ---- the JSON-RPC client ----------------------------------------------------------------------
 
 class Malformed(Exception):
     pass
+
+
+def _no_dup(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise Malformed(f'a duplicate key in {keys}')
+    return dict(pairs)
+
+
+def _no_constant(c):
+    raise Malformed(f'{c} is not JSON')
+
+
+def parse(body):
+    """A frame's JSON, strictly: no duplicate key, no NaN or Infinity."""
+    try:
+        return json.loads(body, object_pairs_hook=_no_dup, parse_constant=_no_constant)
+    except ValueError as e:
+        raise Malformed(f'a frame that is not JSON: {e}') from None
+
+
+def envelope_error(msg, request_id):
+    """Why msg is not exactly the JSON-RPC answer to request_id, else None."""
+    if not isinstance(msg, dict):
+        return 'not an object'
+    if 'method' in msg:
+        return f'a server request or notification ({msg.get("method")!r}): no callbacks are enabled'
+    keys = set(msg)
+    if keys not in ({'jsonrpc', 'id', 'result'}, {'jsonrpc', 'id', 'error'}):
+        return f'envelope keys {sorted(keys)}'
+    if msg['jsonrpc'] != '2.0' or not isinstance(msg['jsonrpc'], str):
+        return f'jsonrpc {msg["jsonrpc"]!r}'
+    if type(msg['id']) is not int or msg['id'] != request_id:
+        return f'id {msg["id"]!r}, not {request_id}'
+    if 'error' in msg:
+        e = msg['error']
+        if (not isinstance(e, dict) or set(e) - {'code', 'message', 'data'} or type(e.get('code')) is not int
+                or not isinstance(e.get('message'), str)):
+            return f'error object {json.dumps(e)[:120]}'
+    return None
 
 
 class Rpc:
     """JSON-RPC over a server's stdio. A reader thread splits stdout into frames strictly: only a
     Content-Length header (and Content-Type), a blank line, then exactly that many bytes of JSON."""
 
-    def __init__(self, argv, env):
+    def __init__(self, argv, env, pass_fds):
         self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
-                                  cwd='/', start_new_session=True)
+                                  cwd='/', start_new_session=True, pass_fds=pass_fds)
         self.n = 0
         self.frames, self.cond, self.eof, self.bad = [], threading.Condition(), False, None
         self.err = bytearray()
@@ -191,44 +276,50 @@ class Rpc:
         for chunk in iter(lambda: self.p.stderr.read1(65536), b''):
             self.err += chunk
 
+    def _frame(self, f):
+        """One frame's body, or None at a clean end."""
+        head = {}
+        line = f.readline()
+        if not line:
+            return None
+        while line not in (b'\r\n', b'\n'):
+            if not line.endswith(b'\n'):
+                raise Malformed(f'a header line without its end: {line[:80]!r}')
+            k, sep, v = line.decode('ascii', 'replace').partition(':')
+            if not sep or k.strip().lower() not in ('content-length', 'content-type') or k.strip().lower() in head:
+                raise Malformed(f'not a header line: {line[:80]!r}')
+            head[k.strip().lower()] = v.strip()
+            line = f.readline()
+        if not re.match(r'^\d+$', head.get('content-length', '')):
+            raise Malformed(f'no Content-Length: {head}')
+        n = int(head['content-length'])
+        body = f.read(n)
+        if len(body) != n:
+            raise Malformed(f'a frame cut short: {len(body)} of {n} bytes')
+        return body
+
     def _read(self):
         f = self.p.stdout
         try:
             while True:
-                head = {}
-                line = f.readline()
-                if not line:
+                body = self._frame(f)
+                if body is None:
                     break
-                while line not in (b'\r\n', b'\n'):
-                    if not line.endswith(b'\n'):
-                        raise Malformed(f'a header line without its end: {line[:80]!r}')
-                    k, sep, v = line.decode('ascii', 'replace').partition(':')
-                    if not sep or k.strip().lower() not in ('content-length', 'content-type'):
-                        raise Malformed(f'not a header line: {line[:80]!r}')
-                    head[k.strip().lower()] = v.strip()
-                    line = f.readline()
-                if not re.match(r'^\d+$', head.get('content-length', '')):
-                    raise Malformed(f'no Content-Length: {head}')
-                n = int(head['content-length'])
-                body = f.read(n)
-                if len(body) != n:
-                    raise Malformed(f'a frame cut short: {len(body)} of {n} bytes')
-                try:
-                    msg = json.loads(body)
-                except ValueError as e:
-                    raise Malformed(f'a frame that is not JSON: {e}') from None
+                msg = parse(body)
                 with self.cond:
-                    self.frames.append(msg)
+                    self.frames.append((body, msg))
                     self.cond.notify_all()
         except Malformed as e:
             with self.cond:
                 self.bad = str(e)
+            for _ in iter(lambda: f.read(65536), b''):  # drain to EOF, so EOF still means "nobody holds it"
+                pass
         with self.cond:
             self.eof = True
             self.cond.notify_all()
 
     def call(self, method, params):
-        """(answer message or None, failure or None)."""
+        """(raw answer bytes, failure (kind, why) or None)."""
         self.n += 1
         msg = {'jsonrpc': '2.0', 'id': self.n, 'method': method}
         if params is not None:
@@ -243,10 +334,11 @@ class Rpc:
         with self.cond:
             while True:
                 if self.frames:
-                    got = self.frames.pop(0)
-                    if got.get('id') != self.n or 'method' in got or ('result' in got) == ('error' in got):
-                        return None, ('malformed', f'{method}: not the answer to request {self.n}: {json.dumps(got)[:200]}')
-                    return got, None
+                    raw, got = self.frames.pop(0)
+                    why = envelope_error(got, self.n)
+                    if why:
+                        return raw, ('malformed', f'{method}: {why}')
+                    return raw, None
                 if self.bad:
                     return None, ('malformed', f'{method}: {self.bad}')
                 if self.eof:
@@ -257,7 +349,7 @@ class Rpc:
                 self.cond.wait(left)
 
     def finish(self):
-        """Closes stdin and waits for the exit: (code or -signal, forced, trailing failure or None)."""
+        """Closes stdin, waits for the exit and for EOF on both streams: (code, forced, trailing, eof)."""
         try:
             self.p.stdin.close()
         except OSError:
@@ -267,13 +359,14 @@ class Rpc:
             self.p.wait(timeout=EXIT_TIMEOUT)
         except subprocess.TimeoutExpired:
             forced = True
-            os.killpg(self.p.pid, signal.SIGKILL)
+            self.kill()
             self.p.wait()
-        self.reader.join(5)
-        self.err_reader.join(5)
+        self.reader.join(EOF_TIMEOUT)
+        self.err_reader.join(EOF_TIMEOUT)
+        eof = not self.reader.is_alive() and not self.err_reader.is_alive()
         with self.cond:
             trailing = self.bad or (f'{len(self.frames)} frames after the last answer' if self.frames else None)
-        return self.p.returncode, forced, trailing
+        return self.p.returncode, forced, trailing, eof
 
     def kill(self):
         try:
@@ -282,25 +375,48 @@ class Rpc:
             pass
 
 
-def _walk_upper(upper):
-    """({relative path: sha256 or 'deleted'}, {relative path: text}) of an overlay upper dir (a whiteout
-    is a deleted input). The texts (files up to 256 KB) are for the diff report, never compared."""
+# ---- the session's storage --------------------------------------------------------------------
+
+def _walk(top, skip=()):
+    """({relative path: sha256, 'deleted', 'dir' or 'link <target>'}, {relative path: text}) of a host dir:
+    what a session wrote there (an overlay whiteout is a deleted input). Texts (up to 256 KB) are for
+    the diff report only."""
     out, texts = {}, {}
-    for top, _dirs, files in os.walk(upper):
-        for f in files:
-            p = os.path.join(top, f)
+    if not os.path.isdir(top):
+        return out, texts
+    for d, dirs, files in os.walk(top):
+        for x in dirs + files:
+            p = os.path.join(d, x)
+            rel = os.path.relpath(p, top)
+            if rel in skip:
+                continue
             st = os.lstat(p)
-            rel = os.path.relpath(p, upper)
             if stat.S_ISCHR(st.st_mode):
                 out[rel] = 'deleted'
             elif stat.S_ISLNK(st.st_mode):
                 out[rel] = 'link ' + os.readlink(p)
+            elif stat.S_ISDIR(st.st_mode):
+                out[rel] = 'dir'
             else:
-                data = Path(p).read_bytes()
+                try:
+                    data = Path(p).read_bytes()
+                except OSError as e:
+                    out[rel] = f'unreadable {e.strerror}'
+                    continue
                 out[rel] = hashlib.sha256(data).hexdigest()[:16]
                 if len(data) <= 1 << 18:
                     texts[rel] = data.decode('utf-8', 'replace')
     return dict(sorted(out.items())), dict(sorted(texts.items()))
+
+
+HOME_SKELETON = {'/'.join(d.split('/')[:k + 1]) for d in HOME_DIRS for k in range(len(d.split('/')))}
+
+
+def storage(work):
+    """The state of a session's writable places: the fixture's upper dir and the private home."""
+    disk, texts = _walk(work / 'upper')
+    home, _ = _walk(work / 'home', HOME_SKELETON)
+    return {'disk': disk, 'home': home}, texts
 
 
 def _clear(d):
@@ -309,89 +425,144 @@ def _clear(d):
         subprocess.run(['rm', '-rf', str(d)], check=False)
 
 
-def _project_ids(answer):
-    return [p.get('id') for p in (answer.get('result') or {}).get('projects') or [] if isinstance(p, dict)]
+def _projects(raw):
+    try:
+        return [p.get('id') for p in (json.loads(raw).get('result') or {}).get('projects') or [] if isinstance(p, dict)]
+    except (ValueError, AttributeError):
+        return []
 
 
-def run_session(binary, sc, work, baits, fixture=None, env_extra=None):
-    """One server process on one scenario: the transcript (see the top comment). work: a scratch dir of
-    this process (removed first); fixture: the disk fixture's read-only snapshot dir, or None."""
-    sc_root = root_of(sc)
-    _clear(work)
-    home = work / 'home'
-    for d in HOME_DIRS:
-        (home / d).mkdir(parents=True, exist_ok=True)
-    overlay = None
-    if fixture is not None:
-        upper, wdir = work / 'upper', work / 'work'
-        upper.mkdir(parents=True)
-        wdir.mkdir()
-        Path(sc_root).mkdir(parents=True, exist_ok=True)
-        overlay = (fixture, upper, wdir, sc_root)
-    argv = sandbox_argv([*str(binary).split(' '), *server_args(sc)], home, baits, overlay)
-    steps, failure = [], None
-    start = time.monotonic()
-    rpc = Rpc(argv, {**server_env(str(SANDBOX_HOME)), **(env_extra or {})})
+def _result(raw, key):
+    try:
+        return (json.loads(raw).get('result') or {}).get(key)
+    except (ValueError, AttributeError):
+        return None
 
-    def ask(method, params):
-        nonlocal failure
-        if failure:
+
+# ---- one session ------------------------------------------------------------------------------
+
+class Session:
+    def __init__(self, binary, sc, work, fixture):
+        self.sc, self.work, self.root = sc, work, root_of(sc)
+        self.steps, self.failure = [], None
+        _clear(work)
+        for d in HOME_DIRS:
+            (work / 'home' / d).mkdir(parents=True, exist_ok=True)
+        if fixture is not None:
+            (work / 'upper').mkdir()
+            (work / 'ovl').mkdir()
+        argv, files = command(binary)
+        self.report_r, report_w = os.pipe()
+        spec = {'report': report_w, 'hide': HIDDEN, 'work': str(work), 'home': str(SANDBOX_HOME),
+                'lower': str(fixture) if fixture is not None else None, 'target': self.root, 'files': files,
+                'mtime': FIXED_MTIME, 'cmd': [*argv, *server_args(sc)]}
+        self.start = time.monotonic()
+        try:
+            self.rpc = Rpc([*UNSHARE, '/usr/bin/python3', '-I', str(INIT), json.dumps(spec)],
+                           server_env(str(SANDBOX_HOME)), [report_w])
+        finally:
+            os.close(report_w)
+
+    def ask(self, method, params):
+        if self.failure:
             return None
-        got, fail = rpc.call(method, params)
+        raw, fail = self.rpc.call(method, params)
         step = {'method': method, 'params': params}
+        if raw is not None:
+            step['answer'] = raw.decode('utf-8', 'surrogateescape')
         if fail:
-            failure = fail
+            self.failure = fail
             step['failure'] = fail[1]
-        else:
-            step.update({'result': got['result']} if 'result' in got else {'error': got['error']})
-        steps.append(step)
-        return got
+        step['fs'] = storage(self.work)[0]
+        self.steps.append(step)
+        return raw if fail is None else None
 
-    ask('initialize', None)
-    snap_params = {}
-    if sc.get('fs'):
-        snap_params['fileSystem'] = expand(sc['fs'], sc_root)
-    for k in ('createPrograms', 'openProjects'):
-        if sc.get(k) is not None:
-            snap_params[k] = expand(sc[k], sc_root)
-    if snap_params.get('fileSystem') or snap_params.get('createPrograms') or snap_params.get('openProjects'):
-        snap = ask('createSnapshot', snap_params)
-        if snap is not None and 'result' in snap:
-            sid = snap['result'].get('snapshot')
-            for pid in _project_ids(snap):
-                for method in sc.get('requests') or PER_PROJECT:
-                    ask(method, {'snapshot': sid, 'project': pid})
-    orchestrator = None
-    for step in sc.get('build') or []:
-        (kind, arg), = step.items()
-        if kind == 'create':
-            got = ask('createBuildOrchestrator', expand(arg, sc_root))
-            orchestrator = ((got or {}).get('result') or {}).get('buildOrchestratorID') if got else None
-            continue
-        method = {'build': 'build', 'buildReferences': 'buildReferences', 'clean': 'cleanBuild'}[kind]
-        ask(method, {'buildOrchestratorID': orchestrator, **({'project': expand(arg, sc_root)} if arg else {})})
-    if failure and failure[0] == 'timeout':
-        rpc.kill()
-    code, forced, trailing = rpc.finish()
-    if not failure and trailing:
-        failure = ('malformed', trailing)
-    err = bytes(rpc.err)
-    crash = next((ln[:300] for ln in err.decode('utf-8', 'replace').splitlines() if CRASH_RE.match(ln)), None)
-    if not failure:
-        if forced:
-            failure = ('crash', f'no exit in {EXIT_TIMEOUT} s after stdin closed: killed')
-        elif code:
-            failure = ('crash', f'exit {code}')
-        elif crash:
-            failure = ('crash', f'stderr: {crash}')
-    written, written_text = _walk_upper(overlay[1]) if overlay else ({}, {})
-    made = {'/'.join(d.split('/')[:k + 1]) for d in HOME_DIRS for k in range(len(d.split('/')))}
-    home_writes = sum(1 for top, ds, fs in os.walk(home) for x in ds + fs
-                      if os.path.relpath(os.path.join(top, x), home) not in made)
-    _clear(work)
-    import parity_grandfather  # the site form a grandfather entry pins (never part of a cached Go answer's key)
-    return {'steps': steps, 'exit': code, 'forced': forced,
-            'stderr': {'sha': hashlib.sha256(err).hexdigest()[:16], 'site': parity_grandfather.stderr_site_hash(err),
-                       'bytes': len(err), 'crash': crash, 'tail': err[-600:].decode('utf-8', 'replace')},
-            'written': written, 'writtenText': written_text, 'homeWrites': home_writes, 'failure': failure[0] if failure else None,
-            'why': failure[1] if failure else None, 'secs': round(time.monotonic() - start, 2)}
+    def per_project(self, sid, projects, requests):
+        for pid in projects:
+            for method in requests or PER_PROJECT:
+                self.ask(method, {'snapshot': sid, 'project': pid})
+
+    def script(self):
+        sc, root = self.sc, self.root
+        self.ask('initialize', None)
+        params = {}
+        if sc.get('fs'):
+            params['fileSystem'] = expand(sc['fs'], root)
+        for k in ('createPrograms', 'openProjects'):
+            if sc.get(k) is not None:
+                params[k] = expand(sc[k], root)
+        sid, projects = None, []
+        if params:
+            snap = self.ask('createSnapshot', params)
+            if snap is not None:
+                sid, projects = _result(snap, 'snapshot'), _projects(snap)
+                self.per_project(sid, projects, sc.get('requests'))
+        for u in sc.get('updates') or []:
+            if sid is None:
+                break
+            got = self.ask('updateSnapshot', {'snapshot': sid, 'changes': expand(u['changes'], root)})
+            if got is None:
+                break
+            old, sid = sid, _result(got, 'snapshot')
+            projects = _projects(got) or projects
+            self.per_project(sid, projects, u.get('requests'))
+            if u.get('release'):
+                self.ask('release', {'snapshot': old})
+        orchestrator = None
+        for step in sc.get('build') or []:
+            (kind, arg), = step.items()
+            if kind == 'create':
+                got = self.ask(BUILD_STEPS[kind], expand(arg, root))
+                orchestrator = _result(got, 'buildOrchestratorID') if got else None
+            elif kind == 'dispose':
+                self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator})
+            else:
+                self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator, **({'project': expand(arg, root)} if arg else {})})
+
+    def end(self):
+        if self.failure and self.failure[0] == 'timeout':
+            self.rpc.kill()
+        code, forced, trailing, eof = self.rpc.finish()
+        with os.fdopen(self.report_r, 'rb') as f:
+            rep_raw = f.read()
+        try:
+            rep = json.loads(rep_raw) if rep_raw else {}
+        except ValueError:
+            rep = {'setup': f'an unreadable report: {rep_raw[:200]!r}'}
+        failure = self.failure
+        if rep.get('setup') or (not rep and not (failure and failure[0] == 'timeout')):
+            failure = ('infra', rep.get('setup') or f'no report from the sandbox (exit {code}): '
+                       f'{bytes(self.rpc.err).decode("utf-8", "replace")[-300:]}')
+        if 'status' in rep:
+            code = os.waitstatus_to_exitcode(rep['status'])
+        err = bytes(self.rpc.err)
+        crash = next((ln[:300] for ln in err.decode('utf-8', 'replace').splitlines() if CRASH_RE.match(ln)), None)
+        if not failure:
+            if trailing:
+                failure = ('malformed', trailing)
+            elif rep.get('survivors'):
+                failure = ('crash', f'processes survived the server: {rep["survivors"][:5]}')
+            elif not eof:
+                failure = ('crash', f'its output was still held open {EOF_TIMEOUT} s after it ended')
+            elif forced:
+                failure = ('crash', f'no exit in {EXIT_TIMEOUT} s after stdin closed: killed')
+            elif code:
+                failure = ('crash', f'exit {code}')
+            elif crash:
+                failure = ('crash', f'stderr: {crash}')
+        final, texts = storage(self.work)
+        _clear(self.work)
+        import parity_grandfather  # the site form a grandfather entry pins (never part of a cached Go answer's key)
+        return {'steps': self.steps, 'exit': code, 'forced': forced, 'survivors': rep.get('survivors', []),
+                'stderr': {'sha': hashlib.sha256(err).hexdigest()[:16], 'site': parity_grandfather.stderr_site_hash(err),
+                           'bytes': len(err), 'crash': crash, 'tail': err[-600:].decode('utf-8', 'replace')},
+                'fs': final, 'writtenText': texts, 'failure': failure[0] if failure else None,
+                'why': failure[1] if failure else None, 'secs': round(time.monotonic() - self.start, 2)}
+
+
+def run_session(binary, sc, work, fixture=None):
+    """One server process on one scenario: the transcript (see the top comment). work: a scratch dir of
+    this process (made new, removed after); fixture: the disk fixture's read-only snapshot dir, or None."""
+    s = Session(binary, sc, Path(work), fixture)
+    s.script()
+    return s.end()

@@ -301,6 +301,41 @@
    ]
   },
   {
+   "name": "dyn-config-include-dirs-insensitive",
+   "about": "Astra H7 finding 9 (B3 risk 13, GlobVisitor keys of dynamic directories): a dynamic config project whose include matches src/A/x.ts and src/a/y.ts, directories that differ only in case, insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A/x.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a/y.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-config-include-dirs",
+   "about": "finding 9 on a case-sensitive host (control)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A/x.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a/y.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
    "name": "case-mixed-dirs-insensitive",
    "about": "B3 D2 (c2-flag-disk): A/x.ts and a/y.ts, outDir, insensitive host: Go emits out/x.js and out/y.js",
    "caseSensitive": false,
@@ -1024,6 +1059,398 @@
     },
     {
      "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "update-reconfigure-emit",
+   "about": "repeated emits with changed options: updateSnapshot reconfigures the program (declaration, maps, another outDir), emits again, releases the first snapshot, then releases it once more (an error answer)",
+   "updates": [
+    {
+     "changes": {
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/src/a.ts",
+         "@ROOT@/src/b.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/dist",
+         "declaration": true,
+         "declarationMap": true,
+         "sourceMap": true
+        }
+       }
+      ]
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getSemanticDiagnostics",
+      "emitToString",
+      "emit"
+     ],
+     "release": true
+    },
+    {
+     "changes": {},
+     "requests": [
+      "emitToString"
+     ],
+     "release": true
+    }
+   ],
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a: number = 1;\n",
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
+   "name": "update-file-change-emit",
+   "about": "snapshot updates: a new full filesystem with a.ts edited (a type error) and c.ts added, the diagnostics and emit again, the old snapshot released",
+   "updates": [
+    {
+     "changes": {
+      "fileSystem": {
+       "kind": "full",
+       "files": {
+        "@ROOT@/src/a.ts": "export const a: number = \"one\";\n",
+        "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+        "@ROOT@/src/c.ts": "export const c = 3;\n",
+        "@ROOT@/globals.d.ts": "@GLOBALS@"
+       }
+      },
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/src/a.ts",
+         "@ROOT@/src/b.ts",
+         "@ROOT@/src/c.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/out"
+        }
+       }
+      ]
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getSemanticDiagnostics",
+      "emitToString"
+     ],
+     "release": true
+    }
+   ],
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a: number = 1;\n",
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
+   "name": "update-mixed-dirs-insensitive",
+   "about": "D2 after a snapshot update: the c2 tree reconfigured with declarations on an insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "emitToString"
+   ],
+   "updates": [
+    {
+     "changes": {
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/A/x.ts",
+         "@ROOT@/a/y.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/out",
+         "declaration": true
+        }
+       }
+      ]
+     },
+     "requests": [
+      "emitToString"
+     ],
+     "release": true
+    }
+   ]
+  },
+  {
+   "name": "build-dispose",
+   "about": "disk fixture: build, disposeBuildOrchestrator, then build and dispose again on the disposed orchestrator (error answers)",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"rootDir\": \"src\", \"noLib\": true, \"declarationMap\": true, \"sourceMap\": true}, \"files\": [\"src/a.ts\", \"src/b.ts\", \"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "dispose": null
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "dispose": null
+    }
+   ]
+  },
+  {
+   "name": "layer-emit-disk",
+   "about": "a layer request filesystem over a disk fixture: b.ts only in the layer imports a.ts only on disk; emit writes through the host filesystem into the fixture (no full filesystem: emit writes, not returns)",
+   "disk": {
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/src/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 99,
+      "moduleResolution": 100
+     }
+    }
+   ]
+  },
+  {
+   "name": "layer-emit-mixed-dirs-insensitive",
+   "about": "D2 on the path that writes: a layer filesystem over the c2 tree on disk, insensitive host; emit writes its outputs into the fixture",
+   "caseSensitive": false,
+   "disk": {
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {}
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "emit"
+   ]
+  },
+  {
+   "name": "layer-emit-mixed-dirs",
+   "about": "layer-emit-mixed-dirs-insensitive on the OS default case setting (control)",
+   "disk": {
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {}
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "emit"
+   ]
+  },
+  {
+   "name": "build-symlink-references",
+   "about": "B3 risk 7 (project-reference symlink redirects): a pnpm-style monorepo, packages/b references packages/a and imports it through node_modules/a -> ../../a; the solution built, and b opened before and after",
+   "disk": {
+    "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"packages/a\"}, {\"path\": \"packages/b\"}]}",
+    "packages/a/package.json": "{\"name\": \"a\", \"types\": \"dist/index.d.ts\"}",
+    "packages/a/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"]}",
+    "packages/a/src/index.ts": "export const a: number = 1;\n",
+    "packages/a/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"], \"references\": [{\"path\": \"../a\"}]}",
+    "packages/b/src/index.ts": "import { a } from \"a\";\nexport const b = a + 1;\n",
+    "packages/b/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/node_modules/a": {
+     "symlink": "../../a"
+    }
+   },
+   "openProjects": [
+    "@ROOT@/packages/b/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
+    }
+   ]
+  },
+  {
+   "name": "build-symlink-references-insensitive",
+   "about": "build-symlink-references on an insensitive host",
+   "caseSensitive": false,
+   "disk": {
+    "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"packages/a\"}, {\"path\": \"packages/b\"}]}",
+    "packages/a/package.json": "{\"name\": \"a\", \"types\": \"dist/index.d.ts\"}",
+    "packages/a/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"]}",
+    "packages/a/src/index.ts": "export const a: number = 1;\n",
+    "packages/a/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"], \"references\": [{\"path\": \"../a\"}]}",
+    "packages/b/src/index.ts": "import { a } from \"a\";\nexport const b = a + 1;\n",
+    "packages/b/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/node_modules/a": {
+     "symlink": "../../a"
+    }
+   },
+   "openProjects": [
+    "@ROOT@/packages/b/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
     }
    ]
   }

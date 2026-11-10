@@ -65,7 +65,8 @@ recorded outcome kinds and Go's panic line agree with an older run's rows.
 --only REGEX (both): only the items it matches. evidence runs only them; regen rebuilds only them and
 keeps every other entry of --from byte for byte. That is how a lane adds entries (--add) without
 re-pinning the others to its own binary: a regen of an entry from another binary would accept whatever
-that binary does now.
+that binary does now. Kept entries are never relabelled: --from must be a valid file of this version
+(a version 3 file with --only would otherwise come out as version 4 with its version 3 pins).
 """
 import argparse
 import hashlib
@@ -238,11 +239,14 @@ def regen(args):
         raise ArtifactError('the quick and full evidence runs are of different binaries')
     manifest = working_manifest()
     kept = {}
-    if args.only:  # every other entry as it is (validated below with the rebuilt ones)
+    if args.only:  # every other entry as it is: only from a file of this version, validated whole first
         kept = {k: v for k, v in listed.items() if not re.search(args.only, k)}
         listed = {k: v for k, v in listed.items() if re.search(args.only, k)}
-        if not all(isinstance(v, dict) and set(v) == set(ENTRY) for v in kept.values()):
-            raise ArtifactError('--only keeps the other entries as they are: they must be entries of this version')
+        if kept and old.get('version') != VERSION:
+            raise ArtifactError(f'--only keeps {len(kept)} entries as they are, but {src} is version {old.get("version")}, '
+                                f'not {VERSION}: an old pin would be relabelled. Regenerate every entry (no --only)')
+        if kept:
+            validate(old, str(src))
     evidence = f'{Path(args.full).name}{" + " + Path(args.quick).name if args.quick else ""}: {full_meta.get("rs")} ({full_meta.get("rsSha", "")[:12]})'
     items = {}
     for item, e in sorted(listed.items(), key=lambda kv: (kv[0].split(':')[0], int(kv[0].split(':')[-1]) if kv[0].split(':')[-1].isdigit() else 0)):

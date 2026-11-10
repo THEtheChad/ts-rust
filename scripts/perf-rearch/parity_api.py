@@ -66,6 +66,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 from collections import Counter
@@ -87,7 +88,7 @@ GO = HOME / '.local/bin/tsgo-oracle-3e9236361fa9'
 GO_RUNS = 2
 CACHE_VERSION = 1  # bump when the form of a cached Go session changes
 RS_RUNS = {'quick': 1, 'full': 2}
-FIXED_MTIME = 978307200  # 2001-01-01: fixture inputs are always older than anything a build writes
+FIXED_MTIME = session.FIXED_MTIME  # fixture inputs are always older than anything a build writes
 JS_ERROR = ('no JS referee on the api tier: JS tsc 6.0.3 has no API server (snapshots, projects, request '
             'filesystems, ^/~ts-uri~/ names, the server case flag); its in-process compiler API is another surface')
 
@@ -148,8 +149,14 @@ def scenarios(tier, path=SCENARIOS):
     return [s for s in every if s['name'] in names]
 
 
+SOURCES = (Path(session.__file__), session.INIT)  # what decides a Go answer: the session driver and the sandbox's init
+
+
 def session_sha():
-    return hashlib.sha256(Path(session.__file__).read_bytes()).hexdigest()[:16]
+    h = hashlib.sha256()
+    for f in SOURCES:
+        h.update(f.name.encode() + b'\0' + f.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def command_identity(cmd):
@@ -174,17 +181,20 @@ def fixture_snapshot(sc):
     tree = STATE / 'snapshots/api' / h / 'tree'
     if not tree.exists():
         tmp = tree.parent / f'tmp-{os.getpid()}-{time.monotonic_ns()}'
-        for rel, text in files.items():
+        tmp.mkdir(parents=True)
+        for rel, v in files.items():
             p = tmp / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text)
+            if isinstance(v, dict):
+                os.symlink(v['symlink'], p)
+            else:
+                p.write_text(v)
         for top, dirs, fs in os.walk(tmp, topdown=False):
-            for f in fs:
-                os.chmod(os.path.join(top, f), 0o444)
-                os.utime(os.path.join(top, f), (FIXED_MTIME, FIXED_MTIME))
-            for d in dirs:
-                os.chmod(os.path.join(top, d), 0o555)
-                os.utime(os.path.join(top, d), (FIXED_MTIME, FIXED_MTIME))
+            for x in fs + dirs:
+                q = os.path.join(top, x)
+                if not os.path.islink(q):
+                    os.chmod(q, 0o555 if os.path.isdir(q) else 0o444)
+                os.utime(q, (FIXED_MTIME, FIXED_MTIME), follow_symlinks=False)
         os.chmod(tmp, 0o555)
         os.utime(tmp, (FIXED_MTIME, FIXED_MTIME))
         try:
@@ -196,17 +206,21 @@ def fixture_snapshot(sc):
 
 
 def check_fixture(tree, files):
-    """Raises inputs.SnapshotError unless tree holds exactly files (bytes, names, read-only, the fixed mtime)."""
+    """Raises inputs.SnapshotError unless tree holds exactly files (bytes, link targets, names, read-only,
+    the fixed mtime)."""
     seen = {}
     for top, dirs, fs in os.walk(tree):
         for x in dirs + fs:
             p = os.path.join(top, x)
             st = os.lstat(p)
-            if st.st_mode & 0o222 or int(st.st_mtime) != FIXED_MTIME:
+            link = stat.S_ISLNK(st.st_mode)
+            if (st.st_mode & 0o222 and not link) or int(st.st_mtime) != FIXED_MTIME:
                 raise inputs.SnapshotError(f'{p}: writable or touched')
-            if not os.path.isdir(p) or os.path.islink(p):
-                seen[os.path.relpath(p, tree)] = Path(p).read_bytes() if os.path.isfile(p) and not os.path.islink(p) else None
-    want = {k: v.encode() for k, v in files.items()}
+            if link:
+                seen[os.path.relpath(p, tree)] = {'symlink': os.readlink(p)}
+            elif not stat.S_ISDIR(st.st_mode):
+                seen[os.path.relpath(p, tree)] = Path(p).read_bytes() if stat.S_ISREG(st.st_mode) else None
+    want = {k: v if isinstance(v, dict) else v.encode() for k, v in files.items()}
     if seen != want:
         raise inputs.SnapshotError(f'{tree} is not its scenario\'s fixture: {sorted(set(seen) ^ set(want))[:5] or "bytes differ"}')
 
@@ -215,20 +229,35 @@ def material(sc, fixture_hash, ancestors, go_sha):
     return {'version': CACHE_VERSION, 'scenario': sc, 'root': session.root_of(sc), 'fixture': fixture_hash,
             'session': session_sha(), 'protocol': session.PROTOCOL, 'home': str(session.SANDBOX_HOME),
             'virtualRootExists': os.path.lexists(session.VIRTUAL), 'ancestors': ancestors, 'go': go_sha, 'goRuns': GO_RUNS,
-            'timeouts': [session.REQUEST_TIMEOUT, session.EXIT_TIMEOUT]}
+            'timeouts': [session.REQUEST_TIMEOUT, session.EXIT_TIMEOUT, session.EOF_TIMEOUT]}
 
 
 # ---- comparing ------------------------------------------------------------------------------
+# Every comparison is of canonical strings (canon): the answers are raw bytes, and everything else is
+# JSON whose types survive json.dumps, so false is never 0 and "2.0" never "9.9".
+
+def canon(value):
+    return json.dumps(value, sort_keys=True)
+
 
 def answers(t):
-    """The answers of a transcript: every request as sent and its answer, and how the session ended."""
-    return {'steps': [{k: s[k] for k in ('method', 'params', 'result', 'error', 'failure') if k in s} for s in t['steps']],
-            'exit': t['exit'], 'forced': t['forced'], 'failure': t['failure']}
+    """Every request as sent and its answer's raw message, and how the session ended."""
+    return {'steps': [{k: s[k] for k in ('method', 'params', 'answer', 'failure') if k in s} for s in t['steps']],
+            'exit': t['exit'], 'forced': t['forced'], 'survivors': t['survivors'], 'failure': t['failure']}
+
+
+def storage(t):
+    """What the session left in its writable places after each request, and at its end."""
+    return {'steps': [s.get('fs') for s in t['steps']], 'end': t['fs']}
 
 
 def view(t):
     """Everything compared of a transcript."""
-    return {**answers(t), 'stderr': t['stderr']['sha'], 'written': t['written'], 'homeWrites': t['homeWrites']}
+    return {**answers(t), 'stderr': t['stderr']['sha'], 'storage': storage(t)}
+
+
+def same(a, b):
+    return canon(view(a)) == canon(view(b))
 
 
 def outcome(t):
@@ -239,16 +268,18 @@ def attempt(t, why):
     """A tsc-rs process as a grandfather entry pins it (parity_grandfather ATTEMPT, plus why and secs)."""
     return {'why': why, 'secs': t['secs'], 'outcome': outcome(t), 'code': 'timeout' if t['failure'] == 'timeout' else t['exit'],
             'stdout': _sha16(answers(t)), 'stderr': t['stderr']['sha'], 'stderrSite': t['stderr']['site'],
-            'written': _sha16([t['written'], t['homeWrites']]), 'inputs': 'intact'}
+            'written': _sha16(storage(t)), 'inputs': 'intact'}
 
 
 def go_evidence(t, status):
+    """Go's first session as a grandfather entry pins it: stdout fingerprints everything of it the tier
+    compares but its storage (the answers, how it ended and its stderr), written its storage."""
     return {'status': status or 'ok', 'outcome': outcome(t), 'panic': t['stderr']['crash'],
-            'stdout': _sha16(answers(t)), 'written': _sha16([t['written'], t['homeWrites']])}
+            'stdout': _sha16([answers(t), t['stderr']['sha']]), 'written': _sha16(storage(t))}
 
 
 def first_difference(a, b, path=''):
-    """(json path, a's value, b's value) of the first place two JSON values differ, else None."""
+    """(json path, a's value, b's value) of the first place two JSON values differ, types included."""
     if type(a) is not type(b):
         return path or '/', a, b
     if isinstance(a, dict):
@@ -269,22 +300,40 @@ def first_difference(a, b, path=''):
     return None if a == b else (path or '/', a, b)
 
 
+def _readable(v):
+    """view() with every raw answer parsed, for the report (never for the comparison)."""
+    v = json.loads(json.dumps(v))
+    for s in v['steps']:
+        if 'answer' in s:
+            try:
+                s['answer'] = json.loads(s['answer'])
+            except ValueError:
+                pass
+    return v
+
+
 def describe(go, rs):
     """Where tsc-rs's transcript first differs from Go's, in a line."""
-    d = first_difference(view(go), view(rs))
-    if d is None:
+    a, b = view(go), view(rs)
+    if canon(a) == canon(b):
         return 'equal'
+    d = first_difference(_readable(a), _readable(b)) or first_difference(a, b)
     path, g, r = d
     m = re.match(r'^/steps/(\d+)', path)
-    where = f'{go["steps"][int(m[1])]["method"] if int(m[1]) < len(go["steps"]) else rs["steps"][int(m[1])]["method"]} {path}' if m else path
+    if m:
+        k = int(m[1])
+        path = f'{(go["steps"] if k < len(go["steps"]) else rs["steps"])[k]["method"]} {path}'
+    if path.split(' ')[-1].endswith('/answer') and json.dumps(g) == json.dumps(r):
+        return f'{path}: the raw bytes differ (the same JSON value)'
     short = lambda v: json.dumps(v)[:160]  # noqa: E731
-    return f'{where}: Go {short(g)}, tsc-rs {short(r)}'
+    return f'{path}: Go {short(g)}, tsc-rs {short(r)}'
 
 
 def diff_text(go, rs):
-    """The unified diff of two transcripts' views, then of every written file whose text differs."""
-    a = json.dumps(view(go), indent=1, sort_keys=True).splitlines()
-    b = json.dumps(view(rs), indent=1, sort_keys=True).splitlines()
+    """The unified diff of two transcripts' views (answers parsed), then of every written file whose text
+    differs."""
+    a = json.dumps(_readable(view(go)), indent=1, sort_keys=True).splitlines()
+    b = json.dumps(_readable(view(rs)), indent=1, sort_keys=True).splitlines()
     out = list(difflib.unified_diff(a, b, 'go', 'tsc-rs', n=4, lineterm=''))
     ga, ra = go.get('writtenText', {}), rs.get('writtenText', {})
     for f in sorted(set(ga) | set(ra)):
@@ -295,28 +344,28 @@ def diff_text(go, rs):
 
 
 def judge(go_runs, rs_runs, confirm):
-    """(status, detail, rsFailure) of a scenario (see the top comment). confirm() runs tsc-rs once more."""
+    """(status, detail, rsFailure) of a scenario (see the top comment). confirm() runs tsc-rs once more.
+    The caller has already made a session with an infra failure ERROR."""
     for t in rs_runs:
         if t['failure']:
             return 'DIFF', f'tsc-rs: {t["failure"]}: {t["why"]}', 'timeout' if t['failure'] == 'timeout' else 'crash'
-    first = view(rs_runs[0])
     for k, t in enumerate(rs_runs[1:], 2):
-        if view(t) != first:
+        if not same(t, rs_runs[0]):
             return 'DIFF', f'rs-nondet: tsc-rs run {k} differs from run 1: {describe(rs_runs[0], t)}', None
     go_failed = next((t for t in go_runs if t['failure']), None)
-    go_differ = any(view(t) != view(go_runs[0]) for t in go_runs[1:])
-    if go_failed or go_differ:
+    go_other = next((t for t in go_runs[1:] if not same(t, go_runs[0])), None)
+    if go_failed or go_other:
         if len(rs_runs) == 1:
             t = confirm()
             rs_runs.append(t)
             if t['failure']:
                 return 'DIFF', f'tsc-rs: {t["failure"]} (rs-confirm): {t["why"]}', 'timeout' if t['failure'] == 'timeout' else 'crash'
-            if view(t) != first:
+            if not same(t, rs_runs[0]):
                 return 'DIFF', f'rs-nondet: the confirming tsc-rs run differs: {describe(rs_runs[0], t)}', None
         why = (f'go {go_failed["failure"]}: {go_failed["why"]}' if go_failed
-               else f'Go runs differ: {describe(go_runs[0], next(t for t in go_runs[1:] if view(t) != view(go_runs[0])))}')
+               else f'Go runs differ: {describe(go_runs[0], go_other)}')
         return 'GO-BROKEN', why, None
-    if view(go_runs[0]) == first:
+    if same(go_runs[0], rs_runs[0]):
         return 'MATCH', None, None
     return 'DIFF', describe(go_runs[0], rs_runs[0]), None
 
@@ -339,27 +388,25 @@ class Tier:
         mat = material(sc, fhash, ancestors, self.go_sha)
         key = inputs.json_hash(mat)[:24]
         cfile = self.cache / f'{name}-{key}.json'
-        baits = parity_lsp.make_baits(STATE / f'scratch/api-guard/{name}')
         start = time.monotonic()
         scratch = session.SCRATCH / name
-        with parity_watch.Watch([str(b) for b, _ in baits], mask=parity_watch.ACCESS) as guard:
-            go = self.stage.load(cfile, mat)
-            cached = go is not None
-            if go is None:
-                go = [session.run_session(self.args.go, sc, scratch / f'go{k}', baits, fdir) for k in range(1, GO_RUNS + 1)]
-            rs = [session.run_session(self.args.rs, sc, scratch / f'rs{k}', baits, fdir) for k in range(1, RS_RUNS[self.args.tier] + 1)]
-            status, detail, rs_failure = judge(go, rs, lambda: session.run_session(self.args.rs, sc, scratch / 'rs-confirm', baits, fdir))
-            touched = guard.dirty()
+        go = self.stage.load(cfile, mat)
+        cached = go is not None
+        if go is None:
+            go = [session.run_session(self.args.go, sc, scratch / f'go{k}', fdir) for k in range(1, GO_RUNS + 1)]
+        rs = [session.run_session(self.args.rs, sc, scratch / f'rs{k}', fdir) for k in range(1, RS_RUNS[self.args.tier] + 1)]
+        infra = next((t for t in go + rs if t['failure'] == 'infra'), None)
+        if infra is None:
+            status, detail, rs_failure = judge(go, rs, lambda: session.run_session(self.args.rs, sc, scratch / 'rs-confirm', fdir))
+            infra = next((t for t in rs if t['failure'] == 'infra'), None)
         secs = round(time.monotonic() - start, 2)
         info = {'key': key, 'goCached': cached, 'secs': secs, 'goSecs': [t['secs'] for t in go], 'rsSecs': [t['secs'] for t in rs]}
         (out / 'go.json').write_text(json.dumps(go, indent=1) + '\n')
         (out / 'rs.json').write_text(json.dumps(rs, indent=1) + '\n')
-        if touched:  # fail closed: a process of the scenario read state that no key holds
-            real = {str(b): str(g) for b, g in baits}
-            why = '; '.join(f'{real[b]} ({ev.replace(b, real[b])})' for b, ev in sorted(touched.items()))
-            info['touched'] = why
-            return ({'status': 'ERROR', 'detail': f'a process of the session touched an unkeyed path: {why}'}, info,
-                    f'api {name}: ERROR touched {why}')
+        if infra is not None:  # the harness failed, not a compiler: no result, nothing cached
+            info['infra'] = infra['why']
+            return ({'status': 'ERROR', 'detail': f'the sandbox or the exec failed: {infra["why"]}'}, info,
+                    f'api {name}: ERROR infra {infra["why"][:200]}')
         if not cached and not any(t['failure'] == 'timeout' for t in go):
             self.stage.save(cfile, mat, go)
         row = {'status': status}
@@ -368,11 +415,18 @@ class Tier:
         if rs_failure:
             row['rsFailure'] = rs_failure
         if status != 'MATCH':
-            go_status = 'GO-BROKEN' if any(t['failure'] for t in go) or any(view(t) != view(go[0]) for t in go[1:]) else None
+            go_status = 'GO-BROKEN' if any(t['failure'] for t in go) or any(not same(t, go[0]) for t in go[1:]) else None
             labels = [f'run{k}' for k in range(1, RS_RUNS[self.args.tier] + 1)] + (['confirm'] if len(rs) > RS_RUNS[self.args.tier] else [])
             row.update(input=key[:16], go=go_evidence(go[0], go_status), attempts=[attempt(t, w) for t, w in zip(rs, labels)])
             (out / 'diff.txt').write_text(f'{status}: {detail}\n\n' + diff_text(go[0], rs[0]))
         return row, info, f'api {name}: {status} {secs}s{" " + detail[:200] if detail else ""}'
+
+
+def ancestor_dirs(roots):
+    """The dirs above the roots that the sandbox shows from the host (the hidden dirs are empty tmpfs dirs
+    there, made by the sandbox): module resolution and the config search look up ANCESTOR_NAMES in them."""
+    hidden = lambda d: any(d == h or d.startswith(h + '/') for h in session.HIDDEN)  # noqa: E731
+    return sorted({d for d in parity_lsp.ancestor_dirs(*roots) if not hidden(d)} | {'/'})
 
 
 def main_tier(argv):
@@ -389,12 +443,6 @@ def main_tier(argv):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     chosen = [s for s in scenarios(args.tier, args.scenarios) if re.search(args.only, s['name'])]
-    session.SANDBOX_HOME.mkdir(parents=True, exist_ok=True)
-    if any(session.SANDBOX_HOME.iterdir()):
-        sys.exit(f'parity_api: {session.SANDBOX_HOME} is not empty: every server binds its own home over it')
-    for real in parity_lsp.GUARDED:  # the typings bait needs its dir (as parity_lsp.py)
-        if real == HOME / '.cache/typescript':
-            real.mkdir(parents=True, exist_ok=True)
     tier = Tier(args)
     items, infos, changed = {}, {}, {}
     fixtures, errors = {}, {}
@@ -406,8 +454,7 @@ def main_tier(argv):
                 errors[sc['name']] = f'fixture: {e}'
         elif os.path.lexists(session.VIRTUAL):
             errors[sc['name']] = f'{session.VIRTUAL} exists on disk: an in-memory root must name nothing there'
-    up_dirs = parity_lsp.ancestor_dirs(session.SANDBOX_HOME, *[Path(session.root_of(s)).parent for s in chosen if s.get('disk') is not None])
-    up_dirs = sorted(set(up_dirs) | {str(Path(session.SANDBOX_HOME).parent), '/'})
+    up_dirs = ancestor_dirs([session.SANDBOX_HOME, *[session.root_of(s) for s in chosen]])
     up_state = parity_lsp.ancestors_state(up_dirs)
     up_watch = parity_watch.Watch(up_dirs, keep=lambda p: os.path.basename(p) in parity_lsp.ANCESTOR_NAMES, recursive=False)
     fx_watch = parity_watch.Watch([str(d) for d, _ in fixtures.values()])
@@ -442,14 +489,12 @@ def main_tier(argv):
     up_watch.close()
     if up_events or parity_lsp.ancestors_state(up_dirs) != up_state:
         changed['ancestors'] = f'an ancestor dir changed while the tier ran: {(up_events or ["state"])[0]}'
-    if any(session.SANDBOX_HOME.iterdir()):
-        changed['home'] = f'{session.SANDBOX_HOME} is not empty after the tier'
-    for why in [v for k, v in changed.items() if k in ('ancestors', 'home')]:
+    for why in [v for k, v in changed.items() if k == 'ancestors']:
         for k in items:
             items[k] = {'status': 'ERROR', 'detail': why, 'was': items[k]}
     for name, info in infos.items():
-        if info.get('touched'):
-            changed[f'session {name}'] = info['touched']
+        if info.get('infra'):
+            changed[f'session {name}'] = f'infra: {info["infra"]}'
     if changed or errors:
         print(f'api: inputs changed or unkeyed reads ({len(changed) + len(errors)}): {tier.stage.discard()} staged files discarded', flush=True)
     else:
@@ -467,6 +512,8 @@ def main_tier(argv):
 def find_scenario(spec):
     if os.path.isfile(spec):
         sc = json.loads(Path(spec).read_text())
+        if set(sc) == {'about', 'version', 'texts', 'scenarios'}:  # a scenarios file of one scenario
+            sc = _expand_texts(sc['scenarios'][0], sc['texts'])
         session.validate(sc)
         return sc
     found = [s for s in load_scenarios() if s['name'] == spec]
@@ -480,14 +527,10 @@ def main_probe(argv):
         sys.exit('usage: parity_api.py probe BIN SCENARIO')
     sc = find_scenario(argv[1])
     fdir = fixture_snapshot(sc)[0] if sc.get('disk') is not None else None
-    session.SANDBOX_HOME.mkdir(parents=True, exist_ok=True)
-    baits = parity_lsp.make_baits(STATE / f'scratch/api-guard/probe-{os.getpid()}')
-    with parity_watch.Watch([str(b) for b, _ in baits], mask=parity_watch.ACCESS) as guard:
-        t = session.run_session(argv[0], sc, session.SCRATCH / sc['name'] / f'probe-{os.getpid()}', baits, fdir)
-        touched = guard.dirty()
-    print(json.dumps(view(t), indent=1, sort_keys=True))
-    if t['failure'] or touched:
-        print(f'probe: {t["failure"] or ""} {t["why"] or ""} {"touched " + str(touched) if touched else ""}', file=sys.stderr)
+    t = session.run_session(argv[0], sc, session.SCRATCH / sc['name'] / f'probe-{os.getpid()}', fdir)
+    print(json.dumps(_readable(view(t)), indent=1, sort_keys=True))
+    if t['failure']:
+        print(f'probe: {t["failure"]}: {t["why"]}', file=sys.stderr)
     return 0
 
 

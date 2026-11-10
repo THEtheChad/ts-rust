@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
-"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py).
+"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py, parity_api_init.py).
 
-usage: parity_h7_test.py [--unit]      prints H7 SELFTEST OK, or each FAIL; exit 1 on a failure
+usage: parity_h7_test.py [--unit]                 prints H7 SELFTEST OK, or each FAIL; exit 1 on a failure
+       parity_h7_test.py --e2e-only --harness DIR  the end-to-end controls against another harness's
+                                                   parity_api.py (a `git archive` of an older commit), to
+                                                   show which of them fail there
 
-Unit checks (seconds): the key holds every effective input (each change below is another key), the
-scenario format refuses what is not hermetic, the judge's order, and api grandfather entries. The
-tripwire checks (about 10 s): parity_watch.ACCESS sees a read and a listing after the watch started,
-and no false access from the watch's own listing under 4 threads that fork (the race that made
-lsp/hono-f12-p6 ERROR; the old mask with IN_CLOSE_NOWRITE is run beside it for the record).
-End-to-end checks (about a minute; real sessions in the sandbox, through `parity_api.py` and
-`parity_compare.py compare`): fake tsc-rs servers are Python proxies in front of the Go oracle
-(written to SCRATCH at run time):
-  pass          forwards everything: MATCH (the proxy itself is transparent)
-  wrong-path    writes emit outputs to /0ut/ instead of /out/: DIFF, and PARITY FAIL (LOST and NEW)
-  crash         a Rust panic line and exit 101 at the first emit: DIFF rsFailure crash
-  late-exit     answers everything, then exits 3: DIFF rsFailure crash
-  malformed     a frame with a bad header: DIFF rsFailure crash (malformed)
-  hang          never answers emit: DIFF rsFailure timeout (REQUEST_TIMEOUT lowered to 3 s)
-  nondet        a different output name on every run: DIFF rs-nondet (full); as Go, GO-BROKEN
-  home-write    writes a file into its home: DIFF (homeWrites)
-  read-typings  reads the real ~/.cache/typescript: ERROR, and the tier publishes no Go entry
-Cache controls on a scenario of its own (a unique fixture, so Go runs cold): a second run reads Go from
-the cache; another case flag, one fixture byte more and a poisoned cache entry each make Go run again; a
-fixture changed after its snapshot is made is ERROR.
+Unit checks (seconds): the key holds every effective input, the scenario format refuses what is not
+hermetic, the judge's order and its type-sensitive comparison, Go's pinned evidence covers its stderr,
+regen --only refuses to relabel an old file, and api grandfather entries. The tripwire checks (about
+10 s; parity_watch.ACCESS, which the lsp tier uses): no false access from the watch's own listing under
+4 threads that fork, and a read and a listing after the watch started are seen.
+
+End-to-end checks (about a minute; real sessions through `parity_api.py` and `parity_compare.py compare`).
+The fake tsc-rs servers are Astra's review proxy (~/.cache/perf-rearch/scratch/review-h7-astra/
+proxy-extra.py; FAKE below, with its two log writes outside the session removed, plus `fds`) in front of
+the Go oracle. Each finding of Astra's H7 review has its control:
+  1 child-stdout   a child holds stdout and stderr after the proxy exits 0: DIFF rsFailure crash (survivor)
+  2 outside-write  writes to the host outside the session (the review dir, /etc, /var/tmp): no file appears
+  3 bool-number    emitSkipped false -> 0: DIFF;  bad-rpc  "jsonrpc": "9.9": DIFF rsFailure crash (malformed)
+  4 unexecutable Go (Astra's go-launch-failure): ERROR, nothing cached
+  5 corrupt-build  out/a.js corrupted after build, then removed by cleanBuild: DIFF
+  6 stat-bait      stat and O_PATH of the real ~/.cache/typescript: the path does not exist in the sandbox
+                   (the proxy fails: DIFF); fds: the server has no fd but 0, 1 and 2
+  7 regen --only of Astra's version 3 file: refused (unit)
+  8 a changed Go stderr changes Go's pinned evidence (unit)
+and the round 1 controls: pass, wrong-path (LOST and NEW: PARITY FAIL), crash, late-exit, malformed, hang,
+nondet (rs-nondet; as Go, GO-BROKEN in full and quick), home-write, read-typings, and the cache controls on
+a scenario of its own (a second run reads the cache; another case flag, one fixture byte more and a
+poisoned entry make Go run again; a fixture that is not its scenario's content is ERROR).
 Run it when no gate runs: it uses the tier's fixed paths and the real Go cache.
 """
 import json
@@ -41,8 +47,10 @@ import parity_grandfather as grandfather  # noqa: E402
 import parity_inputs as inputs  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+HARNESS = Path(sys.argv[sys.argv.index('--harness') + 1]) if '--harness' in sys.argv else HERE
 GO = str(api.GO)
 SCRATCH = session.STATE / 'scratch/h7-selftest'
+ASTRA = Path.home() / '.cache/perf-rearch/scratch/review-h7-astra'
 FAILS = []
 
 
@@ -52,15 +60,33 @@ def check(name, ok, info=''):
         FAILS.append(name)
 
 
+# Astra's proxy-extra.py (review of 6e97777e6), without its two writes of logs to the review dir (they are
+# outside the session, so in the sandbox they would fail and end the proxy before what it tests), plus
+# the `fds` mode and an `outside-write` that tries more places and goes on whatever happens.
 FAKE = r'''
 import os, re, subprocess, sys, threading, time, random
 mode, go, typings = sys.argv[1], sys.argv[2], sys.argv[3]
 args = sys.argv[4:]
+if mode == 'fds':
+    fds = sorted(int(x) for x in os.listdir('/proc/self/fd'))
+    if [fd for fd in fds if fd > 3]:  # 3: the listing's own fd
+        sys.stderr.write('panic: inherited fds %r\n' % fds); sys.exit(2)
 if mode == 'read-typings':
     os.listdir(typings)
     open(os.path.join(typings, '7.1', 'package.json')).read()
 if mode == 'home-write':
     open(os.path.join(os.environ['HOME'], '.cache', 'fake-was-here'), 'w').write('x')
+if mode == 'outside-write':
+    for target in OUTSIDE_LIST:
+        try:
+            open(target, 'w').write('escaped')
+        except OSError:
+            pass
+if mode == 'stat-bait':
+    assert os.stat(os.path.join(typings, '7.1', 'package.json')).st_size > 0
+    fd = os.open(os.path.join(typings, '7.1', 'package.json'), os.O_PATH)
+    os.fstat(fd)
+    os.close(fd)
 p = subprocess.Popen([go, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 def pump():
     for chunk in iter(lambda: sys.stdin.buffer.read1(65536), b''):
@@ -75,6 +101,17 @@ while True:
         break
     n = int(head.split(b':')[1]); p.stdout.readline()
     body = p.stdout.read(n)
+    if mode == 'bad-rpc':
+        assert b'"jsonrpc":"2.0"' in body
+    if mode == 'corrupt-build' and b'"ProjectsBuilt":1' in body:
+        cwd=args[args.index('--cwd')+1]
+        target=os.path.join(cwd,'out','a.js')
+        if os.path.exists(target):
+            open(target,'w').write('CORRUPTED BUILD OUTPUT')
+    if mode == 'bool-number':
+        body = re.sub(rb'("emitSkipped"\s*:\s*)false', rb'\g<1>0', body)
+    if mode == 'bad-rpc':
+        body = body.replace(b'"jsonrpc":"2.0"', b'"jsonrpc":"9.9"')
     emit = b'outputFiles' in body or b'emittedFiles' in body
     if emit and mode == 'wrong-path':
         body = body.replace(b'/out/', b'/0ut/')
@@ -88,21 +125,27 @@ while True:
         out.write(b'Content-Lenght: 2\r\n\r\n{}'); out.flush(); continue
     out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body); out.flush()
 code = p.wait()
+if mode == 'child-stdout':
+    child = os.fork()
+    if child == 0:
+        time.sleep(120)
+        os._exit(0)
 sys.exit(3 if mode == 'late-exit' else code)
 '''
+OUTSIDE = [str(ASTRA / 'outside-sandbox-r2'), '/etc/parity-h7-escape', '/var/tmp/parity-h7-escape', '/tmp/parity-h7-escape']
 
 
 def fake(mode):
     SCRATCH.mkdir(parents=True, exist_ok=True)
     f = SCRATCH / 'fake_api.py'
-    f.write_text(FAKE)
+    f.write_text(FAKE.replace('OUTSIDE_LIST', repr(OUTSIDE)))
     return f'/usr/bin/python3 {f} {mode} {GO} {Path.home() / ".cache/typescript"}'
 
 
 def tier(rs, only, tier_='full', go=GO, scenarios=None, env=None):
-    """Runs the api tier: (results.json, stdout)."""
+    """Runs the api tier of HARNESS: (results.json, stdout)."""
     out = Path(tempfile.mkdtemp(prefix='run-', dir=SCRATCH))
-    cmd = [sys.executable, '-I', str(HERE / 'parity_api.py'), '--rs', rs, '--go', go, '--out', str(out), '--tier', tier_,
+    cmd = [sys.executable, '-I', str(HARNESS / 'parity_api.py'), '--rs', rs, '--go', go, '--out', str(out), '--tier', tier_,
            '--only', only, *(['--scenarios', str(scenarios)] if scenarios else [])]
     r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, **(env or {})})
     try:
@@ -143,6 +186,7 @@ def unit():
         'the filesystem shape (a listing)': {**base, 'fs': {**base['fs'], 'directories': {'@ROOT@': {'files': ['a.ts'], 'directories': []}}}},
         'an option': {**base, 'createPrograms': [{'rootFiles': ['@ROOT@/a.ts'], 'compilerOptions': {'outDir': '@ROOT@/OUT'}}]},
         'the requests': {**base, 'requests': ['emit']},
+        'the updates': {**base, 'updates': [{'changes': {}}]},
     }
     for what, sc in variants.items():
         check(f'key: {what} is another key', inputs.json_hash(api.material(sc, None, {}, 'g' * 64)) != k0)
@@ -151,8 +195,9 @@ def unit():
     check('key: the Go binary', inputs.json_hash(api.material(base, None, {}, 'h' * 64)) != k0)
     saved = (api.session_sha, session.PROTOCOL, session.SANDBOX_HOME)
     api.session_sha = lambda: 'another-source'
-    check('key: the session driver\'s source (harness sources)', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
+    check('key: the session driver\'s and init\'s source (harness sources)', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     api.session_sha = saved[0]
+    check('key: both sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_api_init.py'])
     session.PROTOCOL = 'another protocol'
     check('key: the API protocol', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     session.PROTOCOL = saved[1]
@@ -162,12 +207,13 @@ def unit():
     check('key: unchanged inputs give the same key', inputs.json_hash(api.material(dict(base), None, {}, 'g' * 64)) == k0)
 
     refused = {
-        'a layer filesystem (reads the host)': {**base, 'fs': {'kind': 'layer', 'files': {}}},
+        'a layer filesystem without a disk fixture (it would read the host)': {**base, 'fs': {'kind': 'layer', 'files': {}}},
         'a host symlink': {**base, 'fs': {**base['fs'], 'symlinks': {'@ROOT@/l': {'target': '/etc', 'host': True}}}},
         'no filesystem': {k: v for k, v in base.items() if k != 'fs'},
         'build steps without a disk fixture': {**base, 'build': [{'create': {'rootNames': []}}]},
         'an unknown key': {**base, 'extra': 1},
         'an absolute fixture path': {k: v for k, v in base.items() if k != 'fs'} | {'disk': {'/etc/passwd': 'x'}},
+        'a fixture symlink that leaves the fixture': {k: v for k, v in base.items() if k != 'fs'} | {'disk': {'a/l': {'symlink': '../../x'}}},
         'an unknown request': {**base, 'requests': ['getTypeAtPosition']},
     }
     for what, sc in refused.items():
@@ -177,25 +223,67 @@ def unit():
         except session.ScenarioError:
             check(f'scenario: {what} is refused', True)
 
-    t = lambda **kw: {'steps': [{'method': 'initialize', 'params': None, 'result': kw.get('r', 1)}], 'exit': kw.get('exit', 0),  # noqa: E731
-                      'forced': False, 'failure': kw.get('failure'), 'why': kw.get('why'),
-                      'stderr': {'sha': 's', 'site': 's', 'crash': None}, 'written': {}, 'writtenText': {}, 'homeWrites': 0, 'secs': 0}
+    def t(**kw):
+        return {'steps': [{'method': 'initialize', 'params': None, 'answer': kw.get('a', '{"jsonrpc":"2.0","id":1,"result":1}'),
+                           'fs': {'disk': kw.get('disk', {}), 'home': {}}}],
+                'exit': kw.get('exit', 0), 'forced': False, 'survivors': [], 'failure': kw.get('failure'), 'why': kw.get('why'),
+                'stderr': {'sha': kw.get('err', 's'), 'site': 's', 'crash': None}, 'fs': {'disk': kw.get('end', {}), 'home': kw.get('home', {})},
+                'writtenText': {}, 'secs': 0}
     j = lambda go, rs, confirm=None: api.judge(go, rs, confirm or (lambda: t()))[:3]  # noqa: E731
+    r2 = '{"jsonrpc":"2.0","id":1,"result":2}'
+    r3 = '{"jsonrpc":"2.0","id":1,"result":3}'
     check('judge: equal is MATCH', j([t(), t()], [t(), t()])[0] == 'MATCH')
     check('judge: a tsc-rs crash is a DIFF with rsFailure crash, even where Go is broken',
-          j([t(failure='crash', why='x'), t()], [t(failure='crash', why='x'), t()]) [::2] == ('DIFF', 'crash'))
+          j([t(failure='crash', why='x'), t()], [t(failure='crash', why='x'), t()])[::2] == ('DIFF', 'crash'))
     check('judge: malformed counts as crash', j([t(), t()], [t(failure='malformed', why='x'), t()])[2] == 'crash')
     check('judge: a tsc-rs timeout is rsFailure timeout', j([t(), t()], [t(failure='timeout', why='x'), t()])[2] == 'timeout')
-    check('judge: two tsc-rs runs that differ are rs-nondet', 'rs-nondet' in (j([t(), t()], [t(), t(r=2)])[1] or ''))
-    check('judge: Go runs that differ, tsc-rs stable: GO-BROKEN', j([t(), t(r=2)], [t(r=3), t(r=3)])[0] == 'GO-BROKEN')
-    check('judge: a Go crash, tsc-rs clean: GO-BROKEN', j([t(failure='crash', why='p'), t()], [t(r=3), t(r=3)])[0] == 'GO-BROKEN')
-    check('judge: quick GO-BROKEN needs the confirming run', j([t(), t(r=2)], [t(r=3)], lambda: t(r=4))[0] == 'DIFF')
-    check('judge: quick GO-BROKEN with an equal confirming run', j([t(), t(r=2)], [t(r=3)], lambda: t(r=3))[0] == 'GO-BROKEN')
-    check('judge: a written file that differs is a DIFF',
-          j([t(), t()], [{**t(), 'written': {'a': 'x'}}, {**t(), 'written': {'a': 'x'}}])[0] == 'DIFF')
-    check('judge: a home write is a DIFF', j([t(), t()], [{**t(), 'homeWrites': 1}, {**t(), 'homeWrites': 1}])[0] == 'DIFF')
-    check('judge: stderr that differs is a DIFF',
-          j([t(), t()], [{**t(), 'stderr': {'sha': 'z', 'site': 'z', 'crash': None}}] * 2)[0] == 'DIFF')
+    check('judge: two tsc-rs runs that differ are rs-nondet', 'rs-nondet' in (j([t(), t()], [t(), t(a=r2)])[1] or ''))
+    check('judge: Go runs that differ, tsc-rs stable: GO-BROKEN', j([t(), t(a=r2)], [t(a=r3), t(a=r3)])[0] == 'GO-BROKEN')
+    check('judge: a Go crash, tsc-rs clean: GO-BROKEN', j([t(failure='crash', why='p'), t()], [t(a=r3), t(a=r3)])[0] == 'GO-BROKEN')
+    check('judge: quick GO-BROKEN needs the confirming run', j([t(), t(a=r2)], [t(a=r3)], lambda: t(a=r2))[0] == 'DIFF')
+    check('judge: quick GO-BROKEN with an equal confirming run', j([t(), t(a=r2)], [t(a=r3)], lambda: t(a=r3))[0] == 'GO-BROKEN')
+    check('judge: a written file that differs is a DIFF', j([t(), t()], [t(end={'a': 'x'}), t(end={'a': 'x'})])[0] == 'DIFF')
+    check('judge: a file written and gone again between requests is a DIFF (finding 5)',
+          j([t(), t()], [t(disk={'out/a.js': 'c0'}), t(disk={'out/a.js': 'c0'})])[0] == 'DIFF')
+    check('judge: a home write is a DIFF', j([t(), t()], [t(home={'x': 'y'}), t(home={'x': 'y'})])[0] == 'DIFF')
+    check('judge: stderr that differs is a DIFF', j([t(), t()], [t(err='z'), t(err='z')])[0] == 'DIFF')
+    f0 = '{"jsonrpc":"2.0","id":1,"result":{"emitSkipped":false}}'
+    for what, other in (('false against 0 (finding 3)', '{"jsonrpc":"2.0","id":1,"result":{"emitSkipped":0}}'),
+                        ('1 against 1.0', '{"jsonrpc":"2.0","id":1,"result":{"emitSkipped":1.0}}'),
+                        ('other bytes of the same value', '{"jsonrpc":"2.0", "id":1,"result":{"emitSkipped":false}}')):
+        check(f'judge: type-sensitive: {what} is a DIFF', j([t(a=f0), t(a=f0)], [t(a=other), t(a=other)])[0] == 'DIFF')
+    for what, msg in (('jsonrpc 9.9 (finding 3)', {'jsonrpc': '9.9', 'id': 1, 'result': 1}),
+                      ('an extra envelope key', {'jsonrpc': '2.0', 'id': 1, 'result': 1, 'x': 1}),
+                      ('id true for 1', {'jsonrpc': '2.0', 'id': True, 'result': 1}),
+                      ('id 1.0 for 1', {'jsonrpc': '2.0', 'id': 1.0, 'result': 1}),
+                      ('result and error', {'jsonrpc': '2.0', 'id': 1, 'result': 1, 'error': {'code': 1, 'message': 'm'}}),
+                      ('an error code false', {'jsonrpc': '2.0', 'id': 1, 'error': {'code': False, 'message': 'm'}}),
+                      ('a server request', {'jsonrpc': '2.0', 'id': 1, 'method': 'x'})):
+        check(f'envelope: {what} is malformed', session.envelope_error(msg, 1) is not None)
+    check('envelope: a strict answer passes', session.envelope_error({'jsonrpc': '2.0', 'id': 1, 'result': None}, 1) is None)
+    for what, body in (('a duplicate key', b'{"a":1,"a":2}'), ('NaN', b'{"a":NaN}')):
+        try:
+            session.parse(body)
+            check(f'frame: {what} is malformed', False)
+        except session.Malformed:
+            check(f'frame: {what} is malformed', True)
+
+    # finding 8: Go's stderr is in its pinned evidence
+    check('pin: a changed Go stderr changes Go\'s evidence (finding 8)', api.go_evidence(t(), None) != api.go_evidence(t(err='other'), None))
+    check('pin: a changed Go storage changes Go\'s evidence', api.go_evidence(t(), None) != api.go_evidence(t(end={'a': 'b'}), None))
+
+    # finding 7: regen --only never relabels an old file
+    v3 = ASTRA / 'grandfather-v3.json'
+    runs = session.STATE / 'runs'
+    full, quick = runs / 'h7-gf-evidence-ed6edf820-full', runs / 'h7-gf-evidence-ed6edf820-quick'
+    if v3.exists() and full.exists():
+        out = SCRATCH / 'regen-v3.json'
+        r = subprocess.run([sys.executable, '-I', str(HERE / 'parity_grandfather.py'), 'regen', '--full', str(full), '--quick', str(quick),
+                            '--only', '^api/', '--from', str(v3), '--out', str(out)], capture_output=True, text=True)
+        check('regen --only: a version 3 file with kept entries is refused, nothing written (finding 7)',
+              r.returncode == 1 and 'version 3' in r.stdout and not out.exists(), r.stdout + r.stderr)
+    else:
+        check('regen --only: Astra\'s version 3 file and the evidence runs exist', False, (v3, full))
 
     try:
         grandfather.validate({'about': 'x', 'version': grandfather.VERSION, 'items': {'api/x-y': {
@@ -258,44 +346,97 @@ def tripwire():
 
 # ---- end to end ------------------------------------------------------------------------------
 
+def row_of(r, name):
+    return r['items'].get(f'api/{name}', {})
+
+
+def e2e_findings():
+    """Astra's probes, one control per finding (see the top comment)."""
+    good, item = '^case-mixed-dirs-sensitive$', 'case-mixed-dirs-sensitive'
+    start = time.monotonic()
+    r, log = tier(fake('child-stdout'), good)
+    row = row_of(r, item)
+    check('finding 1: a child that outlives the server holding its output: DIFF rsFailure crash, not MATCH',
+          row.get('status') == 'DIFF' and row.get('rsFailure') == 'crash', row or log)
+    check('finding 1: and the tier does not wait for it (under 15 s)', time.monotonic() - start < 15, time.monotonic() - start)
+    for f in OUTSIDE:
+        if os.path.exists(f):
+            os.unlink(f)
+    r, log = tier(fake('outside-write'), good)
+    escaped = [f for f in OUTSIDE if os.path.exists(f)]
+    check('finding 2: a write outside the session reaches no host file', not escaped, (escaped, row_of(r, item), log[-300:]))
+    for f in escaped:
+        os.unlink(f)
+    r, log = tier(fake('bool-number'), good)
+    check('finding 3: emitSkipped false -> 0 is a DIFF', row_of(r, item).get('status') == 'DIFF', row_of(r, item) or log)
+    r, log = tier(fake('bad-rpc'), good)
+    row = row_of(r, item)
+    check('finding 3: "jsonrpc": "9.9" is a DIFF (malformed: rsFailure crash)', row.get('status') == 'DIFF' and row.get('rsFailure') == 'crash',
+          row or log)
+    unexec = SCRATCH / 'unexecutable-go'
+    unexec.write_text('#!/bin/sh\nexit 0\n')
+    os.chmod(unexec, 0o644)
+    tag = f'{os.getpid()}-{time.time_ns()}'
+    sc = {'name': 'h7-selftest-launch', 'about': f'self-test {tag}', 'fs': {'kind': 'full', 'files': {'@ROOT@/a.ts': f'export const a = "{tag}";'}},
+          'createPrograms': [{'rootFiles': ['@ROOT@/a.ts'], 'compilerOptions': {'noLib': True}}]}
+    sfile = SCRATCH / f'scenarios-launch-{tag}.json'
+    sfile.write_text(json.dumps({'about': 'h7 self-test', 'version': 1, 'texts': {}, 'scenarios': [sc]}))
+    r, log = tier(GO, '.', go=str(unexec), scenarios=sfile)
+    row = row_of(r, 'h7-selftest-launch')
+    key = r['scenarios'].get('h7-selftest-launch', {}).get('key')
+    cached = key and (session.STATE / 'go-cache' / api.command_identity(str(unexec))[:16] / 'api' / f'h7-selftest-launch-{key}.json').exists()
+    check('finding 4: a Go that cannot be exec\'d is ERROR, not GO-BROKEN', row.get('status') == 'ERROR', row or log)
+    check('finding 4: and nothing is cached', key and not cached, (key, cached))
+    sfile.unlink()
+    r, log = tier(fake('corrupt-build'), '^build-clean$')
+    check('finding 5: a build output corrupted, then removed by cleanBuild: DIFF', row_of(r, 'build-clean').get('status') == 'DIFF',
+          row_of(r, 'build-clean') or log)
+    r, log = tier(fake('stat-bait'), good)
+    check('finding 6: stat and O_PATH of the real ~/.cache/typescript find nothing (the proxy fails: DIFF)',
+          row_of(r, item).get('status') == 'DIFF', row_of(r, item) or log)
+    r, log = tier(fake('fds'), good)
+    check('finding 6: the server has no fd but 0, 1 and 2', row_of(r, item).get('status') == 'MATCH', row_of(r, item) or log)
+
+
 def e2e():
     good = '^case-mixed-dirs-sensitive$'
+    item = 'case-mixed-dirs-sensitive'
     r, log = tier(fake('pass'), good)
-    check('e2e pass: a transparent proxy MATCHes', r['items'].get('api/case-mixed-dirs-sensitive', {}).get('status') == 'MATCH', log)
+    check('e2e pass: a transparent proxy MATCHes', row_of(r, item).get('status') == 'MATCH', log)
 
     r, log = tier(fake('wrong-path'), good)
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
+    row = row_of(r, item)
     check('e2e wrong-path: DIFF', row.get('status') == 'DIFF' and '/0ut/' in row.get('detail', ''), row)
-    code, out = compare({'api/case-mixed-dirs-sensitive': {'status': 'MATCH'}}, r)
-    check('e2e wrong-path: LOST against a base where it MATCHed: PARITY FAIL', code == 1 and 'LOST      api/case-mixed-dirs-sensitive' in out, out)
+    code, out = compare({f'api/{item}': {'status': 'MATCH'}}, r)
+    check('e2e wrong-path: LOST against a base where it MATCHed: PARITY FAIL', code == 1 and f'LOST      api/{item}' in out, out)
     code, out = compare({}, r)
-    check('e2e wrong-path: NEW against a base without it: PARITY FAIL', code == 1 and 'NEW DIFF   api/case-mixed-dirs-sensitive' in out, out)
+    check('e2e wrong-path: NEW against a base without it: PARITY FAIL', code == 1 and f'NEW DIFF   api/{item}' in out, out)
 
     for mode, want in (('crash', 'crash'), ('late-exit', 'crash'), ('malformed', 'crash')):
         r, log = tier(fake(mode), good)
-        row = r['items'].get('api/case-mixed-dirs-sensitive', {})
+        row = row_of(r, item)
         check(f'e2e {mode}: DIFF rsFailure {want}', row.get('status') == 'DIFF' and row.get('rsFailure') == want, row or log)
-    code, out = compare({'api/case-mixed-dirs-sensitive': {'status': 'MATCH'}}, r)
+    code, out = compare({f'api/{item}': {'status': 'MATCH'}}, r)
     check('e2e malformed: PARITY FAIL', code == 1, out)
 
     r, log = tier(fake('hang'), good, env={'PARITY_API_REQUEST_TIMEOUT': '3'})
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
+    row = row_of(r, item)
     check('e2e hang: DIFF rsFailure timeout', row.get('status') == 'DIFF' and row.get('rsFailure') == 'timeout', row or log)
 
     r, log = tier(fake('nondet'), good)
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
+    row = row_of(r, item)
     check('e2e nondet: DIFF rs-nondet', row.get('status') == 'DIFF' and 'rs-nondet' in row.get('detail', ''), row)
-
     r, log = tier(GO, good, go=fake('nondet'))
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
-    check('e2e nondet as Go: GO-BROKEN (Go runs differ, tsc-rs stable)', row.get('status') == 'GO-BROKEN', row or log)
+    check('e2e nondet as Go: GO-BROKEN (Go runs differ, tsc-rs stable)', row_of(r, item).get('status') == 'GO-BROKEN', row_of(r, item) or log)
     r, log = tier(GO, good, tier_='quick', go=fake('nondet'))
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
-    check('e2e nondet as Go, quick: GO-BROKEN after the confirming run', row.get('status') == 'GO-BROKEN', row or log)
+    check('e2e nondet as Go, quick: GO-BROKEN after the confirming run', row_of(r, item).get('status') == 'GO-BROKEN', row_of(r, item) or log)
 
     r, log = tier(fake('home-write'), good)
-    row = r['items'].get('api/case-mixed-dirs-sensitive', {})
-    check('e2e home-write: DIFF on homeWrites', row.get('status') == 'DIFF' and 'homeWrites' in row.get('detail', ''), row)
+    row = row_of(r, item)
+    check('e2e home-write: DIFF on the home', row.get('status') == 'DIFF' and 'home' in row.get('detail', ''), row)
+    r, log = tier(fake('read-typings'), good)
+    check('e2e read-typings: the real typings cache is not there (the proxy fails: DIFF)', row_of(r, item).get('status') == 'DIFF',
+          row_of(r, item) or log)
 
     # Cache controls on a scenario of its own: a unique fixture, so its Go key is new.
     tag = f'{os.getpid()}-{time.time_ns()}'
@@ -311,28 +452,27 @@ def e2e():
         sfile.write_text(json.dumps({'about': 'h7 self-test', 'version': 1, 'texts': {}, 'scenarios': [s]}))
         return sfile
 
-    item = 'api/h7-selftest-build'
+    name = 'h7-selftest-build'
     r1, log1 = tier(GO, '.', scenarios=with_scenario(sc))
-    info1 = r1['scenarios'].get('h7-selftest-build', {})
+    info1 = r1['scenarios'].get(name, {})
     check('e2e cache: the first run fills Go (cold) and MATCHes (Go as tsc-rs)',
-          info1.get('goCached') is False and r1['items'].get(item, {}).get('status') == 'MATCH', (r1['items'], log1))
-    r2, log2 = tier(GO, '.', scenarios=with_scenario(sc))
-    info2 = r2['scenarios'].get('h7-selftest-build', {})
+          info1.get('goCached') is False and row_of(r1, name).get('status') == 'MATCH', (r1['items'], log1))
+    r2, _ = tier(GO, '.', scenarios=with_scenario(sc))
+    info2 = r2['scenarios'].get(name, {})
     check('e2e cache: the second run reads Go from the cache, same key', info2.get('goCached') is True and info2.get('key') == info1.get('key'), info2)
     r3, _ = tier(GO, '.', scenarios=with_scenario({**sc, 'caseSensitive': False}))
-    info3 = r3['scenarios'].get('h7-selftest-build', {})
+    info3 = r3['scenarios'].get(name, {})
     check('e2e cache: another case flag is another key, and Go runs again', info3.get('goCached') is False and info3.get('key') != info1.get('key'), info3)
     sc4 = {**sc, 'disk': {**sc['disk'], 'a/y.ts': 'export const x1 = 12;\n'}}
     r4, _ = tier(GO, '.', scenarios=with_scenario(sc4))
-    info4 = r4['scenarios'].get('h7-selftest-build', {})
+    info4 = r4['scenarios'].get(name, {})
     check('e2e cache: one fixture byte more is another key, and Go runs again', info4.get('goCached') is False and info4.get('key') != info1.get('key'), info4)
-    cfile = session.STATE / 'go-cache' / api.command_identity(GO)[:16] / 'api' / f'h7-selftest-build-{info1.get("key")}.json'
+    cfile = session.STATE / 'go-cache' / api.command_identity(GO)[:16] / 'api' / f'{name}-{info1.get("key")}.json'
     entry = json.loads(cfile.read_text())
     entry['material']['scenario']['caseSensitive'] = 'poisoned'
     cfile.write_text(json.dumps(entry))
     r5, _ = tier(GO, '.', scenarios=with_scenario(sc))
-    check('e2e cache: an entry whose material is not the key\'s is not read', r5['scenarios'].get('h7-selftest-build', {}).get('goCached') is False,
-          r5['scenarios'])
+    check('e2e cache: an entry whose material is not the key\'s is not read', r5['scenarios'].get(name, {}).get('goCached') is False, r5['scenarios'])
     tree, _h = api.fixture_snapshot(sc)
     f = tree / 'a/y.ts'
     os.chmod(tree / 'a', 0o755)
@@ -342,29 +482,23 @@ def e2e():
     os.utime(f, (api.FIXED_MTIME, api.FIXED_MTIME))
     os.chmod(tree / 'a', 0o555)
     r6, log6 = tier(GO, '.', scenarios=with_scenario(sc))
-    check('e2e cache: a fixture snapshot that is not its scenario\'s content is ERROR', r6['items'].get(item, {}).get('status') == 'ERROR', (r6['items'], log6))
+    check('e2e cache: a fixture snapshot that is not its scenario\'s content is ERROR', row_of(r6, name).get('status') == 'ERROR', (r6['items'], log6))
     inputs.remove_tree(tree.parent)
-
-    tag2 = f'{tag}-typings'
-    sc7 = {**sc, 'disk': {**sc['disk'], 'A/x.ts': f'export const x0 = "{tag2}";\n'}}
-    r7, log7 = tier(fake('read-typings'), '.', scenarios=with_scenario(sc7))
-    row = r7['items'].get(item, {})
-    check('e2e read-typings: ERROR (a process touched an unkeyed path)', row.get('status') == 'ERROR' and 'unkeyed path' in row.get('detail', ''),
-          row or log7)
-    key7 = r7['scenarios'].get('h7-selftest-build', {}).get('key')
-    published = (cfile.parent / f'h7-selftest-build-{key7}.json').exists()
-    check('e2e read-typings: the tier published no Go entry (staged entries discarded)', key7 and not published, (key7, log7))
-    code, out = compare({}, r7)
-    check('e2e read-typings: PARITY FAIL', code == 1 and 'ERROR' in out, out)
     sfile.unlink()
 
 
 def main():
     SCRATCH.mkdir(parents=True, exist_ok=True)
-    unit()
-    tripwire()
-    if '--unit' not in sys.argv:
+    if '--e2e-only' in sys.argv:
+        print(f'harness: {HARNESS}')
+        e2e_findings()
         e2e()
+    else:
+        unit()
+        tripwire()
+        if '--unit' not in sys.argv:
+            e2e_findings()
+            e2e()
     print('H7 SELFTEST OK' if not FAILS else f'H7 SELFTEST FAIL ({len(FAILS)}): {", ".join(FAILS)}')
     return 1 if FAILS else 0
 

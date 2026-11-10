@@ -48,13 +48,18 @@
   "decl-maps",
   "dyn-commondir",
   "dyn-commondir-insensitive",
+  "dyn-config-include-dirs-insensitive",
   "dyn-config-include-insensitive",
   "dyn-json-case-insensitive",
   "dyn-json-config-outdir-case-insensitive",
   "dyn-reference-ext-insensitive",
   "dyn-resolve",
   "js-overwrite",
-  "json-module"
+  "json-module",
+  "layer-emit-disk",
+  "layer-emit-mixed-dirs-insensitive",
+  "update-mixed-dirs-insensitive",
+  "update-reconfigure-emit"
  ],
  "fuzz": {
   "seed": "1",
