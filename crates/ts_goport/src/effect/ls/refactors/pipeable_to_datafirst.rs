@@ -3,7 +3,7 @@
 use crate::astnav;
 use crate::effect::ls::refactor::{Refactor, RefactorContext};
 use crate::effect::ls::refactors::with_kind;
-use crate::effect::typeparser::{ParsedPipeCallResult, TransformationKind};
+use crate::effect::typeparser::{ParsedPipeCallResult, TransformationKind, TypeParser};
 use crate::ls::CodeAction;
 use crate::prelude::*;
 
@@ -89,24 +89,9 @@ fn try_convert_to_datafirst(
     // Track whether we successfully converted at least one step
     let mut steps = Vec::with_capacity(pipe_call.args.len());
     let mut did_something = false;
-
     for &arg in &pipe_call.args {
-        let mut is_data_first = false;
-        if arg.kind() == SyntaxKind::CallExpression && arg.expression().is_some() {
-            let expr_type = ctx.tp.get_type_at_location(arg.expression());
-            if expr_type.is_some() {
-                let c = &mut *ctx.tp.checker;
-                let call_sigs = c.get_signatures_of_type(expr_type, SignatureKind::CALL);
-                let arg_count = arg.arguments().len();
-                for &sig in call_sigs.iter() {
-                    if c.sig(sig).parameters().len() == arg_count + 1 {
-                        is_data_first = true;
-                        did_something = true;
-                        break;
-                    }
-                }
-            }
-        }
+        let is_data_first = is_data_first_step(ctx.tp, arg);
+        did_something |= is_data_first;
         steps.push(ConversionStep { is_data_first, arg });
     }
 
@@ -119,64 +104,69 @@ fn try_convert_to_datafirst(
         let f = tracker.node_factory();
         // Build the replacement node by accumulating from the subject
         let mut new_node = f.deep_clone_node(pipe_call.subject);
-
         for step in &steps {
-            if step.is_data_first {
-                // Convert: callee(args...) + self -> callee(self, args...)
-                let arg_call = step.arg;
-                let cloned_callee = f.deep_clone_node(arg_call.expression());
-
-                let mut all_args = Vec::with_capacity(1 + arg_call.arguments().len());
-                all_args.push(new_node);
-                for a in arg_call.arguments().iter() {
-                    all_args.push(f.deep_clone_node(a));
-                }
-
-                let call_expr = f.new_call_expression(
-                    cloned_callee,
-                    Node::NIL,
-                    NodeList::NIL,
-                    f.new_node_list(&all_args),
-                    NodeFlags::NONE,
-                );
-                set_parent_in_children(call_expr);
-                new_node = call_expr;
-            } else if is_pipe_call_node(new_node) {
-                // Not data-first: keep in pipe form
-                // If newNode is already a pipe call, extend it
-                let mut existing_args = new_node.arguments().to_vec();
-                existing_args.push(f.deep_clone_node(step.arg));
-
-                let pipe_id = f.new_identifier("pipe");
-                let call_expr = f.new_call_expression(
-                    pipe_id,
-                    Node::NIL,
-                    NodeList::NIL,
-                    f.new_node_list(&existing_args),
-                    NodeFlags::NONE,
-                );
-                set_parent_in_children(call_expr);
-                new_node = call_expr;
-            } else {
-                // Wrap in pipe(self, arg)
-                let pipe_id = f.new_identifier("pipe");
-                let pipe_args = [new_node, f.deep_clone_node(step.arg)];
-                let call_expr = f.new_call_expression(
-                    pipe_id,
-                    Node::NIL,
-                    NodeList::NIL,
-                    f.new_node_list(&pipe_args),
-                    NodeFlags::NONE,
-                );
-                set_parent_in_children(call_expr);
-                new_node = call_expr;
-            }
+            new_node = apply_conversion_step(f, new_node, step);
         }
-
         tracker.replace_node(sf, node, new_node, None);
     });
 
     with_kind(action, "refactor.rewrite.effect.pipeableToDatafirst")
+}
+
+/// Whether a pipe argument converts to data-first: a call whose callee has
+/// a call signature with one more parameter than the call has arguments.
+fn is_data_first_step(tp: &mut TypeParser<'_>, arg: Node) -> bool {
+    if arg.kind() != SyntaxKind::CallExpression || arg.expression().is_nil() {
+        return false;
+    }
+    let expr_type = tp.get_type_at_location(arg.expression());
+    if expr_type.is_nil() {
+        return false;
+    }
+    let c = &mut *tp.checker;
+    let call_sigs = c.get_signatures_of_type(expr_type, SignatureKind::CALL);
+    let arg_count = arg.arguments().len();
+    call_sigs
+        .iter()
+        .any(|&sig| c.sig(sig).parameters().len() == arg_count + 1)
+}
+
+/// `new_node` (the accumulated expression) after one step:
+/// `callee(new_node, args...)` for a data-first step, else the step's
+/// argument appended to `new_node` when it is a `pipe(...)` call, else
+/// `pipe(new_node, arg)`.
+fn apply_conversion_step(f: &NodeFactory, new_node: Node, step: &ConversionStep) -> Node {
+    let (callee, args) = if step.is_data_first {
+        // Convert: callee(args...) + self -> callee(self, args...)
+        let arg_call = step.arg;
+        let cloned_callee = f.deep_clone_node(arg_call.expression());
+        let mut all_args = Vec::with_capacity(1 + arg_call.arguments().len());
+        all_args.push(new_node);
+        for a in arg_call.arguments().iter() {
+            all_args.push(f.deep_clone_node(a));
+        }
+        (cloned_callee, all_args)
+    } else if is_pipe_call_node(new_node) {
+        // Not data-first: keep in pipe form
+        // If newNode is already a pipe call, extend it
+        let mut existing_args = new_node.arguments().to_vec();
+        existing_args.push(f.deep_clone_node(step.arg));
+        let pipe_id = f.new_identifier("pipe");
+        (pipe_id, existing_args)
+    } else {
+        // Wrap in pipe(self, arg)
+        let pipe_id = f.new_identifier("pipe");
+        (pipe_id, vec![new_node, f.deep_clone_node(step.arg)])
+    };
+    let call_expr = f.new_call_expression(
+        callee,
+        Node::NIL,
+        NodeList::NIL,
+        f.new_node_list(&args),
+        NodeFlags::NONE,
+    );
+    set_parent_in_children(call_expr);
+    call_expr
 }
 
 // Go: refactors/pipeable_to_datafirst.go:177 isPipeCallNode
