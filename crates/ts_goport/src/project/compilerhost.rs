@@ -909,11 +909,10 @@ fn shared_key(call: &Arc<AheadCall>) -> usize {
 }
 
 compiler::resolve_ahead::verify_only! {
-    /// Debug builds: the tracking view of the host's file system that
-    /// resolve ahead checks each taken answer on
+    /// Debug and `diagnostics` builds: the tracking view of the host's file
+    /// system that resolve ahead checks each taken answer on
     /// (`ResolveAheadHost::scratch`, `resolve_ahead::resolve_ahead_verify`).
-    /// Compiled in debug and `diagnostics` builds, made in debug builds
-    /// only. goport_core decides where it is compiled (`verify_only!`).
+    /// goport_core decides where it is compiled (`verify_only!`).
     mod resolve_ahead_verify {
         use super::*;
         use crate::frontend::compiler::resolve_ahead::resolve_ahead_verify::ScratchFs;
@@ -921,9 +920,8 @@ compiler::resolve_ahead::verify_only! {
         pub(super) fn scratch(
             to_path: Rc<dyn Fn(&str) -> tspath::Path>,
             files: Rc<dyn FileSource>,
-        ) -> Option<Rc<dyn Fn() -> ScratchFs>> {
-            cfg!(debug_assertions).then(|| {
-                Rc::new(move || {
+        ) -> Rc<dyn Fn() -> ScratchFs> {
+            Rc::new(move || {
                     let fs = new_source_fs(true, files.clone(), to_path.clone());
                     let tracked = fs.clone();
                     ScratchFs {
@@ -942,7 +940,6 @@ compiler::resolve_ahead::verify_only! {
                         }),
                         to_path: to_path.clone(),
                     }
-                }) as Rc<dyn Fn() -> ScratchFs>
             })
         }
     }

@@ -277,11 +277,11 @@ pub struct ResolveAheadHost {
     pub keep_keys: Box<dyn FnOnce(Arc<KeyList>)>,
     /// The project's share in what the workers keep from job to job.
     pub share: Rc<KeptShare>,
-    /// Debug builds: makes a new tracking view of the host's file system,
-    /// to check that the calls of each taken answer list every side effect
-    /// of its resolution (`resolve_ahead_verify`).
+    /// Debug and `diagnostics` builds: makes a new tracking view of the
+    /// host's file system, to check that the calls of each taken answer
+    /// list every side effect of its resolution (`resolve_ahead_verify`).
     #[cfg(any(debug_assertions, feature = "diagnostics"))]
-    pub scratch: Option<Rc<dyn Fn() -> resolve_ahead_verify::ScratchFs>>,
+    pub scratch: Rc<dyn Fn() -> resolve_ahead_verify::ScratchFs>,
 }
 
 /// A project's share in what the workers keep from job to job: the known
@@ -1594,11 +1594,10 @@ impl Fs for AheadFs {
     }
 }
 
-/// Debug builds: checks each answer that a load takes against a resolution
-/// of its key on a new tracking view of the host's file system
-/// (`ResolveAheadHost::scratch`, which project/compilerhost.rs makes in a
-/// debug build only). Compiled in debug and `diagnostics` builds; a release
-/// build without `diagnostics` has none of it.
+/// Debug and `diagnostics` builds: checks each answer that a load takes
+/// against a resolution of its key on a new tracking view of the host's
+/// file system (`ResolveAheadHost::scratch`, which project/compilerhost.rs
+/// makes). A release build without `diagnostics` has none of it.
 #[cfg(any(debug_assertions, feature = "diagnostics"))]
 pub mod resolve_ahead_verify {
     use super::*;
@@ -1613,16 +1612,13 @@ pub mod resolve_ahead_verify {
         pub to_path: Rc<dyn Fn(&str) -> Path>,
     }
 
-    /// `accept`, which with a `scratch` view (debug builds) also checks each
-    /// taken answer (`check_answer`).
+    /// `accept`, which also checks each taken answer on a `scratch` view
+    /// (`check_answer`).
     pub(super) fn checked_accept(
         accept: AheadAccept,
-        scratch: Option<Rc<dyn Fn() -> ScratchFs>>,
+        scratch: Rc<dyn Fn() -> ScratchFs>,
         config: Arc<ResolverConfig>,
     ) -> AheadAccept {
-        let Some(scratch) = scratch.filter(|_| cfg!(debug_assertions)) else {
-            return accept;
-        };
         Rc::new(move |answer: AheadAnswer<'_>, calls: &[AheadCall]| {
             let accepted = accept(answer, calls);
             if accepted {
@@ -1632,7 +1628,7 @@ pub mod resolve_ahead_verify {
         }) as AheadAccept
     }
 
-    /// Debug builds: checks a taken answer against a resolution of its key (a
+    /// Checks a taken answer against a resolution of its key (a
     /// module key or the package scope of a directory) by a new resolver on a
     /// new tracking view of the host's file system. The answer must be the
     /// same, and the calls must list exactly the files that the view saw and
