@@ -1421,3 +1421,15 @@ once a **reconciliation step** is built and tested.
       pattern;
     - `project::unfrozen_compiler_hosts`;
     - `checker/inference_p1.rs:1234` is a debug verifier.
+- **Q6 merged** after Astra ACCEPT (`reviews/2026-11-09-astra-q6.md`).
+  `quality.sh gating` is GATING OK at head.
+- **Queued as Q7, after W2-FE** (which owns `execute/`, `project/` and
+  `frontend/`):
+  - gate the 3 test counters whole;
+  - turn on the resolve-ahead verification in diagnostics builds, with its
+    cost measured;
+  - the `emit_files.rs:1427` fingerprint `debug_assert!`;
+  - `project::unfrozen_compiler_hosts`;
+  - `checker/inference_p1.rs:1234`, a debug verifier;
+  - centralize the `debug_assertions` cfg boundary between `compilerhost`
+    and `goport_core`.
