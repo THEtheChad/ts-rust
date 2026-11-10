@@ -185,7 +185,8 @@ files were blessed (`EFFECT_LSP_PINS_BLESS=1`) from the base binary, and a
 second base run matched them. Their content is not checked against
 Effect-TS/tsgo: they pin what tsc-rs answered at the base.
 
-They cover every LS path this lane touches:
+They reach each LS feature this lane touches, though not every changed
+branch (round 2 below adds pins for the branches they missed):
 - schemagen (all three type-to-Schema refactors, v3 and v4);
 - the Schema self completions (v3 and v4);
 - `writeTagClassAccessors`;
@@ -228,7 +229,7 @@ function's own cog; "largest helper" is the largest new function it split into.
 | `analyze_layer_merge_all_call` | rules/layer_merge_all_with_dependencies.rs | 34 | 8 | 12 | `parse_layer_infos`, `provider_consumers`, `unique_type_names` | 5a2ff35ae |
 | `run_promise_in_effect_success` | rules/promise_in_effect_success.rs | 34 | 18 | 11 | `has_unawaited_promise_success` (the walk stays) | 33ad8ef81 |
 | `run_write_tag_class_accessors` | ls/refactors/write_tag_class_accessors.rs | 33 | 7 | 13 | `enclosing_class_declaration`, `service_class_name`, `non_primitive_service_shapes`, `involved_members` | 793e5d762 |
-| `reconstruct_piping_flow` | typeparser/reconstruct.rs | 31 | 4 | 2 | `apply_transformation_text`; the all-`Effect.fn` early return is the same as skipping every `Effect.fn` step. The function has no caller (dead since its port, `1352bca5f`); left in place, as removing a port function is outside this lane | f0258e459 |
+| `reconstruct_piping_flow` | typeparser/reconstruct.rs | 31 | 4 | 2 | `apply_transformation_text`; the all-`Effect.fn` early return is the same as skipping every `Effect.fn` step. The function had no caller (dead since its port, `1352bca5f`); round 2 deleted it | f0258e459, e6ed71b55 |
 | `run_schema_literal_non_finite` (and `visit`) | rules/schema_literal_non_finite.rs | 30, 29 | 10, 9 | 8 | `schema_literal_values` | c7554e577 |
 | `analyze_unsafe_effect_type_assertion` | rules/unsafe_effect_type_assertion.rs | 30 | 5 | 6 | `unsafe_assertion_match`, `parse_effect_stream_or_layer` (moved out of the function), `unsafe_channel` | 357379b83 |
 | `effect_fn_build_replacement` | ls/fixables/effect_fn_opportunity.rs | 29 | 14 | 9 | `effect_fn_function_text`, `effect_fn_pipe_arguments_text` | 084fca119 |
@@ -262,6 +263,63 @@ function's own cog; "largest helper" is the largest new function it split into.
   in `rules/mod.rs`. No production file outside `effect/` changed. The test
   files (all Effect's own) are listed under "LS pins first".
 - **Switches:** none added or removed.
+
+### Round 2 (Astra: ACCEPT WITH FIXES on `62691936b`)
+
+- **Pins for the missed branches.** All expected files were blessed again
+  from the base source (`68755a4fa`, `git restore --source=68755a4fa` of
+  `crates/ts_goport/src` with the new tests), then passed on the head.
+  The 60 earlier pins came out the same, apart from the pins whose fixtures
+  or positions changed.
+  - `effect_schema_self_in_classes` bare constructors: the completion
+    positions now include the end of each identifier after `extends`
+    (an invoked completion), and the fixture imports
+    `{ Class as SchemaClass, TaggedError }`. `class F extends SchemaClass`
+    and `class G extends TaggedError` answer `Class<F>` and
+    `TaggedError<G>` with the unqualified insert text.
+  - `pipeableToDatafirst` extending a synthesized pipe:
+    `pipe(Effect.succeed(1), identity, identity, Effect.map(...))` becomes
+    `Effect.map(pipe(Effect.succeed(1), identity, identity), n => n + 1)`.
+  - `runOfExitToRunExit` runner calls (pins `run_of_exit_pipe_argument_v3`
+    and `_v4`):
+    - `Effect.runPromise(program.pipe(Effect.exit))` and
+      `Effect.runPromise(pipe(program, Effect.exit))` replace the pipe with
+      its subject;
+    - a last `Effect.exit` step after another step (with RunOptions) is
+      deleted;
+    - an `Effect.exit` that is not the last step gives no match.
+  - Plaintext Layer hover links (`layer_graph_simple_plaintext`, with
+    `contentFormat` plaintext first): 8 `{@link ...}` hovers.
+  - schemagen index-signature errors: `[key?]: number` gives "only explicit
+    types are supported", and `[a: string, b: string]: number` gives "only
+    index signatures with one parameter are supported".
+  - schemagen structural export of a hoisted variable:
+    `export type ExportedUnion = { a: string } | { b: number }` gives
+    `export const ExportedUnion = ...`. The same type without `export`
+    gives `const LocalUnion = ...`.
+  - Service construction with no arguments
+    (`service_not_as_class_shapes`): `Context.Service<ConfigService>()`
+    becomes `class NoArguments extends Context.Service<NoArguments,
+    ConfigService>()() {}`.
+  - Catch callbacks (`catch_callbacks_v3`/`_v4`, `Effect.catchAll` and
+    `Effect.catch`): a callback that returns no call, and `Effect.fail()`
+    or `Effect.succeed()` with no argument, give no match. Mapped and
+    succeeding callbacks still do.
+  - Angle-bracket assertions (`unsafe_angle_bracket_assertion`): the three
+    narrowing `<T>x` assertions are flagged and fixed; the widening one is
+    not.
+  - **Not pinned: duplicate members across service shapes.** Several
+    service shapes only come from a union shape. `Effect.Tag` with a union
+    shape (inline, or as `First | Second`) and an `Effect.Service` whose
+    effect returns a union both get no `Implement Service accessors`
+    refactor, at the base and at the head. So the duplicate skip in
+    `involved_members` is not reached from a cheap fixture. The fixture
+    keeps the union `Shapes` class, so the pin holds that no refactor is
+    offered there.
+- **Dead code deleted** (`e6ed71b55`): `typeparser/reconstruct.rs`, with its
+  `mod` line and re-export. That removes `reconstruct_piping_flow` and its
+  `node_text` and `apply_transformation_text` helpers. Nothing referenced
+  any of them. `Tracker::node_text` (`ls/rewriter.rs`) is separate and stays.
 
 ### Evidence (W2-EF2)
 
