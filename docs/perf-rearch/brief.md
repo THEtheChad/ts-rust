@@ -158,6 +158,13 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   `--outDir`/`--tsBuildInfoFile` plus `--incremental false --composite false`.
   The gate re-hashes the inputs and marks changed ones ERROR. A bench that
   wrote into `projects/t3code` mid-gate cost a full run on 2026-11-05.
+  - **The tree has been read-only since 2026-11-10** (`chmod -R a-w`). That
+    happened after B2's icount script wrote
+    `query-core/dist-ts/tsconfig.tsbuildinfo`.
+  - **A tool that fails there with EACCES is writing where it must not.**
+    Fix the tool, not the mode.
+  - **To prepare inputs again,** run `chmod -R u+w` on the project, prepare
+    it, then run `chmod -R a-w`.
 - **Memory:** big test runs, memory profilers and anything that can use more
   than 8 GB go under
   `systemd-run --user --collect --slice=app-batch.slice --nice=10 -p MemoryMax=20G -p MemorySwapMax=0 --unit=<name> ...`.
