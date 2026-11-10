@@ -3782,29 +3782,45 @@ impl Session {
             }
             // Go: defer newSnapshot.Deref(s)
 
-            // PORT: Go's clone would take its snapshot id now.
-            let snapshot_id = self.snapshot_id.get() + 1;
-            self.snapshot_id.set(snapshot_id);
-            // PORT: Go's warm starts now, and the part of this task before
-            // it ran for `prefix`. The hold counts from `queued_at + prefix`
-            // (see `run_pending_warm`).
-            let queued_at = Instant::now();
-            let prefix = queued_at.saturating_duration_since(task_start);
-            let warm = PendingWarm {
-                ctx: warm_ctx,
-                cancel,
-                changed_file,
-                new_snapshot: new_snapshot.clone(),
-                snapshot_id,
-                hold_from: (!self.warm_auto_import_slow.get()).then(|| queued_at + prefix),
-                retry: false,
-            };
-            // A pending warm here was cancelled above (`previous_cancel`).
-            if let Some(previous) = self.warm_auto_import_pending.replace(Some(warm)) {
-                self.end_pending_warm(previous);
-            }
-            self.queue_pending_warm();
+            self.defer_warm_clone(warm_ctx, cancel, changed_file, new_snapshot, task_start);
         }
+    }
+
+    /// PORT: Go's warm clones the snapshot and adopts the clone here, on its
+    /// goroutine. The port makes it the pending warm instead and queues the
+    /// idle job that runs it (`run_pending_warm`, see
+    /// `warm_auto_import_cache`). `new_snapshot` is already referenced for
+    /// the warm (Go's `tryRef`).
+    fn defer_warm_clone(
+        self: &Rc<Self>,
+        warm_ctx: Context,
+        cancel: gostd::context::CancelFunc,
+        changed_file: lsproto::DocumentUri,
+        new_snapshot: &Rc<Snapshot>,
+        task_start: Instant,
+    ) {
+        // PORT: Go's clone would take its snapshot id now.
+        let snapshot_id = self.snapshot_id.get() + 1;
+        self.snapshot_id.set(snapshot_id);
+        // PORT: Go's warm starts now, and the part of this task before
+        // it ran for `prefix`. The hold counts from `queued_at + prefix`
+        // (see `run_pending_warm`).
+        let queued_at = Instant::now();
+        let prefix = queued_at.saturating_duration_since(task_start);
+        let warm = PendingWarm {
+            ctx: warm_ctx,
+            cancel,
+            changed_file,
+            new_snapshot: new_snapshot.clone(),
+            snapshot_id,
+            hold_from: (!self.warm_auto_import_slow.get()).then(|| queued_at + prefix),
+            retry: false,
+        };
+        // A pending warm here was cancelled (the previous cancel func).
+        if let Some(previous) = self.warm_auto_import_pending.replace(Some(warm)) {
+            self.end_pending_warm(previous);
+        }
+        self.queue_pending_warm();
     }
 
     /// PORT: queues the idle job that runs the pending warm, unless one is
