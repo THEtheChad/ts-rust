@@ -646,29 +646,9 @@ pub(crate) fn stringify_json(value: &CompilerOptionsValue, out: &mut String) {
         CompilerOptionsValue::Number(n) => out.push_str(&crate::jsnum::Number(*n).to_string()),
         CompilerOptionsValue::String(s) => append_json_quote(out, s),
         CompilerOptionsValue::StringList(list) => {
-            out.push('[');
-            for (i, s) in list.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                append_json_quote(out, s);
-            }
-            out.push(']');
+            stringify_json_array(list, out, |s, out| append_json_quote(out, s));
         }
-        CompilerOptionsValue::List(list) => {
-            out.push('[');
-            for (i, v) in list.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                if v.is_nil() {
-                    out.push_str("null");
-                } else {
-                    stringify_json(v, out);
-                }
-            }
-            out.push(']');
-        }
+        CompilerOptionsValue::List(list) => stringify_json_array(list, out, stringify_json_element),
         CompilerOptionsValue::Map(m) => {
             out.push('{');
             for (i, (k, v)) in m.iter().enumerate() {
@@ -677,15 +657,33 @@ pub(crate) fn stringify_json(value: &CompilerOptionsValue, out: &mut String) {
                 }
                 append_json_quote(out, k);
                 out.push(':');
-                if v.is_nil() {
-                    out.push_str("null");
-                } else {
-                    stringify_json(v, out);
-                }
+                stringify_json_element(v, out);
             }
             out.push('}');
         }
         other => panic!("stringify_json: value kind not made by JSON conversion: {other:?}"),
+    }
+}
+
+/// `stringify_json` of the JSON array of `items`, each written by `write`.
+fn stringify_json_array<T>(items: &[T], out: &mut String, write: impl Fn(&T, &mut String)) {
+    out.push('[');
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write(item, out);
+    }
+    out.push(']');
+}
+
+/// `stringify_json` of an array element or object member value: a nil
+/// value is `null` there (only a nil spec list itself is `[]`).
+fn stringify_json_element(value: &CompilerOptionsValue, out: &mut String) {
+    if value.is_nil() {
+        out.push_str("null");
+    } else {
+        stringify_json(value, out);
     }
 }
 

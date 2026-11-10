@@ -599,42 +599,19 @@ impl Generator {
     pub fn base64_data_url(&mut self) -> String {
         const PREFIX: &str = "data:application/json;base64,";
         let data = self.bytes();
-        let mut sb = String::with_capacity(PREFIX.len() + data.len().div_ceil(3) * 4);
-        sb.push_str(PREFIX);
         // PORT: `data` is in the port form (see
         // `scanner_util::GO_STRING_MARKER`); Go encodes its bytes.
-        base64_std_encode(&mut sb, &go_string_bytes(&data));
+        let encoded = crate::gostd::base64::std_encoding_encode_to_string(&go_string_bytes(&data));
+        let mut sb = String::with_capacity(PREFIX.len() + encoded.len());
+        sb.push_str(PREFIX);
+        sb.push_str(&encoded);
         sb
     }
 }
 
-/// The standard base64 digits. Both `base64FormatEncode` and
-/// `base64.StdEncoding` use this order.
+/// The standard base64 digits, in the order of `base64FormatEncode`.
 const BASE64_DIGITS: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// Go `base64.StdEncoding` (with `=` padding).
-// PORT: Go uses `encoding/base64`; the crate adds no dependency for it.
-fn base64_std_encode(out: &mut String, data: &[u8]) {
-    for chunk in data.chunks(3) {
-        let b0 = u32::from(chunk[0]);
-        let b1 = chunk.get(1).map_or(0, |&b| u32::from(b));
-        let b2 = chunk.get(2).map_or(0, |&b| u32::from(b));
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(BASE64_DIGITS[((triple >> 18) & 63) as usize] as char);
-        out.push(BASE64_DIGITS[((triple >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(BASE64_DIGITS[((triple >> 6) & 63) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(BASE64_DIGITS[(triple & 63) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-}
 
 // Go: sourcemap/generator.go:372 base64FormatEncode
 // PORT: a table lookup that returns the ASCII byte. A value past 63 panics
@@ -691,10 +668,12 @@ mod tests {
         );
     }
 
+    /// The encoder of `base64_data_url` pads like Go's `StdEncoding`.
     #[test]
     fn base64_padding() {
-        let mut s = String::new();
-        base64_std_encode(&mut s, b"ab");
-        assert_eq!(s, "YWI=");
+        assert_eq!(
+            crate::gostd::base64::std_encoding_encode_to_string(b"ab"),
+            "YWI="
+        );
     }
 }

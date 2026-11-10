@@ -24,18 +24,15 @@ use crate::prelude::*;
 use crate::printer::semicolon_writer::get_trailing_semicolon_deferring_writer;
 use crate::printer::*;
 
-thread_local! {
-    /// Go `p.emitContext.Factory.AsNodeFactory()` for the comment range
-    /// scanner. The scanner only uses it to build `CommentRange` values.
-    static COMMENT_RANGE_FACTORY: NodeFactory = NodeFactory::default();
-}
-
 // Go: scanner/scanner.go:2799 GetLeadingCommentRanges
 // PORT: the free functions below have no printer, so they use a plain
 // `ast` factory; the scanner does not allocate nodes with it.
 fn get_leading_comment_ranges(text: &str, pos: i32) -> Vec<CommentRange> {
-    COMMENT_RANGE_FACTORY
-        .with(|f| crate::frontend::scanner::get_leading_comment_ranges(f, text, pos))
+    // Go `p.emitContext.Factory.AsNodeFactory()`: the scan only builds
+    // `CommentRange` values with it.
+    crate::frontend::scanner::with_comment_range_factory(|f| {
+        crate::frontend::scanner::get_leading_comment_ranges(f, text, pos)
+    })
 }
 
 // Go: scanner/scanner.go:2814 iterateCommentRanges (an iter.Seq in Go). The
@@ -43,14 +40,16 @@ fn get_leading_comment_ranges(text: &str, pos: i32) -> Vec<CommentRange> {
 // value (effectemit1).
 #[inline]
 fn for_each_leading_comment_range(text: &str, pos: i32, yield_: impl FnMut(CommentRange) -> bool) {
-    COMMENT_RANGE_FACTORY
-        .with(|f| crate::frontend::scanner::for_each_comment_range(f, text, pos, false, yield_))
+    crate::frontend::scanner::with_comment_range_factory(|f| {
+        crate::frontend::scanner::for_each_comment_range(f, text, pos, false, yield_)
+    })
 }
 
 #[inline]
 fn for_each_trailing_comment_range(text: &str, pos: i32, yield_: impl FnMut(CommentRange) -> bool) {
-    COMMENT_RANGE_FACTORY
-        .with(|f| crate::frontend::scanner::for_each_comment_range(f, text, pos, true, yield_))
+    crate::frontend::scanner::with_comment_range_factory(|f| {
+        crate::frontend::scanner::for_each_comment_range(f, text, pos, true, yield_)
+    })
 }
 
 impl Printer {

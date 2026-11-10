@@ -173,6 +173,18 @@ pub fn new_es_decorator_transformer(opts: &TransformOptions) -> Option<Transform
     }))
 }
 
+/// The `memberInfo` that Go's `partialTransformClassElement` keeps as a pointer (`mi`) after
+/// `ci.memberInfos.Set(member, mi)`. Rust stores it by value in the class's map, so later field
+/// writes borrow it back from there; the entry is always present once set.
+#[inline]
+fn member_info_mut(ci: &ClassInfoRef, member: Node) -> std::cell::RefMut<'_, MemberInfo> {
+    std::cell::RefMut::map(ci.borrow_mut(), |ci| {
+        ci.member_infos
+            .get_mut(&member)
+            .expect("memberInfo is set before its fields")
+    })
+}
+
 /// `createDescriptorFunc`.
 pub(super) type CreateDescriptorFunc = fn(&mut EsDecoratorTransformer, Node, ModifierList) -> Node;
 
@@ -1804,9 +1816,7 @@ impl EsDecoratorTransformer {
                     });
                     let descriptor = create_descriptor(self, member, async_mods);
                     let member_descriptor_name = self.create_helper_variable(member, "descriptor");
-                    if let Some(mi) = ci.borrow_mut().member_infos.get_mut(&member) {
-                        mi.member_descriptor_name = member_descriptor_name;
-                    }
+                    member_info_mut(&ci, member).member_descriptor_name = member_descriptor_name;
                     result.descriptor_name = member_descriptor_name;
                     f.new_assignment_expression(member_descriptor_name, descriptor)
                 } else {
@@ -1828,7 +1838,8 @@ impl EsDecoratorTransformer {
                 let member_initializers_name = self.create_helper_variable(member, "initializers");
                 let member_extra_initializers_name =
                     self.create_helper_variable(member, "extraInitializers");
-                if let Some(mi) = ci.borrow_mut().member_infos.get_mut(&member) {
+                {
+                    let mut mi = member_info_mut(&ci, member);
                     mi.member_initializers_name = member_initializers_name;
                     mi.member_extra_initializers_name = member_extra_initializers_name;
                 }
@@ -1850,9 +1861,7 @@ impl EsDecoratorTransformer {
                 {
                     let descriptor = create_descriptor(self, member, ModifierList::NIL);
                     let member_descriptor_name = self.create_helper_variable(member, "descriptor");
-                    if let Some(mi) = ci.borrow_mut().member_infos.get_mut(&member) {
-                        mi.member_descriptor_name = member_descriptor_name;
-                    }
+                    member_info_mut(&ci, member).member_descriptor_name = member_descriptor_name;
                     result.descriptor_name = member_descriptor_name;
                     f.new_assignment_expression(member_descriptor_name, descriptor)
                 } else {

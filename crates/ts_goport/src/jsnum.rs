@@ -583,48 +583,10 @@ mod go_math {
         }
     }
 
+    /// The body of Go's `math.pow` (`pow`), with Go's `useFMA` as `fma`.
     pub(super) fn pow_with(x: f64, y: f64, fma: bool) -> f64 {
-        if y == 0.0 || x == 1.0 {
-            return 1.0;
-        } else if y == 1.0 {
-            return x;
-        } else if x.is_nan() || y.is_nan() {
-            return f64::NAN;
-        } else if x == 0.0 {
-            if y < 0.0 {
-                return if x.is_sign_negative() && is_odd_int(y) {
-                    f64::NEG_INFINITY
-                } else {
-                    f64::INFINITY
-                };
-            } else if y > 0.0 {
-                return if x.is_sign_negative() && is_odd_int(y) {
-                    x
-                } else {
-                    0.0
-                };
-            }
-        } else if y.is_infinite() {
-            return if x == -1.0 {
-                1.0
-            } else if (x.abs() < 1.0) == (y == f64::INFINITY) {
-                0.0
-            } else {
-                f64::INFINITY
-            };
-        } else if x.is_infinite() {
-            if x == f64::NEG_INFINITY {
-                return pow_with(1.0 / x, -y, fma); // Pow(-0, -y)
-            }
-            if y < 0.0 {
-                return 0.0;
-            } else if y > 0.0 {
-                return f64::INFINITY;
-            }
-        } else if y == 0.5 {
-            return x.sqrt();
-        } else if y == -0.5 {
-            return 1.0 / x.sqrt();
+        if let Some(special) = pow_special_case(x, y, fma) {
+            return special;
         }
 
         let (mut yi, mut yf) = modf(y.abs());
@@ -634,13 +596,7 @@ mod go_math {
         if yi >= 9_223_372_036_854_775_808.0 {
             // yi is a large even int that will lead to overflow (or underflow
             // to 0) for all x except -1 (x == 1 was handled earlier).
-            return if x == -1.0 {
-                1.0
-            } else if (x.abs() < 1.0) == (y > 0.0) {
-                0.0
-            } else {
-                f64::INFINITY
-            };
+            return pow_overflow(x, y > 0.0);
         }
 
         // ans = a1 * 2**ae (= 1 for now).
@@ -686,6 +642,73 @@ mod go_math {
             ae = -ae;
         }
         ldexp(a1, ae)
+    }
+
+    /// Part of Go `math.pow`: its leading `switch` of exact special cases.
+    /// `None` when none applies (Go falls through to the computation).
+    // A Go tagless switch, as an else-if chain.
+    fn pow_special_case(x: f64, y: f64, fma: bool) -> Option<f64> {
+        if y == 0.0 || x == 1.0 {
+            Some(1.0)
+        } else if y == 1.0 {
+            Some(x)
+        } else if x.is_nan() || y.is_nan() {
+            Some(f64::NAN)
+        } else if x == 0.0 {
+            pow_zero_base(x, y)
+        } else if y.is_infinite() {
+            Some(pow_overflow(x, y == f64::INFINITY))
+        } else if x.is_infinite() {
+            if x == f64::NEG_INFINITY {
+                return Some(pow_with(1.0 / x, -y, fma)); // Pow(-0, -y)
+            }
+            if y < 0.0 {
+                Some(0.0)
+            } else if y > 0.0 {
+                Some(f64::INFINITY)
+            } else {
+                None
+            }
+        } else if y == 0.5 {
+            Some(x.sqrt())
+        } else if y == -0.5 {
+            Some(1.0 / x.sqrt())
+        } else {
+            None
+        }
+    }
+
+    /// Part of Go `math.pow`: its `case x == 0` (`x` is ±0).
+    fn pow_zero_base(x: f64, y: f64) -> Option<f64> {
+        if y < 0.0 {
+            Some(if x.is_sign_negative() && is_odd_int(y) {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            })
+        } else if y > 0.0 {
+            Some(if x.is_sign_negative() && is_odd_int(y) {
+                x
+            } else {
+                0.0
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Part of Go `math.pow`: the `switch` that it has twice, for an
+    /// infinite `y` and for an integer part of `y` at or over 2^63, where
+    /// the result is 1, 0 or +Inf. `grows` is Go's `IsInf(y, 1)` or
+    /// `y > 0`, the same test for those `y`.
+    fn pow_overflow(x: f64, grows: bool) -> f64 {
+        if x == -1.0 {
+            1.0
+        } else if (x.abs() < 1.0) == grows {
+            0.0
+        } else {
+            f64::INFINITY
+        }
     }
 
     fn is_odd_int(x: f64) -> bool {

@@ -393,7 +393,7 @@ pub fn get_document_position_mapper(
         let (base64_object, matched) = try_parse_base64_url(&map_file_name);
         if matched {
             if !base64_object.is_empty()
-                && let Ok(decoded) = base64_std_encoding_decode_string(base64_object)
+                && let Ok(decoded) = crate::gostd::base64::std_encoding_decode_string(base64_object)
             {
                 // PORT: Go `string(decoded)` keeps any bytes. Invalid UTF-8
                 // always fails the JSON decode in Go (no AllowInvalidUTF8),
@@ -720,115 +720,6 @@ fn deduplicate_sorted<T: Copy>(slice: Vec<T>, is_equal: impl Fn(&T, &T) -> bool)
     }
 
     deduplicated
-}
-
-// Go: encoding/base64/base64.go:312 decodeQuantum (StdEncoding.DecodeString)
-// PORT: no base64 dependency. This is Go `base64.StdEncoding.DecodeString`:
-// the standard alphabet, `=` padding required, not strict, and `\r` and `\n`
-// skipped. Only the error result matters to the caller.
-fn base64_std_encoding_decode_string(s: &str) -> Result<Vec<u8>, ()> {
-    fn decode_map(c: u8) -> u8 {
-        match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => 0xFF,
-        }
-    }
-
-    let src = s.as_bytes();
-    let mut dst: Vec<u8> = Vec::with_capacity(src.len() / 4 * 3);
-    let mut si = 0;
-    while si < src.len() {
-        // Decode quantum using the base64 alphabet
-        let mut dbuf = [0u8; 4];
-        let mut dlen = 4;
-        let mut trailing_garbage = false;
-
-        let mut j = 0;
-        while j < dbuf.len() {
-            if src.len() == si {
-                if j == 0 {
-                    return Ok(dst);
-                }
-                // j == 1, or padding is required (StdEncoding)
-                return Err(());
-            }
-            let input = src[si];
-            si += 1;
-
-            let out = decode_map(input);
-            if out != 0xFF {
-                dbuf[j] = out;
-                j += 1;
-                continue;
-            }
-
-            if input == b'\n' || input == b'\r' {
-                continue;
-            }
-
-            if input != b'=' {
-                return Err(());
-            }
-
-            // We've reached the end and there's padding
-            match j {
-                0 | 1 => {
-                    // incorrect padding
-                    return Err(());
-                }
-                2 => {
-                    // "==" is expected, the first "=" is already consumed.
-                    // skip over newlines
-                    while si < src.len() && (src[si] == b'\n' || src[si] == b'\r') {
-                        si += 1;
-                    }
-                    if si == src.len() {
-                        // not enough padding
-                        return Err(());
-                    }
-                    if src[si] != b'=' {
-                        // incorrect padding
-                        return Err(());
-                    }
-
-                    si += 1;
-                }
-                _ => {}
-            }
-
-            // skip over newlines
-            while si < src.len() && (src[si] == b'\n' || src[si] == b'\r') {
-                si += 1;
-            }
-            if si < src.len() {
-                // trailing garbage
-                trailing_garbage = true;
-            }
-            dlen = j;
-            break;
-        }
-
-        // Convert 4x 6bit source bytes into 3 bytes
-        let val = u32::from(dbuf[0]) << 18
-            | u32::from(dbuf[1]) << 12
-            | u32::from(dbuf[2]) << 6
-            | u32::from(dbuf[3]);
-        let bytes = [(val >> 16) as u8, (val >> 8) as u8, val as u8];
-        match dlen {
-            4 => dst.extend_from_slice(&bytes[..3]),
-            3 => dst.extend_from_slice(&bytes[..2]),
-            2 => dst.extend_from_slice(&bytes[..1]),
-            _ => {}
-        }
-        if trailing_garbage {
-            return Err(());
-        }
-    }
-    Ok(dst)
 }
 
 // Go: sourcemap/source_mapper_test.go (the ts#64544 tests). The ts#64159

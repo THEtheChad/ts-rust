@@ -12,6 +12,7 @@
 
 use crate::frontend::prelude::*;
 
+use crate::checker::if_else;
 use crate::flags_macros::go_enum;
 
 /// Go `(*resolved).isResolved` on a possibly nil `*resolved`.
@@ -323,10 +324,8 @@ impl ResolutionState<'_> {
                 };
                 let pattern_path = exports_string.strip_prefix("./").unwrap_or(exports_string);
                 // Go: strings.Cut(patternPath, "*")
-                let (leading_slice, trailing_slice) = match pattern_path.split_once('*') {
-                    Some((before, after)) => (before.to_string(), after.to_string()),
-                    None => (pattern_path.to_string(), String::new()),
-                };
+                let (leading_slice, trailing_slice) =
+                    pattern_path.split_once('*').unwrap_or((pattern_path, ""));
                 let case_sensitive =
                     dynamic_package || self.resolver.host.fs().use_case_sensitive_file_names();
                 let files = crate::frontend::vfs::vfsmatch::read_directory(
@@ -355,8 +354,8 @@ impl ResolutionState<'_> {
                     };
                     let (mut matched_star, ok) = self.get_matched_star_for_pattern_entrypoint(
                         &logical_file,
-                        &leading_slice,
-                        &trailing_slice,
+                        leading_slice,
+                        trailing_slice,
                         case_sensitive,
                     );
                     if !ok {
@@ -378,11 +377,11 @@ impl ResolutionState<'_> {
                         &module_specifier,
                         include_conditions.clone(),
                         exclude_conditions.clone(),
-                        if exports_string.ends_with('*') {
-                            Ending::EXTENSION_CHANGEABLE
-                        } else {
-                            Ending::FIXED
-                        },
+                        if_else(
+                            exports_string.ends_with('*'),
+                            Ending::EXTENSION_CHANGEABLE,
+                            Ending::FIXED,
+                        ),
                     ));
                 }
             } else {
@@ -410,11 +409,11 @@ impl ResolutionState<'_> {
                         &crate::frontend::tspath::resolve_path(package_name, &[subpath]),
                         include_conditions,
                         exclude_conditions.clone(),
-                        if exports_string.ends_with('*') {
-                            Ending::EXTENSION_CHANGEABLE
-                        } else {
-                            Ending::FIXED
-                        },
+                        if_else(
+                            exports_string.ends_with('*'),
+                            Ending::EXTENSION_CHANGEABLE,
+                            Ending::FIXED,
+                        ),
                     ));
                 }
             }
@@ -448,20 +447,13 @@ impl ResolutionState<'_> {
                     // Go: newIncludeConditions = includeConditions.Clone()
                     new_include_conditions = include_conditions.clone();
                     // Go: excludeConditions = excludeConditions.Clone() (the value is already a copy)
-                    if new_include_conditions.is_none() {
-                        new_include_conditions = Some(FxHashSet::default());
-                    }
+                    // Go: `if set == nil { set = &collections.Set[string]{} }; set.Add(..)`
                     new_include_conditions
-                        .as_mut()
-                        .unwrap()
+                        .get_or_insert_with(FxHashSet::default)
                         .insert(condition.clone());
                     for prev_condition in &prev_conditions {
-                        if exclude_conditions.is_none() {
-                            exclude_conditions = Some(FxHashSet::default());
-                        }
                         exclude_conditions
-                            .as_mut()
-                            .unwrap()
+                            .get_or_insert_with(FxHashSet::default)
                             .insert(prev_condition.clone());
                     }
                 }

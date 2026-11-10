@@ -724,14 +724,8 @@ impl Session {
     // scheduleDiagnosticsRefresh schedules a coalesced workspace diagnostics refresh after delay. A delay of
     // 0 refreshes as soon as the background queue runs the task; it is used for interactive edits (e.g. a
     // content-mapped file) where the debounce would make dependent-file diagnostics feel sluggish.
-    // PORT: Go sleeps inside the background task with
-    // `select { case <-time.After(delay): case <-ctx.Done(): }`. Here the
-    // rest of the task runs after the delay or as soon as the context is
-    // done, whichever comes first (`after_delay_or_done`). The task keeps a
-    // `background::TaskHold` until then, so `Queue::wait` (Go
-    // `WaitForBackgroundTasks`) waits for the refresh, as Go's does, and a
-    // cancelled refresh does not hold Close. A zero delay runs the rest of
-    // the task at once, as Go does.
+    // PORT: the debounced task is `enqueue_debounced`; a zero delay runs the
+    // rest of the task at once, as Go does.
     pub fn schedule_diagnostics_refresh(self: &Rc<Self>, delay: Duration) {
         // Cancel any existing scheduled diagnostics refresh
         let existing_cancel = self.diagnostics_refresh_cancel.borrow().clone();
@@ -751,51 +745,35 @@ impl Session {
 
         // Enqueue the (optionally debounced) diagnostics refresh
         let s = self.clone();
-        self.background_queue.enqueue(&debounce_ctx, move |ctx| {
-            let ctx = ctx.clone();
-            let wait_ctx = ctx.clone();
-            let hold = s.background_queue.hold();
-            let task = move || {
-                let run = || {
-                    // Wait out the debounce window; a newer event cancels this one.
-                    if ctx.err().is_some() {
-                        // Context was cancelled, newer events arrived
-                        return;
-                    }
-                    // Delay completed, proceed with refresh
+        // Wait out the debounce window; a newer event cancels this one.
+        let wait = (delay > Duration::ZERO).then_some(delay);
+        enqueue_debounced(
+            &self.background_queue,
+            &debounce_ctx,
+            wait,
+            cancel,
+            move |_| {
+                // Clear the cancel function since we're about to execute the refresh
+                if s.diagnostics_refresh_generation.get() != generation {
+                    return;
+                }
+                *s.diagnostics_refresh_cancel.borrow_mut() = None;
 
-                    // Clear the cancel function since we're about to execute the refresh
-                    if s.diagnostics_refresh_generation.get() != generation {
-                        return;
-                    }
-                    *s.diagnostics_refresh_cancel.borrow_mut() = None;
-
-                    if s.options.logging_enabled {
-                        s.logger.log("Running scheduled diagnostics refresh");
-                    }
-                    if let Err(err) = s
-                        .client
-                        .as_ref()
-                        .unwrap_or_else(|| crate::core::go_nil_dereference())
-                        .refresh_diagnostics(&s.background_context())
-                        && s.options.logging_enabled
-                    {
-                        s.logger
-                            .logf(&format!("Error refreshing diagnostics: {}", err.error()));
-                    }
-                };
-                // Go: the rest of the same wg.Go goroutine (`TaskHold`).
-                crate::core::go_wait_group_task(run);
-                // Go: defer cancel()
-                cancel();
-                drop(hold);
-            };
-            if delay > Duration::ZERO {
-                after_delay_or_done(&wait_ctx, delay, task);
-            } else {
-                task();
-            }
-        });
+                if s.options.logging_enabled {
+                    s.logger.log("Running scheduled diagnostics refresh");
+                }
+                if let Err(err) = s
+                    .client
+                    .as_ref()
+                    .unwrap_or_else(|| crate::core::go_nil_dereference())
+                    .refresh_diagnostics(&s.background_context())
+                    && s.options.logging_enabled
+                {
+                    s.logger
+                        .logf(&format!("Error refreshing diagnostics: {}", err.error()));
+                }
+            },
+        );
     }
 
     // Go: project/session.go:564 cancelDiagnosticsRefresh
@@ -811,9 +789,8 @@ impl Session {
     }
 
     // Go: project/session.go:575 ScheduleSnapshotUpdate
-    // PORT: the debounce sleep ends after the delay or when the context is
-    // done (`after_delay_or_done`), and the task keeps a
-    // `background::TaskHold` until then, as in `schedule_diagnostics_refresh`.
+    // PORT: the debounced task is `enqueue_debounced`, as in
+    // `schedule_diagnostics_refresh`.
     pub fn schedule_snapshot_update(self: &Rc<Self>, reason: UpdateReason) {
         // Cancel any existing scheduled snapshot update
         let existing_cancel = self.scheduled_snapshot_update_cancel.borrow().clone();
@@ -835,55 +812,42 @@ impl Session {
 
         // Enqueue the debounced snapshot update
         let s = self.clone();
-        self.background_queue.enqueue(&debounce_ctx, move |ctx| {
-            let ctx = ctx.clone();
-            let wait_ctx = ctx.clone();
-            let delay = s.options.debounce_delay;
-            let hold = s.background_queue.hold();
-            let task = move || {
-                let run = || {
-                    // Sleep for the debounce delay
-                    if ctx.err().is_some() {
-                        // Context was cancelled, newer events arrived or another snapshot update ran
-                        return;
-                    }
-                    // Delay completed, proceed with update
+        // Sleep for the debounce delay
+        let wait = Some(self.options.debounce_delay);
+        enqueue_debounced(
+            &self.background_queue,
+            &debounce_ctx,
+            wait,
+            cancel,
+            move |ctx| {
+                // Clear the cancel function since we're about to execute the update
+                if s.scheduled_snapshot_update_generation.get() != generation {
+                    return;
+                }
+                *s.scheduled_snapshot_update_cancel.borrow_mut() = None;
 
-                    // Clear the cancel function since we're about to execute the update
-                    if s.scheduled_snapshot_update_generation.get() != generation {
-                        return;
-                    }
-                    *s.scheduled_snapshot_update_cancel.borrow_mut() = None;
+                if s.options.logging_enabled {
+                    s.logger.log("Running scheduled snapshot update");
+                }
 
-                    if s.options.logging_enabled {
-                        s.logger.log("Running scheduled snapshot update");
-                    }
+                let (file_changes, overlays, ata_changes, new_config) = s.flush_changes(ctx);
+                if file_changes.is_empty() && ata_changes.is_empty() && new_config.is_none() {
+                    return;
+                }
 
-                    let (file_changes, overlays, ata_changes, new_config) = s.flush_changes(&ctx);
-                    if file_changes.is_empty() && ata_changes.is_empty() && new_config.is_none() {
-                        return;
-                    }
-
-                    s.update_snapshot_exported(
-                        &ctx,
-                        overlays,
-                        SnapshotChange {
-                            reason,
-                            file_changes,
-                            ata_changes,
-                            new_config,
-                            ..Default::default()
-                        },
-                    );
-                };
-                // Go: the rest of the same wg.Go goroutine (`TaskHold`).
-                crate::core::go_wait_group_task(run);
-                // Go: defer cancel()
-                cancel();
-                drop(hold);
-            };
-            after_delay_or_done(&wait_ctx, delay, task);
-        });
+                s.update_snapshot_exported(
+                    ctx,
+                    overlays,
+                    SnapshotChange {
+                        reason,
+                        file_changes,
+                        ata_changes,
+                        new_config,
+                        ..Default::default()
+                    },
+                );
+            },
+        );
     }
 
     // Go: project/session.go:637 cancelScheduledSnapshotUpdate
@@ -915,6 +879,57 @@ impl Session {
             pending => *self.warm_auto_import_pending.borrow_mut() = pending,
         }
     }
+}
+
+/// PORT: the debounced background task of Go `ScheduleSnapshotUpdate` and
+/// `scheduleDiagnosticsRefresh`:
+///
+/// ```go
+/// s.backgroundQueue.Enqueue(debounceCtx, func(ctx context.Context) {
+///     defer cancel()
+///     select {
+///     case <-time.After(delay):
+///     case <-ctx.Done():
+///         return
+///     }
+///     run(ctx)
+/// })
+/// ```
+///
+/// The wait is `after_delay_or_done`; `wait` `None` runs at once (Go's
+/// zero-delay refresh, which only tests `ctx.Err()`). The task keeps a
+/// `background::TaskHold` until it ends, so `Queue::wait` (Go
+/// `WaitForBackgroundTasks`) waits for it and a cancelled task does not hold
+/// Close. `run` is the rest of the Go task: it runs in the task's wait group
+/// (the same `wg.Go` goroutine), and not at all when the context was
+/// cancelled (newer events arrived, or another update ran).
+fn enqueue_debounced(
+    queue: &Rc<background::Queue>,
+    debounce_ctx: &Context,
+    wait: Option<Duration>,
+    cancel: gostd::context::CancelFunc,
+    run: impl FnOnce(&Context) + 'static,
+) {
+    let queue_for_hold = queue.clone();
+    queue.enqueue(debounce_ctx, move |ctx| {
+        let ctx = ctx.clone();
+        let wait_ctx = ctx.clone();
+        let hold = queue_for_hold.hold();
+        let task = move || {
+            crate::core::go_wait_group_task(|| {
+                if ctx.err().is_none() {
+                    run(&ctx);
+                }
+            });
+            // Go: defer cancel()
+            cancel();
+            drop(hold);
+        };
+        match wait {
+            Some(delay) => after_delay_or_done(&wait_ctx, delay, task),
+            None => task(),
+        }
+    });
 }
 
 /// PORT: Go `select { case <-time.After(delay): case <-ctx.Done(): }` in a
@@ -1376,6 +1391,38 @@ fn collect_memory_stats(out: &mut dyn std::io::Read) -> Result<OsMemoryStats, Go
     Ok(OsMemoryStats { total, used })
 }
 
+/// PORT: Go's `ticker := time.NewTicker(interval); defer ticker.Stop()` and
+/// its `for { select { case <-ctx.Done(): return; case <-ticker.C: … } }`
+/// loop in a background task. A `gostd::local::after_func` timer re-arms
+/// itself for the next tick, then runs `on_tick` (the `ticker.C` case); a
+/// tick that finds `ctx` done stops the timer instead (the `ctx.Done()`
+/// case). Each tick runs as part of the task's wait group, as Go's loop runs
+/// in its one `wg.Go` goroutine.
+fn run_local_ticker(ctx: Context, interval: Duration, on_tick: impl Fn() + 'static) {
+    let ticker: Rc<RefCell<Option<gostd::local::LocalTimer>>> = Rc::new(RefCell::new(None));
+    let tick_ticker = ticker.clone();
+    let timer = gostd::local::after_func(
+        interval,
+        Box::new(move || {
+            crate::core::go_wait_group_task(|| {
+                if ctx.err().is_some() {
+                    let stopped = tick_ticker.borrow_mut().take();
+                    if let Some(stopped) = stopped {
+                        stopped.stop();
+                    }
+                    return;
+                }
+                // The ticker sends the next tick after the interval.
+                if let Some(t) = tick_ticker.borrow().as_ref() {
+                    t.reset(interval);
+                }
+                on_tick();
+            })
+        }),
+    );
+    *ticker.borrow_mut() = Some(timer);
+}
+
 impl Session {
     // Go: project/session.go:734 StartPerformanceTelemetry
     // StartPerformanceTelemetry begins periodic collection and sending of performance
@@ -1392,39 +1439,12 @@ impl Session {
         let s = self.clone();
         self.background_queue.enqueue(&ctx, move |ctx| {
             let ctx = ctx.clone();
-            let ticker: Rc<RefCell<Option<gostd::local::LocalTimer>>> = Rc::new(RefCell::new(None));
-            let tick_ticker = ticker.clone();
-            let timer = gostd::local::after_func(
-                PERFORMANCE_TELEMETRY_INTERVAL,
-                Box::new(move || {
-                    // Go: each tick runs in the same wg.Go goroutine.
-                    crate::core::go_wait_group_task(|| {
-                        // Go: case <-ctx.Done(): return (defer ticker.Stop())
-                        if ctx.err().is_some() {
-                            let stopped = tick_ticker.borrow_mut().take();
-                            if let Some(stopped) = stopped {
-                                stopped.stop();
-                            }
-                            return;
-                        }
-                        // Go: case <-ticker.C (the ticker sends the next tick after the interval)
-                        if let Some(t) = tick_ticker.borrow().as_ref() {
-                            t.reset(PERFORMANCE_TELEMETRY_INTERVAL);
-                        }
-                        if s.client.is_none()
-                            || !s
-                                .client
-                                .as_ref()
-                                .unwrap_or_else(|| crate::core::go_nil_dereference())
-                                .is_active()
-                        {
-                            return; // Go: continue
-                        }
-                        s.send_performance_telemetry(&ctx);
-                    })
-                }),
-            );
-            *ticker.borrow_mut() = Some(timer);
+            run_local_ticker(ctx.clone(), PERFORMANCE_TELEMETRY_INTERVAL, move || {
+                if !s.client.as_ref().is_some_and(|client| client.is_active()) {
+                    return; // Go: continue
+                }
+                s.send_performance_telemetry(&ctx);
+            });
         });
     }
 
@@ -1885,31 +1905,22 @@ impl Session {
             update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_WITH_AUTO_IMPORTS;
         } else {
             for document in &request.documents {
-                match snapshot.get_default_project(document) {
-                    None => {
-                        update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
-                    }
-                    Some(project) => {
-                        if project.borrow().dirty {
-                            update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
-                        }
-                    }
+                let project = snapshot.get_default_project(document);
+                if project.is_none() {
+                    update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
+                } else if project.is_some_and(|project| project.borrow().dirty) {
+                    update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
                 }
             }
             if update_reason == UpdateReason::UNKNOWN {
                 for document in &request.configured_project_documents {
                     if snapshot.is_open_file(&document.file_name()) {
-                        match snapshot.get_default_project(document) {
-                            None => {
-                                update_reason =
-                                    UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
-                            }
-                            Some(project) => {
-                                if project.borrow().dirty {
-                                    update_reason =
-                                        UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
-                                }
-                            }
+                        let project = snapshot.get_default_project(document);
+                        if project.is_none() {
+                            update_reason =
+                                UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
+                        } else if project.is_some_and(|project| project.borrow().dirty) {
+                            update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
                         }
                     } else {
                         update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_FOR_FILE_NOT_OPEN;
@@ -3150,12 +3161,9 @@ impl Session {
         let mut parse_cache_size = 0;
         let mut extended_config_count = 0;
         if self.logger.is_verbose() {
-            for _ in self.parse_cache.entries.borrow().iter() {
-                parse_cache_size += 1;
-            }
-            for _ in self.extended_config_cache.entries.borrow().iter() {
-                extended_config_count += 1;
-            }
+            // PORT: Go counts the entries with `Range`.
+            parse_cache_size = self.parse_cache.entries.borrow().len();
+            extended_config_count = self.extended_config_cache.entries.borrow().len();
         }
         self.logger.log("\n======== Cache Statistics ========");
         self.logger.logf(&format!(
@@ -3224,11 +3232,11 @@ impl Session {
                         if bucket.state.dirty() { " (dirty)" } else { "" }
                     ));
                     // PORT: Go map order is random (log text only).
-                    if let Some(dirty_packages) = bucket.state.dirty_packages_exported() {
-                        for package_name in dirty_packages {
-                            self.logger
-                                .logf(&format!("\t\t\tNeeds granular update: {}", package_name));
-                        }
+                    // Go ranges over a nil map as over an empty one.
+                    for package_name in bucket.state.dirty_packages_exported().into_iter().flatten()
+                    {
+                        self.logger
+                            .logf(&format!("\t\t\tNeeds granular update: {}", package_name));
                     }
                     if let Some(dependency_names) = &bucket.dependency_names {
                         self.logger.logf(&format!(
@@ -3774,29 +3782,45 @@ impl Session {
             }
             // Go: defer newSnapshot.Deref(s)
 
-            // PORT: Go's clone would take its snapshot id now.
-            let snapshot_id = self.snapshot_id.get() + 1;
-            self.snapshot_id.set(snapshot_id);
-            // PORT: Go's warm starts now, and the part of this task before
-            // it ran for `prefix`. The hold counts from `queued_at + prefix`
-            // (see `run_pending_warm`).
-            let queued_at = Instant::now();
-            let prefix = queued_at.saturating_duration_since(task_start);
-            let warm = PendingWarm {
-                ctx: warm_ctx,
-                cancel,
-                changed_file,
-                new_snapshot: new_snapshot.clone(),
-                snapshot_id,
-                hold_from: (!self.warm_auto_import_slow.get()).then(|| queued_at + prefix),
-                retry: false,
-            };
-            // A pending warm here was cancelled above (`previous_cancel`).
-            if let Some(previous) = self.warm_auto_import_pending.replace(Some(warm)) {
-                self.end_pending_warm(previous);
-            }
-            self.queue_pending_warm();
+            self.defer_warm_clone(warm_ctx, cancel, changed_file, new_snapshot, task_start);
         }
+    }
+
+    /// PORT: Go's warm clones the snapshot and adopts the clone here, on its
+    /// goroutine. The port makes it the pending warm instead and queues the
+    /// idle job that runs it (`run_pending_warm`, see
+    /// `warm_auto_import_cache`). `new_snapshot` is already referenced for
+    /// the warm (Go's `tryRef`).
+    fn defer_warm_clone(
+        self: &Rc<Self>,
+        warm_ctx: Context,
+        cancel: gostd::context::CancelFunc,
+        changed_file: lsproto::DocumentUri,
+        new_snapshot: &Rc<Snapshot>,
+        task_start: Instant,
+    ) {
+        // PORT: Go's clone would take its snapshot id now.
+        let snapshot_id = self.snapshot_id.get() + 1;
+        self.snapshot_id.set(snapshot_id);
+        // PORT: Go's warm starts now, and the part of this task before
+        // it ran for `prefix`. The hold counts from `queued_at + prefix`
+        // (see `run_pending_warm`).
+        let queued_at = Instant::now();
+        let prefix = queued_at.saturating_duration_since(task_start);
+        let warm = PendingWarm {
+            ctx: warm_ctx,
+            cancel,
+            changed_file,
+            new_snapshot: new_snapshot.clone(),
+            snapshot_id,
+            hold_from: (!self.warm_auto_import_slow.get()).then(|| queued_at + prefix),
+            retry: false,
+        };
+        // A pending warm here was cancelled (the previous cancel func).
+        if let Some(previous) = self.warm_auto_import_pending.replace(Some(warm)) {
+            self.end_pending_warm(previous);
+        }
+        self.queue_pending_warm();
     }
 
     /// PORT: queues the idle job that runs the pending warm, unless one is

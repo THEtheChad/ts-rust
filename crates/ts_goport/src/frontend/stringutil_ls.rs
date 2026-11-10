@@ -186,7 +186,14 @@ fn decode_rune_in_string(s: &str) -> (char, usize) {
 
 /// Go `utf8.DecodeRune` on bytes. An invalid or truncated sequence gives
 /// U+FFFD with width 1, like Go. `s` is not empty at the call sites.
-fn decode_rune_bytes(s: &[u8]) -> (char, usize) {
+#[inline]
+pub(crate) fn decode_rune_bytes(s: &[u8]) -> (char, usize) {
+    // PERF (cfgwalk1): an ASCII byte is its own rune, as in Go's fast path.
+    if let Some(&b) = s.first()
+        && b < 0x80
+    {
+        return (b as char, 1);
+    }
     let head = &s[..s.len().min(4)];
     let valid = match std::str::from_utf8(head) {
         Ok(v) => v,
@@ -226,7 +233,7 @@ fn strings_to_lower(s: &str) -> String {
 
 /// Simple case fold key. Two runes are in the same Go `unicode.SimpleFold`
 /// orbit when their keys are equal.
-// PORT: the same approach as the tspath and vfsmatch private helpers. The
+// PORT: the one copy (tspath and vfsmatch use this `equal_fold`). The
 // key is lower(upper(c)) with simple mappings. U+0131 (dotless i) has only a
 // Turkic fold entry, so its orbit is itself, like Go. Rust and Go can use
 // different Unicode versions; this matters only for runes added between
@@ -247,7 +254,7 @@ fn simple_fold_key(c: char) -> char {
 // PORT: runes are decoded like Go (see `decode_rune_bytes`). Each rune pair
 // must be equal, ASCII case equal, or in the same simple fold orbit (see
 // `simple_fold_key`), as in the Go loop over `unicode.SimpleFold`.
-fn equal_fold(s: &[u8], t: &[u8]) -> bool {
+pub fn equal_fold(s: &[u8], t: &[u8]) -> bool {
     let (mut i, mut j) = (0usize, 0usize);
     while i < s.len() && j < t.len() {
         let (sr, sn) = decode_rune_bytes(&s[i..]);

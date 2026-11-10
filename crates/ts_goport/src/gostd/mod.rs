@@ -1,5 +1,5 @@
 //! Go runtime and standard library pieces used by the language-service port
-//! (`context`, `errors`, `errgroup`, `slices`, `net/url`, `net/netip`,
+//! (`context`, `encoding/base64`, `errors`, `errgroup`, `slices`, `net/url`, `net/netip`,
 //! `strconv`, `time` timers, `unicode`, `regexp` with its `unicode` tables,
 //! `golang.org/x/text/collate` and `unicode/norm`, the dispatch-thread `go`
 //! queue, the goroutine stack size, `GOMAXPROCS` and the open-file limit),
@@ -7,6 +7,7 @@
 //! of a goroutine stack (`backtrace`). See PORTING.md "Go runtime".
 
 pub mod backtrace;
+pub mod base64;
 pub mod collate;
 pub mod context;
 pub mod debug;

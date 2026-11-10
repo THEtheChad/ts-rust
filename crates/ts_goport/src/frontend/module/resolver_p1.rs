@@ -740,33 +740,7 @@ impl DefaultResolver {
             if let Some(cached) = self.caches.module_resolution_cache.get(&key_parts) {
                 return (cached, Vec::new());
             }
-            // PERF: a parse worker may have resolved this key already (see
-            // `resolve_type_reference_directive`). A resolve-ahead worker
-            // resolves each key that no other worker takes
-            // (`AheadQueue::take_next`), so it does not look.
-            if let Some(shared) = &self.caches.shared
-                && !(shared.publish && on_ahead_thread())
-                && let Some(found) = shared.cache.get_module(&key_parts)
-            {
-                self.caches.note_worker_package_jsons(&found.package_jsons);
-                self.caches.note_worker_lookups(&found.lookups);
-                self.caches.module_resolution_cache.set(
-                    ModuleResolutionCacheKey::from_parts(key_parts),
-                    found.value.clone(),
-                );
-                return (found.value, Vec::new());
-            }
-            // PERF: a resolve-ahead worker may have resolved this key
-            // (compiler/resolve_ahead.rs). The loader takes the answer only
-            // after it checked it on its own file system.
-            if let Some(found) = self
-                .caches
-                .take_resolved_ahead(key_parts, &self.package_json_info_cache)
-            {
-                self.caches.module_resolution_cache.set(
-                    ModuleResolutionCacheKey::from_parts(key_parts),
-                    found.clone(),
-                );
+            if let Some(found) = self.take_worker_module_resolution(key_parts) {
                 return (found, Vec::new());
             }
         }
@@ -799,23 +773,23 @@ impl DefaultResolver {
             );
         }
 
-        let result: ResolvedModule = if module_resolution == ModuleResolutionKind::NODE16
-            || module_resolution == ModuleResolutionKind::NODE_NEXT
-            || module_resolution == ModuleResolutionKind::BUNDLER
-        {
-            let mut state = new_resolution_state(
-                module_name,
-                containing_directory,
-                false, /*isTypeReferenceDirective*/
-                resolution_mode,
-                &compiler_options,
-                redirected_reference,
-                self,
-                trace_builder.clone(),
-            );
-            state.resolve_node_like()
-        } else {
-            panic!("Unexpected moduleResolution: {}", module_resolution.0);
+        let result: ResolvedModule = match module_resolution {
+            ModuleResolutionKind::NODE16
+            | ModuleResolutionKind::NODE_NEXT
+            | ModuleResolutionKind::BUNDLER => {
+                let mut state = new_resolution_state(
+                    module_name,
+                    containing_directory,
+                    false, /*isTypeReferenceDirective*/
+                    resolution_mode,
+                    &compiler_options,
+                    redirected_reference,
+                    self,
+                    trace_builder.clone(),
+                );
+                state.resolve_node_like()
+            }
+            _ => panic!("Unexpected moduleResolution: {}", module_resolution.0),
         };
 
         if let Some(trace_builder) = &trace_builder {
@@ -847,33 +821,84 @@ impl DefaultResolver {
             result,
             &trace_builder,
         ));
-        if let Some(shared) = self.caches.shared.as_ref().filter(|shared| shared.publish) {
-            let package_jsons = self.caches.take_package_json_log();
-            let lookups = self.caches.take_worker_lookup_log();
-            // A resolve-ahead answer that the loader cannot check is not
-            // published (`AheadLogEnd::Unshareable`).
-            let ahead = match self.caches.take_ahead_log() {
-                AheadLogEnd::NotLogged => Some(None),
-                AheadLogEnd::Unshareable => None,
-                AheadLogEnd::Logged(calls) => Some(Some(calls)),
-            };
-            if let Some(ahead) = ahead {
-                shared.cache.set_module(
-                    cache_key.clone(),
-                    SharedResolution {
-                        value: Arc::clone(&final_result),
-                        package_jsons,
-                        lookups,
-                        ahead,
-                    },
-                );
-            }
-        }
+        self.publish_module_resolution(&cache_key, &final_result);
         self.caches
             .module_resolution_cache
             .set(cache_key, final_result.clone());
 
         (final_result, traces_of(&trace_builder))
+    }
+
+    /// An answer for `key_parts` that another worker made, when this
+    /// resolver's own cache has none (`resolve_module_name_worker`, untraced
+    /// only). It goes into this resolver's cache as its own.
+    // PERF: not in Go (Go shares one cache between all parse tasks). Per
+    // module name the loader resolves, so inlined into the worker.
+    #[inline]
+    fn take_worker_module_resolution(
+        &self,
+        key_parts: ModuleKeyParts<'_>,
+    ) -> Option<Arc<ResolvedModule>> {
+        // A parse worker may have resolved this key already (see
+        // `resolve_type_reference_directive`). A resolve-ahead worker
+        // resolves each key that no other worker takes
+        // (`AheadQueue::take_next`), so it does not look.
+        if let Some(shared) = &self.caches.shared
+            && !(shared.publish && on_ahead_thread())
+            && let Some(found) = shared.cache.get_module(&key_parts)
+        {
+            self.caches.note_worker_package_jsons(&found.package_jsons);
+            self.caches.note_worker_lookups(&found.lookups);
+            self.caches.module_resolution_cache.set(
+                ModuleResolutionCacheKey::from_parts(key_parts),
+                found.value.clone(),
+            );
+            return Some(found.value);
+        }
+        // A resolve-ahead worker may have resolved this key
+        // (compiler/resolve_ahead.rs). The loader takes the answer only
+        // after it checked it on its own file system.
+        let found = self
+            .caches
+            .take_resolved_ahead(key_parts, &self.package_json_info_cache)?;
+        self.caches.module_resolution_cache.set(
+            ModuleResolutionCacheKey::from_parts(key_parts),
+            found.clone(),
+        );
+        Some(found)
+    }
+
+    /// Shares the answer of a publishing resolver (a parse worker) with the
+    /// other workers, with the package.json files and lookups it read
+    /// (`resolve_module_name_worker`).
+    // PERF: not in Go (see `take_worker_module_resolution`).
+    #[inline]
+    fn publish_module_resolution(
+        &self,
+        cache_key: &ModuleResolutionCacheKey,
+        final_result: &Arc<ResolvedModule>,
+    ) {
+        let Some(shared) = self.caches.shared.as_ref().filter(|shared| shared.publish) else {
+            return;
+        };
+        let package_jsons = self.caches.take_package_json_log();
+        let lookups = self.caches.take_worker_lookup_log();
+        // A resolve-ahead answer that the loader cannot check is not
+        // published (`AheadLogEnd::Unshareable`).
+        let ahead = match self.caches.take_ahead_log() {
+            AheadLogEnd::NotLogged => None,
+            AheadLogEnd::Unshareable => return,
+            AheadLogEnd::Logged(calls) => Some(calls),
+        };
+        shared.cache.set_module(
+            cache_key.clone(),
+            SharedResolution {
+                value: Arc::clone(final_result),
+                package_jsons,
+                lookups,
+                ahead,
+            },
+        );
     }
 
     // Go: module/resolver.go:537 ResolvePackageDirectory

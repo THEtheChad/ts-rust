@@ -1137,59 +1137,127 @@ fn flush_serialized_client_writes(
     let mut first_round = true;
     // A failed OS write of the last round doomed its file.
     let mut doomed_by_os_write = false;
-    while let Some(&((declaration, place, _), _)) = rounds.peek() {
-        let mut round = Vec::new();
-        while let Some(((_, _, file), write)) =
-            rounds.next_if(|&((d, p, _), _)| (d, p) == (declaration, place))
-        {
-            round.push((file, write));
-        }
+    while let Some(round) = next_serialized_round(&mut rounds) {
         if let Some(doomed) = flush.doomed {
-            for (file, write) in round {
-                if file == doomed {
-                    flush.write(file, write);
-                } else if doomed_by_os_write && file == (doomed + 1) % files {
-                    // The process ends before this OS write.
-                    drop(defer_os_writes(|| flush.write(file, write)));
-                }
-            }
+            flush_doomed_round(round, flush, doomed, doomed_by_os_write, files);
             doomed_by_os_write = false;
             continue;
         }
-        let mut held = Vec::new();
-        for (file, write) in round {
-            let called = match flush.doomed {
-                None => true,
-                Some(doomed) => first_round || file == (doomed + 1) % files,
-            };
-            if called {
-                let name = write.file_name.clone();
-                let signature_read_diagnostics = write.signature_read_diagnostics;
-                let os_writes = defer_os_writes(|| flush.write(file, write));
-                held.push((file, name, signature_read_diagnostics, os_writes));
-            }
-        }
-        // The doom of a failed call of the round.
-        let doomed_by_call = flush.doomed;
-        for (file, name, signature_read_diagnostics, os_writes) in held {
-            let written =
-                doomed_by_call.is_none_or(|doomed| file == doomed || file == (doomed + 1) % files);
-            if !written {
-                continue;
-            }
-            for os_write in os_writes {
-                if let Err(err) = os_write() {
-                    doomed_by_os_write |= flush.fail(
-                        file,
-                        name.clone(),
-                        Some(fs_error_text(&err)),
-                        signature_read_diagnostics,
-                    );
-                }
-            }
-        }
+        let held = call_serialized_round(round, flush, first_round, files);
+        doomed_by_os_write |= write_serialized_round(held, flush, files);
         first_round = false;
     }
+}
+
+/// The next round of `flush_serialized_client_writes`: the writes of
+/// `rounds` with the declaration flag and place of the first one, as
+/// `(file, write)` in order. None when no write is left.
+fn next_serialized_round(
+    rounds: &mut std::iter::Peekable<std::vec::IntoIter<((bool, usize, usize), BufferedWrite)>>,
+) -> Option<Vec<(usize, BufferedWrite)>> {
+    let &((declaration, place, _), _) = rounds.peek()?;
+    let mut round = Vec::new();
+    while let Some(((_, _, file), write)) =
+        rounds.next_if(|&((d, p, _), _)| (d, p) == (declaration, place))
+    {
+        round.push((file, write));
+    }
+    Some(round)
+}
+
+/// A round of `flush_serialized_client_writes` after a failure doomed the
+/// file `doomed` (of `files`): only the doomed file's own outputs are made.
+/// After a failed OS write (`doomed_by_os_write`) the next file's output is
+/// called too, without its OS write: the process ends before it.
+fn flush_doomed_round(
+    round: Vec<(usize, BufferedWrite)>,
+    flush: &mut ClientFlush<'_>,
+    doomed: usize,
+    doomed_by_os_write: bool,
+    files: usize,
+) {
+    for (file, write) in round {
+        if file == doomed {
+            flush.write(file, write);
+        } else if doomed_by_os_write && file == (doomed + 1) % files {
+            // The process ends before this OS write.
+            drop(defer_os_writes(|| flush.write(file, write)));
+        }
+    }
+}
+
+/// A client call of a round of `flush_serialized_client_writes`, with the
+/// OS writes that it asked for, held until the round's calls end.
+struct HeldCall {
+    file: usize,
+    name: String,
+    signature_read_diagnostics: bool,
+    os_writes: Vec<DeferredOsWrite>,
+}
+
+/// The calls of a round of `flush_serialized_client_writes` that no
+/// failure doomed a file before: every file's call in the first round
+/// (`first_round`); in a later round, after a failed call dooms a file of
+/// `files`, only the next file's call.
+fn call_serialized_round(
+    round: Vec<(usize, BufferedWrite)>,
+    flush: &mut ClientFlush<'_>,
+    first_round: bool,
+    files: usize,
+) -> Vec<HeldCall> {
+    let mut held = Vec::new();
+    for (file, write) in round {
+        let called = match flush.doomed {
+            None => true,
+            Some(doomed) => first_round || file == (doomed + 1) % files,
+        };
+        if called {
+            let name = write.file_name.clone();
+            let signature_read_diagnostics = write.signature_read_diagnostics;
+            let os_writes = defer_os_writes(|| flush.write(file, write));
+            held.push(HeldCall {
+                file,
+                name,
+                signature_read_diagnostics,
+                os_writes,
+            });
+        }
+    }
+    held
+}
+
+/// The OS writes of the `held` calls of a round of
+/// `flush_serialized_client_writes`: all of them, or after a failed call
+/// of the round doomed a file of `files`, only the doomed file's and the
+/// next file's. True when a failed OS write doomed its file.
+fn write_serialized_round(held: Vec<HeldCall>, flush: &mut ClientFlush<'_>, files: usize) -> bool {
+    // The doom of a failed call of the round.
+    let doomed_by_call = flush.doomed;
+    let mut doomed_by_os_write = false;
+    for HeldCall {
+        file,
+        name,
+        signature_read_diagnostics,
+        os_writes,
+    } in held
+    {
+        let written =
+            doomed_by_call.is_none_or(|doomed| file == doomed || file == (doomed + 1) % files);
+        if !written {
+            continue;
+        }
+        for os_write in os_writes {
+            if let Err(err) = os_write() {
+                doomed_by_os_write |= flush.fail(
+                    file,
+                    name.clone(),
+                    Some(fs_error_text(&err)),
+                    signature_read_diagnostics,
+                );
+            }
+        }
+    }
+    doomed_by_os_write
 }
 
 /// An OS write that `defer_os_writes` holds back.

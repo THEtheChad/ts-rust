@@ -9,6 +9,19 @@ use crate::scanner_util::{is_shebang_trivia, scan_shebang_trivia};
 
 use super::scanner_p1::{rune_to_char, utf8_decode_rune_in_string};
 
+thread_local! {
+    /// The factory of the comment range scans whose callers have none (the
+    /// printer's free functions, the declaration transformer). The scan
+    /// only builds `CommentRange` values with it.
+    static COMMENT_RANGE_FACTORY: NodeFactory = NodeFactory::default();
+}
+
+/// Runs `f` with this thread's comment range factory (Go passes the
+/// caller's factory, which the scan only uses to build the ranges).
+pub fn with_comment_range_factory<R>(f: impl FnOnce(&NodeFactory) -> R) -> R {
+    COMMENT_RANGE_FACTORY.with(f)
+}
+
 // Go: scanner/scanner.go:2799 GetLeadingCommentRanges
 // PORT: `for_each_comment_range` is Go's `iter.Seq`; these functions collect it into a Vec.
 pub fn get_leading_comment_ranges(f: &NodeFactory, text: &str, pos: i32) -> Vec<CommentRange> {

@@ -11,6 +11,7 @@
 use crate::frontend::prelude::*;
 use std::borrow::Cow;
 
+use crate::checker::if_else;
 use crate::scanner_util::push_js_string_rune;
 
 use super::scanner_p1::{
@@ -846,31 +847,31 @@ impl<'a> Scanner<'a> {
                     self.scanner_state.token_flags |= TokenFlags::UNTERMINATED;
                     self.error(diag::Unterminated_template_literal);
                 }
-                token = if started_with_backtick {
-                    SyntaxKind::NoSubstitutionTemplateLiteral
-                } else {
-                    SyntaxKind::TemplateTail
-                };
+                token = if_else(
+                    started_with_backtick,
+                    SyntaxKind::NoSubstitutionTemplateLiteral,
+                    SyntaxKind::TemplateTail,
+                );
                 break;
             }
             if ch == '$' as i32 && self.char_at(1) == '{' as i32 {
                 value_end = self.scanner_state.pos;
                 self.scanner_state.pos += 2;
-                token = if started_with_backtick {
-                    SyntaxKind::TemplateHead
-                } else {
-                    SyntaxKind::TemplateMiddle
-                };
+                token = if_else(
+                    started_with_backtick,
+                    SyntaxKind::TemplateHead,
+                    SyntaxKind::TemplateMiddle,
+                );
                 break;
             }
             if ch == '\\' as i32 {
                 sb.push_str(&self.text[start as usize..self.scanner_state.pos as usize]);
                 let flags = EscapeSequenceScanningFlags::STRING
-                    | if should_emit_invalid_escape_error {
-                        EscapeSequenceScanningFlags::REPORT_ERRORS
-                    } else {
-                        EscapeSequenceScanningFlags::default()
-                    };
+                    | if_else(
+                        should_emit_invalid_escape_error,
+                        EscapeSequenceScanningFlags::REPORT_ERRORS,
+                        EscapeSequenceScanningFlags::default(),
+                    );
                 self.scan_escape_sequence_into(flags, &mut sb);
                 start = self.scanner_state.pos;
                 continue;

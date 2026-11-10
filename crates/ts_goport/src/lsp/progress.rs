@@ -138,6 +138,41 @@ pub fn new_project_loading_progress_from_reporter(
     p
 }
 
+/// PORT: the case of `run`'s Go `select` that fired.
+enum Selected {
+    Event(ProgressEvent),
+    Delay,
+    Done,
+}
+
+/// PORT: Go's `select` in `run` over `p.ch`, `delayC()` and
+/// `p.reporter.done()`, as one wait on the channel: with a delay deadline a
+/// `recv_timeout` (its timeout is the timer firing), without one a plain
+/// `recv` (Go's nil `delayC()` never fires). A `None` message is the done
+/// wake-up (`wake_on_done`). Returns `None` when the sending side is gone.
+fn select_progress(
+    ch: &Receiver<Option<ProgressEvent>>,
+    delay: Option<Instant>,
+) -> Option<Selected> {
+    let Some(deadline) = delay else {
+        return match ch.recv() {
+            Ok(Some(ev)) => Some(Selected::Event(ev)),
+            Ok(None) => Some(Selected::Done),
+            Err(_) => None,
+        };
+    };
+    let now = Instant::now();
+    if now >= deadline {
+        return Some(Selected::Delay);
+    }
+    match ch.recv_timeout(deadline - now) {
+        Ok(Some(ev)) => Some(Selected::Event(ev)),
+        Ok(None) => Some(Selected::Done),
+        Err(RecvTimeoutError::Timeout) => Some(Selected::Delay),
+        Err(RecvTimeoutError::Disconnected) => None,
+    }
+}
+
 impl ProjectLoadingProgress {
     // Go: lsp/progress.go:90 start
     pub fn start(&self, message: &'static crate::diagnostics::Message, args: Vec<String>) {
@@ -204,50 +239,16 @@ impl ProjectLoadingProgress {
         let mut delay: Option<Instant> = None;
         let mut delay_fired = false; // true after the delay timer fires
 
-        // PORT: the `<-p.reporter.done()` case wakes the channel wait.
         let done = self.reporter.done();
-        if let Some(done) = &done {
-            let wake = self.ch.clone();
-            if done
-                .register_waker(move || {
-                    let _ = wake.try_send(None);
-                })
-                .is_none()
-            {
-                // Already closed.
-                return;
-            }
+        if !self.wake_on_done(done.as_ref()) {
+            return;
         }
         let is_done = || done.as_ref().is_some_and(Done::is_closed);
 
-        enum Selected {
-            Event(ProgressEvent),
-            Delay,
-            Done,
-        }
-
         loop {
-            let selected = match delay {
-                Some(deadline) => {
-                    let now = Instant::now();
-                    if now >= deadline {
-                        Selected::Delay
-                    } else {
-                        match ch.recv_timeout(deadline - now) {
-                            Ok(Some(ev)) => Selected::Event(ev),
-                            Ok(None) => Selected::Done,
-                            Err(RecvTimeoutError::Timeout) => Selected::Delay,
-                            Err(RecvTimeoutError::Disconnected) => return,
-                        }
-                    }
-                }
-                None => match ch.recv() {
-                    Ok(Some(ev)) => Selected::Event(ev),
-                    Ok(None) => Selected::Done,
-                    Err(_) => return,
-                },
+            let Some(selected) = select_progress(&ch, delay) else {
+                return;
             };
-
             match selected {
                 Selected::Event(ev) => {
                     let text = self.reporter.localize(ev.message, ev.args);
@@ -332,6 +333,21 @@ impl ProjectLoadingProgress {
                 return;
             }
         }
+    }
+
+    /// PORT: Go's `case <-p.reporter.done()` in `run`. `run` waits on its
+    /// channel alone, so a waker on `done` sends the `None` wake-up into it.
+    /// Returns false when `done` is already closed (`run` returns at once);
+    /// `None` is Go's nil channel, which never fires.
+    fn wake_on_done(&self, done: Option<&Done>) -> bool {
+        let Some(done) = done else {
+            return true;
+        };
+        let wake = self.ch.clone();
+        done.register_waker(move || {
+            let _ = wake.try_send(None);
+        })
+        .is_some()
     }
 
     // Go: lsp/progress.go:200 beginOrReport

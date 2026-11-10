@@ -5948,7 +5948,7 @@ fn access_kind(node: Node) -> AccessKind {
     access_kind_ref(NodeRef::new(node))
 }
 
-/// `access_kind` of the view of a node.
+/// `access_kind` of the view of a node: the body of Go `accessKind`.
 // PERF: checkid1. The parent, its kind and the parents of the recursive
 // steps are read through views (`NodeRef`): a parent in the same store
 // costs no registry lookup. Go reads struct fields. Same tests, same order.
@@ -5961,16 +5961,8 @@ fn access_kind_ref(node: NodeRef) -> AccessKind {
         SyntaxKind::ParenthesizedExpression | SyntaxKind::ArrayLiteralExpression => {
             access_kind_ref(parent)
         }
-        // PERF: noderead2. The operator and the left operand come from one
-        // node data read of the parent (`NodeRef::data`, `frozen_data_ids`),
-        // and the operator token kind is read once. Go reads the fields.
         SyntaxKind::PrefixUnaryExpression | SyntaxKind::PostfixUnaryExpression => {
-            let operator = match parent.data() {
-                Some(NodeData::PrefixUnaryExpression(d)) => d.operator,
-                Some(NodeData::PostfixUnaryExpression(d)) => d.operator,
-                _ => parent.node().operator(),
-            };
-            debug_assert_eq!(operator, parent.node().operator());
+            let operator = unary_operator_of(parent);
             if operator == SyntaxKind::PlusPlusToken || operator == SyntaxKind::MinusMinusToken {
                 AccessKind::READ_WRITE
             } else {
@@ -5978,12 +5970,7 @@ fn access_kind_ref(node: NodeRef) -> AccessKind {
             }
         }
         SyntaxKind::BinaryExpression => {
-            let (left, operator_token) = match frozen_data_ids(parent.node()) {
-                Some((NodeData::BinaryExpression(d), ids)) => {
-                    (ids.node(d.left), ids.node(d.operator_token))
-                }
-                _ => (parent.node().left(), parent.node().operator_token()),
-            };
+            let (left, operator_token) = binary_left_and_operator_token_of(parent);
             if left == node.node() {
                 let operator = operator_token.kind();
                 if is_assignment_operator(operator) {
@@ -6024,6 +6011,35 @@ fn access_kind_ref(node: NodeRef) -> AccessKind {
             }
         }
         _ => AccessKind::READ,
+    }
+}
+
+/// The operator of a prefix or postfix unary expression (Go
+/// `parent.AsPrefixUnaryExpression().Operator`) for `access_kind_ref`.
+// PERF: noderead2. The operator comes from one node data read
+// (`NodeRef::data`). Go reads the field.
+#[inline]
+fn unary_operator_of(unary: NodeRef) -> SyntaxKind {
+    let operator = match unary.data() {
+        Some(NodeData::PrefixUnaryExpression(d)) => d.operator,
+        Some(NodeData::PostfixUnaryExpression(d)) => d.operator,
+        _ => unary.node().operator(),
+    };
+    debug_assert_eq!(operator, unary.node().operator());
+    operator
+}
+
+/// The left operand and the operator token of a binary expression (Go
+/// `Left`, `OperatorToken`) for `access_kind_ref`.
+// PERF: noderead2. Both come from one node data read of the expression
+// (`frozen_data_ids`). Go reads the fields.
+#[inline]
+fn binary_left_and_operator_token_of(binary: NodeRef) -> (Node, Node) {
+    match frozen_data_ids(binary.node()) {
+        Some((NodeData::BinaryExpression(d), ids)) => {
+            (ids.node(d.left), ids.node(d.operator_token))
+        }
+        _ => (binary.node().left(), binary.node().operator_token()),
     }
 }
 

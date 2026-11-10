@@ -183,12 +183,25 @@ pub struct JsonDecoder<'a> {
     spare_names: Vec<FxHashSet<Cow<'a, str>>>,
 }
 
-fn is_ws(c: u8) -> bool {
+// JSON whitespace.
+#[inline]
+pub(crate) fn is_ws(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\r' | b'\n')
 }
 
+// Go `jsonwire.ConsumeWhitespace` from `p`: the offset of the first byte of
+// `data` at or after `p` that is not whitespace.
+#[inline]
+pub(crate) fn skip_ws(data: &[u8], mut p: usize) -> usize {
+    while p < data.len() && is_ws(data[p]) {
+        p += 1;
+    }
+    p
+}
+
 // Go `jsontext.Kind.normalize`.
-fn normalize_kind(c: u8) -> u8 {
+#[inline]
+pub(crate) fn normalize_kind(c: u8) -> u8 {
     match c {
         b'-' | b'0'..=b'9' => b'0',
         _ => c,
@@ -230,11 +243,8 @@ impl<'a> JsonDecoder<'a> {
         }
     }
 
-    fn skip_ws(&self, mut p: usize) -> usize {
-        while p < self.buf.len() && is_ws(self.buf[p]) {
-            p += 1;
-        }
-        p
+    fn skip_ws(&self, p: usize) -> usize {
+        skip_ws(self.buf, p)
     }
 
     fn last_len(&self) -> usize {
@@ -395,41 +405,14 @@ impl<'a> JsonDecoder<'a> {
 
     /// `read_token` without the `JsonToken` copies of the text
     /// (`RawToken`): the same checks, state changes and errors.
+    // Go `decoderState.ReadToken`: each kind of token is a method, as Go's
+    // cases call the `stateMachine` methods.
     fn next_token(&mut self) -> Result<RawToken<'a>, JsonError> {
         let (p, _) = self.peek_pos()?;
         let c = self.buf[p];
         match c {
-            b'n' | b't' | b'f' => {
-                let (lit, tok): (&[u8], RawToken<'a>) = match c {
-                    b'n' => (b"null", RawToken::Null),
-                    b't' => (b"true", RawToken::True),
-                    _ => (b"false", RawToken::False),
-                };
-                if !self.buf[p..].starts_with(lit) {
-                    let (pos, err) = consume_literal_error(self.buf, p, lit);
-                    return Err(self.syntactic_error(err, pos, 1, &[]));
-                }
-                self.append_value(p)?;
-                self.pos = p + lit.len();
-                Ok(tok)
-            }
-            b'"' => {
-                let (end, s) = self.scan_string(p)?;
-                if self.need_object_name() {
-                    let dup = match &mut self.stack.last_mut().expect("object frame").names {
-                        Some(names) => !names.insert(s.clone()),
-                        None => false,
-                    };
-                    if dup {
-                        let name = pointer_token_of_name(&self.buf[p..end]);
-                        return Err(self.syntactic_error(SyntaxErr::DuplicateName, p, 1, &[name]));
-                    }
-                    self.stack.last_mut().expect("object frame").name = p;
-                }
-                self.increment();
-                self.pos = end;
-                Ok(RawToken::String(s))
-            }
+            b'n' | b't' | b'f' => self.read_literal(p, c),
+            b'"' => self.read_string(p),
             b'-' | b'0'..=b'9' => {
                 let end = self.consume_number(p)?;
                 self.append_value(p)?;
@@ -437,54 +420,9 @@ impl<'a> JsonDecoder<'a> {
                 let raw = std::str::from_utf8(&self.buf[p..end]).expect("number is ASCII");
                 Ok(RawToken::Number(raw))
             }
-            b'{' | b'[' => {
-                if self.need_object_name() {
-                    return Err(self.syntactic_error(SyntaxErr::NonStringName, p, 1, &[]));
-                }
-                if self.stack.len() == MAX_NESTING_DEPTH {
-                    return Err(self.syntactic_error(SyntaxErr::MaxDepth, p, 1, &[]));
-                }
-                self.increment();
-                let is_object = c == b'{';
-                let names = if is_object && !self.options.allow_duplicate_names {
-                    Some(self.spare_names.pop().unwrap_or_default())
-                } else {
-                    None
-                };
-                self.stack.push(Frame {
-                    is_object,
-                    len: 0,
-                    names,
-                    name: 0,
-                });
-                self.pos = p + 1;
-                Ok(if is_object {
-                    RawToken::BeginObject
-                } else {
-                    RawToken::BeginArray
-                })
-            }
-            b'}' => {
-                if !self.last_is_object() {
-                    return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
-                }
-                if self.need_object_value() {
-                    return Err(self.syntactic_error(SyntaxErr::MissingValue, p, 1, &[]));
-                }
-                if let Some(names) = self.stack.pop().and_then(|f| f.names) {
-                    self.keep_names(names);
-                }
-                self.pos = p + 1;
-                Ok(RawToken::EndObject)
-            }
-            b']' => {
-                if self.stack.is_empty() || self.last_is_object() {
-                    return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
-                }
-                self.stack.pop();
-                self.pos = p + 1;
-                Ok(RawToken::EndArray)
-            }
+            b'{' | b'[' => self.push_container(p, c == b'{'),
+            b'}' => self.pop_object(p),
+            b']' => self.pop_array(p),
             _ => Err(self.syntactic_error(
                 invalid_character(self.buf, p, "at start of value"),
                 p,
@@ -492,6 +430,99 @@ impl<'a> JsonDecoder<'a> {
                 &[],
             )),
         }
+    }
+
+    /// Part of Go `ReadToken`: the literal at `p` that starts with `c`
+    /// (`consumeLiteral`, `appendLiteral`).
+    #[inline]
+    fn read_literal(&mut self, p: usize, c: u8) -> Result<RawToken<'a>, JsonError> {
+        let end = consume_literal_raw(self.buf, p, literal_text(c))
+            .map_err(|(pos, err)| self.syntactic_error(err, pos, 1, &[]))?;
+        self.append_value(p)?;
+        self.pos = end;
+        Ok(match c {
+            b'n' => RawToken::Null,
+            b't' => RawToken::True,
+            _ => RawToken::False,
+        })
+    }
+
+    /// Part of Go `ReadToken`: the string at `p`, with the duplicate check
+    /// of an object name (`insertQuoted`) and `appendString`.
+    #[inline]
+    fn read_string(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        let (end, s) = self.scan_string(p)?;
+        if self.need_object_name() {
+            let dup = match &mut self.stack.last_mut().expect("object frame").names {
+                Some(names) => !names.insert(s.clone()),
+                None => false,
+            };
+            if dup {
+                let name = pointer_token_of_name(&self.buf[p..end]);
+                return Err(self.syntactic_error(SyntaxErr::DuplicateName, p, 1, &[name]));
+            }
+            self.stack.last_mut().expect("object frame").name = p;
+        }
+        self.increment();
+        self.pos = end;
+        Ok(RawToken::String(s))
+    }
+
+    /// Go `stateMachine.pushObject` / `pushArray` and `Namespaces.push` for
+    /// the '{' or '[' at `p`.
+    #[inline]
+    fn push_container(&mut self, p: usize, is_object: bool) -> Result<RawToken<'a>, JsonError> {
+        if self.need_object_name() {
+            return Err(self.syntactic_error(SyntaxErr::NonStringName, p, 1, &[]));
+        }
+        if self.stack.len() == MAX_NESTING_DEPTH {
+            return Err(self.syntactic_error(SyntaxErr::MaxDepth, p, 1, &[]));
+        }
+        self.increment();
+        let names = if is_object && !self.options.allow_duplicate_names {
+            Some(self.spare_names.pop().unwrap_or_default())
+        } else {
+            None
+        };
+        self.stack.push(Frame {
+            is_object,
+            len: 0,
+            names,
+            name: 0,
+        });
+        self.pos = p + 1;
+        Ok(if is_object {
+            RawToken::BeginObject
+        } else {
+            RawToken::BeginArray
+        })
+    }
+
+    /// Go `stateMachine.popObject` and `Namespaces.pop` for the '}' at `p`.
+    #[inline]
+    fn pop_object(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        if !self.last_is_object() {
+            return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
+        }
+        if self.need_object_value() {
+            return Err(self.syntactic_error(SyntaxErr::MissingValue, p, 1, &[]));
+        }
+        if let Some(names) = self.stack.pop().and_then(|f| f.names) {
+            self.keep_names(names);
+        }
+        self.pos = p + 1;
+        Ok(RawToken::EndObject)
+    }
+
+    /// Go `stateMachine.popArray` for the ']' at `p`.
+    #[inline]
+    fn pop_array(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        if self.stack.is_empty() || self.last_is_object() {
+            return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
+        }
+        self.stack.pop();
+        self.pos = p + 1;
+        Ok(RawToken::EndArray)
     }
 
     /// Go `jsontext.Decoder.ReadValue`: the raw bytes of the next complete
@@ -606,109 +637,18 @@ impl<'a> JsonDecoder<'a> {
             let Some(&c) = b.get(i) else {
                 return Err((b.len(), SyntaxErr::UnexpectedEof));
             };
-            match c {
+            i = match c {
                 b'"' => return Ok((i + 1, out)),
-                b'\\' => {
-                    let Some(&e) = b.get(i + 1) else {
-                        return Err((i, SyntaxErr::UnexpectedEof));
-                    };
-                    match e {
-                        b'"' => out.push('"'),
-                        b'\\' => out.push('\\'),
-                        b'/' => out.push('/'),
-                        b'b' => out.push('\u{8}'),
-                        b'f' => out.push('\u{C}'),
-                        b'n' => out.push('\n'),
-                        b'r' => out.push('\r'),
-                        b't' => out.push('\t'),
-                        b'u' => {
-                            let escape = i;
-                            if b.len() < i + 6 {
-                                if has_escaped_utf16_prefix(&b[i..], false) {
-                                    return Err((escape, SyntaxErr::UnexpectedEof));
-                                }
-                                return Err((i, invalid_escape(&b[i..])));
-                            }
-                            let Some(v1) = parse_hex4(&b[i + 2..i + 6]) else {
-                                return Err((i, invalid_escape(&b[i..i + 6])));
-                            };
-                            i += 6;
-                            if (0xD800..0xE000).contains(&v1) {
-                                // Go checks the pair only with `validateUTF8`.
-                                let v2 = if b.len() < i + 6 {
-                                    if validate && has_escaped_utf16_prefix(&b[i..], true) {
-                                        return Err((escape, SyntaxErr::UnexpectedEof));
-                                    }
-                                    None
-                                } else if b[i] == b'\\' && b[i + 1] == b'u' {
-                                    parse_hex4(&b[i + 2..i + 6])
-                                } else {
-                                    None
-                                };
-                                let decoded = v2.and_then(|v2| {
-                                    ((0xD800..0xDC00).contains(&v1)
-                                        && (0xDC00..0xE000).contains(&v2))
-                                    .then(|| {
-                                        char::from_u32(
-                                            0x10000 + ((v1 - 0xD800) << 10) + (v2 - 0xDC00),
-                                        )
-                                    })
-                                    .flatten()
-                                });
-                                match decoded {
-                                    Some(ch) => {
-                                        out.push(ch);
-                                        i += 6;
-                                    }
-                                    None if !validate => out.push('\u{FFFD}'),
-                                    None => {
-                                        let what = &b[escape..(escape + 12).min(b.len())];
-                                        return Err((escape, invalid_escape(what)));
-                                    }
-                                }
-                            } else {
-                                out.push(char::from_u32(v1).expect("non-surrogate BMP code point"));
-                            }
-                            continue;
-                        }
-                        _ => return Err((i, invalid_escape(&b[i..i + 2]))),
-                    }
-                    i += 2;
-                }
+                b'\\' => consume_escape(b, i, validate, &mut out)?,
                 0x00..=0x1F => {
                     return Err((
                         i,
                         invalid_character(b, i, "in string (expecting non-control character)"),
                     ));
                 }
-                0x20..=0x7F => {
-                    // PERF: the run of plain ASCII bytes up to the next quote,
-                    // backslash, control or non-ASCII byte in one copy.
-                    let start = i;
-                    i += 1;
-                    while let Some(&c) = b.get(i) {
-                        if c == b'"' || c == b'\\' || !(0x20..0x80).contains(&c) {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    out.push_str(std::str::from_utf8(&b[start..i]).expect("ASCII run"));
-                }
-                _ => match decode_utf8(&b[i..]) {
-                    Some((ch, n)) => {
-                        out.push(ch);
-                        i += n;
-                    }
-                    None if !go_full_rune(&b[i..]) => {
-                        return Err((i, SyntaxErr::UnexpectedEof));
-                    }
-                    None if !validate => {
-                        out.push('\u{FFFD}');
-                        i += 1;
-                    }
-                    None => return Err((i, SyntaxErr::InvalidUtf8)),
-                },
-            }
+                0x20..=0x7F => push_ascii_run(b, i, &mut out),
+                _ => consume_utf8_rune(b, i, validate, &mut out)?,
+            };
         }
     }
 
@@ -890,6 +830,136 @@ fn parse_hex4(b: &[u8]) -> Option<u32> {
     b.iter().try_fold(0, |v, &c| hex_val(c).map(|d| v * 16 + d))
 }
 
+/// Part of `JsonDecoder::consume_string_raw`: the escape sequence at `i` (a
+/// backslash). Pushes its text to `out` and gives the offset after it.
+#[inline]
+fn consume_escape(
+    b: &[u8],
+    i: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    let Some(&e) = b.get(i + 1) else {
+        return Err((i, SyntaxErr::UnexpectedEof));
+    };
+    let c = match e {
+        b'"' => '"',
+        b'\\' => '\\',
+        b'/' => '/',
+        b'b' => '\u{8}',
+        b'f' => '\u{C}',
+        b'n' => '\n',
+        b'r' => '\r',
+        b't' => '\t',
+        b'u' => return consume_unicode_escape(b, i, validate, out),
+        _ => return Err((i, invalid_escape(&b[i..i + 2]))),
+    };
+    out.push(c);
+    Ok(i + 2)
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the `\uXXXX` escape at
+/// `escape`, with the `\uXXXX` low half that follows a high surrogate. Go
+/// checks the pair only with `validateUTF8`; without it a lone or broken
+/// surrogate is U+FFFD.
+fn consume_unicode_escape(
+    b: &[u8],
+    escape: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    if b.len() < escape + 6 {
+        if has_escaped_utf16_prefix(&b[escape..], false) {
+            return Err((escape, SyntaxErr::UnexpectedEof));
+        }
+        return Err((escape, invalid_escape(&b[escape..])));
+    }
+    let Some(v1) = parse_hex4(&b[escape + 2..escape + 6]) else {
+        return Err((escape, invalid_escape(&b[escape..escape + 6])));
+    };
+    let i = escape + 6;
+    if !(0xD800..0xE000).contains(&v1) {
+        out.push(char::from_u32(v1).expect("non-surrogate BMP code point"));
+        return Ok(i);
+    }
+    let v2 = if b.len() < i + 6 {
+        if validate && has_escaped_utf16_prefix(&b[i..], true) {
+            return Err((escape, SyntaxErr::UnexpectedEof));
+        }
+        None
+    } else if b[i] == b'\\' && b[i + 1] == b'u' {
+        parse_hex4(&b[i + 2..i + 6])
+    } else {
+        None
+    };
+    match v2.and_then(|v2| decode_surrogate_pair(v1, v2)) {
+        Some(ch) => {
+            out.push(ch);
+            Ok(i + 6)
+        }
+        None if !validate => {
+            out.push('\u{FFFD}');
+            Ok(i)
+        }
+        None => {
+            let what = &b[escape..(escape + 12).min(b.len())];
+            Err((escape, invalid_escape(what)))
+        }
+    }
+}
+
+/// The character of the UTF-16 surrogate pair `v1`, `v2` (Go
+/// `utf16.DecodeRune`), or `None` when they are not a high and a low half.
+fn decode_surrogate_pair(v1: u32, v2: u32) -> Option<char> {
+    if (0xD800..0xDC00).contains(&v1) && (0xDC00..0xE000).contains(&v2) {
+        char::from_u32(0x10000 + ((v1 - 0xD800) << 10) + (v2 - 0xDC00))
+    } else {
+        None
+    }
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the plain ASCII byte at `i`
+/// and the run that follows it, up to the next quote, backslash, control or
+/// non-ASCII byte. Pushes the run to `out` and gives the offset after it.
+// PERF: the run is one copy.
+#[inline]
+fn push_ascii_run(b: &[u8], i: usize, out: &mut String) -> usize {
+    let start = i;
+    let mut i = i + 1;
+    while let Some(&c) = b.get(i) {
+        if c == b'"' || c == b'\\' || !(0x20..0x80).contains(&c) {
+            break;
+        }
+        i += 1;
+    }
+    out.push_str(std::str::from_utf8(&b[start..i]).expect("ASCII run"));
+    i
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the non-ASCII UTF-8 character
+/// at `i`. Pushes it (or U+FFFD for an invalid byte when not `validate`) to
+/// `out` and gives the offset after it.
+#[inline]
+fn consume_utf8_rune(
+    b: &[u8],
+    i: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    match decode_utf8(&b[i..]) {
+        Some((ch, n)) => {
+            out.push(ch);
+            Ok(i + n)
+        }
+        None if !go_full_rune(&b[i..]) => Err((i, SyntaxErr::UnexpectedEof)),
+        None if !validate => {
+            out.push('\u{FFFD}');
+            Ok(i + 1)
+        }
+        None => Err((i, SyntaxErr::InvalidUtf8)),
+    }
+}
+
 // Go `ConsumeLiteral` of the literal `lit` at `p`, which is not all there:
 // the offset and error of `consumeLiteral`.
 fn consume_literal_error(b: &[u8], p: usize, lit: &[u8]) -> (usize, SyntaxErr) {
@@ -905,6 +975,27 @@ fn consume_literal_error(b: &[u8], p: usize, lit: &[u8]) -> (usize, SyntaxErr) {
         }
     }
     (b.len(), SyntaxErr::UnexpectedEof)
+}
+
+/// The JSON literal that starts with `c` (`n`, `t` or `f`).
+#[inline]
+fn literal_text(c: u8) -> &'static [u8] {
+    match c {
+        b'n' => b"null",
+        b't' => b"true",
+        _ => b"false",
+    }
+}
+
+// Go `consumeLiteral` of the literal `lit` at `p`: the end offset, or the
+// offset and error.
+#[inline]
+fn consume_literal_raw(b: &[u8], p: usize, lit: &[u8]) -> Result<usize, (usize, SyntaxErr)> {
+    if b[p..].starts_with(lit) {
+        Ok(p + lit.len())
+    } else {
+        Err(consume_literal_error(b, p, lit))
+    }
 }
 
 // Go `jsonwire.ConsumeNumberResumable` through `consumeNumber`: the end
@@ -946,15 +1037,56 @@ fn consume_number_raw(b: &[u8], p: usize) -> Result<usize, (usize, SyntaxErr)> {
     Ok(i)
 }
 
-// Go `appendEscapePointerName`: a JSON pointer token for an object name.
+// A JSON pointer token for an object name (`append_escape_pointer_name`).
 fn escape_pointer_token(name: &str) -> String {
     let mut b = String::with_capacity(name.len());
+    append_escape_pointer_name(&mut b, name);
+    b
+}
+
+// Go: jsontext/state.go:203 appendEscapePointerName
+fn append_escape_pointer_name(b: &mut String, name: &str) {
     for c in name.chars() {
         // Per RFC 6901, section 3, escape '~' and '/' characters.
         match c {
             '~' => b.push_str("~0"),
             '/' => b.push_str("~1"),
             c => b.push(c),
+        }
+    }
+}
+
+// Go: jsontext/state.go:180 appendStackPointer, over `entries`, the open
+// objects and arrays below the top level: `kind_len` gives whether an entry
+// is an object and its length (names and values read), `name` the unquoted
+// last name read in an object. `at` is Go's `where`.
+pub(crate) fn append_stack_pointer<'s, T>(
+    entries: &'s [T],
+    kind_len: impl Fn(&T) -> (bool, usize),
+    name: impl Fn(&'s T) -> Cow<'s, str>,
+    at: i32,
+) -> String {
+    let mut b = String::new();
+    for (i, e) in entries.iter().enumerate() {
+        let (is_object, len) = kind_len(e);
+        // By default point to the previous array element.
+        let mut index = len.wrapping_sub(1);
+        if i + 1 == entries.len() {
+            let need_value = is_object && len % 2 == 1;
+            let need_name = is_object && len.is_multiple_of(2);
+            if (at < 0 && len == 0) || (at == 0 && !need_value) || (at > 0 && need_name) {
+                return b;
+            }
+            if at > 0 && !is_object {
+                // Point to the next array element.
+                index = len;
+            }
+        }
+        b.push('/');
+        if is_object {
+            append_escape_pointer_name(&mut b, &name(e));
+        } else {
+            b.push_str(&index.to_string());
         }
     }
     b
@@ -1017,32 +1149,15 @@ fn syntactic_error_text(err: &SyntaxErr, mut pointer: String, mut offset: usize)
 }
 
 impl JsonDecoder<'_> {
-    // Go: jsontext/state.go:180 appendStackPointer
+    // Go `state.appendStackPointer` of the decoder state
+    // (`append_stack_pointer`).
     fn stack_pointer(&self, at: i32) -> String {
-        let mut b = String::new();
-        let n = self.stack.len();
-        for (i, f) in self.stack.iter().enumerate() {
-            // By default point to the previous array element.
-            let mut index = f.len.wrapping_sub(1);
-            if i + 1 == n {
-                let need_value = f.is_object && f.len % 2 == 1;
-                let need_name = f.is_object && f.len.is_multiple_of(2);
-                if (at < 0 && f.len == 0) || (at == 0 && !need_value) || (at > 0 && need_name) {
-                    return b;
-                }
-                if at > 0 && !f.is_object {
-                    // Point to the next array element.
-                    index = f.len;
-                }
-            }
-            b.push('/');
-            if f.is_object {
-                b.push_str(&pointer_token_of_name(self.quoted_name_at(f.name)));
-            } else {
-                b.push_str(&index.to_string());
-            }
-        }
-        b
+        append_stack_pointer(
+            &self.stack,
+            |f| (f.is_object, f.len),
+            |f| Cow::Owned(unquote_pointer_name(self.quoted_name_at(f.name))),
+            at,
+        )
     }
 
     // The JSON string (with its quotes) that starts at `p`.
@@ -1219,170 +1334,213 @@ impl JsonDecoder<'_> {
     // consumeArray, for the value at `start`, whose `depth` is Go's (the
     // stack depth plus one). Gives the end of the value, or Go's error, its
     // offset and pointer suffix.
-    // PORT: Go recurses; this keeps its own stack of open containers.
+    // PORT: Go recurses; this keeps its own stack of open containers (up to
+    // `MAX_NESTING_DEPTH` deep), and each step is a function: the value
+    // (`consume_value_step`), the start of a container (`consume_open`), an
+    // object name (`consume_object_name`) and what follows a value
+    // (`consume_after_value`).
     fn go_consume_value(&self, start: usize, depth: usize) -> Result<usize, ConsumeError> {
-        struct Open {
-            is_object: bool,
-            // The pointer token of the member being read (name or index).
-            member: String,
-            index: usize,
-            names: Option<FxHashSet<String>>,
-        }
-        // An error at `pos`: each open container but the innermost adds its
-        // member; the innermost adds it when `wrap`.
-        fn fail(open: &[Open], pos: usize, err: SyntaxErr, wrap: bool) -> ConsumeError {
-            let n = open.len() - usize::from(!wrap && !open.is_empty());
-            let suffix = open[..n].iter().map(|o| o.member.clone()).collect();
-            (pos, err, suffix)
-        }
-        enum Step {
-            Value,
-            AfterValue,
-            BeforeName,
-        }
-        let b = self.buf;
-        let mut open: Vec<Open> = Vec::new();
+        let mut open: Vec<ConsumeOpen> = Vec::new();
         let mut p = start;
-        let mut step = Step::Value;
+        let mut step = ConsumeStep::Value;
         loop {
-            match step {
-                Step::Value => {
-                    let c = b[p];
-                    match normalize_kind(c) {
-                        b'n' | b't' | b'f' => {
-                            let lit: &[u8] = match c {
-                                b'n' => b"null",
-                                b't' => b"true",
-                                _ => b"false",
-                            };
-                            if !b[p..].starts_with(lit) {
-                                let (pos, err) = consume_literal_error(b, p, lit);
-                                return Err(fail(&open, pos, err, true));
-                            }
-                            p += lit.len();
-                        }
-                        b'"' => match self.consume_string_raw(p) {
-                            Ok((end, _)) => p = end,
-                            Err((pos, err)) => return Err(fail(&open, pos, err, true)),
-                        },
-                        b'0' => match consume_number_raw(b, p) {
-                            Ok(end) => p = end,
-                            Err((pos, err)) => return Err(fail(&open, pos, err, true)),
-                        },
-                        b'{' | b'[' => {
-                            if depth + open.len() == MAX_NESTING_DEPTH + 1 {
-                                return Err(fail(&open, p, SyntaxErr::MaxDepth, true));
-                            }
-                            let is_object = c == b'{';
-                            open.push(Open {
-                                is_object,
-                                member: "0".to_string(),
-                                index: 0,
-                                names: (is_object && !self.options.allow_duplicate_names)
-                                    .then(FxHashSet::default),
-                            });
-                            p = self.skip_ws(p + 1);
-                            if p >= b.len() {
-                                return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                            }
-                            if b[p] == if is_object { b'}' } else { b']' } {
-                                open.pop();
-                                p += 1;
-                            } else {
-                                step = if is_object {
-                                    Step::BeforeName
-                                } else {
-                                    Step::Value
-                                };
-                                continue;
-                            }
-                        }
-                        next => {
-                            let last_is_object = self.last_is_object();
-                            let err = if (last_is_object && next == b']')
-                                || (!last_is_object && next == b'}')
-                            {
-                                SyntaxErr::MismatchDelim
-                            } else {
-                                invalid_character(b, p, "at start of value")
-                            };
-                            return Err(fail(&open, p, err, true));
-                        }
-                    }
-                    step = Step::AfterValue;
+            (p, step) = match step {
+                ConsumeStep::Value => self.consume_value_step(&mut open, p, depth)?,
+                ConsumeStep::BeforeName => {
+                    (self.consume_object_name(&mut open, p)?, ConsumeStep::Value)
                 }
-                Step::BeforeName => {
-                    p = self.skip_ws(p);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                    }
-                    let name_start = p;
-                    let (end, name) = self
-                        .consume_string_raw(p)
-                        .map_err(|(pos, err)| fail(&open, pos, err, false))?;
-                    let top = open.last_mut().expect("open object");
-                    top.member = escape_pointer_token(&name);
-                    if let Some(names) = &mut top.names
-                        && !names.insert(name)
-                    {
-                        return Err(fail(&open, name_start, SyntaxErr::DuplicateName, true));
-                    }
-                    p = self.skip_ws(end);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, true));
-                    }
-                    if b[p] != b':' {
-                        let err = invalid_character(b, p, "after object name (expecting ':')");
-                        return Err(fail(&open, p, err, true));
-                    }
-                    p = self.skip_ws(p + 1);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, true));
-                    }
-                    step = Step::Value;
+                ConsumeStep::AfterValue => match self.consume_after_value(&mut open, p)? {
+                    Some(next) => next,
+                    None => return Ok(p),
+                },
+            };
+        }
+    }
+
+    /// Part of Go `consumeValue`: the value at `p`. A literal, string or
+    /// number is read whole; an object or array is opened (`consume_open`).
+    fn consume_value_step(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+        depth: usize,
+    ) -> Result<(usize, ConsumeStep), ConsumeError> {
+        let b = self.buf;
+        let c = b[p];
+        let end = match normalize_kind(c) {
+            b'n' | b't' | b'f' => consume_literal_raw(b, p, literal_text(c)),
+            b'"' => self.consume_string_raw(p).map(|(end, _)| end),
+            b'0' => consume_number_raw(b, p),
+            b'{' | b'[' => return self.consume_open(open, p, depth),
+            next => {
+                let last_is_object = self.last_is_object();
+                let err = if (last_is_object && next == b']') || (!last_is_object && next == b'}') {
+                    SyntaxErr::MismatchDelim
+                } else {
+                    invalid_character(b, p, "at start of value")
+                };
+                Err((p, err))
+            }
+        };
+        end.map(|end| (end, ConsumeStep::AfterValue))
+            .map_err(|(pos, err)| consume_fail(open, pos, err, true))
+    }
+
+    /// Part of Go `consumeObject` / `consumeArray` ("handle before start" and
+    /// "after start"): opens the container at `p` and goes to its first
+    /// member, or past it when it is empty.
+    fn consume_open(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+        depth: usize,
+    ) -> Result<(usize, ConsumeStep), ConsumeError> {
+        if depth + open.len() == MAX_NESTING_DEPTH + 1 {
+            return Err(consume_fail(open, p, SyntaxErr::MaxDepth, true));
+        }
+        let is_object = self.buf[p] == b'{';
+        open.push(ConsumeOpen {
+            is_object,
+            member: "0".to_string(),
+            index: 0,
+            names: (is_object && !self.options.allow_duplicate_names).then(FxHashSet::default),
+        });
+        let p = self.skip_ws(p + 1);
+        if p >= self.buf.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        if self.buf[p] == close_delim(is_object) {
+            open.pop();
+            return Ok((p + 1, ConsumeStep::AfterValue));
+        }
+        let next = if is_object {
+            ConsumeStep::BeforeName
+        } else {
+            ConsumeStep::Value
+        };
+        Ok((p, next))
+    }
+
+    /// Part of Go `consumeObject` ("handle before name", "after name" and
+    /// "before value"): the name at `p` of the innermost open object, its
+    /// duplicate check and the ':'. Gives the start of the value.
+    fn consume_object_name(
+        &self,
+        open: &mut [ConsumeOpen],
+        p: usize,
+    ) -> Result<usize, ConsumeError> {
+        let b = self.buf;
+        let p = self.skip_ws(p);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        let name_start = p;
+        let (end, name) = self
+            .consume_string_raw(p)
+            .map_err(|(pos, err)| consume_fail(open, pos, err, false))?;
+        let top = open.last_mut().expect("open object");
+        top.member = escape_pointer_token(&name);
+        if let Some(names) = &mut top.names
+            && !names.insert(name)
+        {
+            return Err(consume_fail(
+                open,
+                name_start,
+                SyntaxErr::DuplicateName,
+                true,
+            ));
+        }
+        let p = self.skip_ws(end);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, true));
+        }
+        if b[p] != b':' {
+            let err = invalid_character(b, p, "after object name (expecting ':')");
+            return Err(consume_fail(open, p, err, true));
+        }
+        let p = self.skip_ws(p + 1);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, true));
+        }
+        Ok(p)
+    }
+
+    /// Part of Go `consumeObject` / `consumeArray` ("handle after value"):
+    /// the ',' or closing delimiter at `p` after a member of the innermost
+    /// open container. `None` when no container is open (the value is done).
+    fn consume_after_value(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+    ) -> Result<Option<(usize, ConsumeStep)>, ConsumeError> {
+        let b = self.buf;
+        let Some(top) = open.last_mut() else {
+            return Ok(None);
+        };
+        let p = self.skip_ws(p);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        let is_object = top.is_object;
+        match b[p] {
+            b',' if is_object => Ok(Some((p + 1, ConsumeStep::BeforeName))),
+            b',' => {
+                top.index += 1;
+                top.member = top.index.to_string();
+                let p = self.skip_ws(p + 1);
+                if p >= b.len() {
+                    return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
                 }
-                Step::AfterValue => {
-                    let Some(top) = open.last_mut() else {
-                        return Ok(p);
-                    };
-                    p = self.skip_ws(p);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                    }
-                    let is_object = top.is_object;
-                    match b[p] {
-                        b',' => {
-                            p += 1;
-                            if is_object {
-                                step = Step::BeforeName;
-                            } else {
-                                top.index += 1;
-                                top.member = top.index.to_string();
-                                p = self.skip_ws(p);
-                                if p >= b.len() {
-                                    return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                                }
-                                step = Step::Value;
-                            }
-                        }
-                        c if c == if is_object { b'}' } else { b']' } => {
-                            open.pop();
-                            p += 1;
-                        }
-                        _ => {
-                            let place = if is_object {
-                                "after object value (expecting ',' or '}')"
-                            } else {
-                                "after array element (expecting ',' or ']')"
-                            };
-                            let err = invalid_character(b, p, place);
-                            return Err(fail(&open, p, err, false));
-                        }
-                    }
-                }
+                Ok(Some((p, ConsumeStep::Value)))
+            }
+            c if c == close_delim(is_object) => {
+                open.pop();
+                Ok(Some((p + 1, ConsumeStep::AfterValue)))
+            }
+            _ => {
+                let place = if is_object {
+                    "after object value (expecting ',' or '}')"
+                } else {
+                    "after array element (expecting ',' or ']')"
+                };
+                let err = invalid_character(b, p, place);
+                Err(consume_fail(open, p, err, false))
             }
         }
     }
+}
+
+/// One open container of `go_consume_value`: a frame of Go's recursive
+/// `consumeObject` / `consumeArray`.
+struct ConsumeOpen {
+    is_object: bool,
+    // The pointer token of the member being read (name or index).
+    member: String,
+    index: usize,
+    names: Option<FxHashSet<String>>,
+}
+
+/// Where `go_consume_value` goes on: a value (Go `consumeValue`), what
+/// follows a value, or an object name.
+enum ConsumeStep {
+    Value,
+    AfterValue,
+    BeforeName,
+}
+
+/// The `ConsumeError` of `go_consume_value` at `pos`: each open container
+/// but the innermost adds its member to the pointer suffix (Go's
+/// `wrapWithObjectName` / `wrapWithArrayIndex` on the way out); the
+/// innermost adds it when `wrap`.
+fn consume_fail(open: &[ConsumeOpen], pos: usize, err: SyntaxErr, wrap: bool) -> ConsumeError {
+    let n = open.len() - usize::from(!wrap && !open.is_empty());
+    let suffix = open[..n].iter().map(|o| o.member.clone()).collect();
+    (pos, err, suffix)
+}
+
+/// The closing delimiter of an object or array.
+fn close_delim(is_object: bool) -> u8 {
+    if is_object { b'}' } else { b']' }
 }
 
 /// Go `json.UnmarshalerFrom` and the JSON v2 default unmarshalers.
@@ -2173,50 +2331,7 @@ fn json_append_multiline_pieces(
         m.may_append_delim(&mut b, k);
         json_append_whitespace(&m, &mut b, k, prefix, indent);
         let start = i;
-        match k {
-            b'"' => {
-                i += 1;
-                while i < src.len() && src[i] != b'"' {
-                    if src[i] == b'\\' {
-                        i += 1;
-                    }
-                    i += 1;
-                }
-                if i >= src.len() {
-                    return Err(JsonError::new("unexpected EOF within string"));
-                }
-                i += 1;
-                m.increment();
-            }
-            b'0' => {
-                while i < src.len()
-                    && matches!(src[i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
-                {
-                    i += 1;
-                }
-                m.increment();
-            }
-            b'n' | b't' | b'f' => {
-                while i < src.len() && src[i].is_ascii_lowercase() {
-                    i += 1;
-                }
-                m.increment();
-            }
-            b'{' | b'[' => {
-                i += 1;
-                m.push(k == b'{');
-            }
-            b'}' | b']' => {
-                i += 1;
-                m.pop()?;
-            }
-            _ => {
-                return Err(JsonError::new(format!(
-                    "invalid character {:?} at start of value",
-                    char::from(c)
-                )));
-            }
-        }
+        i = json_multiline_token(src, start, k, &mut m)?;
         if let Some(pieces) = pieces.as_deref_mut() {
             pieces.token(k, &src[start..i]);
         }
@@ -2226,6 +2341,63 @@ fn json_append_multiline_pieces(
         }
     }
     Ok(b)
+}
+
+/// Part of `json_append_multiline_pieces`: the compact token of kind `k`
+/// at `start`, with the state machine update of Go `WriteToken`. Gives the
+/// end of the token.
+#[inline]
+fn json_multiline_token(
+    src: &[u8],
+    start: usize,
+    k: u8,
+    m: &mut JsonMultilineState,
+) -> Result<usize, JsonError> {
+    let mut i = start;
+    match k {
+        b'"' => {
+            i += 1;
+            while i < src.len() && src[i] != b'"' {
+                if src[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i >= src.len() {
+                return Err(JsonError::new("unexpected EOF within string"));
+            }
+            i += 1;
+            m.increment();
+        }
+        b'0' => {
+            while i < src.len() && matches!(src[i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+            {
+                i += 1;
+            }
+            m.increment();
+        }
+        b'n' | b't' | b'f' => {
+            while i < src.len() && src[i].is_ascii_lowercase() {
+                i += 1;
+            }
+            m.increment();
+        }
+        b'{' | b'[' => {
+            i += 1;
+            m.push(k == b'{');
+        }
+        b'}' | b']' => {
+            i += 1;
+            m.pop()?;
+        }
+        _ => {
+            return Err(JsonError::new(format!(
+                "invalid character {:?} at start of value",
+                char::from(src[start])
+            )));
+        }
+    }
+    Ok(i)
 }
 
 // Go: json/json.go:48 MarshalIndentWrite

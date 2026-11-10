@@ -785,7 +785,7 @@ impl Session {
             return Ok(to_any(RawBinary(data)));
         }
         Ok(to_any(SourceFileResponse {
-            data: base64_std_encoding_encode_to_string(&data),
+            data: crate::gostd::base64::std_encoding_encode_to_string(&data),
         }))
     }
 
@@ -840,7 +840,7 @@ impl Session {
             return Ok(to_any(RawBinary(data)));
         }
         Ok(to_any(SourceFileResponse {
-            data: base64_std_encoding_encode_to_string(&data),
+            data: crate::gostd::base64::std_encoding_encode_to_string(&data),
         }))
     }
 
@@ -1212,7 +1212,7 @@ impl Session {
 
         let target_source_file = self.resolve_optional_source_file(program, Some(&params.file))?;
 
-        let data = match base64_std_encoding_decode_string(&params.data) {
+        let data = match crate::gostd::base64::std_encoding_decode_string(&params.data) {
             Ok(data) => data,
             Err(err) => {
                 return Err(errors::errorf(
@@ -3142,166 +3142,12 @@ impl Session {
     }
 }
 
-// Go: encoding/base64/base64.go:139 (*Encoding).EncodeToString (StdEncoding)
-// PORT: the crate has no base64 dependency. Go `base64.StdEncoding`: the
-// standard alphabet with `=` padding.
-// PERF: (apiperf1) Go `Encode` (base64.go:145) writes each 3 bytes as 4
-// bytes of a buffer of the final size; so does this. The text is ASCII, so
-// the UTF-8 check at the end is one fast pass. A `String::push` for each
-// byte was 5% of an API createSourceFile loop of a 260 KB file.
-pub fn base64_std_encoding_encode_to_string(src: &[u8]) -> String {
-    const ENCODE_STD: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let encode = |val: u32, shift: u32| ENCODE_STD[((val >> shift) & 0x3F) as usize];
-    let mut dst = vec![0u8; src.len().div_ceil(3) * 4];
-    let (whole, rest) = src.as_chunks::<3>();
-    let (quads, _) = dst.as_chunks_mut::<4>();
-    for (quad, &[b0, b1, b2]) in quads.iter_mut().zip(whole) {
-        let val = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
-        *quad = [
-            encode(val, 18),
-            encode(val, 12),
-            encode(val, 6),
-            encode(val, 0),
-        ];
-    }
-    // Go: the remaining small block of `Encode`, with `=` padding.
-    if let Some(quad) = quads.get_mut(whole.len()) {
-        let val = (u32::from(rest[0]) << 16) | rest.get(1).map_or(0, |&b| u32::from(b) << 8);
-        *quad = [
-            encode(val, 18),
-            encode(val, 12),
-            if rest.len() == 2 {
-                encode(val, 6)
-            } else {
-                b'='
-            },
-            b'=',
-        ];
-    }
-    String::from_utf8(dst).expect("base64 text is ASCII")
-}
-
-// Go: encoding/base64/base64.go:429 (*Encoding).DecodeString (StdEncoding)
-// PORT: the crate has no base64 dependency. This is Go `Decode` as a loop of
-// `decodeQuantum` (base64.go:312): the standard alphabet, `=` padding
-// required, not strict, `\r` and `\n` skipped. Go's 8- and 4-byte fast paths
-// decode valid input the same way and fall back to `decodeQuantum` at the
-// same offset, so results and error offsets are equal. Go returns the
-// partial data with the error; the only caller uses the error alone. Go
-// `CorruptInputError` is a `GoError` with the same text.
-pub fn base64_std_encoding_decode_string(s: &str) -> Result<Vec<u8>, GoError> {
-    fn decode_map(c: u8) -> u8 {
-        match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => 0xFF,
-        }
-    }
-    // Go: base64.go:303 CorruptInputError.Error
-    fn corrupt_input_error(offset: usize) -> GoError {
-        errors::new(format!("illegal base64 data at input byte {offset}"))
-    }
-
-    let src = s.as_bytes();
-    let mut dst: Vec<u8> = Vec::with_capacity(src.len() / 4 * 3);
-    if src.is_empty() {
-        return Ok(dst);
-    }
-    let mut si = 0usize;
-    while si < src.len() {
-        // Go: base64.go:312 decodeQuantum
-        let mut dbuf = [0u8; 4];
-        let mut dlen = 4usize;
-        let mut err: Option<GoError> = None;
-
-        let mut j = 0usize;
-        while j < dbuf.len() {
-            if src.len() == si {
-                if j == 0 {
-                    return Ok(dst);
-                }
-                // j == 1, or padding is required (StdEncoding)
-                return Err(corrupt_input_error(si - j));
-            }
-            let input = src[si];
-            si += 1;
-
-            let out = decode_map(input);
-            if out != 0xFF {
-                dbuf[j] = out;
-                j += 1;
-                continue;
-            }
-
-            if input == b'\n' || input == b'\r' {
-                continue;
-            }
-
-            if input != b'=' {
-                return Err(corrupt_input_error(si - 1));
-            }
-
-            // We've reached the end and there's padding
-            match j {
-                0 | 1 => {
-                    // incorrect padding
-                    return Err(corrupt_input_error(si - 1));
-                }
-                2 => {
-                    // "==" is expected, the first "=" is already consumed.
-                    // skip over newlines
-                    while si < src.len() && (src[si] == b'\n' || src[si] == b'\r') {
-                        si += 1;
-                    }
-                    if si == src.len() {
-                        // not enough padding
-                        return Err(corrupt_input_error(src.len()));
-                    }
-                    if src[si] != b'=' {
-                        // incorrect padding
-                        return Err(corrupt_input_error(si - 1));
-                    }
-
-                    si += 1;
-                }
-                _ => {}
-            }
-
-            // skip over newlines
-            while si < src.len() && (src[si] == b'\n' || src[si] == b'\r') {
-                si += 1;
-            }
-            if si < src.len() {
-                // trailing garbage
-                err = Some(corrupt_input_error(si));
-            }
-            dlen = j;
-            break;
-        }
-
-        // Convert 4x 6bit source bytes into 3 bytes
-        let val = u32::from(dbuf[0]) << 18
-            | u32::from(dbuf[1]) << 12
-            | u32::from(dbuf[2]) << 6
-            | u32::from(dbuf[3]);
-        let bytes = [(val >> 16) as u8, (val >> 8) as u8, val as u8];
-        match dlen {
-            4 => dst.extend_from_slice(&bytes[..3]),
-            3 => dst.extend_from_slice(&bytes[..2]),
-            2 => dst.extend_from_slice(&bytes[..1]),
-            _ => {}
-        }
-
-        if let Some(err) = err {
-            return Err(err);
-        }
-    }
-    Ok(dst)
-}
+/// Go `base64.StdEncoding.DecodeString` and `EncodeToString`, under the
+/// names that the API tests use.
+pub use crate::gostd::base64::{
+    std_encoding_decode_string as base64_std_encoding_decode_string,
+    std_encoding_encode_to_string as base64_std_encoding_encode_to_string,
+};
 
 // Go: strconv/number.go:104 ParseUint and internal/strconv/atoi.go:47 ParseUint
 // PORT: Go stdlib. Only `2 <= base <= 36` is ported (the caller passes 10);
@@ -3365,7 +3211,7 @@ fn strconv_parse_uint(s: &str, base: u32, bit_size: u32) -> Result<u64, GoError>
 
 // Go: api/session.go:3543 decodePrintNode (ts#64320)
 pub fn decode_print_node(encoded: &str) -> Result<Node, GoError> {
-    let data = match base64_std_encoding_decode_string(encoded) {
+    let data = match crate::gostd::base64::std_encoding_decode_string(encoded) {
         Ok(data) => data,
         Err(err) => {
             return Err(errors::errorf(

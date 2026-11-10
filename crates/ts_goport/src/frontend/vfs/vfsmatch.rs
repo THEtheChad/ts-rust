@@ -1,5 +1,8 @@
 use crate::frontend::prelude::*;
 use std::borrow::Cow;
+// Go `strings.EqualFold`; other modules name it through vfsmatch.
+use crate::frontend::stringutil_ls::decode_rune_bytes as decode_rune;
+pub use crate::frontend::stringutil_ls::equal_fold;
 
 // This file ports vfs/vfsmatch/vfsmatch.go and stringer_generated.go.
 // It implements the glob matching algorithm specified in MATCHING_ALGORITHM.md.
@@ -850,83 +853,6 @@ fn ensure_trailing_slash(s: &str) -> String {
         return format!("{s}/");
     }
     s.to_string()
-}
-
-// PORT: Go `utf8.DecodeRuneInString`. An invalid or truncated sequence
-// gives U+FFFD with width 1. The input is never empty at the call sites.
-fn decode_rune(s: &[u8]) -> (char, usize) {
-    // PERF (cfgwalk1): an ASCII byte is its own rune, as in Go's fast path.
-    if let Some(&b) = s.first()
-        && b < 0x80
-    {
-        return (b as char, 1);
-    }
-    let head = &s[..s.len().min(4)];
-    let valid = match std::str::from_utf8(head) {
-        Ok(v) => v,
-        // `valid_up_to` marks the valid UTF-8 prefix.
-        Err(e) => std::str::from_utf8(&head[..e.valid_up_to()]).unwrap_or(""),
-    };
-    match valid.chars().next() {
-        Some(c) => (c, c.len_utf8()),
-        None => (char::REPLACEMENT_CHARACTER, 1),
-    }
-}
-
-// PORT: Go `unicode.ToUpper` uses the simple mapping. A multi-rune full
-// uppercase has no simple mapping, so the rune stays the same.
-fn simple_to_upper(c: char) -> char {
-    let mut u = c.to_uppercase();
-    match (u.next(), u.next()) {
-        (Some(single), None) => single,
-        _ => c,
-    }
-}
-
-// PORT: simple case fold key, the same approach as tspath's private helper.
-// Two runes are in the same Go `unicode.SimpleFold` orbit when their keys
-// are equal. U+0131 (dotless i) has only a Turkic fold entry, so its orbit
-// is itself, like Go. Rust and Go can use different Unicode versions; this
-// matters only for runes added between those versions.
-fn simple_fold_key(c: char) -> char {
-    if c == '\u{0131}' {
-        return c;
-    }
-    let u = simple_to_upper(c);
-    let mut l = u.to_lowercase();
-    match (l.next(), l.next()) {
-        (Some(single), None) => single,
-        _ => u,
-    }
-}
-
-// PORT: Go `strings.EqualFold` on byte strings. Runes are decoded like Go
-// (see `decode_rune`). Each rune pair must be equal, ASCII case equal, or
-// in the same simple fold orbit (see `simple_fold_key`).
-pub fn equal_fold(a: &[u8], b: &[u8]) -> bool {
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        let (sr, sn) = decode_rune(&a[i..]);
-        let (tr, tn) = decode_rune(&b[j..]);
-        i += sn;
-        j += tn;
-        if sr == tr {
-            continue;
-        }
-        let (sr, tr) = if tr < sr { (tr, sr) } else { (sr, tr) };
-        if (tr as u32) < 0x80 {
-            // ASCII only, sr/tr must be upper/lower case
-            if sr.is_ascii_uppercase() && tr as u32 == sr as u32 + ('a' as u32 - 'A' as u32) {
-                continue;
-            }
-            return false;
-        }
-        if simple_fold_key(sr) == simple_fold_key(tr) {
-            continue;
-        }
-        return false;
-    }
-    i == a.len() && j == b.len()
 }
 
 // Go: vfs/vfsmatch/vfsmatch.go:515 globMatcher

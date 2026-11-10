@@ -135,14 +135,8 @@ fn evaluate_expression(
                 && expr.operator_token().kind() == SyntaxKind::PlusToken;
             resolved_other_files = left.resolved_other_files || right.resolved_other_files;
             has_external_references = left.has_external_references || right.has_external_references;
-            let (left_num, left_is_num) = match &left.value {
-                Some(LiteralValue::Number(n)) => (*n, true),
-                _ => (Number::default(), false),
-            };
-            let (right_num, right_is_num) = match &right.value {
-                Some(LiteralValue::Number(n)) => (*n, true),
-                _ => (Number::default(), false),
-            };
+            let (left_num, left_is_num) = number_value(&left.value);
+            let (right_num, right_is_num) = number_value(&right.value);
             if left_is_num && right_is_num {
                 let value = match operator {
                     SyntaxKind::BarToken => Some(left_num.bitwise_or(right_num)),
@@ -172,14 +166,8 @@ fn evaluate_expression(
                     );
                 }
             }
-            let (mut left_str, left_is_str) = match &left.value {
-                Some(LiteralValue::String(s)) => (s.clone(), true),
-                _ => (String::new(), false),
-            };
-            let (mut right_str, right_is_str) = match &right.value {
-                Some(LiteralValue::String(s)) => (s.clone(), true),
-                _ => (String::new(), false),
-            };
+            let (mut left_str, left_is_str) = string_value(&left.value);
+            let (mut right_str, right_is_str) = string_value(&right.value);
             if (left_is_str || left_is_num)
                 && (right_is_str || right_is_num)
                 && operator == SyntaxKind::PlusToken
@@ -236,6 +224,26 @@ fn evaluate_expression(
         resolved_other_files,
         has_external_references,
     )
+}
+
+/// Go's two-value type assertion `value.(jsnum.Number)` in `evaluate`: the
+/// number and true, or the zero number and false.
+#[inline]
+fn number_value(value: &Option<LiteralValue>) -> (Number, bool) {
+    match value {
+        Some(LiteralValue::Number(n)) => (*n, true),
+        _ => (Number::default(), false),
+    }
+}
+
+/// Go's two-value type assertion `value.(string)` in `evaluate`: the string
+/// and true, or "" and false.
+#[inline]
+fn string_value(value: &Option<LiteralValue>) -> (String, bool) {
+    match value {
+        Some(LiteralValue::String(s)) => (s.clone(), true),
+        _ => (String::new(), false),
+    }
 }
 
 // Go: evaluator/evaluator.go:124 evaluateTemplateExpression

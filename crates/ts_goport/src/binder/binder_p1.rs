@@ -13,6 +13,7 @@
 //! arena, and the other fields are not in the `GoFile` yet.
 
 use crate::astdata::NodeData;
+use crate::checker::if_else;
 use crate::prelude::*;
 
 // Go: binder/binder.go:44 ExpandoAssignmentInfo
@@ -1063,7 +1064,7 @@ impl Binder {
     }
 
     /// `get_declaration_name_in` for a caller that already read `node.kind()`
-    /// (`kind`).
+    /// (`kind`): the body of Go `getDeclarationName`.
     // PERF: parsefast1 item 2. The node kind and the name kind are each read
     // once, as Go reads its `Kind` fields (a port kind read goes through
     // the node store).
@@ -1074,11 +1075,11 @@ impl Binder {
         d: LoadedData,
     ) -> Name {
         if kind == SyntaxKind::ExportAssignment {
-            return if node.is_export_equals() {
-                Name::from(INTERNAL_SYMBOL_NAME_EXPORT_EQUALS)
-            } else {
-                Name::from(INTERNAL_SYMBOL_NAME_DEFAULT)
-            };
+            return Name::from(if_else(
+                node.is_export_equals(),
+                INTERNAL_SYMBOL_NAME_EXPORT_EQUALS,
+                INTERNAL_SYMBOL_NAME_DEFAULT,
+            ));
         }
         let name = get_name_of_declaration_in(node, d);
         if name.is_some() {
@@ -1117,15 +1118,7 @@ impl Binder {
                     containing_class,
                     name.text(),
                 ));
-                self.symbols.note_private_name(&private_name);
-                // PORT: Go gives the class symbol its id here
-                // (`ast.GetSymbolId`); `program::bind_all` gives it after
-                // the bind, in Go's bind order.
-                let classes = &mut self.file_bind.private_name_classes;
-                if classes.last() != Some(&containing_class) && !classes.contains(&containing_class)
-                {
-                    classes.push(containing_class);
-                }
+                self.note_private_name_class(&private_name, containing_class);
                 return private_name;
             }
             // Go `ast.IsPropertyNameLiteral(name) || ast.IsJsxNamespacedName(name)`
@@ -1180,6 +1173,19 @@ impl Binder {
             _ => {}
         }
         Name::from(INTERNAL_SYMBOL_NAME_MISSING)
+    }
+
+    /// Notes a private identifier name in the arena (`note_private_name`)
+    /// and its class, once, for the class symbol's id.
+    // PORT: Go gives the class symbol its id in `getDeclarationName`
+    // (`ast.GetSymbolId`); `program::bind_all` gives it after the bind, in
+    // Go's bind order.
+    fn note_private_name_class(&mut self, private_name: &Name, containing_class: Node) {
+        self.symbols.note_private_name(private_name);
+        let classes = &mut self.file_bind.private_name_classes;
+        if classes.last() != Some(&containing_class) && !classes.contains(&containing_class) {
+            classes.push(containing_class);
+        }
     }
 
     // Go: binder/binder.go:362 getDisplayName

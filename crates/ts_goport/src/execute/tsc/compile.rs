@@ -700,7 +700,7 @@ fn look_path(file: &str) -> Result<String, GoError> {
         for dir in path.split(':') {
             // Unix shell semantics: path element "" means "."
             let dir = if dir.is_empty() { "." } else { dir };
-            let candidate = go_path_clean(&format!("{dir}/{file}"));
+            let candidate = crate::frontend::vfs::filepath_clean(&format!("{dir}/{file}"));
             if find_executable(&candidate) {
                 if !candidate.starts_with('/') {
                     return Err(exec_error(
@@ -740,62 +740,13 @@ fn find_executable(file: &str) -> bool {
 #[cfg(unix)]
 fn go_abs(path: &str) -> Result<String, GoError> {
     if path.starts_with('/') {
-        return Ok(go_path_clean(path));
+        return Ok(crate::frontend::vfs::filepath_clean(path));
     }
     let wd = crate::frontend::vfs::os_current_dir()
         .map_err(|err| crate::gostd::errors::new(crate::frontend::vfs::getwd_error_text(&err)))?;
-    Ok(go_path_clean(&format!("{wd}/{path}")))
-}
-
-/// Go `path.Clean` (the Unix `filepath.Clean`).
-#[cfg(unix)]
-fn go_path_clean(path: &str) -> String {
-    if path.is_empty() {
-        return ".".to_string();
-    }
-    let path = path.as_bytes();
-    let rooted = path[0] == b'/';
-    let n = path.len();
-    let mut out: Vec<u8> = Vec::with_capacity(n);
-    let (mut r, mut dotdot) = (0, 0);
-    if rooted {
-        out.push(b'/');
-        (r, dotdot) = (1, 1);
-    }
-    while r < n {
-        if path[r] == b'/' {
-            r += 1;
-        } else if path[r] == b'.' && (r + 1 == n || path[r + 1] == b'/') {
-            r += 1;
-        } else if path[r] == b'.' && path[r + 1] == b'.' && (r + 2 == n || path[r + 2] == b'/') {
-            r += 2;
-            if out.len() > dotdot {
-                // Go drops bytes up to and with the last '/'.
-                let mut last = out.pop();
-                while out.len() > dotdot && last != Some(b'/') {
-                    last = out.pop();
-                }
-            } else if !rooted {
-                if !out.is_empty() {
-                    out.push(b'/');
-                }
-                out.extend_from_slice(b"..");
-                dotdot = out.len();
-            }
-        } else {
-            if (rooted && out.len() != 1) || (!rooted && !out.is_empty()) {
-                out.push(b'/');
-            }
-            while r < n && path[r] != b'/' {
-                out.push(path[r]);
-                r += 1;
-            }
-        }
-    }
-    if out.is_empty() {
-        return ".".to_string();
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    Ok(crate::frontend::vfs::filepath_clean(&format!(
+        "{wd}/{path}"
+    )))
 }
 
 // Go: cmd/tsc/sys.go:74 spawnProcess (tsgo#4712), on Windows

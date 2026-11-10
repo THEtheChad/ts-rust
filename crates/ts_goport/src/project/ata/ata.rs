@@ -667,7 +667,15 @@ where
         )));
     }
 
-    // Go: tg.Wait()
+    throttle_group_wait(tg).await
+}
+
+/// PORT: Go `tg.Wait()` of the throttle group in `installNpmPackages`: polls
+/// the bodies until all have ended and gives the first error (by the order
+/// the bodies end, as Go's `errgroup` keeps the first error it sees).
+async fn throttle_group_wait(
+    mut tg: Vec<Pin<Box<dyn Future<Output = Result<(), GoError>> + '_>>>,
+) -> Result<(), GoError> {
     let mut first_err: Option<GoError> = None;
     poll_fn(|cx| {
         tg.retain_mut(|body| match body.as_mut().poll(cx) {

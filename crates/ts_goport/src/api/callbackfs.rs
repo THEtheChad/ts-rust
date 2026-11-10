@@ -397,33 +397,21 @@ fn parse_rfc3339_nano(value: &str) -> Result<SystemTime, GoError> {
     if s.len() < "2006-01-02T15:04:05".len() {
         return Err(parse_error());
     }
-    let digits = |b: &[u8]| -> Option<i64> {
-        b.iter().try_fold(0i64, |n, &c| {
-            c.is_ascii_digit().then(|| n * 10 + i64::from(c - b'0'))
-        })
-    };
     let (Some(year), Some(month), Some(day), Some(hour), Some(min), Some(sec)) = (
-        digits(&s[0..4]),
-        digits(&s[5..7]),
-        digits(&s[8..10]),
-        digits(&s[11..13]),
-        digits(&s[14..16]),
-        digits(&s[17..19]),
+        parse_digits(&s[0..4]),
+        parse_digits(&s[5..7]),
+        parse_digits(&s[8..10]),
+        parse_digits(&s[11..13]),
+        parse_digits(&s[14..16]),
+        parse_digits(&s[17..19]),
     ) else {
         return Err(parse_error());
     };
     if !(s[4] == b'-' && s[7] == b'-' && s[10] == b'T' && s[13] == b':' && s[16] == b':') {
         return Err(parse_error());
     }
-    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days_in_month = match month {
-        2 if is_leap => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    };
     if !(1..=12).contains(&month)
-        || !(1..=days_in_month).contains(&day)
+        || !(1..=days_in(month, year)).contains(&day)
         || hour > 23
         || min > 59
         || sec > 59
@@ -436,38 +424,14 @@ fn parse_rfc3339_nano(value: &str) -> Result<SystemTime, GoError> {
     let mut nsec: u32 = 0;
     if rest.len() >= 2 && rest[0] == b'.' && rest[1].is_ascii_digit() {
         let n = 1 + rest[1..].iter().take_while(|c| c.is_ascii_digit()).count();
-        for (i, &c) in rest[1..n].iter().take(9).enumerate() {
-            nsec += u32::from(c - b'0') * 10u32.pow(8 - i as u32);
-        }
+        nsec = parse_nanoseconds(&rest[1..n]);
         rest = &rest[n..];
     }
 
     // Parse the time zone.
-    let mut offset_secs: i64 = 0;
-    if rest != b"Z" {
-        if rest.len() != "-07:00".len() {
-            return Err(parse_error());
-        }
-        let (Some(hr), Some(mm)) = (digits(&rest[1..3]), digits(&rest[4..6])) else {
-            return Err(parse_error());
-        };
-        if hr > 23 || mm > 59 || !(matches!(rest[0], b'-' | b'+') && rest[3] == b':') {
-            return Err(parse_error());
-        }
-        offset_secs = (hr * 60 + mm) * 60;
-        if rest[0] == b'-' {
-            offset_secs = -offset_secs;
-        }
-    }
+    let offset_secs = parse_zone_offset(rest).ok_or_else(parse_error)?;
 
-    // Days from 1970-01-01 (the civil-from-days algorithm in reverse).
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
+    let days = days_since_epoch(year, month, day);
     let unix = days * 86_400 + hour * 3600 + min * 60 + sec - offset_secs;
     let time = if unix >= 0 {
         SystemTime::UNIX_EPOCH + Duration::new(unix as u64, nsec)
@@ -476,6 +440,72 @@ fn parse_rfc3339_nano(value: &str) -> Result<SystemTime, GoError> {
             + Duration::from_nanos(u64::from(nsec))
     };
     Ok(time)
+}
+
+// Go: the `parseUint` closure of time/format_rfc3339.go parseRFC3339,
+// without its range check (`parse_rfc3339_nano` checks the ranges): the
+// decimal value of the digits `b`, or `None` for a byte that is not a
+// digit.
+fn parse_digits(b: &[u8]) -> Option<i64> {
+    b.iter().try_fold(0i64, |n, &c| {
+        c.is_ascii_digit().then(|| n * 10 + i64::from(c - b'0'))
+    })
+}
+
+// Go: time.daysIn with time.isLeap: the number of days in `month` of
+// `year`.
+fn days_in(month: i64, year: i64) -> i64 {
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    match month {
+        2 if is_leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+// Go: time.parseNanoseconds of the digits `frac` after the '.': the first
+// 9 digits as nanoseconds.
+fn parse_nanoseconds(frac: &[u8]) -> u32 {
+    let mut nsec = 0;
+    for (i, &c) in frac.iter().take(9).enumerate() {
+        nsec += u32::from(c - b'0') * 10u32.pow(8 - i as u32);
+    }
+    nsec
+}
+
+// Part of Go parseRFC3339 ("Parse the time zone"): the offset in seconds
+// east of UTC of the zone `rest`, "Z" or "+hh:mm" or "-hh:mm". `None` when
+// it does not parse.
+fn parse_zone_offset(rest: &[u8]) -> Option<i64> {
+    if rest == b"Z" {
+        return Some(0);
+    }
+    if rest.len() != "-07:00".len() {
+        return None;
+    }
+    let (hr, mm) = (parse_digits(&rest[1..3])?, parse_digits(&rest[4..6])?);
+    if hr > 23 || mm > 59 || !(matches!(rest[0], b'-' | b'+') && rest[3] == b':') {
+        return None;
+    }
+    let offset_secs = (hr * 60 + mm) * 60;
+    Some(if rest[0] == b'-' {
+        -offset_secs
+    } else {
+        offset_secs
+    })
+}
+
+// The days from 1970-01-01 to the date `year`-`month`-`day` (the
+// civil-from-days algorithm in reverse), for Go `time.Date` in UTC.
+fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 impl Fs for CallbackFS {

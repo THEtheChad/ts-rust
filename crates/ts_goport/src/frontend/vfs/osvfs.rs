@@ -376,11 +376,6 @@ impl Fs for OsFs {
     }
 
     // Go: os.go:223 Chtimes (ts#64832)
-    // PORT: Go `os.Chtimes` is utimensat(AT_FDCWD, path, times, 0) on unix,
-    // so it works on a file without read permission; a zero Go time
-    // (`None` here) is UTIME_OMIT. Off unix, Rust std sets times through an
-    // open file (opened read-only here).
-    #[cfg(unix)]
     fn chtimes(
         &self,
         path: &str,
@@ -390,62 +385,83 @@ impl Fs for OsFs {
         if is_network_path(path) {
             return Err(err_network_path());
         }
-        use rustix::fs::{AtFlags, CWD, Timespec, Timestamps, UTIME_OMIT};
-        // Go: syscall.NsecToTimespec(t.UnixNano())
-        let timespec = |time: Option<SystemTime>| match time {
-            None => Timespec {
-                tv_sec: 0,
-                tv_nsec: UTIME_OMIT,
-            },
-            Some(time) => {
-                let (sec, nsec) = match time.duration_since(SystemTime::UNIX_EPOCH) {
-                    Ok(d) => (d.as_secs() as i64, i64::from(d.subsec_nanos())),
-                    Err(err) => {
-                        let d = err.duration();
-                        let (sec, nsec) = (-(d.as_secs() as i64), -i64::from(d.subsec_nanos()));
-                        if nsec < 0 {
-                            (sec - 1, nsec + 1_000_000_000)
-                        } else {
-                            (sec, nsec)
-                        }
-                    }
-                };
-                Timespec {
-                    tv_sec: sec,
-                    tv_nsec: nsec as _,
-                }
-            }
-        };
-        let times = Timestamps {
-            last_access: timespec(a_time),
-            last_modification: timespec(m_time),
-        };
-        rustix::fs::utimensat(CWD, &*os_path(path), &times, AtFlags::empty())
-            .map_err(|err| FsError::path("chtimes", path, io::Error::from(err)))
+        os_chtimes(path, a_time, m_time)
     }
+}
 
-    #[cfg(not(unix))]
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<SystemTime>,
-        m_time: Option<SystemTime>,
-    ) -> Result<(), FsError> {
-        if is_network_path(path) {
-            return Err(err_network_path());
+// Go: os/file_posix.go Chtimes
+// PORT: Go standard library. Go `os.Chtimes` is utimensat(AT_FDCWD, path,
+// times, 0) on unix, so it works on a file without read permission; a
+// zero Go time (`None` here) is UTIME_OMIT.
+#[cfg(unix)]
+fn os_chtimes(
+    path: &str,
+    a_time: Option<SystemTime>,
+    m_time: Option<SystemTime>,
+) -> Result<(), FsError> {
+    let times = rustix::fs::Timestamps {
+        last_access: chtimes_timespec(a_time),
+        last_modification: chtimes_timespec(m_time),
+    };
+    rustix::fs::utimensat(
+        rustix::fs::CWD,
+        &*os_path(path),
+        &times,
+        rustix::fs::AtFlags::empty(),
+    )
+    .map_err(|err| FsError::path("chtimes", path, io::Error::from(err)))
+}
+
+// Go: os/file_posix.go Chtimes, its `set` closure
+// PORT: Go standard library. A zero Go time (`None`) is UTIME_OMIT, any
+// other is `syscall.NsecToTimespec(t.UnixNano())`.
+#[cfg(unix)]
+fn chtimes_timespec(time: Option<SystemTime>) -> rustix::fs::Timespec {
+    let Some(time) = time else {
+        return rustix::fs::Timespec {
+            tv_sec: 0,
+            tv_nsec: rustix::fs::UTIME_OMIT,
+        };
+    };
+    let (sec, nsec) = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, i64::from(d.subsec_nanos())),
+        Err(err) => {
+            let d = err.duration();
+            let (sec, nsec) = (-(d.as_secs() as i64), -i64::from(d.subsec_nanos()));
+            if nsec < 0 {
+                (sec - 1, nsec + 1_000_000_000)
+            } else {
+                (sec, nsec)
+            }
         }
-        let file = std::fs::File::open(os_path(path))
-            .map_err(|err| FsError::path("chtimes", path, err))?;
-        let mut times = std::fs::FileTimes::new();
-        if let Some(a_time) = a_time {
-            times = times.set_accessed(a_time);
-        }
-        if let Some(m_time) = m_time {
-            times = times.set_modified(m_time);
-        }
-        file.set_times(times)
-            .map_err(|err| FsError::path("chtimes", path, err))
+    };
+    rustix::fs::Timespec {
+        tv_sec: sec,
+        tv_nsec: nsec as _,
     }
+}
+
+// Go: os/file_posix.go Chtimes
+// PORT: Go standard library. Off unix, Rust std sets times through an open
+// file (opened read-only here); a zero Go time (`None` here) is left as it
+// is.
+#[cfg(not(unix))]
+fn os_chtimes(
+    path: &str,
+    a_time: Option<SystemTime>,
+    m_time: Option<SystemTime>,
+) -> Result<(), FsError> {
+    let file =
+        std::fs::File::open(os_path(path)).map_err(|err| FsError::path("chtimes", path, err))?;
+    let mut times = std::fs::FileTimes::new();
+    if let Some(a_time) = a_time {
+        times = times.set_accessed(a_time);
+    }
+    if let Some(m_time) = m_time {
+        times = times.set_modified(m_time);
+    }
+    file.set_times(times)
+        .map_err(|err| FsError::path("chtimes", path, err))
 }
 
 /// PORT: not in Go (perf). None (not read) for each normalized absolute
@@ -1110,32 +1126,10 @@ pub fn filepath_clean(path: &str) -> String {
         } else if p[r] == b'.' && p[r + 1] == b'.' && (r + 2 == n || p[r + 2] == b'/') {
             // .. element: remove to last /
             r += 2;
-            if out.len() > dotdot {
-                // can backtrack
-                let mut w = out.len() - 1;
-                while w > dotdot && out[w] != b'/' {
-                    w -= 1;
-                }
-                out.truncate(w);
-            } else if !rooted {
-                // cannot backtrack, but not rooted, so append .. element.
-                if !out.is_empty() {
-                    out.push(b'/');
-                }
-                out.extend_from_slice(b"..");
-                dotdot = out.len();
-            }
+            dotdot = filepath_clean_dot_dot(&mut out, dotdot, rooted);
         } else {
             // real path element.
-            // add slash if needed
-            if (rooted && out.len() != 1) || (!rooted && !out.is_empty()) {
-                out.push(b'/');
-            }
-            // copy element
-            while r < n && p[r] != b'/' {
-                out.push(p[r]);
-                r += 1;
-            }
+            r = filepath_clean_element(&mut out, p, r, rooted);
         }
     }
 
@@ -1148,11 +1142,51 @@ pub fn filepath_clean(path: &str) -> String {
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
+/// The `..` element step of `filepath_clean` (Go stdlib `Clean`, unix). It
+/// removes the last element of `out` down to `dotdot`, or else, when the
+/// path is not rooted, appends `..`. Returns the new `dotdot`.
+#[cfg(not(windows))]
+#[inline]
+fn filepath_clean_dot_dot(out: &mut Vec<u8>, dotdot: usize, rooted: bool) -> usize {
+    if out.len() > dotdot {
+        // can backtrack
+        let mut w = out.len() - 1;
+        while w > dotdot && out[w] != b'/' {
+            w -= 1;
+        }
+        out.truncate(w);
+    } else if !rooted {
+        // cannot backtrack, but not rooted, so append .. element.
+        if !out.is_empty() {
+            out.push(b'/');
+        }
+        out.extend_from_slice(b"..");
+        return out.len();
+    }
+    dotdot
+}
+
+/// The real path element step of `filepath_clean` (Go stdlib `Clean`, unix):
+/// from `r` in `p` to the next `/`, appended to `out` after a slash if
+/// needed. Returns the index after the element.
+#[cfg(not(windows))]
+#[inline]
+fn filepath_clean_element(out: &mut Vec<u8>, p: &[u8], mut r: usize, rooted: bool) -> usize {
+    // add slash if needed
+    if (rooted && out.len() != 1) || (!rooted && !out.is_empty()) {
+        out.push(b'/');
+    }
+    // copy element
+    while r < p.len() && p[r] != b'/' {
+        out.push(p[r]);
+        r += 1;
+    }
+    r
+}
+
 // Go: internal/filepathlite/path.go Clean (windows)
 // PORT: Go standard library (go1.27 internal/filepathlite, path_windows.go
-// for the volume name and postClean). Go's `lazybuf` is `out` plus
-// `changed` (Go's `buf != nil`: the output is no longer a prefix of the
-// input).
+// for the volume name and postClean).
 #[cfg(windows)]
 pub fn filepath_clean(path: &str) -> String {
     const SEPARATOR: u8 = b'\\';
@@ -1175,17 +1209,14 @@ pub fn filepath_clean(path: &str) -> String {
     //	dotdot is index in buf where .. must stop, either because
     //		it is the leading slash or it is a leading ../../.. prefix.
     let n = p.len();
-    let mut out: Vec<u8> = Vec::with_capacity(n);
-    let mut changed = false;
-    let append = |out: &mut Vec<u8>, changed: &mut bool, c: u8| {
-        if !*changed && (out.len() >= n || p[out.len()] != c) {
-            *changed = true;
-        }
-        out.push(c);
+    let mut out = LazyBuf {
+        path: p,
+        out: Vec::with_capacity(n),
+        changed: false,
     };
     let (mut r, mut dotdot) = (0usize, 0usize);
     if rooted {
-        append(&mut out, &mut changed, SEPARATOR);
+        out.append(SEPARATOR);
         r = 1;
         dotdot = 1;
     }
@@ -1203,70 +1234,120 @@ pub fn filepath_clean(path: &str) -> String {
         {
             // .. element: remove to last separator
             r += 2;
-            if out.len() > dotdot {
-                // can backtrack
-                let mut w = out.len() - 1;
-                while w > dotdot && !win_is_path_separator(out[w]) {
-                    w -= 1;
-                }
-                out.truncate(w);
-            } else if !rooted {
-                // cannot backtrack, but not rooted, so append .. element.
-                if !out.is_empty() {
-                    append(&mut out, &mut changed, SEPARATOR);
-                }
-                append(&mut out, &mut changed, b'.');
-                append(&mut out, &mut changed, b'.');
-                dotdot = out.len();
-            }
+            dotdot = filepath_clean_dot_dot(&mut out, dotdot, rooted);
         } else {
             // real path element.
-            // add slash if needed
-            if (rooted && out.len() != 1) || (!rooted && !out.is_empty()) {
-                append(&mut out, &mut changed, SEPARATOR);
-            }
-            // copy element
-            while r < n && !win_is_path_separator(p[r]) {
-                append(&mut out, &mut changed, p[r]);
-                r += 1;
-            }
+            r = filepath_clean_element(&mut out, r, rooted);
         }
     }
 
     // Turn empty string into "."
-    if out.is_empty() {
-        append(&mut out, &mut changed, b'.');
+    if out.out.is_empty() {
+        out.append(b'.');
     }
 
-    // postClean: avoid creating absolute paths on Windows
-    if vol_len == 0 && changed {
-        // If a ':' appears in the path element at the start of a path,
-        // insert a .\ at the beginning to avoid converting relative paths
-        // like a/../c: into c:.
-        let first = out
-            .iter()
-            .position(|&c| win_is_path_separator(c))
-            .unwrap_or(out.len());
-        if out[..first].contains(&b':') {
-            out.splice(0..0, [b'.', SEPARATOR]);
-        } else if out.len() >= 3
-            && win_is_path_separator(out[0])
-            && out[1] == b'?'
-            && out[2] == b'?'
-        {
-            // If a path begins with \??\, insert a \. at the beginning
-            // to avoid converting paths like \a\..\??\c:\x into \??\c:\x
-            // (equivalent to c:\x).
-            out.splice(0..0, [SEPARATOR, b'.']);
-        }
-    }
+    filepath_post_clean(&mut out, vol_len); // avoid creating absolute paths on Windows
 
     let mut result = original_path.as_bytes()[..vol_len].to_vec();
-    result.extend_from_slice(&out);
+    result.extend_from_slice(&out.out);
     // FromSlash. The cuts are at ASCII bytes, so the bytes stay UTF-8.
     String::from_utf8(result)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
         .replace('/', "\\")
+}
+
+// Go: internal/filepathlite/path.go lazybuf
+// PORT: Go standard library. Go's `buf` and `w` are `out` (its length is
+// `w`) plus `changed` (Go's `buf != nil`: the output is no longer a
+// prefix of `path`).
+#[cfg(windows)]
+struct LazyBuf<'a> {
+    path: &'a [u8],
+    out: Vec<u8>,
+    changed: bool,
+}
+
+#[cfg(windows)]
+impl LazyBuf<'_> {
+    // Go: internal/filepathlite/path.go (*lazybuf).append
+    #[inline]
+    fn append(&mut self, c: u8) {
+        if !self.changed && (self.out.len() >= self.path.len() || self.path[self.out.len()] != c) {
+            self.changed = true;
+        }
+        self.out.push(c);
+    }
+}
+
+/// The `..` element step of `filepath_clean` (Go stdlib `Clean`,
+/// windows). It removes the last element of `out` down to `dotdot`, or
+/// else, when the path is not rooted, appends `..`. Returns the new
+/// `dotdot`.
+#[cfg(windows)]
+#[inline]
+fn filepath_clean_dot_dot(out: &mut LazyBuf<'_>, dotdot: usize, rooted: bool) -> usize {
+    if out.out.len() > dotdot {
+        // can backtrack
+        let mut w = out.out.len() - 1;
+        while w > dotdot && !win_is_path_separator(out.out[w]) {
+            w -= 1;
+        }
+        out.out.truncate(w);
+    } else if !rooted {
+        // cannot backtrack, but not rooted, so append .. element.
+        if !out.out.is_empty() {
+            out.append(b'\\');
+        }
+        out.append(b'.');
+        out.append(b'.');
+        return out.out.len();
+    }
+    dotdot
+}
+
+/// The real path element step of `filepath_clean` (Go stdlib `Clean`,
+/// windows): from `r` in `out.path` to the next separator, appended to
+/// `out` after a separator if needed. Returns the index after the element.
+#[cfg(windows)]
+#[inline]
+fn filepath_clean_element(out: &mut LazyBuf<'_>, mut r: usize, rooted: bool) -> usize {
+    // add slash if needed
+    if (rooted && out.out.len() != 1) || (!rooted && !out.out.is_empty()) {
+        out.append(b'\\');
+    }
+    // copy element
+    let p = out.path;
+    while r < p.len() && !win_is_path_separator(p[r]) {
+        out.append(p[r]);
+        r += 1;
+    }
+    r
+}
+
+// Go: internal/filepathlite/path_windows.go postClean
+// PORT: Go standard library. Go's `out.volLen` is `vol_len`.
+#[cfg(windows)]
+fn filepath_post_clean(out: &mut LazyBuf<'_>, vol_len: usize) {
+    const SEPARATOR: u8 = b'\\';
+    if vol_len != 0 || !out.changed {
+        return;
+    }
+    let out = &mut out.out;
+    // If a ':' appears in the path element at the start of a path,
+    // insert a .\ at the beginning to avoid converting relative paths
+    // like a/../c: into c:.
+    let first = out
+        .iter()
+        .position(|&c| win_is_path_separator(c))
+        .unwrap_or(out.len());
+    if out[..first].contains(&b':') {
+        out.splice(0..0, [b'.', SEPARATOR]);
+    } else if out.len() >= 3 && win_is_path_separator(out[0]) && out[1] == b'?' && out[2] == b'?' {
+        // If a path begins with \??\, insert a \. at the beginning
+        // to avoid converting paths like \a\..\??\c:\x into \??\c:\x
+        // (equivalent to c:\x).
+        out.splice(0..0, [SEPARATOR, b'.']);
+    }
 }
 
 // Go: internal/filepathlite/path_windows.go IsPathSeparator

@@ -623,6 +623,26 @@ impl WorkerSymbolIds {
 #[must_use]
 pub fn worker_symbol_ids(base: &SymbolIdBase) -> WorkerSymbolIds {
     let base = &*base.0;
+    let (mut log, unlogged) = take_worker_id_log();
+    // The worker's global ids come after the ids of its seed.
+    let first_global = log.globals.first().map_or(u64::MAX, |global| global.id);
+    let (chunks, big) = SYMBOL_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        ids.free_dead();
+        worker_id_chunks(&ids, base, &mut log, first_global)
+    });
+    WorkerSymbolIds {
+        chunks,
+        big,
+        log,
+        unlogged,
+    }
+}
+
+/// This thread's id log (`record_symbol_ids`), which ends here, with its
+/// blocks filled in (`IdLog::blocks`); or, on a worker that kept no log, an
+/// empty log and its next symbol id and block (`WorkerSymbolIds::unlogged`).
+fn take_worker_id_log() -> (IdLog, Option<(u64, u64)>) {
     let counted = BLOCK_IDS_GIVEN.with(|given| given.replace(None));
     let next_block = NEXT_SYMBOL_BLOCK_ID.with(std::cell::Cell::get);
     let log = ID_LOG.with(|log| log.borrow_mut().take());
@@ -641,62 +661,88 @@ pub fn worker_symbol_ids(base: &SymbolIdBase) -> WorkerSymbolIds {
             count <= blocks * BLOCK_ID_SIZE && count + BLOCK_ID_SIZE > blocks * BLOCK_ID_SIZE
         }));
     }
-    // The worker's global ids come after the ids of its seed.
-    let first_global = log.globals.first().map_or(u64::MAX, |global| global.id);
-    let (chunks, big) = SYMBOL_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        ids.free_dead();
-        let mut chunks = Vec::new();
-        let mut big = FxHashMap::default();
-        for (chunk, cells) in ids.chunks.iter().enumerate() {
-            let Some(cells) = cells else {
-                continue;
-            };
-            if base.is_freed(chunk) {
-                continue;
-            }
-            let base_cells = base.chunks.get(chunk).and_then(Option::as_deref);
-            if base_cells == Some(&**cells) {
-                continue;
-            }
-            let start = chunk << LINEAGE_ID_SHIFT;
-            for (place, &cell) in cells.iter().enumerate() {
-                let id = match cell {
-                    0 => continue,
-                    BIG_ID => {
-                        let id = ids.big[&(start | place)];
-                        if base_cells.is_none_or(|base_cells| base_cells[place] == 0) {
-                            big.insert(start | place, id);
-                        }
-                        id
-                    }
-                    cell if cell < BLOCK_CELL => u64::from(cell),
-                    _ => continue,
-                };
-                if id >= first_global
-                    && id < BLOCK_ID_OFFSET
-                    && let Some(global) = log.global_of(id)
-                {
-                    log.globals[global].lineage = Some(start | place);
-                }
-            }
-            let mut new = cells.clone();
-            if let Some(base_cells) = base_cells {
-                for (cell, &base_cell) in new.iter_mut().zip(base_cells) {
-                    if base_cell != 0 {
-                        *cell = 0;
-                    }
-                }
-            }
-            chunks.push((chunk, new));
+    (log, unlogged)
+}
+
+/// The id chunks of this thread (`ids`) that differ from `base`'s, each
+/// with the cells that `base` has cleared, and the big ids of the cells
+/// that `base` has not. Notes in `log` the lineage index of each of its
+/// global ids that a cell holds (`note_cell_lineages`).
+fn worker_id_chunks(
+    ids: &LineageIds,
+    base: &LineageIds,
+    log: &mut IdLog,
+    first_global: u64,
+) -> (
+    Vec<(usize, Box<[IdCell; LINEAGE_ID_CHUNK]>)>,
+    FxHashMap<usize, u64>,
+) {
+    let mut chunks = Vec::new();
+    let mut big = FxHashMap::default();
+    for (chunk, cells) in ids.chunks.iter().enumerate() {
+        let Some(cells) = cells else {
+            continue;
+        };
+        if base.is_freed(chunk) {
+            continue;
         }
-        (chunks, big)
-    });
-    WorkerSymbolIds {
-        chunks,
-        big,
-        log,
-        unlogged,
+        let base_cells = base.chunks.get(chunk).and_then(Option::as_deref);
+        if base_cells == Some(&**cells) {
+            continue;
+        }
+        note_cell_lineages(
+            ids,
+            log,
+            cells,
+            base_cells,
+            chunk << LINEAGE_ID_SHIFT,
+            first_global,
+            &mut big,
+        );
+        let mut new = cells.clone();
+        if let Some(base_cells) = base_cells {
+            for (cell, &base_cell) in new.iter_mut().zip(base_cells) {
+                if base_cell != 0 {
+                    *cell = 0;
+                }
+            }
+        }
+        chunks.push((chunk, new));
+    }
+    (chunks, big)
+}
+
+/// For the cells of one id chunk (the first lineage index `start`): the
+/// lineage index of each global id of `log` that a cell holds, and the big
+/// id of each `BIG_ID` cell that `base_cells` has not, into `big`.
+fn note_cell_lineages(
+    ids: &LineageIds,
+    log: &mut IdLog,
+    cells: &[IdCell; LINEAGE_ID_CHUNK],
+    base_cells: Option<&[IdCell; LINEAGE_ID_CHUNK]>,
+    start: usize,
+    first_global: u64,
+    big: &mut FxHashMap<usize, u64>,
+) {
+    for (place, &cell) in cells.iter().enumerate() {
+        let id = match cell {
+            0 => continue,
+            BIG_ID => {
+                let id = ids.big[&(start | place)];
+                if base_cells.is_none_or(|base_cells| base_cells[place] == 0) {
+                    big.insert(start | place, id);
+                }
+                id
+            }
+            cell if cell < BLOCK_CELL => u64::from(cell),
+            _ => continue,
+        };
+        if id >= first_global
+            && id < BLOCK_ID_OFFSET
+            && let Some(global) = log.global_of(id)
+        {
+            log.globals[global].lineage = Some(start | place);
+        }
     }
 }
 
@@ -738,8 +784,17 @@ pub fn carry_symbol_ids(collect: impl FnOnce(&SymbolIdBase) -> Vec<WorkerSymbolI
 /// `carry_symbol_ids` after the collect: merges `workers` into `ids` and
 /// the counters of this thread.
 fn merge_symbol_ids(ids: &mut LineageIds, workers: &mut [WorkerSymbolIds]) {
-    // A cell that more workers have keeps the id with the lowest clock, then
-    // of the first worker; the others drop it.
+    drop_shared_cells(workers);
+    let new_globals = renumber_global_ids(ids, workers);
+    let new_starts = renumber_id_blocks(workers);
+    for (worker, given) in workers.iter_mut().enumerate() {
+        given.merge_into(ids, worker, &new_globals[worker], &new_starts[worker]);
+    }
+}
+
+/// A cell that more workers have keeps the id with the lowest clock, then
+/// of the first worker; the others drop it.
+fn drop_shared_cells(workers: &mut [WorkerSymbolIds]) {
     let mut shared: Vec<(usize, usize, usize)> = Vec::new();
     for (worker, given) in workers.iter().enumerate() {
         shared.extend(
@@ -764,32 +819,48 @@ fn merge_symbol_ids(ids: &mut LineageIds, workers: &mut [WorkerSymbolIds]) {
             }
         }
         for place in (0..LINEAGE_ID_CHUNK).filter(|&place| given[place] > 1) {
-            let index = (group[0].0 << LINEAGE_ID_SHIFT) | place;
-            let mut first: Option<(u64, usize, usize)> = None;
-            for &(_, worker, at) in group {
-                let cell = workers[worker].chunks[at].1[place];
-                if cell == 0 {
-                    continue;
-                }
-                let given = &workers[worker];
-                let clock = given.log.clock(given.id(index, cell)).unwrap_or(u64::MAX);
-                let lost = match first {
-                    Some((first_clock, ..)) if first_clock <= clock => (worker, at),
-                    _ => {
-                        let lost = first.map(|(_, worker, at)| (worker, at));
-                        first = Some((clock, worker, at));
-                        match lost {
-                            Some(lost) => lost,
-                            None => continue,
-                        }
-                    }
-                };
-                workers[lost.0].chunks[lost.1].1[place] = 0;
-            }
+            drop_losing_cells(workers, group, place);
         }
     }
-    // Global ids in clock order: each winning cell, and every id of a
-    // checker symbol. A freed symbol still counts.
+}
+
+/// Cell `place` of the chunk that the workers of `group` have (chunk,
+/// worker, index in its `chunks`): the worker whose id has the lowest
+/// clock, then the first, keeps it; the others clear it.
+fn drop_losing_cells(
+    workers: &mut [WorkerSymbolIds],
+    group: &[(usize, usize, usize)],
+    place: usize,
+) {
+    let index = (group[0].0 << LINEAGE_ID_SHIFT) | place;
+    let mut first: Option<(u64, usize, usize)> = None;
+    for &(_, worker, at) in group {
+        let cell = workers[worker].chunks[at].1[place];
+        if cell == 0 {
+            continue;
+        }
+        let given = &workers[worker];
+        let clock = given.log.clock(given.id(index, cell)).unwrap_or(u64::MAX);
+        let lost = match first {
+            Some((first_clock, ..)) if first_clock <= clock => (worker, at),
+            _ => {
+                let lost = first.map(|(_, worker, at)| (worker, at));
+                first = Some((clock, worker, at));
+                match lost {
+                    Some(lost) => lost,
+                    None => continue,
+                }
+            }
+        };
+        workers[lost.0].chunks[lost.1].1[place] = 0;
+    }
+}
+
+/// The new global ids of each worker's logged global ids, by worker and log
+/// place (0: the id does not count), from this thread's global counter.
+/// They count in clock order: each winning cell, and every id of a checker
+/// symbol. A freed symbol still counts.
+fn renumber_global_ids(ids: &LineageIds, workers: &[WorkerSymbolIds]) -> Vec<Vec<u64>> {
     let mut globals: Vec<(u64, usize, usize)> = Vec::new();
     for (worker, given) in workers.iter().enumerate() {
         for (place, global) in given.log.globals.iter().enumerate() {
@@ -811,7 +882,12 @@ fn merge_symbol_ids(ids: &mut LineageIds, workers: &mut [WorkerSymbolIds]) {
     for &(_, worker, place) in &globals {
         new_globals[worker][place] = next_global_id();
     }
-    // Blocks in clock order of their takes.
+    new_globals
+}
+
+/// The new start of each worker's logged blocks, by worker and block, from
+/// this thread's block counter, in clock order of their takes.
+fn renumber_id_blocks(workers: &[WorkerSymbolIds]) -> Vec<Vec<u64>> {
     let mut blocks: Vec<(u64, usize, usize)> = Vec::new();
     for (worker, given) in workers.iter().enumerate() {
         for (block, &(_, before)) in given.log.blocks.iter().enumerate() {
@@ -828,32 +904,74 @@ fn merge_symbol_ids(ids: &mut LineageIds, workers: &mut [WorkerSymbolIds]) {
             new_starts[worker][block] = next.replace(next.get() + BLOCK_ID_SIZE);
         }
     });
-    for (worker, given) in workers.iter_mut().enumerate() {
-        if let Some((next_symbol_id, next_symbol_block_id)) = given.unlogged {
-            debug_assert!(given.log.globals.is_empty() && given.log.blocks.is_empty());
+    new_starts
+}
+
+impl WorkerSymbolIds {
+    /// Moves the chunks of worker `worker` into `ids`, each cell with its
+    /// new id (`new_globals`, `new_starts`); a worker with no log moves its
+    /// counters to this thread.
+    fn merge_into(
+        &mut self,
+        ids: &mut LineageIds,
+        worker: usize,
+        new_globals: &[u64],
+        new_starts: &[u64],
+    ) {
+        if let Some((next_symbol_id, next_symbol_block_id)) = self.unlogged {
+            debug_assert!(self.log.globals.is_empty() && self.log.blocks.is_empty());
             NEXT_SYMBOL_ID.with(|next| next.set(next.get().max(next_symbol_id)));
             NEXT_SYMBOL_BLOCK_ID.with(|next| next.set(next.get().max(next_symbol_block_id)));
         }
-        let log = &given.log;
-        let keeps = given.unlogged.is_some()
+        let keeps = self.keeps_numbers(new_globals, new_starts);
+        let (block_moves, moves_from) = self.block_moves(new_starts);
+        for (chunk, mut cells) in std::mem::take(&mut self.chunks) {
+            if ids.is_freed(chunk) {
+                continue;
+            }
+            if !keeps || !self.big.is_empty() {
+                let renumber = CellRenumber {
+                    worker,
+                    keeps,
+                    block_moves: block_moves.as_deref(),
+                    moves_from,
+                    new_globals,
+                    new_starts,
+                };
+                self.renumber_cells(ids, chunk << LINEAGE_ID_SHIFT, &mut cells, &renumber);
+            }
+            ids.install_chunk(chunk, cells);
+        }
+    }
+
+    /// True when every id of the worker keeps its number: a worker with no
+    /// log, or one whose new global ids and block starts are its own.
+    fn keeps_numbers(&self, new_globals: &[u64], new_starts: &[u64]) -> bool {
+        let log = &self.log;
+        self.unlogged.is_some()
             || log
                 .globals
                 .iter()
-                .zip(&new_globals[worker])
+                .zip(new_globals)
                 .all(|(global, &new)| new == 0 || new == global.id)
                 && log
                     .blocks
                     .iter()
-                    .zip(&new_starts[worker])
-                    .all(|(&(start, _), &new)| new == start);
-        // PERF: when the worker's blocks follow each other (they do) and
-        // every new block id has a cell, a block cell moves by its block's
-        // move, in cell form.
+                    .zip(new_starts)
+                    .all(|(&(start, _), &new)| new == start)
+    }
+
+    /// The move of each logged block in cell form, and the first block's
+    /// start in cell form.
+    // PERF: when the worker's blocks follow each other (they do) and every
+    // new block id has a cell, a block cell moves by its block's move.
+    fn block_moves(&self, new_starts: &[u64]) -> (Option<Vec<IdCell>>, IdCell) {
+        let log = &self.log;
         let moves_from = log.blocks.first().map_or(0, |&(start, _)| start);
-        let block_moves: Option<Vec<IdCell>> = log
+        let block_moves = log
             .blocks
             .iter()
-            .zip(&new_starts[worker])
+            .zip(new_starts)
             .enumerate()
             .all(|(block, (&(start, _), &new))| {
                 start == moves_from + block as u64 * BLOCK_ID_SIZE
@@ -862,74 +980,113 @@ fn merge_symbol_ids(ids: &mut LineageIds, workers: &mut [WorkerSymbolIds]) {
             .then(|| {
                 log.blocks
                     .iter()
-                    .zip(&new_starts[worker])
+                    .zip(new_starts)
                     .map(|(&(start, _), &new)| (new as IdCell).wrapping_sub(start as IdCell))
                     .collect()
             });
-        let moves_from = moves_from as IdCell;
-        for (chunk, mut cells) in std::mem::take(&mut given.chunks) {
-            if ids.is_freed(chunk) {
+        (block_moves, moves_from as IdCell)
+    }
+
+    /// Gives each cell of one of the worker's chunks (the first lineage
+    /// index `first`) its new id; a `BIG_ID` cell's id goes to `ids.big`.
+    fn renumber_cells(
+        &self,
+        ids: &mut LineageIds,
+        first: usize,
+        cells: &mut [IdCell; LINEAGE_ID_CHUNK],
+        renumber: &CellRenumber<'_>,
+    ) {
+        for (place, cell) in cells.iter_mut().enumerate() {
+            if *cell == 0 {
                 continue;
             }
-            let first = chunk << LINEAGE_ID_SHIFT;
-            if !keeps || !given.big.is_empty() {
-                for (place, cell) in cells.iter_mut().enumerate() {
-                    if *cell == 0 {
-                        continue;
-                    }
-                    if !keeps
-                        && let Some(moves) = &block_moves
-                        && *cell != BIG_ID
-                        && *cell & BLOCK_CELL != 0
-                        && let Some(&by) = moves.get(
-                            ((*cell & !BLOCK_CELL).wrapping_sub(moves_from)
-                                / BLOCK_ID_SIZE as IdCell) as usize,
-                        )
-                    {
-                        *cell = cell.wrapping_add(by);
-                        continue;
-                    }
-                    let index = first | place;
-                    let id = given.id(index, *cell);
-                    let new = if keeps {
-                        Some(id)
-                    } else {
-                        match id.checked_sub(BLOCK_ID_OFFSET) {
-                            Some(n) => log.block_of(n).map(|block| {
-                                BLOCK_ID_OFFSET
-                                    + new_starts[worker][block]
-                                    + (n - log.blocks[block].0)
-                            }),
-                            None => log
-                                .global_of(id)
-                                .map(|global| new_globals[worker][global])
-                                .filter(|&new| new != 0),
-                        }
-                    };
-                    let Some(new) = new else {
-                        debug_assert!(false, "worker {worker} did not log id {id}");
-                        *cell = 0;
-                        continue;
-                    };
-                    *cell = id_cell(new);
-                    if *cell == BIG_ID {
-                        ids.big.insert(index, new);
-                    }
+            if !renumber.keeps
+                && let Some(by) = renumber.block_cell_move(*cell)
+            {
+                *cell = cell.wrapping_add(by);
+                continue;
+            }
+            let index = first | place;
+            let id = self.id(index, *cell);
+            let new = if renumber.keeps {
+                Some(id)
+            } else {
+                self.new_id(id, renumber.new_globals, renumber.new_starts)
+            };
+            let Some(new) = new else {
+                debug_assert!(false, "worker {} did not log id {id}", renumber.worker);
+                *cell = 0;
+                continue;
+            };
+            *cell = id_cell(new);
+            if *cell == BIG_ID {
+                ids.big.insert(index, new);
+            }
+        }
+    }
+
+    /// The new id of the worker's id `id`: a block id moves with its block,
+    /// a global id takes its new global id. None for an id that the worker
+    /// did not log, or a global id that does not count.
+    fn new_id(&self, id: u64, new_globals: &[u64], new_starts: &[u64]) -> Option<u64> {
+        let log = &self.log;
+        match id.checked_sub(BLOCK_ID_OFFSET) {
+            Some(n) => log
+                .block_of(n)
+                .map(|block| BLOCK_ID_OFFSET + new_starts[block] + (n - log.blocks[block].0)),
+            None => log
+                .global_of(id)
+                .map(|global| new_globals[global])
+                .filter(|&new| new != 0),
+        }
+    }
+}
+
+/// How `WorkerSymbolIds::renumber_cells` renumbers one worker's cells.
+struct CellRenumber<'a> {
+    worker: usize,
+    /// Every id keeps its number (`WorkerSymbolIds::keeps_numbers`).
+    keeps: bool,
+    /// `WorkerSymbolIds::block_moves`.
+    block_moves: Option<&'a [IdCell]>,
+    moves_from: IdCell,
+    new_globals: &'a [u64],
+    new_starts: &'a [u64],
+}
+
+impl CellRenumber<'_> {
+    /// The move of a block cell by its block's move, in cell form, when the
+    /// blocks move so (`block_moves`).
+    #[inline]
+    fn block_cell_move(&self, cell: IdCell) -> Option<IdCell> {
+        let moves = self.block_moves?;
+        if cell == BIG_ID || cell & BLOCK_CELL == 0 {
+            return None;
+        }
+        moves
+            .get(
+                ((cell & !BLOCK_CELL).wrapping_sub(self.moves_from) / BLOCK_ID_SIZE as IdCell)
+                    as usize,
+            )
+            .copied()
+    }
+}
+
+impl LineageIds {
+    /// Adds a merged chunk of a worker to this thread's chunk `chunk`.
+    fn install_chunk(&mut self, chunk: usize, cells: Box<[IdCell; LINEAGE_ID_CHUNK]>) {
+        if chunk >= self.chunks.len() {
+            self.chunks.resize_with(chunk + 1, || None);
+        }
+        match &mut self.chunks[chunk] {
+            // A cell of `cells` is 0 where `old` has an id: the worker
+            // dropped this thread's ids, and no two workers keep a cell.
+            Some(old) => {
+                for (old, cell) in old.iter_mut().zip(cells.iter()) {
+                    *old |= cell;
                 }
             }
-            if chunk >= ids.chunks.len() {
-                ids.chunks.resize_with(chunk + 1, || None);
-            }
-            match &mut ids.chunks[chunk] {
-                // A cell of `cells` is 0 where `old` has an id: the worker
-                // dropped this thread's ids, and no two workers keep a cell.
-                Some(old) => {
-                    for (old, cell) in old.iter_mut().zip(cells.iter()) {
-                        *old |= cell;
-                    }
-                }
-                slot => *slot = Some(cells),
-            }
+            slot => *slot = Some(cells),
         }
     }
 }
