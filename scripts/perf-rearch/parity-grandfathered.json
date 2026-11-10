@@ -6,20 +6,20 @@
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. D2 family, not attributed further: the build orchestrator's out/tsconfig.tsbuildinfo on an insensitive host has root [[1,3]] in Go and [[2,3]] in tsc-rs (the root A/x.ts is not matched to its fileNames entry ../a/x.ts); every other output is equal. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "347aa0c0e167cd2b",
+   "input": "387a7543523c9f5b",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "8ded4cac88f3e19e",
-    "written": "7bfba58630d08299"
+    "written": "1b764b1ae9f1f9aa"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "e390b4433f72d3b1",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "984d21b76817d775",
+    "written": "6c954b60dc6df9cb",
     "inputs": "intact"
    },
    "attempts": {
@@ -31,26 +31,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-json-overwrite-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). B3 c1b: Go emits no SRC/data.json (it would overwrite src/data.json on this host), tsc-rs emits it. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "dedbdac2641f476a",
+   "input": "f42adfab4c0cd34e",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "867cbe49eca355e5",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "7a0a9d1a9353ca57",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -62,26 +62,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-mixed-dirs-decl-maps-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). With declarations and maps: Go emits every output to out/, tsc-rs a/y.* beside its source. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "80ae7190fd34de1c",
+   "input": "26068491370694fc",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "b69ddc9e0a5558bc",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "9b2e8728163db1ea",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -90,26 +90,26 @@
      "run2"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-mixed-dirs-decldir-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). emitDeclarationOnly: Go emits types/y.d.ts, tsc-rs a/y.d.ts. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "a7c7e4e319f920c1",
+   "input": "f4b60d9a15142196",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "4af68cfb0d06f63c",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "5cec3134f5a44e6f",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -118,26 +118,26 @@
      "run2"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-mixed-dirs-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). Go emits out/x.js and out/y.js, tsc-rs a/y.js beside its source. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "bc68091d84596b86",
+   "input": "4ada0626a07005b8",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "5e8afcd52d946d07",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "8bfe40fbbad00fd4",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -149,26 +149,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-mixed-dirs-reversed-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). The root files in the other order: Go emits out/x.js, tsc-rs A/x.js. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "1579a2197626b55d",
+   "input": "b23f5c0fd6cec5ad",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "60c3606c6cff2810",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "44a4284d1011fc5b",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -177,26 +177,26 @@
      "run2"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-mixed-dirs-rootdir-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). rootDir A fixes the common directory, so D2 alone: Go emits out/y.js, tsc-rs a/y.js. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "2e2ba3f94d06b595",
+   "input": "65b69005f638a7f5",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "550ae50156b5b7e7",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "1a108a50bf8f19d3",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -208,26 +208,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/case-outdir-rootdir-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). At the source-map writer: Go's maps in SRC/ name sources a.ts and b.ts (SRC and src are one dir on this host), tsc-rs ../src/a.ts and ../../src/sub/b.ts. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "5c8b8daa6d5c8cce",
+   "input": "94b6c9a18a575832",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "c31a42cdefb07059",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "531b28d3542f55b9",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -236,26 +236,26 @@
      "run2"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/dyn-commondir-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D1: on an insensitive host the common source directory folds the case of dynamic ^/~ts-uri~/ names (frontend/outputpaths.rs compute_common_source_directory_of_filenames; Go CaseSensitivity.CommonDirectoryOfFiles compares them case-sensitively): Go emits virtualout/A/x.* and virtualout/a/y.*, tsc-rs virtualout/x.* and a/y.* beside its source. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "affcd351a3165fa5",
+   "input": "32f030ba0cb602c8",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "de7bc309f90473ee",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "a844335944477f5b",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -267,26 +267,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/dyn-config-include-dirs-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. Astra's H7 finding 9, B3 risk 13 (GlobVisitor and the wildcard keys lowercase dynamic directory names; Go caseSensitivity.PathKey keeps their case): Go's config project has src/A/x.ts and src/a/y.ts, tsc-rs drops src/a/y.ts. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "4690fcf65530817b",
+   "input": "2c2d10d748489501",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "87a021c08f81e542",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "6d74493ccc8cb6de",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -298,26 +298,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/dyn-config-include-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 risks 12, 13, 15 (tsconfig wildcard and file-name keys, GlobVisitor, wildcard to_canonical_key lowercase dynamic names; Go caseSensitivity.PathKey keeps their case): Go's config project has src/A.ts and src/a.ts, tsc-rs drops src/a.ts. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "1a1624ee7ca7cb79",
+   "input": "beb60ceaac667dd6",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "cb75156c05bf0a9d",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "5467da54b63ab534",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -329,26 +329,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/dyn-reference-ext-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 risk 10 (frontend/compiler/file_loader.rs get_source_file_from_reference lowercases a dynamic name before the extension check; Go caseSensitivity.PathKey keeps its case): Go reports TS6054 for /// <reference path=\"x.TS\"> and leaves x.TS out, tsc-rs takes it in and emits out/x.TS.js. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "cf9e01a1b449f83a",
+   "input": "62a7f9ca7f553b3c",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "086c80daa93b1092",
-    "written": "13637e7eb4ff7620"
+    "written": "f71a30777e064f18"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "e4e038095d343e40",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "13637e7eb4ff7620",
+    "written": "f71a30777e064f18",
     "inputs": "intact"
    },
    "attempts": {
@@ -360,26 +360,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/layer-emit-mixed-dirs-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). On the path that writes: a layer filesystem over the c2 tree on disk, emit through the host filesystem: Go writes out/x.js and out/y.js into the fixture, tsc-rs out/x.js and a/y.js. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "fa76717ae2cd08f1",
+   "input": "e46810ecefa5ecd7",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "c124796caf52a25d",
-    "written": "8670d4a9a344fffd"
+    "written": "6d8b77db4feb7d29"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "5e7a7f7a7182cefc",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "3a47e94e97f1afb4",
+    "written": "e717a8e419589b2b",
     "inputs": "intact"
    },
    "attempts": {
@@ -391,26 +391,26 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "api/update-mixed-dirs-insensitive": {
    "status": "DIFF",
    "rsFailure": null,
    "reason": "Known-bad tracking entry (lane H7), not an accepted difference: a confirmed output difference of tsc-rs from pinned Go on the API path. B3 D2: the emit side takes its case sensitivity from the OS (program/go_frontend.rs build_program and publish_parsed_files, osvfs_fs()), not from the session's filesystem (--useCaseSensitiveFileNames=false). After an updateSnapshot that reconfigures the program: Go emits out/x.js and out/y.js, tsc-rs a/y.js beside its source, before and after the update. Fix lane B2 is open and removes this entry when the item MATCHes; any other change of this failure fails the gate.",
-   "input": "754aa16528bee570",
+   "input": "7f6143ccde455276",
    "go": {
     "status": "ok",
     "outcome": "exit 0",
     "panic": null,
     "stdout": "e64a82580f64b9ee",
-    "written": "72f8d9bfe801c19d"
+    "written": "3120c75ea3124cf4"
    },
    "attempt": {
     "outcome": "exit 0",
     "code": 0,
     "stdout": "c1b4aff2cf12a2e9",
     "stderrSite": "8ce658ddd65dc478",
-    "written": "72f8d9bfe801c19d",
+    "written": "3120c75ea3124cf4",
     "inputs": "intact"
    },
    "attempts": {
@@ -422,7 +422,7 @@
      "run1"
     ]
    },
-   "evidence": "h7r3-gf-evidence-ed6edf820-full + h7r3-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
+   "evidence": "h7final-gf-evidence-ed6edf820-full + h7final-gf-evidence-ed6edf820-quick: /home/agent/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel (310f56f918c3)"
   },
   "fuzz/1:411": {
    "status": "DIFF",
