@@ -224,23 +224,25 @@ pub struct StartedPlainEmit {
 }
 
 /// Debug and `diagnostics` builds: checks that the loading thread kept its
-/// state during the early emit. The emit pool starts from a copy of this
-/// thread's state (`program::bind_thread_fingerprint`), so until the wait
-/// this thread must not change it, else the pool would start from other
-/// state than in the emit after the check.
+/// state during an early emit: the plain one here (`start_plain_emit`) and
+/// the incremental one (`execute::incremental::emit_files`,
+/// `start_emit_files`). The emit pool starts from a copy of this thread's
+/// state (`program::bind_thread_fingerprint`), so until the wait this
+/// thread must not change it, else the pool would start from other state
+/// than in the emit after the check.
 #[cfg(any(debug_assertions, feature = "diagnostics"))]
-mod early_emit_verify {
+pub(crate) mod early_emit_verify {
     /// `program::bind_thread_fingerprint` of this thread at the start.
-    pub(super) struct Fingerprint((usize, (u64, u64), u64, usize));
+    pub(crate) struct Fingerprint((usize, (u64, u64), u64, usize));
 
     impl Fingerprint {
-        pub(super) fn now() -> Self {
+        pub(crate) fn now() -> Self {
             Fingerprint(crate::program::bind_thread_fingerprint())
         }
 
         /// At the wait: a debug build panics when the state changed; with
         /// the checker call log on, a `diagnostics` build says so on stderr.
-        pub(super) fn check(&self) {
+        pub(crate) fn check(&self) {
             if crate::program::bind_thread_fingerprint() == self.0 {
                 return;
             }
