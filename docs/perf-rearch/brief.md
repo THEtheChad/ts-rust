@@ -78,6 +78,28 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
   timers.
 - **Never use remote hosts or Blacksmith** (`remote.sh`, `testbox.sh`,
   `boatbox.sh`). Everything runs here.
+- **Heavy runs** (ops note, 2026-11-10): builds, test suites, parity gates
+  and refills, icount, and anything that forks many processes.
+  - **Background.** On 2026-11-10, from 13:01 to 13:21 CST, every agent on
+    the machine hit a task cap: `app-t3code.slice` was capped at 10,018 by a
+    systemd 255 bug. Forks were refused and agents aborted, H8 among them.
+    The cap is fixed, but CPU was oversubscribed: load 40.6 on 32 CPUs.
+  - **At most one or two heavy runs at a time,** across all lanes.
+  - **Every heavy run takes the one shared absolute lock** and runs in the
+    batch slice with an explicit task cap:
+
+    ```sh
+    systemd-run --user --collect --slice=app-batch.slice --property=TasksMax=24000 \
+      --unit=<name> -p WorkingDirectory=$PWD \
+      flock /home/agent/.cache/ts-rust-heavy.lock bash -lc '<command>; echo DONE or FAIL rc=N to the log'
+    ```
+
+  - **Why the lock path is absolute:** a relative path doesn't serialize
+    across worktrees.
+  - **Why the explicit `TasksMax`:** the batch slice gives the run low CPU
+    priority but has no task cap of its own.
+  - **The parity gate's own lock** (`parity/.lock`) and `run-cargo-capped.sh`'s
+    slots still apply inside it.
 
 ## Parity gate (mandatory for every change)
 

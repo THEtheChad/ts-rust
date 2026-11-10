@@ -1816,3 +1816,26 @@ once a **reconciliation step** is built and tested.
   - a `regen` option to drop recovered pins;
   - the `build_watch_keeps_the_first_json_parse_of_a_cycle` flake (CRLF
     assertion at `build_watch_parses.rs:100`, which predates B2).
+- **2026-11-10, 13:01–13:21 CST: the task-cap incident** (ops note).
+  - **What happened:** a systemd 255 bug capped `app-t3code.slice` at 10,018
+    tasks, so forks failed everywhere. H8 died at 13:13 CST, and root's turn
+    died too. Ops has fixed the cap.
+  - **H8's refill:** it had finished (`scratch/h8/fill.log`, `DONE`: lsp
+    2,655 MATCH and 29 GO-BROKEN). Root spot-checked it:
+    - **During the incident window:** the watch-hono-f12 refill 2 and fill-2
+      ran then. Both agree with the runs before it.
+    - **fill-2's GO-BROKEN set** equals `base-current`'s exactly, and no item
+      is not good.
+    - **Logs:** no fork or resource errors.
+    - **Decision:** kept; nothing regenerated.
+  - **Shared inputs:** git status is clean.
+    - The `effect`/`t3code` `tsconfig.base.noeffect.json` files come from
+      input prep (2026-11-03).
+    - `zod/vitest.config.{js,d.ts,d.ts.map}` are stray emit outputs from
+      2026-11-04, before the read-only guard. Every snapshot since then has
+      included them, and both sides see them. They will be dropped at the
+      next input prep, because removing them now resets zod's Go cache.
+  - **New rule** (brief, "Machine"): one or two heavy runs at a time, under
+    the shared absolute lock `/home/agent/.cache/ts-rust-heavy.lock`, in
+    `app-batch.slice` with `TasksMax=24000`. Added to `w2-brief.md` and to
+    every lane brief from now on.

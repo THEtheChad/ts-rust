@@ -81,6 +81,12 @@ Then read this page. Your lane prompt gives you your files and your targets.
   finish the evidence below on what you have, and report. Root starts a
   continuation lane from your progress file.
 
+## Heavy runs
+Follow `brief.md`, "Machine", on heavy runs:
+- **One or two heavy runs at a time,** across all lanes.
+- **Each one under `flock /home/agent/.cache/ts-rust-heavy.lock`,** launched
+  with `systemd-run --user --slice=app-batch.slice --property=TasksMax=24000`.
+
 ## Evidence before you report
 
 - **Tests:** `scripts/run-cargo-capped.sh test --release` for the workspace,
