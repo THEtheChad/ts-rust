@@ -319,38 +319,9 @@ impl CompilerHost for CompilerHostImpl {
     fn get_source_file(&self, opts: &SourceFileParseOptions) -> Option<Rc<ParsedSourceFile>> {
         let script_kind = ensure_script_kind_from_file_name(&opts.file_name);
         let freeable = crate::ast::freeable_path(&opts.path.0);
-        let text: FileText = if self.plain_os_fs {
-            // PERF: on the plain OS file system a worker read the same
-            // bytes, so the file is read once, as in Go. A bundled lib is
-            // its embedded text (what `WrappedFs::read_file` copies).
-            match take_prefetched(opts, script_kind, None) {
-                Prefetched::Parse(file) => return Some(Rc::new(file)),
-                Prefetched::Text(text) => text,
-                Prefetched::Nothing => match bundled_text(&opts.file_name) {
-                    Some(text) => text.into(),
-                    None => {
-                        let (text, ok) = self.fs.read_file(&opts.file_name);
-                        if !ok {
-                            return None;
-                        }
-                        FileText::new(text, freeable)
-                    }
-                },
-            }
-        } else {
-            let (text, ok) = CompilerHost::fs(self).read_file(&opts.file_name);
-            if !ok {
-                return None;
-            }
-            // Another file system can show other bytes than the worker's
-            // OS file system, so a worker result is used only for the same
-            // text.
-            match take_prefetched(opts, script_kind, Some(text.as_str())) {
-                Prefetched::Parse(file) => return Some(Rc::new(file)),
-                Prefetched::Text(worker_text) => worker_text,
-                Prefetched::Nothing => unpacked_lib_text(&opts.file_name, &text)
-                    .unwrap_or_else(|| FileText::new(text, freeable)),
-            }
+        let text = match self.read_source_file(opts, script_kind, freeable)? {
+            SourceFileInput::Parsed(file) => return Some(Rc::new(file)),
+            SourceFileInput::Text(text) => text,
         };
         // Not in Go: while `ast::free_file_versions` is on (`tsc --watch`,
         // or `goport_multiprog --free-file-versions`), a new parse of a path that this
@@ -403,6 +374,87 @@ impl CompilerHost for CompilerHostImpl {
 
     fn is_plain_os_fs(&self) -> bool {
         self.plain_os_fs
+    }
+}
+
+/// What `CompilerHostImpl::get_source_file` gets for a file: a parse worker's
+/// finished parse of it, or the text to parse.
+// PORT: not in Go (see `CompilerHostImpl::read_source_file`).
+enum SourceFileInput {
+    Parsed(ParsedSourceFile),
+    Text(FileText),
+}
+
+impl CompilerHostImpl {
+    /// Go `h.FS().ReadFile(opts.FileName)` in `GetSourceFile`, with the
+    /// parse workers in front of it (`FilesParser` prefetch,
+    /// `take_prefetched`): a worker may have parsed the file already, or
+    /// read its text. `None` is Go's `!ok`.
+    // PORT: not in Go. Hot: once per file that the loader parses.
+    #[inline]
+    fn read_source_file(
+        &self,
+        opts: &SourceFileParseOptions,
+        script_kind: ScriptKind,
+        freeable: bool,
+    ) -> Option<SourceFileInput> {
+        if self.plain_os_fs {
+            self.read_plain_os_source_file(opts, script_kind, freeable)
+        } else {
+            self.read_other_fs_source_file(opts, script_kind, freeable)
+        }
+    }
+
+    /// `read_source_file` on the plain OS file system. A worker read the
+    /// same bytes, so the file is read once, as in Go. A bundled lib is its
+    /// embedded text (what `WrappedFs::read_file` copies).
+    // PERF: not in Go.
+    #[inline]
+    fn read_plain_os_source_file(
+        &self,
+        opts: &SourceFileParseOptions,
+        script_kind: ScriptKind,
+        freeable: bool,
+    ) -> Option<SourceFileInput> {
+        let text = match take_prefetched(opts, script_kind, None) {
+            Prefetched::Parse(file) => return Some(SourceFileInput::Parsed(file)),
+            Prefetched::Text(text) => text,
+            Prefetched::Nothing => match bundled_text(&opts.file_name) {
+                Some(text) => text.into(),
+                None => {
+                    let (text, ok) = self.fs.read_file(&opts.file_name);
+                    if !ok {
+                        return None;
+                    }
+                    FileText::new(text, freeable)
+                }
+            },
+        };
+        Some(SourceFileInput::Text(text))
+    }
+
+    /// `read_source_file` on any other file system. It can show other bytes
+    /// than the worker's OS file system, so a worker result is used only for
+    /// the same text.
+    // PORT: the worker part is not in Go.
+    #[inline]
+    fn read_other_fs_source_file(
+        &self,
+        opts: &SourceFileParseOptions,
+        script_kind: ScriptKind,
+        freeable: bool,
+    ) -> Option<SourceFileInput> {
+        let (text, ok) = CompilerHost::fs(self).read_file(&opts.file_name);
+        if !ok {
+            return None;
+        }
+        let text = match take_prefetched(opts, script_kind, Some(text.as_str())) {
+            Prefetched::Parse(file) => return Some(SourceFileInput::Parsed(file)),
+            Prefetched::Text(worker_text) => worker_text,
+            Prefetched::Nothing => unpacked_lib_text(&opts.file_name, &text)
+                .unwrap_or_else(|| FileText::new(text, freeable)),
+        };
+        Some(SourceFileInput::Text(text))
     }
 }
 
