@@ -94,75 +94,96 @@ fn visit(
     wanted: &'static str,
     node: Node,
 ) -> Walk {
-    if node.kind() == SyntaxKind::Identifier && !is_declaration_name_or_import_property_name(node) {
-        // The selected overload is authoritative for calls. A tagged overload
-        // may differ from other declarations of the same symbol.
-        let mut stability = DeclarationStabilityInfo::default();
-        let mut selected_declaration = Node::NIL;
-        let mut callee = node;
-        let parent = node.parent();
-        if parent.is_some()
-            && parent.kind() == SyntaxKind::PropertyAccessExpression
-            && parent.name() == node
-        {
-            callee = parent;
-        }
-        let parent = callee.parent();
-        if parent.is_some()
-            && matches!(
-                parent.kind(),
-                SyntaxKind::CallExpression | SyntaxKind::NewExpression
-            )
-            && parent.expression() == callee
-        {
-            let signature = ctx.tp.checker.get_resolved_signature_exported(parent);
-            if signature.is_some() && ctx.tp.checker.sig(signature).declaration().is_some() {
-                selected_declaration = ctx.tp.checker.sig(signature).declaration();
-                stability = read_signature(ctx, signature);
-                if stability.stability.is_empty() {
-                    // A signature with no own tag still carries the selected
-                    // declaration so the symbol fallback can be suppressed for it.
-                    stability = DeclarationStabilityInfo {
-                        stability: "",
-                        declaration: selected_declaration,
-                    };
-                }
-            }
-        }
-        let symbol = ctx.tp.checker.get_symbol_at_location_exported(node);
-        let resolved_symbol = ctx.tp.reference_symbol_at_node(node);
-        let use_symbol = selected_declaration.is_nil()
-            || !symbol_has_declaration(ctx.tp.checker, symbol, selected_declaration)
-                && !symbol_has_declaration(ctx.tp.checker, resolved_symbol, selected_declaration);
-        if stability.stability.is_empty() && use_symbol {
-            stability = read_symbol(ctx, symbol);
-        }
-        if stability.stability.is_empty() && use_symbol {
-            stability = read_symbol(ctx, resolved_symbol);
-        }
-        if stability.stability == wanted {
-            let mut name = node.text().to_string();
-            let (allowed, api_name) = allow.decide(ctx, stability.declaration);
-            if allowed {
-                return Walk::SkipChildren;
-            }
-            if !api_name.is_empty() {
-                name = api_name;
-            }
-            let mut message = diag::X_0_is_an_unstable_API_Breaking_changes_may_happen_between_versions_effect_unstableApiUsage;
-            if wanted == "experimental" {
-                message = diag::X_0_is_an_experimental_API_effect_experimentalApiUsage;
-            }
-            diagnostics.push(ctx.new_diagnostic(
-                ctx.source_file,
-                ctx.get_error_range(node),
-                message,
-                Vec::new(),
-                vec![name],
-            ));
-        }
+    if node.kind() != SyntaxKind::Identifier || is_declaration_name_or_import_property_name(node) {
+        return Walk::Descend;
     }
+    let stability = identifier_stability(ctx, node);
+    if stability.stability != wanted {
+        return Walk::Descend;
+    }
+    let mut name = node.text().to_string();
+    let (allowed, api_name) = allow.decide(ctx, stability.declaration);
+    if allowed {
+        return Walk::SkipChildren;
+    }
+    if !api_name.is_empty() {
+        name = api_name;
+    }
+    let mut message = diag::X_0_is_an_unstable_API_Breaking_changes_may_happen_between_versions_effect_unstableApiUsage;
+    if wanted == "experimental" {
+        message = diag::X_0_is_an_experimental_API_effect_experimentalApiUsage;
+    }
+    diagnostics.push(ctx.new_diagnostic(
+        ctx.source_file,
+        ctx.get_error_range(node),
+        message,
+        Vec::new(),
+        vec![name],
+    ));
     Walk::Descend
+}
+
+/// The stability of the identifier `node`: the selected overload's tag when
+/// it is the callee of a call or `new` (authoritative: a tagged overload may
+/// differ from other declarations of the same symbol), else the tag of its
+/// symbol or resolved reference symbol, unless the selected declaration
+/// belongs to one of them.
+fn identifier_stability(ctx: &mut RuleContext<'_, '_>, node: Node) -> DeclarationStabilityInfo {
+    let (mut stability, selected_declaration) = selected_signature_stability(ctx, node);
+    let symbol = ctx.tp.checker.get_symbol_at_location_exported(node);
+    let resolved_symbol = ctx.tp.reference_symbol_at_node(node);
+    let use_symbol = selected_declaration.is_nil()
+        || !symbol_has_declaration(ctx.tp.checker, symbol, selected_declaration)
+            && !symbol_has_declaration(ctx.tp.checker, resolved_symbol, selected_declaration);
+    if stability.stability.is_empty() && use_symbol {
+        stability = read_symbol(ctx, symbol);
+    }
+    if stability.stability.is_empty() && use_symbol {
+        stability = read_symbol(ctx, resolved_symbol);
+    }
+    stability
+}
+
+/// The stability of the signature selected for the call or `new` whose
+/// callee is `node` (or the property access it names), and the selected
+/// declaration (nil when `node` is no callee).
+fn selected_signature_stability(
+    ctx: &mut RuleContext<'_, '_>,
+    node: Node,
+) -> (DeclarationStabilityInfo, Node) {
+    let mut callee = node;
+    let parent = node.parent();
+    if parent.is_some()
+        && parent.kind() == SyntaxKind::PropertyAccessExpression
+        && parent.name() == node
+    {
+        callee = parent;
+    }
+    let parent = callee.parent();
+    if parent.is_nil()
+        || !matches!(
+            parent.kind(),
+            SyntaxKind::CallExpression | SyntaxKind::NewExpression
+        )
+        || parent.expression() != callee
+    {
+        return (DeclarationStabilityInfo::default(), Node::NIL);
+    }
+    let signature = ctx.tp.checker.get_resolved_signature_exported(parent);
+    if signature.is_nil() || ctx.tp.checker.sig(signature).declaration().is_nil() {
+        return (DeclarationStabilityInfo::default(), Node::NIL);
+    }
+    let selected_declaration = ctx.tp.checker.sig(signature).declaration();
+    let mut stability = read_signature(ctx, signature);
+    if stability.stability.is_empty() {
+        // A signature with no own tag still carries the selected
+        // declaration so the symbol fallback can be suppressed for it.
+        stability = DeclarationStabilityInfo {
+            stability: "",
+            declaration: selected_declaration,
+        };
+    }
+    (stability, selected_declaration)
 }
 
 // Go: rules/stability_api_usage.go symbolHasDeclaration
@@ -262,45 +283,13 @@ impl StabilityApiAllowlist {
         if sf.is_nil() {
             return (false, String::new());
         }
-        let module_name = if let Some(name) = self.modules.get(&sf) {
-            name.clone()
-        } else {
-            let mut module_name = String::new();
-            if let Some(pkg) = ctx.tp.package_json_for_source_file(sf) {
-                let (package_name, ok) = pkg.fields.name.get_value();
-                if ok && !package_name.is_empty() {
-                    let directory =
-                        super::deterministic_keys::get_package_json_directory(ctx.program, sf);
-                    module_name = stability_api_module_name(
-                        &package_name,
-                        &directory,
-                        source_file_file_name(sf),
-                    );
-                }
-            }
-            self.modules.insert(sf, module_name.clone());
-            module_name
-        };
+        let module_name = self.module_name(ctx, sf);
         if module_name.is_empty() {
             return (false, String::new());
         }
         let c = &mut *ctx.tp.checker;
         let module_symbol = c.get_symbol_of_declaration(sf);
-        let mut symbol = c.get_symbol_of_declaration(declaration);
-        if symbol.is_some() && c.sym(symbol).export_symbol.is_some() {
-            symbol = c.sym(symbol).export_symbol;
-        }
-        // A selected overload (for example a call signature of a dual export)
-        // carries its own `__call` symbol rather than the export's, so it is not
-        // a module export. Resolve the enclosing exported declaration instead so
-        // the name and the per-export allow-list match stay export-scoped.
-        if module_symbol.is_some() && !stability_symbol_is_module_export(c, symbol, module_symbol) {
-            let owner = stability_owning_export_symbol(c, declaration, module_symbol);
-            if owner.is_some() {
-                symbol = owner;
-            }
-        }
-        let mut allowed = false;
+        let symbol = stability_export_symbol(c, declaration, module_symbol);
         let mut name = module_name.clone();
         if module_symbol.is_some() && symbol.is_some() {
             let symbol_name = c.sym(symbol).name.clone();
@@ -311,43 +300,31 @@ impl StabilityApiAllowlist {
                 name.push_str(&symbol_name);
             }
         }
-        for entry in &self.entries {
-            let (module, member, has_member) = match entry.split_once('#') {
-                Some((module, member)) => (module, member, true),
-                None => (entry.as_str(), "", false),
-            };
-            if !has_member {
-                if !module.is_empty()
-                    && (module_name == module
-                        || module_name
-                            .strip_prefix(module)
-                            .is_some_and(|rest| rest.starts_with('/')))
-                {
-                    allowed = true;
-                    break;
-                }
-            } else if module == module_name
-                && !member.is_empty()
-                && module_symbol.is_some()
-                && symbol.is_some()
-            {
-                let exported =
-                    c.try_get_member_in_module_exports_and_properties(member, module_symbol);
-                if exported.is_some() {
-                    if exported == symbol {
-                        allowed = true;
-                        break;
-                    }
-                    let left = resolve_stability_alias(c, exported);
-                    let right = resolve_stability_alias(c, symbol);
-                    if c.get_symbol_if_same_reference(left, right).is_some() {
-                        allowed = true;
-                        break;
-                    }
-                }
+        let allowed = self
+            .entries
+            .iter()
+            .any(|entry| stability_entry_allows(c, entry, &module_name, module_symbol, symbol));
+        (allowed, name)
+    }
+
+    /// The module name of the declaration file `sf` (from its package.json;
+    /// empty when it has none), cached per file.
+    fn module_name(&mut self, ctx: &mut RuleContext<'_, '_>, sf: Node) -> String {
+        if let Some(name) = self.modules.get(&sf) {
+            return name.clone();
+        }
+        let mut module_name = String::new();
+        if let Some(pkg) = ctx.tp.package_json_for_source_file(sf) {
+            let (package_name, ok) = pkg.fields.name.get_value();
+            if ok && !package_name.is_empty() {
+                let directory =
+                    super::deterministic_keys::get_package_json_directory(ctx.program, sf);
+                module_name =
+                    stability_api_module_name(&package_name, &directory, source_file_file_name(sf));
             }
         }
-        (allowed, name)
+        self.modules.insert(sf, module_name.clone());
+        module_name
     }
 }
 
@@ -446,4 +423,59 @@ mod tests {
             );
         }
     }
+}
+
+/// The export symbol of `declaration` in the module `module_symbol`. A
+/// selected overload (for example a call signature of a dual export) carries
+/// its own `__call` symbol rather than the export's, so it is not a module
+/// export: the enclosing exported declaration is resolved instead so the
+/// name and the per-export allow-list match stay export-scoped.
+fn stability_export_symbol(
+    c: &mut Checker,
+    declaration: Node,
+    module_symbol: SymbolId,
+) -> SymbolId {
+    let mut symbol = c.get_symbol_of_declaration(declaration);
+    if symbol.is_some() && c.sym(symbol).export_symbol.is_some() {
+        symbol = c.sym(symbol).export_symbol;
+    }
+    if module_symbol.is_some() && !stability_symbol_is_module_export(c, symbol, module_symbol) {
+        let owner = stability_owning_export_symbol(c, declaration, module_symbol);
+        if owner.is_some() {
+            symbol = owner;
+        }
+    }
+    symbol
+}
+
+/// Whether the allow-list entry `entry` allows `symbol` of the module
+/// `module_name`: a module entry allows the module and its subpaths, a
+/// `module#member` entry the export of that name (through aliases).
+fn stability_entry_allows(
+    c: &mut Checker,
+    entry: &str,
+    module_name: &str,
+    module_symbol: SymbolId,
+    symbol: SymbolId,
+) -> bool {
+    let Some((module, member)) = entry.split_once('#') else {
+        return !entry.is_empty()
+            && (module_name == entry
+                || module_name
+                    .strip_prefix(entry)
+                    .is_some_and(|rest| rest.starts_with('/')));
+    };
+    if module != module_name || member.is_empty() || module_symbol.is_nil() || symbol.is_nil() {
+        return false;
+    }
+    let exported = c.try_get_member_in_module_exports_and_properties(member, module_symbol);
+    if exported.is_nil() {
+        return false;
+    }
+    if exported == symbol {
+        return true;
+    }
+    let left = resolve_stability_alias(c, exported);
+    let right = resolve_stability_alias(c, symbol);
+    c.get_symbol_if_same_reference(left, right).is_some()
 }
