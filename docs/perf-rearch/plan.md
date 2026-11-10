@@ -1754,3 +1754,22 @@ once a **reconciliation step** is built and tested.
   loaded median reached 7.2 ms, and the faults land near 54 ms. All three
   tests pass. No third review round: a change to a constant, verified by
   the fault tests.
+- **H7 merged** (`11dcc9470`) after root verified the final fix.
+  - H7's self-test (111 checks) passes. Astra's three final cases now give
+    DIFF:
+    - a write, then `chmod 000` on the storage root;
+    - `chmod 0700` on `build-composite`, in full mode;
+    - the same in quick mode.
+  - The fix records the storage root's metadata, and any directory that
+    can't be listed or stat'ed counts as a difference.
+  - The mmap edit-and-restore race on the host is documented as a known
+    limit; it affects the cli and lsp snapshots too.
+  - **Base:** `base-current` is now `runs/h7final-head-ed6edf820-full-2`,
+    the full run with the api tier.
+  - The first gate run lost `fuzz/1:2450` to a timeout at load 42. Run
+    alone, it MATCHes in about 10 s. The rerun was clean.
+- **B2 told** to:
+  - rebase onto Q7 and H7, resolving the `program.rs` overlap;
+  - fix all 14 api differences (three are new since its report);
+  - remove the pins with `regen --only`;
+  - run the full gate, api tier included.

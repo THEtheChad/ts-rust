@@ -93,7 +93,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now head e81a14807 (C1–C3 and the C2 follow-up, L1, P1, P3, ND1/ND2, WIN, H5), under the H5 hermetic harness; run head-ed6edf820-full (Q3–Q8, H6, all of wave 2; grandfather v4), 0 lost; on main the Effect items were known
+  this branch (now head e81a14807 (C1–C3 and the C2 follow-up, L1, P1, P3, ND1/ND2, WIN, H5), under the H5 hermetic harness; run h7final-head-ed6edf820-full-2 (all of wave 2, with the H7 api tier: 14 api differences pinned for B2), 0 lost; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - **Referees:** on the cli, fuzz and corpus tiers the gate applies the
