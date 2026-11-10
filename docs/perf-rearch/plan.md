@@ -1729,3 +1729,12 @@ once a **reconciliation step** is built and tested.
     Astra for a final recheck that includes merge readiness. Root then
     decides: merge, with any remaining findings fixed by root or by H8.
     The tier only adds coverage.
+- **H7 final recheck: REJECT** (`reviews/2026-11-10-astra-h7-r3.md`).
+  - **Finding 1 (high):** storage that can't be read (the root chmodded)
+    gives MATCH.
+  - **Finding 2 (medium):** a host-side mmap edit-and-restore is a race on
+    the host.
+- **Root's decision at the cap:** H7 makes one final narrow fix for finding
+  1, with controls, and documents finding 2 as a limit. Root verifies it
+  with Astra's reproductions, then merges without another review round. The
+  tier only adds coverage, and Astra found no weakening of the other tiers.
