@@ -412,12 +412,12 @@ impl Checker {
                     if index_info.is_some() {
                         prop_flags =
                             prop_flags.without(SymbolFlags::ACCESSOR) | SymbolFlags::PROPERTY;
-                        let readonly = if self.index_info(index_info).is_readonly {
-                            CheckFlags::READONLY
-                        } else {
-                            CheckFlags::NONE
-                        };
-                        check_flags |= CheckFlags::WRITE_PARTIAL | readonly;
+                        check_flags |= CheckFlags::WRITE_PARTIAL
+                            | if_else(
+                                self.index_info(index_info).is_readonly,
+                                CheckFlags::READONLY,
+                                CheckFlags::NONE,
+                            );
                         if self.is_tuple_type(t) {
                             let mut index_type = self.get_rest_type_of_tuple_type(t);
                             if index_type.is_nil() {
@@ -1423,11 +1423,7 @@ impl Checker {
                         .resolved_type_arguments =
                         SharedList::non_nil(&vec![error_type; type_parameter_count]);
                 }
-                let error_node = if node.is_some() {
-                    node
-                } else {
-                    self.current_node
-                };
+                let error_node = if_else(node.is_some(), node, self.current_node);
                 let target_symbol = self.ty(target).symbol;
                 if target_symbol.is_some() {
                     let symbol_string = self.symbol_to_string(target_symbol);
