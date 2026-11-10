@@ -1609,3 +1609,11 @@ once a **reconciliation step** is built and tested.
     closely.
   - Gate `runs/h7-head-ed6edf820-full`: PARITY OK.
   - **B2 told:** fix all 11, rebase after H7 merges, remove the pins.
+- **H7 review: REJECT** (`reviews/2026-11-10-astra-h7.md`). Nine findings,
+  four of them high: surviving children, host writes, type-insensitive JSON
+  comparison, and infrastructure failures counted as GO-BROKEN.
+  - **Round 2 sent:** fix all nine, with negative controls built from
+    Astra's probes. Check the lsp tier for the shared tripwire and sandbox
+    gaps. Add the directory-collision scenario as a 12th known-bad for B2.
+  - B2 continues with its own Rust tests. Its api-tier verification waits
+    for H7.
