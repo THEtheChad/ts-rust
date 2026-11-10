@@ -160,11 +160,7 @@ impl Checker {
             self.get_single_signature(t, SignatureKind::CALL, true /*allowMembers*/);
         let construct_signature =
             self.get_single_signature(t, SignatureKind::CONSTRUCT, true /*allowMembers*/);
-        let signature = if call_signature.is_some() {
-            call_signature
-        } else {
-            construct_signature
-        };
+        let signature = or_else_signature(call_signature, construct_signature);
         if signature.is_nil() || self.sig(signature).type_parameters.is_empty() {
             return t;
         }
@@ -176,11 +172,11 @@ impl Checker {
         let non_nullable_contextual_type = self.get_non_nullable_type(contextual_type);
         let contextual_signature = self.get_single_signature(
             non_nullable_contextual_type,
-            if call_signature.is_some() {
-                SignatureKind::CALL
-            } else {
-                SignatureKind::CONSTRUCT
-            },
+            if_else(
+                call_signature.is_some(),
+                SignatureKind::CALL,
+                SignatureKind::CONSTRUCT,
+            ),
             false, /*allowMembers*/
         );
         if contextual_signature.is_nil()
@@ -272,41 +268,11 @@ impl Checker {
                 // If the type parameters for which we produced candidates do not have any inferences yet,
                 // we adopt the new inference candidates and add the type parameters of the expression type
                 // to the set of inferred type parameters for the outer function return type.
-                // PORT: Go `hasOverlappingInferences(context.inferences, inferences)` inlined.
-                let has_overlapping = {
-                    let a = &self.inference_context(context).inferences;
-                    let b = &self.inference_context(inferences).inferences;
-                    (0..a.len()).any(|i| {
-                        info_has_inference_candidates(&a[i]) && info_has_inference_candidates(&b[i])
-                    })
-                };
-                if !has_overlapping {
-                    // PORT: Go `c.mergeInferences(context.inferences, inferences)` inlined.
-                    // Go shares the `*InferenceInfo` pointer; the scratch context is
-                    // discarded, so a clone of the value is equivalent.
-                    let source_infos = self.inference_context(inferences).inferences.clone();
-                    {
-                        let target_infos = &mut self.inference_context_mut(context).inferences;
-                        for i in 0..target_infos.len() {
-                            if !info_has_inference_candidates(&target_infos[i])
-                                && info_has_inference_candidates(&source_infos[i])
-                            {
-                                target_infos[i] = source_infos[i].clone();
-                            }
-                        }
-                    }
-                    // PORT: Go `core.Concatenate` returns a new slice whenever
-                    // `uniqueTypeParameters` is not empty (the fresh slice from
-                    // getUniqueTypeParameters itself, or a copy).
-                    // An empty append leaves the list as it is, so it makes no
-                    // `rare` box.
-                    if !unique_type_parameters.is_empty() {
-                        let origin = self.new_type_parameters_origin();
-                        let rare = self.inference_context_mut(context).rare_mut();
-                        rare.inferred_type_parameters_origin = origin;
-                        rare.inferred_type_parameters
-                            .extend(unique_type_parameters.iter().copied());
-                    }
+                if !self.has_overlapping_inferences(context, inferences) {
+                    // PORT: the scratch context is discarded, so the copies
+                    // `merge_inferences` makes stand for Go's shared pointers.
+                    self.merge_inferences(context, inferences);
+                    self.concatenate_inferred_type_parameters(context, &unique_type_parameters);
                     return self.get_or_create_type_from_signature(instantiated_signature);
                 }
             }
@@ -322,6 +288,26 @@ impl Checker {
             None,
         );
         self.get_or_create_type_from_signature(instantiated)
+    }
+
+    /// Go `context.inferredTypeParameters = core.Concatenate(context.inferredTypeParameters,
+    /// uniqueTypeParameters)` in `instantiateTypeWithSingleGenericCallSignature`.
+    /// Go's `core.Concatenate` returns a new slice whenever `type_parameters` is
+    /// not empty, so the list gets a new origin then. An empty append leaves the
+    /// list as it is and makes no `rare` box.
+    fn concatenate_inferred_type_parameters(
+        &mut self,
+        context: InferenceContextId,
+        type_parameters: &[TypeId],
+    ) {
+        if type_parameters.is_empty() {
+            return;
+        }
+        let origin = self.new_type_parameters_origin();
+        let rare = self.inference_context_mut(context).rare_mut();
+        rare.inferred_type_parameters_origin = origin;
+        rare.inferred_type_parameters
+            .extend(type_parameters.iter().copied());
     }
 
     // Go: checker/checker.go:7869 getOuterInferenceTypeParameters
@@ -836,8 +822,8 @@ impl Checker {
                             && c.ty(t).as_mapped_type().name_type.is_nil()
                             && {
                                 let target = c.ty(t).as_mapped_type().object.target;
-                                let base = if target.is_some() { target } else { t };
-                                c.get_homomorphic_type_variable(base).is_some()
+                                c.get_homomorphic_type_variable(or_else_type(target, t))
+                                    .is_some()
                             }
                 });
         let mut has_omitted_expression = false;
@@ -906,11 +892,11 @@ impl Checker {
                 element_types[i] =
                     self.add_optionality_ex(t, true /*isProperty*/, has_omitted_expression);
                 element_infos[i] = TupleElementInfo {
-                    flags: if has_omitted_expression {
-                        ElementFlags::OPTIONAL
-                    } else {
-                        ElementFlags::REQUIRED
-                    },
+                    flags: if_else(
+                        has_omitted_expression,
+                        ElementFlags::OPTIONAL,
+                        ElementFlags::REQUIRED,
+                    ),
                     ..Default::default()
                 };
                 if in_tuple_context
@@ -952,20 +938,16 @@ impl Checker {
                         Node::NIL,
                         None,
                     );
-                    element_types[i] = if indexed.is_some() {
-                        indexed
-                    } else {
-                        self.any_type
-                    };
+                    element_types[i] = or_else_type(indexed, self.any_type);
                 }
             }
             self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL)
         } else {
-            if self.strict_null_checks {
-                self.implicit_never_type
-            } else {
-                self.undefined_widening_type
-            }
+            if_else(
+                self.strict_null_checks,
+                self.implicit_never_type,
+                self.undefined_widening_type,
+            )
         };
         let array_type = self.create_array_type_ex(element_type, in_const_context);
         self.create_array_literal_type(array_type)

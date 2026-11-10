@@ -15,6 +15,49 @@ use crate::jsnum::{Number, PseudoBigInt};
 use crate::prelude::*;
 use std::sync::LazyLock;
 
+// Go: core/core.go:400 IfElse
+/// Go `core.IfElse(b, whenTrue, whenFalse)`: picks one of two values that are
+/// both already evaluated. The checker uses it where Go does, mostly to pick
+/// between the JS (JSDoc tag) and TS (modifier) variant of a diagnostic.
+/// Pass only values whose evaluation has no side effects: Go evaluates both
+/// arguments, and a lazy `if` would differ from Go only when they do.
+#[inline(always)]
+pub(crate) fn if_else<T>(b: bool, when_true: T, when_false: T) -> T {
+    if b { when_true } else { when_false }
+}
+
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(node, fallback)` for node handles.
+#[inline(always)]
+pub(crate) fn or_else_node(node: Node, fallback: Node) -> Node {
+    if node.is_some() { node } else { fallback }
+}
+
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(symbol, fallback)` for symbol handles.
+#[inline(always)]
+pub(crate) fn or_else_symbol(symbol: SymbolId, fallback: SymbolId) -> SymbolId {
+    if symbol.is_some() { symbol } else { fallback }
+}
+
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(t, fallback)` for type handles.
+#[inline(always)]
+pub(crate) fn or_else_type(t: TypeId, fallback: TypeId) -> TypeId {
+    if t.is_some() { t } else { fallback }
+}
+
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(signature, fallback)` for signature handles.
+#[inline(always)]
+pub(crate) fn or_else_signature(signature: SignatureId, fallback: SignatureId) -> SignatureId {
+    if signature.is_some() {
+        signature
+    } else {
+        fallback
+    }
+}
+
 // Go: checker/checker.go:53 TypeSystemEntity
 // PORT: Go `TypeSystemEntity any`. The Go callers of `pushTypeResolution`
 // pass a declaration node, a symbol, a type or a signature, so the Rust type
@@ -383,6 +426,15 @@ impl InferenceContext {
     /// The rare fields for a write. Makes the box on the first write.
     pub fn rare_mut(&mut self) -> &mut InferenceContextRare {
         self.rare.get_or_insert_default()
+    }
+
+    /// Go `n.returnMapper = mapper`. Setting nil makes no box.
+    pub fn set_return_mapper(&mut self, mapper: MapperId) {
+        if mapper.is_some() {
+            self.rare_mut().return_mapper = mapper;
+        } else if let Some(rare) = &mut self.rare {
+            rare.return_mapper = MapperId::NIL;
+        }
     }
 }
 

@@ -66,16 +66,15 @@ impl Checker {
                 }
             } else {
                 // PORT: Go `findInMap(exports, ...)` over the symbol table values.
-                let mut exported_symbol = SymbolId::NIL;
-                for symbol in self.symbols.values(exports) {
-                    if self
-                        .get_symbol_if_same_reference(symbol, local_symbol)
-                        .is_some()
-                    {
-                        exported_symbol = symbol;
-                        break;
-                    }
-                }
+                let exported_symbol = self
+                    .symbols
+                    .values(exports)
+                    .into_iter()
+                    .find(|&symbol| {
+                        self.get_symbol_if_same_reference(symbol, local_symbol)
+                            .is_some()
+                    })
+                    .unwrap_or(SymbolId::NIL);
                 let mut diagnostic = if exported_symbol.is_some() {
                     let exported_name = self.symbol_to_string(exported_symbol);
                     new_diagnostic_for_node(
@@ -92,11 +91,7 @@ impl Checker {
                 };
                 let declarations = self.sym(local_symbol).declarations.clone();
                 for (i, decl) in declarations.iter().enumerate() {
-                    let message = if i == 0 {
-                        diag::X_0_is_declared_here
-                    } else {
-                        diag::X_and_here
-                    };
+                    let message = if_else(i == 0, diag::X_0_is_declared_here, diag::X_and_here);
                     diagnostic.add_related_info(Some(create_diagnostic_for_node(
                         *decl,
                         message,
@@ -1115,15 +1110,13 @@ impl Checker {
             let ext = if ts_extension == tspath_p17::EXTENSION_MTS
                 || ts_extension == tspath_p17::EXTENSION_DMTS
             {
-                if prefer_ts { ".mts" } else { ".mjs" }
+                if_else(prefer_ts, ".mts", ".mjs")
             } else if ts_extension == tspath_p17::EXTENSION_CTS
                 || ts_extension == tspath_p17::EXTENSION_DCTS
             {
-                if prefer_ts { ".cts" } else { ".cjs" }
-            } else if prefer_ts {
-                ".ts"
+                if_else(prefer_ts, ".cts", ".cjs")
             } else {
-                ".js"
+                if_else(prefer_ts, ".ts", ".js")
             };
 
             return format!("{import_source_without_extension}{ext}");
@@ -1157,11 +1150,11 @@ impl Checker {
             return ".cjs";
         }
         if exists(".tsx") {
-            return if self.compiler_options.jsx == JsxEmit::PRESERVE {
-                ".jsx"
-            } else {
-                ".js"
-            };
+            return if_else(
+                self.compiler_options.jsx == JsxEmit::PRESERVE,
+                ".jsx",
+                ".js",
+            );
         }
         if exists(".jsx") {
             return ".jsx";
@@ -1944,18 +1937,9 @@ pub(crate) mod tspath_p17 {
     // Go: tspath/extension.go:121 GetDeclarationFileExtension
     // PERF: returns a slice of `file_name` or a constant, not a copy.
     fn get_declaration_file_extension(file_name: &str) -> &str {
-        let base = get_base_file_name(file_name);
-        for ext in SUPPORTED_DECLARATION_EXTENSIONS {
-            if base.ends_with(ext) {
-                return ext;
-            }
-        }
-        if base.ends_with(EXTENSION_TS)
-            && let Some(index) = base.find(".d.")
-        {
-            return &base[index..];
-        }
-        ""
+        crate::checker::checker_p16::declaration_file_extension_of_base_file_name(
+            get_base_file_name(file_name),
+        )
     }
 
     // Go: tspath/relative_path.go:82 CaseSensitivity.RelativePathFromPath (ts#64159)

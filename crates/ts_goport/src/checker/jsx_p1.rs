@@ -446,45 +446,40 @@ impl Checker {
         // stores no string hash: its map lookups hash the text each time.
         let jsx_children_property_name =
             Name::from(self.get_jsx_element_children_property_name(jsx_namespace));
-        let mut discriminant_properties: Vec<Node> = Vec::new();
-        for p in node.properties() {
-            let symbol = p.symbol();
-            let keep = if symbol.is_nil() || !is_jsx_attribute(p) {
-                false
-            } else {
+        let discriminant_properties: Vec<Node> = node
+            .properties()
+            .into_iter()
+            .filter(|&p| {
+                let symbol = p.symbol();
+                if symbol.is_nil() || !is_jsx_attribute(p) {
+                    return false;
+                }
                 let initializer = p.initializer();
                 let name = self.sym(symbol).name.clone();
                 (initializer.is_nil() || self.is_possibly_discriminant_value(initializer))
                     && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
-            };
-            if keep {
-                discriminant_properties.push(p);
-            }
-        }
-        let mut discriminant_members: Vec<SymbolId> = Vec::new();
-        for s in self.get_properties_of_type(contextual_type) {
-            let keep = if !self.sym(s).flags.intersects(SymbolFlags::OPTIONAL)
-                || node.symbol().is_nil()
-            {
-                false
-            } else {
+            })
+            .collect();
+        let discriminant_members: Vec<SymbolId> = self
+            .get_properties_of_type(contextual_type)
+            .into_iter()
+            .filter(|&s| {
+                if !self.sym(s).flags.intersects(SymbolFlags::OPTIONAL) || node.symbol().is_nil() {
+                    return false;
+                }
                 let element = node.parent().parent();
                 let name = self.sym(s).name.clone();
                 if name == jsx_children_property_name
                     && is_jsx_element(element)
                     && !get_semantic_jsx_children(&element.children().nodes().to_vec()).is_empty()
                 {
-                    false
-                } else {
-                    let node_members = self.sym(node.symbol()).members;
-                    self.symbols.get_name(node_members, &name).is_nil()
-                        && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
+                    return false;
                 }
-            };
-            if keep {
-                discriminant_members.push(s);
-            }
-        }
+                let node_members = self.sym(node.symbol()).members;
+                self.symbols.get_name(node_members, &name).is_nil()
+                    && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
+            })
+            .collect();
         let mut discriminator = ObjectLiteralDiscriminator {
             props: discriminant_properties,
             members: discriminant_members,
@@ -563,36 +558,11 @@ impl Checker {
                     }),
                 )
             };
-            // PORT: Go `getInvalidTextualChildDiagnostic` is a closure that computes
-            // the message and args once, on first call. The cache is shared through
-            // `Rc<RefCell<..>>` so the returned `Rc<dyn Fn>` can be stored in
-            // `JsxElaborationElement::create_diagnostic` closures.
-            let invalid_text_diagnostic: Rc<RefCell<Option<(&'static Message, Vec<String>)>>> =
-                Rc::new(RefCell::new(None));
-            let get_invalid_textual_child_diagnostic: JsxInvalidTextDiagnosticFn = {
-                let invalid_text_diagnostic = invalid_text_diagnostic.clone();
-                let tag_name = node.parent().tag_name();
-                let children_prop_name = children_prop_name.clone();
-                Rc::new(move |c: &mut Checker| {
-                    if invalid_text_diagnostic.borrow().is_none() {
-                        let tag_name_text = get_text_of_node(tag_name);
-                        let message = diag::X_0_components_don_t_accept_text_as_child_elements_Text_in_JSX_has_the_type_string_but_the_expected_type_of_1_is_2;
-                        let children_target_type_string = c.type_to_string(children_target_type);
-                        *invalid_text_diagnostic.borrow_mut() = Some((
-                            message,
-                            args![
-                                tag_name_text,
-                                children_prop_name,
-                                children_target_type_string
-                            ],
-                        ));
-                    }
-                    invalid_text_diagnostic
-                        .borrow()
-                        .clone()
-                        .expect("invalid text diagnostic")
-                })
-            };
+            let get_invalid_textual_child_diagnostic = new_invalid_textual_child_diagnostic(
+                node.parent().tag_name(),
+                children_prop_name.clone(),
+                children_target_type,
+            );
             if more_than_one_real_children {
                 if array_like_target_parts != self.never_type {
                     let child_types =
@@ -637,25 +607,11 @@ impl Checker {
                         get_invalid_textual_child_diagnostic.clone(),
                     );
                     if e.error_node.is_some() {
-                        let create_diagnostic = e.create_diagnostic.clone();
-                        let mut factory = |c: &mut Checker, prop: Node| -> Diagnostic {
-                            (create_diagnostic.as_ref().expect("create_diagnostic"))(c, prop)
-                        };
-                        let factory_opt: Option<&mut dyn FnMut(&mut Checker, Node) -> Diagnostic> =
-                            if e.create_diagnostic.is_some() {
-                                Some(&mut factory)
-                            } else {
-                                None
-                            };
-                        reported_error = self.elaborate_element(
+                        reported_error = self.elaborate_jsx_elaboration_element(
                             source,
                             target,
                             relation,
-                            e.error_node,
-                            e.inner_expression,
-                            e.name_type,
-                            None,
-                            factory_opt,
+                            &e,
                             diagnostic_output.as_deref_mut(),
                         ) || reported_error;
                     }
@@ -687,6 +643,73 @@ impl Checker {
 // PORT: Go `func() (*diagnostics.Message, []any)` passed to the JSX child
 // elaboration helpers. Stored in closures, so it is an `Rc<dyn Fn>`.
 pub type JsxInvalidTextDiagnosticFn = Rc<dyn Fn(&mut Checker) -> (&'static Message, Vec<String>)>;
+
+/// Go's `getInvalidTextualChildDiagnostic` closure in `elaborateJsxComponents`:
+/// it computes the text-child message and its args on the first call and
+/// returns the same ones after. The cache is an `Rc<RefCell<..>>` so the
+/// function can be stored in `JsxElaborationElement::create_diagnostic`.
+fn new_invalid_textual_child_diagnostic(
+    tag_name: Node,
+    children_prop_name: String,
+    children_target_type: TypeId,
+) -> JsxInvalidTextDiagnosticFn {
+    let invalid_text_diagnostic: Rc<RefCell<Option<(&'static Message, Vec<String>)>>> =
+        Rc::new(RefCell::new(None));
+    Rc::new(move |c: &mut Checker| {
+        if invalid_text_diagnostic.borrow().is_none() {
+            let tag_name_text = get_text_of_node(tag_name);
+            let message = diag::X_0_components_don_t_accept_text_as_child_elements_Text_in_JSX_has_the_type_string_but_the_expected_type_of_1_is_2;
+            let children_target_type_string = c.type_to_string(children_target_type);
+            *invalid_text_diagnostic.borrow_mut() = Some((
+                message,
+                args![
+                    tag_name_text,
+                    children_prop_name,
+                    children_target_type_string
+                ],
+            ));
+        }
+        invalid_text_diagnostic
+            .borrow()
+            .clone()
+            .expect("invalid text diagnostic")
+    })
+}
+
+impl Checker {
+    /// `elaborateElement` for one JSX child element `e`. Go passes the nil-able
+    /// `e.createDiagnostic` func through as it is; Rust adapts the stored
+    /// `Rc<dyn Fn>` to the `&mut dyn FnMut` that `elaborate_element` takes.
+    fn elaborate_jsx_elaboration_element(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: &Rc<RefCell<Relation>>,
+        e: &JsxElaborationElement,
+        diagnostic_output: Option<&mut Vec<Diagnostic>>,
+    ) -> bool {
+        let mut factory = |c: &mut Checker, prop: Node| -> Diagnostic {
+            (e.create_diagnostic.as_ref().expect("create_diagnostic"))(c, prop)
+        };
+        let factory_opt: Option<&mut dyn FnMut(&mut Checker, Node) -> Diagnostic> =
+            if e.create_diagnostic.is_some() {
+                Some(&mut factory)
+            } else {
+                None
+            };
+        self.elaborate_element(
+            source,
+            target,
+            relation,
+            e.error_node,
+            e.inner_expression,
+            e.name_type,
+            None,
+            factory_opt,
+            diagnostic_output,
+        )
+    }
+}
 
 // Go: checker/jsx.go:369 JsxElaborationElement
 // PORT: Go `createDiagnostic func(prop *ast.Node) *ast.Diagnostic` (nil-able)
@@ -916,19 +939,17 @@ impl Checker {
                         self.report_diagnostic(diag, diagnostic_output.as_deref_mut());
                     } else {
                         let target_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
-                            let mut p = self
+                            let p = self
                                 .get_property_of_type(tuple_or_array_like_target_parts, &prop_name);
-                            if p.is_nil() {
-                                p = self.unknown_symbol;
-                            }
-                            self.sym(p).flags.intersects(SymbolFlags::OPTIONAL)
+                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                                .flags
+                                .intersects(SymbolFlags::OPTIONAL)
                         };
                         let source_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
-                            let mut p = self.get_property_of_type(source, &prop_name);
-                            if p.is_nil() {
-                                p = self.unknown_symbol;
-                            }
-                            self.sym(p).flags.intersects(SymbolFlags::OPTIONAL)
+                            let p = self.get_property_of_type(source, &prop_name);
+                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                                .flags
+                                .intersects(SymbolFlags::OPTIONAL)
                         };
                         target_prop_type =
                             self.remove_missing_type(target_prop_type, target_is_optional);

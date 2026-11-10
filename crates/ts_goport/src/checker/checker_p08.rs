@@ -212,23 +212,14 @@ impl Checker {
         // otherwise it will conflict with some local declaration). Note that in addition to normal flags we include matching SymbolFlags.Export*
         // in order to prevent collisions with declarations that were exported from the current module (they still contribute to local names).
         let export_symbol = self.sym(symbol).export_symbol;
-        symbol = self.get_merged_symbol(if export_symbol.is_some() {
-            export_symbol
-        } else {
-            symbol
-        });
+        symbol = self.get_merged_symbol(or_else_symbol(export_symbol, symbol));
         let target_flags = self.get_symbol_flags(target);
         // A type-only import/export will already have a grammar error in a JS file, so no need to issue more errors within
         if is_in_js_file(node)
             && !target_flags.intersects(SymbolFlags::VALUE)
             && !is_type_only_import_or_export_declaration(node)
         {
-            let property_name_or_name = node.property_name_or_name();
-            let error_node = if property_name_or_name.is_some() {
-                property_name_or_name
-            } else {
-                node
-            };
+            let error_node = or_else_node(node.property_name_or_name(), node);
             debug_assert!(node.kind() != SyntaxKind::NamespaceExport);
             if is_export_specifier(node) {
                 // PORT: Go mutates the diagnostic returned by `c.error` after it
@@ -293,26 +284,25 @@ impl Checker {
             return;
         }
         let symbol_flags = self.sym(symbol).flags;
-        let excluded_meanings =
-            (if symbol_flags.intersects(SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE) {
-                SymbolFlags::VALUE
-            } else {
-                SymbolFlags::NONE
-            }) | (if symbol_flags.intersects(SymbolFlags::TYPE) {
-                SymbolFlags::TYPE
-            } else {
-                SymbolFlags::NONE
-            }) | (if symbol_flags.intersects(SymbolFlags::NAMESPACE) {
-                SymbolFlags::NAMESPACE
-            } else {
-                SymbolFlags::NONE
-            });
+        let excluded_meanings = if_else(
+            symbol_flags.intersects(SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE),
+            SymbolFlags::VALUE,
+            SymbolFlags::NONE,
+        ) | if_else(
+            symbol_flags.intersects(SymbolFlags::TYPE),
+            SymbolFlags::TYPE,
+            SymbolFlags::NONE,
+        ) | if_else(
+            symbol_flags.intersects(SymbolFlags::NAMESPACE),
+            SymbolFlags::NAMESPACE,
+            SymbolFlags::NONE,
+        );
         if target_flags.intersects(excluded_meanings) {
-            let message = if is_export_specifier(node) {
-                diag::Export_declaration_conflicts_with_exported_declaration_of_0
-            } else {
-                diag::Import_declaration_conflicts_with_local_declaration_of_0
-            };
+            let message = if_else(
+                is_export_specifier(node),
+                diag::Export_declaration_conflicts_with_exported_declaration_of_0,
+                diag::Import_declaration_conflicts_with_local_declaration_of_0,
+            );
             let symbol_string = self.symbol_to_string(symbol);
             self.error(node, message, args![symbol_string]);
         } else if !is_export_specifier(node) {
@@ -366,7 +356,7 @@ impl Checker {
                             let diagnostic = new_diagnostic_for_node(node, message, args![name]);
                             let diagnostic = self.add_type_only_declaration_related_info(
                                 diagnostic,
-                                if is_type { Node::NIL } else { type_only_alias },
+                                if_else(is_type, Node::NIL, type_only_alias),
                                 &name,
                             );
                             self.add_diagnostic(diagnostic);
@@ -414,7 +404,7 @@ impl Checker {
                             };
                             let diagnostic = self.add_type_only_declaration_related_info(
                                 diagnostic,
-                                if is_type { Node::NIL } else { type_only_alias },
+                                if_else(is_type, Node::NIL, type_only_alias),
                                 &name,
                             );
                             self.add_diagnostic(diagnostic);
@@ -468,13 +458,12 @@ impl Checker {
                     let redirect = get_project_reference_from_output_dts(
                         &source_file_info(get_source_file_of_node(const_enum_declaration)).path,
                     );
-                    if match &redirect {
-                        None => true,
-                        Some(redirect) => !redirect
+                    if redirect.as_ref().is_none_or(|redirect| {
+                        !redirect
                             .resolved
                             .compiler_options()
-                            .should_preserve_const_enums(),
-                    } {
+                            .should_preserve_const_enums()
+                    }) {
                         let flag_name = self.get_isolated_modules_like_flag_name();
                         self.error(
                             node,
@@ -1509,26 +1498,26 @@ impl Checker {
                 );
                 return;
             }
-            let message = if facts.intersects(TypeFacts::IS_UNDEFINED) {
-                if facts.intersects(TypeFacts::IS_NULL) {
-                    diag::X_0_is_possibly_null_or_undefined
-                } else {
-                    diag::X_0_is_possibly_undefined
-                }
-            } else {
-                diag::X_0_is_possibly_null
-            };
+            let message = if_else(
+                facts.intersects(TypeFacts::IS_UNDEFINED),
+                if_else(
+                    facts.intersects(TypeFacts::IS_NULL),
+                    diag::X_0_is_possibly_null_or_undefined,
+                    diag::X_0_is_possibly_undefined,
+                ),
+                diag::X_0_is_possibly_null,
+            );
             self.error(node, message, args![node_text]);
         } else {
-            let message = if facts.intersects(TypeFacts::IS_UNDEFINED) {
-                if facts.intersects(TypeFacts::IS_NULL) {
-                    diag::Object_is_possibly_null_or_undefined
-                } else {
-                    diag::Object_is_possibly_undefined
-                }
-            } else {
-                diag::Object_is_possibly_null
-            };
+            let message = if_else(
+                facts.intersects(TypeFacts::IS_UNDEFINED),
+                if_else(
+                    facts.intersects(TypeFacts::IS_NULL),
+                    diag::Object_is_possibly_null_or_undefined,
+                    diag::Object_is_possibly_undefined,
+                ),
+                diag::Object_is_possibly_null,
+            );
             self.error(node, message, args![]);
         }
     }

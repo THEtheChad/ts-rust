@@ -47,21 +47,17 @@ impl Checker {
         if !is_decorator(node) && !is_binary_expression(node) {
             // PERF: the type parameters are read from the signature in place,
             // not copied.
-            let mut skip_binding_patterns = true;
-            for i in 0..self.sig(signature).type_parameters.len() {
+            let skip_binding_patterns = (0..self.sig(signature).type_parameters.len()).all(|i| {
                 let p = self.sig(signature).type_parameters[i];
-                if self.get_default_from_type_parameter(p).is_nil() {
-                    skip_binding_patterns = false;
-                    break;
-                }
-            }
+                self.get_default_from_type_parameter(p).is_some()
+            });
             let contextual_type = self.get_contextual_type(
                 node,
-                if skip_binding_patterns {
-                    ContextFlags::SKIP_BINDING_PATTERNS
-                } else {
-                    ContextFlags::NONE
-                },
+                if_else(
+                    skip_binding_patterns,
+                    ContextFlags::SKIP_BINDING_PATTERNS,
+                    ContextFlags::NONE,
+                ),
             );
             if contextual_type.is_some() {
                 let inference_target_type = self.get_return_type_of_signature(signature);
@@ -147,21 +143,15 @@ impl Checker {
                         false,
                     );
                     let count = self.inference_context(return_context).inferences.len();
-                    let mut any_candidates = false;
-                    for i in 0..count {
-                        if self.has_inference_candidates(return_context, i) {
-                            any_candidates = true;
-                            break;
-                        }
-                    }
-                    if any_candidates {
-                        let cloned = self.clone_inferred_part_of_context(return_context);
-                        let return_mapper = self.get_mapper_from_context(cloned);
-                        self.inference_context_mut(context).rare_mut().return_mapper =
-                            return_mapper;
-                    } else if let Some(rare) = &mut self.inference_context_mut(context).rare {
-                        rare.return_mapper = MapperId::NIL;
-                    }
+                    let return_mapper =
+                        if (0..count).any(|i| self.has_inference_candidates(return_context, i)) {
+                            let cloned = self.clone_inferred_part_of_context(return_context);
+                            self.get_mapper_from_context(cloned)
+                        } else {
+                            MapperId::NIL
+                        };
+                    self.inference_context_mut(context)
+                        .set_return_mapper(return_mapper);
                 }
             }
         }
@@ -404,81 +394,48 @@ impl Checker {
             .collect();
         let mut this_parameter = SymbolId::NIL;
         if !this_parameters.is_empty() {
-            let mut types = Vec::with_capacity(this_parameters.len());
-            for &p in &this_parameters {
-                types.push(self.get_type_of_parameter(p));
-            }
+            let types: Vec<TypeId> = this_parameters
+                .iter()
+                .map(|&p| self.get_type_of_parameter(p))
+                .collect();
             this_parameter = self.create_combined_symbol_from_types(&this_parameters, &types);
         }
-        // PORT: Go `minAndMax(candidates, getNonRestParameterCount)`, inlined because the
-        // value function needs the checker.
-        let mut min_argument_count: i32 = 0;
-        let mut max_non_rest_param: i32 = 0;
-        for (i, &s) in candidates.iter().enumerate() {
-            let value = self.get_non_rest_parameter_count(s);
-            if i == 0 {
-                min_argument_count = value;
-                max_non_rest_param = value;
-            } else {
-                min_argument_count = min_argument_count.min(value);
-                max_non_rest_param = max_non_rest_param.max(value);
-            }
-        }
+        let (min_argument_count, max_non_rest_param) =
+            min_and_max(candidates, |s| self.get_non_rest_parameter_count(s));
         let mut parameters: Vec<SymbolId> = Vec::with_capacity(max_non_rest_param.max(0) as usize);
         for i in 0..max_non_rest_param {
-            let iu = i as usize;
-            let mut symbols: Vec<SymbolId> = Vec::new();
-            for &s in candidates {
-                let has_rest = self.signature_has_rest_parameter(s);
-                let sig_parameters = &self.sig(s).parameters;
-                let symbol = if has_rest {
-                    if iu + 1 < sig_parameters.len() {
-                        sig_parameters[iu]
-                    } else {
-                        sig_parameters.last().copied().unwrap_or(SymbolId::NIL)
-                    }
-                } else if iu < sig_parameters.len() {
-                    sig_parameters[iu]
-                } else {
-                    SymbolId::NIL
-                };
-                if symbol.is_some() {
-                    symbols.push(symbol);
-                }
-            }
-            let mut types: Vec<TypeId> = Vec::new();
-            for &s in candidates {
-                let t = self.try_get_type_at_position(s, i);
-                if t.is_some() {
-                    types.push(t);
-                }
-            }
+            let symbols: Vec<SymbolId> = candidates
+                .iter()
+                .map(|&s| self.overload_failure_parameter_at(s, i as usize))
+                .filter(|p| p.is_some())
+                .collect();
+            let types: Vec<TypeId> = candidates
+                .iter()
+                .map(|&s| self.try_get_type_at_position(s, i))
+                .filter(|t| t.is_some())
+                .collect();
             let combined = self.create_combined_symbol_from_types(&symbols, &types);
             parameters.push(combined);
         }
-        let mut rest_parameter_symbols: Vec<SymbolId> = Vec::new();
-        for &s in candidates {
-            if self.signature_has_rest_parameter(s) {
-                let last = self
-                    .sig(s)
+        let rest_parameter_symbols: Vec<SymbolId> = candidates
+            .iter()
+            .filter(|&&s| self.signature_has_rest_parameter(s))
+            .map(|&s| {
+                self.sig(s)
                     .parameters
                     .last()
                     .copied()
-                    .unwrap_or(SymbolId::NIL);
-                if last.is_some() {
-                    rest_parameter_symbols.push(last);
-                }
-            }
-        }
+                    .unwrap_or(SymbolId::NIL)
+            })
+            .filter(|p| p.is_some())
+            .collect();
         let mut flags = SignatureFlags::IS_SIGNATURE_CANDIDATE_FOR_OVERLOAD_FAILURE;
         if !rest_parameter_symbols.is_empty() {
-            let mut rest_types: Vec<TypeId> = Vec::new();
-            for &s in candidates {
-                let t = self.try_get_rest_type_of_signature(s);
-                if t.is_some() {
-                    rest_types.push(t);
-                }
-            }
+            let rest_types: Vec<TypeId> = candidates
+                .iter()
+                .map(|&s| self.try_get_rest_type_of_signature(s))
+                .filter(|t| t.is_some())
+                .collect();
             let union =
                 self.get_union_type_ex(&rest_types, UnionReduction::SUBTYPE, None, TypeId::NIL);
             let t = self.create_array_type(union);
@@ -487,17 +444,17 @@ impl Checker {
             parameters.push(combined);
             flags |= SignatureFlags::HAS_REST_PARAMETER;
         }
-        for &s in candidates {
-            if self.signature_has_literal_types(s) {
-                flags |= SignatureFlags::HAS_LITERAL_TYPES;
-                break;
-            }
+        if candidates
+            .iter()
+            .any(|&s| self.signature_has_literal_types(s))
+        {
+            flags |= SignatureFlags::HAS_LITERAL_TYPES;
         }
         let declaration = self.sig(candidates[0]).declaration;
-        let mut return_types = Vec::with_capacity(candidates.len());
-        for &s in candidates {
-            return_types.push(self.get_return_type_of_signature(s));
-        }
+        let return_types: Vec<TypeId> = candidates
+            .iter()
+            .map(|&s| self.get_return_type_of_signature(s))
+            .collect();
         let return_type = self.get_intersection_type(&return_types);
         self.new_signature(
             flags,
@@ -509,6 +466,25 @@ impl Checker {
             TypePredicateId::NIL,
             min_argument_count,
         )
+    }
+
+    /// The parameter of `s` that stands at position `i` in the combined
+    /// overload-failure signature: a rest parameter covers every position
+    /// from its own on. Part of Go `createUnionOfSignaturesForOverloadFailure`
+    /// (the closure passed to `core.MapNonNil` for each position).
+    fn overload_failure_parameter_at(&self, s: SignatureId, i: usize) -> SymbolId {
+        let has_rest = self.signature_has_rest_parameter(s);
+        let parameters = &self.sig(s).parameters;
+        if has_rest {
+            if i + 1 < parameters.len() {
+                return parameters[i];
+            }
+            return parameters.last().copied().unwrap_or(SymbolId::NIL);
+        }
+        if i < parameters.len() {
+            return parameters[i];
+        }
+        SymbolId::NIL
     }
 
     // Go: checker/checker.go:9844 createCombinedSymbolFromTypes
@@ -729,13 +705,9 @@ impl Checker {
                 min_above = max_parameter;
             }
         }
-        let mut has_rest_parameter = false;
-        for &sig in signatures {
-            if self.has_effective_rest_parameter(sig) {
-                has_rest_parameter = true;
-                break;
-            }
-        }
+        let has_rest_parameter = signatures
+            .iter()
+            .any(|&sig| self.has_effective_rest_parameter(sig));
         let parameter_range = if has_rest_parameter {
             min_count.to_string()
         } else if min_count < max_count {
@@ -789,11 +761,8 @@ impl Checker {
             let mut parameter = Node::NIL;
             if closest_signature.is_some() && self.sig(closest_signature).declaration.is_some() {
                 let closest_declaration = self.sig(closest_signature).declaration;
-                let this_offset = if self.sig(closest_signature).this_parameter.is_some() {
-                    1
-                } else {
-                    0
-                };
+                let this_offset =
+                    if_else(self.sig(closest_signature).this_parameter.is_some(), 1, 0);
                 parameter = node_slice_element_or_nil(
                     closest_declaration.parameters(),
                     args.len() + this_offset,
@@ -1107,22 +1076,22 @@ impl Checker {
                         let constituent_string = self.type_to_string(constituent);
                         let d = new_diagnostic_for_node(
                             target,
-                            if is_call {
-                                diag::Type_0_has_no_call_signatures
-                            } else {
-                                diag::Type_0_has_no_construct_signatures
-                            },
+                            if_else(
+                                is_call,
+                                diag::Type_0_has_no_call_signatures,
+                                diag::Type_0_has_no_construct_signatures,
+                            ),
                             args![constituent_string],
                         );
                         let apparent_string = self.type_to_string(apparent_type);
                         diagnostic = Some(new_diagnostic_chain_for_node(
                             Some(d),
                             target,
-                            if is_call {
-                                diag::Not_all_constituents_of_type_0_are_callable
-                            } else {
-                                diag::Not_all_constituents_of_type_0_are_constructable
-                            },
+                            if_else(
+                                is_call,
+                                diag::Not_all_constituents_of_type_0_are_callable,
+                                diag::Not_all_constituents_of_type_0_are_constructable,
+                            ),
                             args![apparent_string],
                         ));
                     }
@@ -1136,11 +1105,11 @@ impl Checker {
                 let apparent_string = self.type_to_string(apparent_type);
                 diagnostic = Some(new_diagnostic_for_node(
                     target,
-                    if is_call {
-                        diag::No_constituent_of_type_0_is_callable
-                    } else {
-                        diag::No_constituent_of_type_0_is_constructable
-                    },
+                    if_else(
+                        is_call,
+                        diag::No_constituent_of_type_0_is_callable,
+                        diag::No_constituent_of_type_0_is_constructable,
+                    ),
                     args![apparent_string],
                 ));
             }
@@ -1148,11 +1117,11 @@ impl Checker {
                 let apparent_string = self.type_to_string(apparent_type);
                 diagnostic = Some(new_diagnostic_for_node(
                     target,
-                    if is_call {
-                        diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other
-                    } else {
-                        diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other
-                    },
+                    if_else(
+                        is_call,
+                        diag::Each_member_of_the_union_type_0_has_signatures_but_none_of_those_signatures_are_compatible_with_each_other,
+                        diag::Each_member_of_the_union_type_0_has_construct_signatures_but_none_of_those_signatures_are_compatible_with_each_other,
+                    ),
                     args![apparent_string],
                 ));
             }
@@ -1161,19 +1130,19 @@ impl Checker {
             diagnostic = Some(new_diagnostic_chain_for_node(
                 diagnostic,
                 target,
-                if is_call {
-                    diag::Type_0_has_no_call_signatures
-                } else {
-                    diag::Type_0_has_no_construct_signatures
-                },
+                if_else(
+                    is_call,
+                    diag::Type_0_has_no_call_signatures,
+                    diag::Type_0_has_no_construct_signatures,
+                ),
                 args![apparent_string],
             ));
         }
-        let mut head_message = if is_call {
-            diag::This_expression_is_not_callable
-        } else {
-            diag::This_expression_is_not_constructable
-        };
+        let mut head_message = if_else(
+            is_call,
+            diag::This_expression_is_not_callable,
+            diag::This_expression_is_not_constructable,
+        );
         // Diagnose get accessors incorrectly called as functions
         if is_call_expression(error_target.parent()) && error_target.parent().arguments().is_empty()
         {

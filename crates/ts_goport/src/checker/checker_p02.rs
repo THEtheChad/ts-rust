@@ -1505,17 +1505,11 @@ impl Checker {
         if symbol.is_some() {
             return symbol;
         }
-        let memo_key = match name {
-            TableKey::Name(name) if symbols == self.globals && self.globals_complete => {
-                Some((name.id(), meaning))
-            }
-            _ => None,
-        };
+        let memo_key = self.global_spelling_suggestion_key(symbols, name, meaning);
+        // The version before the scan: a merge during the scan makes the
+        // entry old at once.
         let merge_version = self.merge_version;
-        let memo = memo_key.and_then(|key| match self.global_spelling_suggestions.get(&key) {
-            Some(&(version, memo)) if version == merge_version => Some(memo),
-            _ => None,
-        });
+        let memo = memo_key.and_then(|key| self.kept_global_spelling_suggestion(key));
         // PORT: Go `core.ConcatenateSeq(maps.Values(symbols), extras)` -> one Vec.
         let mut candidates = if memo.is_some() {
             Vec::new()
@@ -1527,11 +1521,8 @@ impl Checker {
             let extras = self.get_primitive_type_alias_suggestions(symbols);
             candidates.extend(extras);
         }
-        match memo {
-            Some(GlobalSpellingSuggestion::NotFound) => return SymbolId::NIL,
-            Some(GlobalSpellingSuggestion::Table(symbol)) => return symbol,
-            Some(GlobalSpellingSuggestion::Extra(index)) => return candidates[index],
-            None => {}
+        if let Some(memo) = memo {
+            return memo.symbol(&candidates);
         }
         let mut alias_in_progress = false;
         let named = self.get_spelling_candidate_names(&candidates, meaning, &mut alias_in_progress);
@@ -1539,17 +1530,63 @@ impl Checker {
         if let Some(key) = memo_key
             && !alias_in_progress
         {
-            let memo = if best.is_nil() {
-                GlobalSpellingSuggestion::NotFound
-            } else if let Some(index) = candidates[table_len..].iter().position(|&s| s == best) {
-                GlobalSpellingSuggestion::Extra(index)
-            } else {
-                GlobalSpellingSuggestion::Table(best)
-            };
-            self.global_spelling_suggestions
-                .insert(key, (merge_version, memo));
+            self.keep_global_spelling_suggestion(
+                key,
+                merge_version,
+                best,
+                &candidates[table_len..],
+            );
         }
         best
+    }
+
+    /// The key of `global_spelling_suggestions` for a lookup of `name` in
+    /// `symbols`, or `None` when the answer is not kept: only lookups of a
+    /// `Name` in the complete globals table are.
+    fn global_spelling_suggestion_key(
+        &self,
+        symbols: SymbolTable,
+        name: TableKey<'_>,
+        meaning: SymbolFlags,
+    ) -> Option<GlobalSpellingSuggestionKey> {
+        match name {
+            TableKey::Name(name) if symbols == self.globals && self.globals_complete => {
+                Some((name.id(), meaning))
+            }
+            _ => None,
+        }
+    }
+
+    /// The kept suggestion for `key`, if one was kept since the last merge.
+    fn kept_global_spelling_suggestion(
+        &self,
+        key: GlobalSpellingSuggestionKey,
+    ) -> Option<GlobalSpellingSuggestion> {
+        match self.global_spelling_suggestions.get(&key) {
+            Some(&(version, memo)) if version == self.merge_version => Some(memo),
+            _ => None,
+        }
+    }
+
+    /// Keeps `best` for `key`, found by a scan that started at
+    /// `merge_version`. `extras` are the primitive type alias candidates,
+    /// which are made anew on each call, so one of them is kept by its index.
+    fn keep_global_spelling_suggestion(
+        &mut self,
+        key: GlobalSpellingSuggestionKey,
+        merge_version: u64,
+        best: SymbolId,
+        extras: &[SymbolId],
+    ) {
+        let memo = if best.is_nil() {
+            GlobalSpellingSuggestion::NotFound
+        } else if let Some(index) = extras.iter().position(|&s| s == best) {
+            GlobalSpellingSuggestion::Extra(index)
+        } else {
+            GlobalSpellingSuggestion::Table(best)
+        };
+        self.global_spelling_suggestions
+            .insert(key, (merge_version, memo));
     }
 
     // Go: checker/checker.go:1867 getSpellingSuggestionForName
@@ -2151,6 +2188,10 @@ impl Checker {
     }
 }
 
+/// The key of `Checker::global_spelling_suggestions`: the looked-up name's
+/// id and the meaning.
+type GlobalSpellingSuggestionKey = (u32, SymbolFlags);
+
 /// A spelling suggestion from the globals table, kept by
 /// `get_suggestion_for_symbol_name_lookup`.
 #[derive(Clone, Copy, Debug)]
@@ -2162,4 +2203,15 @@ pub enum GlobalSpellingSuggestion {
     /// The symbol at this index of `get_primitive_type_alias_suggestions`,
     /// which makes new symbols on each call.
     Extra(usize),
+}
+
+impl GlobalSpellingSuggestion {
+    /// The suggested symbol; `candidates` are this call's candidates.
+    fn symbol(self, candidates: &[SymbolId]) -> SymbolId {
+        match self {
+            GlobalSpellingSuggestion::NotFound => SymbolId::NIL,
+            GlobalSpellingSuggestion::Table(symbol) => symbol,
+            GlobalSpellingSuggestion::Extra(index) => candidates[index],
+        }
+    }
 }

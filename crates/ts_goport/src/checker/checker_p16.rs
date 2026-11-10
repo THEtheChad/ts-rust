@@ -147,34 +147,21 @@ impl Checker {
                 .flags
                 .intersects(SymbolFlags::INTERFACE)
             {
-                for &d in &declarations {
-                    if self.is_deprecated_declaration(d) {
-                        return true;
-                    }
-                }
-                return false;
+                return declarations
+                    .iter()
+                    .any(|&d| self.is_deprecated_declaration(d));
             } else {
-                for &d in &declarations {
-                    if !self.is_deprecated_declaration(d) {
-                        return false;
-                    }
-                }
-                return true;
+                return declarations
+                    .iter()
+                    .all(|&d| self.is_deprecated_declaration(d));
             }
         }
         let value_declaration = self.sym(symbol).value_declaration;
-        if value_declaration.is_some() && self.is_deprecated_declaration(value_declaration) {
-            return true;
-        }
-        if declarations.is_empty() {
-            return false;
-        }
-        for &d in &declarations {
-            if !self.is_deprecated_declaration(d) {
-                return false;
-            }
-        }
-        true
+        value_declaration.is_some() && self.is_deprecated_declaration(value_declaration)
+            || !declarations.is_empty()
+                && declarations
+                    .iter()
+                    .all(|&d| self.is_deprecated_declaration(d))
     }
 
     // Go: checker/checker.go:14334 hasParseDiagnostics
@@ -1726,11 +1713,19 @@ impl Checker {
 // keeps its own private copy with the same logic.
 // Go: tspath/extension.go:121 GetDeclarationFileExtension
 // PERF: namekeys1. Returns a slice of `file_name` or a constant, as Go does,
-// not a `String`. The ".d." search finds each '.' with `memchr`: `str::find`
-// built a `StrSearcher` on every call (about 70 M cycles of VS Code check,
-// one call per ES import through `is_only_importable_as_default`).
+// not a `String`.
 fn tspath_get_declaration_file_extension(file_name: &str) -> &str {
-    let base = tspath_get_base_file_name(file_name);
+    declaration_file_extension_of_base_file_name(tspath_get_base_file_name(file_name))
+}
+
+// Go: tspath/extension.go:125 getDeclarationFileExtensionFromNormalized
+// PORT: takes the base file name, which each caller computes for the names
+// it gets (`tspath_get_base_file_name` here, `tspath_p17::get_base_file_name`
+// in checker_p17). PERF: namekeys1. The ".d." search finds each '.' with
+// `memchr`: `str::find` built a `StrSearcher` on every call (about 70 M
+// cycles of VS Code check, one call per ES import through
+// `is_only_importable_as_default`).
+pub(crate) fn declaration_file_extension_of_base_file_name(base: &str) -> &str {
     // Go: tspath.SupportedDeclarationExtensions
     for ext in [".d.ts", ".d.cts", ".d.mts"] {
         if base.ends_with(ext) {

@@ -814,28 +814,19 @@ impl Checker {
         let mut result: Vec<IndexInfoId> = Vec::new();
         for info in source_infos {
             let index_type = self.index_info(info).key_type;
-            let mut every = true;
-            for &t in types {
-                if self.get_index_info_of_type(t, index_type).is_nil() {
-                    every = false;
-                    break;
-                }
-            }
-            if every {
-                let mut value_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for &t in types {
-                    let value_type = self.get_index_type_of_type(t, index_type);
-                    value_types.push(value_type);
-                }
+            if types
+                .iter()
+                .all(|&t| self.get_index_info_of_type(t, index_type).is_some())
+            {
+                let value_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&t| self.get_index_type_of_type(t, index_type))
+                    .collect();
                 let value_type = self.get_union_type(&value_types);
-                let mut is_readonly = false;
-                for &t in types {
+                let is_readonly = types.iter().any(|&t| {
                     let i = self.get_index_info_of_type(t, index_type);
-                    if self.index_info(i).is_readonly {
-                        is_readonly = true;
-                        break;
-                    }
-                }
+                    self.index_info(i).is_readonly
+                });
                 let new_info =
                     self.new_index_info(index_type, value_type, is_readonly, Node::NIL, &[]);
                 result.push(new_info);
@@ -859,43 +850,29 @@ impl Checker {
             return t;
         }
         let types = self.ty(t).types_list();
-        let mut every = true;
-        for &u in &types {
-            if !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                every = false;
-                break;
-            }
-        }
-        if every {
-            let mut empty = TypeId::NIL;
-            for &u in &types {
-                if self.is_empty_object_type(u) {
-                    empty = u;
-                    break;
-                }
-            }
-            if empty.is_some() {
+        if types
+            .iter()
+            .all(|&u| self.is_empty_object_type_or_spreads_into_empty_object(u))
+        {
+            let empty = types
+                .iter()
+                .copied()
+                .find(|&u| self.is_empty_object_type(u));
+            if let Some(empty) = empty {
                 return empty;
             }
             return self.empty_object_type;
         }
-        let mut first_type = TypeId::NIL;
-        for &u in &types {
-            if !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                first_type = u;
-                break;
-            }
-        }
-        if first_type.is_nil() {
+        let first_type = types
+            .iter()
+            .copied()
+            .find(|&u| !self.is_empty_object_type_or_spreads_into_empty_object(u));
+        let Some(first_type) = first_type else {
             return t;
-        }
-        let mut second_type = TypeId::NIL;
-        for &u in &types {
-            if u != first_type && !self.is_empty_object_type_or_spreads_into_empty_object(u) {
-                second_type = u;
-                break;
-            }
-        }
+        };
+        let second_type = types.iter().copied().find(|&u| {
+            u != first_type && !self.is_empty_object_type_or_spreads_into_empty_object(u)
+        });
         if second_type.is_some() {
             return t;
         }
@@ -916,11 +893,7 @@ impl Checker {
                     && !prop_flags.intersects(SymbolFlags::GET_ACCESSOR);
                 let flags = SymbolFlags::PROPERTY | SymbolFlags::OPTIONAL;
                 let check_flags = (prop_check_flags & CheckFlags::LATE)
-                    | if readonly {
-                        CheckFlags::READONLY
-                    } else {
-                        CheckFlags::NONE
-                    };
+                    | if_else(readonly, CheckFlags::READONLY, CheckFlags::NONE);
                 let result = self.new_symbol_ex(flags, &prop_name, check_flags);
                 // Go `links := c.valueSymbolLinks.Get(result)` gives the id here.
                 self.value_symbol_links.get_by_id(&self.symbols, result);
@@ -1140,12 +1113,18 @@ impl Checker {
     }
 
     // Go: checker/checker.go:13913 isConstTypeVariable
-    // PERF (constvar1, not in Go): the answer of a union, intersection or
-    // conditional type is kept in `const_type_variable_memo` (see there).
     pub fn is_const_type_variable(&mut self, t: TypeId, depth: i32) -> bool {
         if depth >= 5 || t.is_nil() {
             return false;
         }
+        self.is_const_type_variable_memoized(t, depth)
+    }
+
+    /// PERF (constvar1, not in Go): the answer of a union, intersection or
+    /// conditional type is kept in `const_type_variable_memo` (see there);
+    /// other types go straight to `is_const_type_variable_walk`.
+    #[inline]
+    fn is_const_type_variable_memoized(&mut self, t: TypeId, depth: i32) -> bool {
         if !self
             .ty(t)
             .flags
@@ -1179,12 +1158,7 @@ impl Checker {
                     .any(|&d| has_syntactic_modifier(d, ModifierFlags::CONST));
         } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
             let types = self.ty(t).types_list();
-            for s in types {
-                if self.is_const_type_variable(s, depth) {
-                    return true;
-                }
-            }
-            return false;
+            return types.iter().any(|&s| self.is_const_type_variable(s, depth));
         } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
             let object_type = self.ty(t).as_indexed_access_type().object_type;
             return self.is_const_type_variable(object_type, depth + 1);
@@ -1463,21 +1437,13 @@ impl Checker {
                                 Node::NIL, /*flowContainer*/
                                 get_flow_node_of_node(location),
                             );
-                            let position = match func
+                            let position = func
                                 .parameters()
-                                .to_vec()
                                 .iter()
-                                .position(|&p| p == declaration)
-                            {
-                                Some(i) => i as i64,
-                                None => -1,
-                            };
-                            let index = position
-                                - if get_this_parameter(func).is_some() {
-                                    1
-                                } else {
-                                    0
-                                };
+                                .position(|p| p == declaration)
+                                .map_or(-1, |i| i as i64);
+                            let index =
+                                position - if_else(get_this_parameter(func).is_some(), 1, 0);
                             let index_type = self
                                 .get_number_literal_type(crate::jsnum::Number::from(index as f64));
                             t = self.get_indexed_access_type(narrowed_type, index_type);
@@ -1678,32 +1644,32 @@ impl Checker {
                 diag::Cannot_find_name_0_Do_you_need_to_change_your_target_library_Try_changing_the_lib_compiler_option_to_include_dom
             }
             "$" => {
-                if uses_wildcard_types {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_jQuery_Try_npm_i_save_dev_types_Slashjquery
-                } else {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_jQuery_Try_npm_i_save_dev_types_Slashjquery_and_then_add_jquery_to_the_types_field_in_your_tsconfig
-                }
+                if_else(
+                    uses_wildcard_types,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_jQuery_Try_npm_i_save_dev_types_Slashjquery,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_jQuery_Try_npm_i_save_dev_types_Slashjquery_and_then_add_jquery_to_the_types_field_in_your_tsconfig,
+                )
             }
             "beforeEach" | "describe" | "suite" | "it" | "test" => {
-                if uses_wildcard_types {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_a_test_runner_Try_npm_i_save_dev_types_Slashjest_or_npm_i_save_dev_types_Slashmocha
-                } else {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_a_test_runner_Try_npm_i_save_dev_types_Slashjest_or_npm_i_save_dev_types_Slashmocha_and_then_add_jest_or_mocha_to_the_types_field_in_your_tsconfig
-                }
+                if_else(
+                    uses_wildcard_types,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_a_test_runner_Try_npm_i_save_dev_types_Slashjest_or_npm_i_save_dev_types_Slashmocha,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_a_test_runner_Try_npm_i_save_dev_types_Slashjest_or_npm_i_save_dev_types_Slashmocha_and_then_add_jest_or_mocha_to_the_types_field_in_your_tsconfig,
+                )
             }
             "process" | "require" | "Buffer" | "module" | "NodeJS" => {
-                if uses_wildcard_types {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode
-                } else {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode_and_then_add_node_to_the_types_field_in_your_tsconfig
-                }
+                if_else(
+                    uses_wildcard_types,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_node_Try_npm_i_save_dev_types_Slashnode_and_then_add_node_to_the_types_field_in_your_tsconfig,
+                )
             }
             "Bun" => {
-                if uses_wildcard_types {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_Bun_Try_npm_i_save_dev_types_Slashbun
-                } else {
-                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_Bun_Try_npm_i_save_dev_types_Slashbun_and_then_add_bun_to_the_types_field_in_your_tsconfig
-                }
+                if_else(
+                    uses_wildcard_types,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_Bun_Try_npm_i_save_dev_types_Slashbun,
+                    diag::Cannot_find_name_0_Do_you_need_to_install_type_definitions_for_Bun_Try_npm_i_save_dev_types_Slashbun_and_then_add_bun_to_the_types_field_in_your_tsconfig,
+                )
             }
             // PORT: Go lists the literal "ast.Symbol" here (a rename artifact); kept as-is for fidelity.
             "Map" | "Set" | "Promise" | "ast.Symbol" | "WeakMap" | "WeakSet" | "Iterator" | "AsyncIterator"

@@ -3,6 +3,23 @@
 use crate::diagnostics::Message;
 use crate::prelude::*;
 
+// Go: binder/binder.go:1360 FindUseStrictPrologue
+// PERF: portonly1 item 3. Go passes `body.Statements()` (grammarchecks.go:727)
+// with no copy; the port read the statements into a new Vec for each
+// function. This walks the statements in place (`find_use_strict_prologue`
+// takes a slice, and `binder_p2.rs` is a key source of the lib blobs).
+fn find_use_strict_prologue_in_list(source_file: Node, statements: NodeSlice) -> Node {
+    for statement in statements {
+        if !is_prologue_directive(statement) {
+            break;
+        }
+        if is_use_strict_prologue_directive(source_file, statement) {
+            return statement;
+        }
+    }
+    Node::NIL
+}
+
 impl Checker {
     // Go: checker/grammarchecks.go:19 grammarErrorOnFirstToken
     pub fn grammar_error_on_first_token(
@@ -1418,22 +1435,10 @@ impl Checker {
             let body = node.body();
             let mut use_strict_directive = Node::NIL;
             if body.is_some() && is_block(body) {
-                // PERF: portonly1 item 3. Go passes `body.Statements()`
-                // (grammarchecks.go:727) with no copy; the port read the
-                // statements into a new Vec for each function. This is Go
-                // binder.go:1360 `FindUseStrictPrologue` on the statements in
-                // place (`find_use_strict_prologue` takes a slice, and
-                // `binder_p2.rs` is a key source of the lib blobs).
-                let source_file = get_source_file_of_node(node);
-                for statement in body.statements() {
-                    if !is_prologue_directive(statement) {
-                        break;
-                    }
-                    if is_use_strict_prologue_directive(source_file, statement) {
-                        use_strict_directive = statement;
-                        break;
-                    }
-                }
+                use_strict_directive = find_use_strict_prologue_in_list(
+                    get_source_file_of_node(node),
+                    body.statements(),
+                );
             }
             if use_strict_directive.is_some() {
                 let non_simple_parameters: Vec<Node> = node

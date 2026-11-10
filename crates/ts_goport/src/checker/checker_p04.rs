@@ -5,16 +5,6 @@
 use crate::diagnostics::Message;
 use crate::prelude::*;
 
-// PORT: Go `core.OrElse(a, b)` for node handles.
-fn or_else_node_p04(a: Node, b: Node) -> Node {
-    if a.is_some() { a } else { b }
-}
-
-// PORT: Go `core.OrElse(a, b)` for symbol handles.
-fn or_else_symbol_p04(a: SymbolId, b: SymbolId) -> SymbolId {
-    if a.is_some() { a } else { b }
-}
-
 // PORT: Go `core.ElementOrNil(slice, i)`.
 fn element_or_nil_p04(nodes: &[Node], i: usize) -> Node {
     if i < nodes.len() { nodes[i] } else { Node::NIL }
@@ -726,7 +716,7 @@ impl Checker {
             // - if node.localSymbol !== undefined - this is current declaration is exported and localSymbol points to the local symbol
             // - if node.localSymbol === undefined - this node is non-exported so we can just pick the result of getSymbolOfNode
             let symbol = self.get_symbol_of_declaration(node);
-            let local_symbol = or_else_symbol_p04(node.local_symbol(), symbol);
+            let local_symbol = or_else_symbol(node.local_symbol(), symbol);
             // Since the javascript won't do semantic analysis like typescript, ignore javascript function
             // declarations so that redeclaring a function in a JS file is not reported as a duplicate.
             if !node.flags().intersects(NodeFlags::JAVA_SCRIPT_FILE) {
@@ -885,7 +875,7 @@ impl Checker {
                                 .intersects(ModifierFlags::PRIVATE | ModifierFlags::PROTECTED)
                             {
                                 c.error(
-                                or_else_node_p04(get_name_of_declaration(overload), overload),
+                                or_else_node(get_name_of_declaration(overload), overload),
                                 diag::Overload_signatures_must_all_be_public_private_or_protected,
                                 args![],
                             );
@@ -942,7 +932,7 @@ impl Checker {
                 && subsequent_node.kind() == node.kind()
             {
                 let subsequent_name = subsequent_node.name();
-                let error_node = or_else_node_p04(subsequent_name, subsequent_node);
+                let error_node = or_else_node(subsequent_name, subsequent_node);
                 if name.is_some()
                     && subsequent_name.is_some()
                     && (is_private_identifier(name)
@@ -985,7 +975,7 @@ impl Checker {
                     return;
                 }
             }
-            let error_node = or_else_node_p04(name, node);
+            let error_node = or_else_node(name, node);
             if is_constructor {
                 c.error(
                     error_node,
@@ -1076,7 +1066,7 @@ impl Checker {
         if duplicate_function_declaration {
             for &declaration in &function_declarations {
                 self.error(
-                    or_else_node_p04(get_name_of_declaration(declaration), declaration),
+                    or_else_node(get_name_of_declaration(declaration), declaration),
                     diag::Duplicate_function_implementation,
                     args![],
                 );
@@ -1114,7 +1104,7 @@ impl Checker {
                     // copy here, so build it, set the related info, then add it
                     // (same as Go `c.error` body: NewDiagnosticForNode + addDiagnostic).
                     let mut d = new_diagnostic_for_node(
-                        or_else_node_p04(get_name_of_declaration(declaration), declaration),
+                        or_else_node(get_name_of_declaration(declaration), declaration),
                         diagnostic,
                         args![symbol_name],
                     );
@@ -1422,7 +1412,7 @@ impl Checker {
             && {
                 let resolved = self.get_resolved_symbol_or_nil(location.expression());
                 let unknown_symbol = self.unknown_symbol;
-                self.sym(or_else_symbol_p04(resolved, unknown_symbol))
+                self.sym(or_else_symbol(resolved, unknown_symbol))
                     .flags
                     .intersects(SymbolFlags::ENUM)
             }

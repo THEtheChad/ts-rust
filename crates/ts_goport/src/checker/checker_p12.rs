@@ -687,32 +687,36 @@ impl Checker {
         signatures: &[SignatureId],
     ) -> Vec<SignatureId> {
         let type_arguments = state.type_arguments.clone();
-        let mut applicable_signatures: Vec<SignatureId> = Vec::new();
-        for sig in signatures.iter().copied() {
-            if !self.sig(sig).type_parameters.is_empty()
-                && self.has_correct_type_argument_arity(sig, &type_arguments)
-            {
-                applicable_signatures.push(sig);
-            }
-        }
-        let mut result = Vec::with_capacity(applicable_signatures.len());
-        for sig in applicable_signatures {
-            let type_argument_types =
-                self.check_type_arguments(sig, &type_arguments, true /*reportErrors*/, None);
-            if let Some(type_argument_types) = type_argument_types {
+        let applicable_signatures: Vec<SignatureId> = signatures
+            .iter()
+            .copied()
+            .filter(|&sig| {
+                !self.sig(sig).type_parameters.is_empty()
+                    && self.has_correct_type_argument_arity(sig, &type_arguments)
+            })
+            .collect();
+        applicable_signatures
+            .into_iter()
+            .map(|sig| {
+                let type_argument_types = self.check_type_arguments(
+                    sig,
+                    &type_arguments,
+                    true, /*reportErrors*/
+                    None,
+                );
+                let Some(type_argument_types) = type_argument_types else {
+                    return sig;
+                };
                 let declaration = self.sig(sig).declaration;
-                result.push(self.get_signature_instantiation(
+                self.get_signature_instantiation(
                     sig,
                     &type_argument_types,
                     is_in_js_file(declaration),
                     &[],
                     0,
-                ));
-            } else {
-                result.push(sig);
-            }
-        }
-        result
+                )
+            })
+            .collect()
     }
 
     // PORT: Go closure `getInstantiatedType` inside getInstantiationExpressionType.
@@ -1261,16 +1265,8 @@ impl Checker {
             iteration_types =
                 self.get_iteration_types_of_generator_function_return_type(return_type, is_async);
         }
-        let signature_yield_type = if iteration_types.yield_type.is_some() {
-            iteration_types.yield_type
-        } else {
-            self.any_type
-        };
-        let signature_next_type = if iteration_types.next_type.is_some() {
-            iteration_types.next_type
-        } else {
-            self.any_type
-        };
+        let signature_yield_type = or_else_type(iteration_types.yield_type, self.any_type);
+        let signature_next_type = or_else_type(iteration_types.next_type, self.any_type);
         let yielded_type = self.get_yielded_type_of_yield_expression(
             node,
             yield_expression_type,
@@ -1278,11 +1274,7 @@ impl Checker {
             is_async,
         );
         if return_type.is_some() && yielded_type.is_some() {
-            let error_node = if node.expression().is_some() {
-                node.expression()
-            } else {
-                node
-            };
+            let error_node = or_else_node(node.expression(), node);
             self.check_type_assignable_to_and_optionally_elaborate(
                 yielded_type,
                 signature_yield_type,
@@ -1293,18 +1285,18 @@ impl Checker {
             );
         }
         if node.asterisk_token().is_some() {
-            let use_ = if is_async {
-                IterationUse::ASYNC_YIELD_STAR
-            } else {
-                IterationUse::YIELD_STAR
-            };
+            let use_ = if_else(
+                is_async,
+                IterationUse::ASYNC_YIELD_STAR,
+                IterationUse::YIELD_STAR,
+            );
             let t = self.get_iteration_type_of_iterable(
                 use_,
                 IterationTypeKind::RETURN,
                 yield_expression_type,
                 node.expression(),
             );
-            return if t.is_some() { t } else { self.any_type };
+            return or_else_type(t, self.any_type);
         }
         if return_type.is_some() {
             let t = self.get_iteration_type_of_generator_function_return_type(
@@ -1312,7 +1304,7 @@ impl Checker {
                 return_type,
                 is_async,
             );
-            return if t.is_some() { t } else { self.any_type };
+            return or_else_type(t, self.any_type);
         }
         let mut t = self.get_contextual_iteration_type(IterationTypeKind::NEXT, fn_);
         if t.is_nil() {
@@ -1380,6 +1372,21 @@ impl Checker {
             return self.get_indexed_access_type(t, number_type);
         }
         t
+    }
+
+    /// Go `c.isEvolvingArrayOperationTarget(node)` in `checkIdentifier`, whose
+    /// answer matters only when `t` is an automatic type.
+    /// PERF: chkA. For any other type only the element assignment part runs,
+    /// at the same point, because that part can make types; the length, push
+    /// and unshift part only reads the tree. Returns false then.
+    #[inline]
+    fn is_evolving_array_operation_target_of_automatic(&mut self, node: Node, t: TypeId) -> bool {
+        if t == self.auto_type || t == self.auto_array_type {
+            return self.is_evolving_array_operation_target(node);
+        }
+        let root = self.get_reference_root(node);
+        self.is_evolving_array_element_assignment(root, root.parent());
+        false
     }
 
     // Go: checker/checker.go:11275 checkIdentifier
@@ -1593,20 +1600,8 @@ impl Checker {
         // A variable is considered uninitialized when it is possible to analyze the entire control flow graph
         // from declaration to use, and when the variable's declared type doesn't include undefined but the
         // control flow based type does include undefined.
-        // PERF: chkA. Go calls `isEvolvingArrayOperationTarget(node)` first,
-        // but its answer matters only for an automatic type. For any other
-        // type only its element assignment part runs, at the same point,
-        // because that part can make types. The length, push and unshift part
-        // only reads the tree.
-        let is_evolving_array_operation_target = if t == self.auto_type || t == self.auto_array_type
-        {
-            self.is_evolving_array_operation_target(node)
-        } else {
-            let root = self.get_reference_root(node);
-            self.is_evolving_array_element_assignment(root, root.parent());
-            false
-        };
-        if !is_evolving_array_operation_target && (t == self.auto_type || t == self.auto_array_type)
+        if !self.is_evolving_array_operation_target_of_automatic(node, t)
+            && (t == self.auto_type || t == self.auto_array_type)
         {
             if flow_type == self.auto_type || flow_type == self.auto_array_type {
                 if self.no_implicit_any {
