@@ -1376,6 +1376,38 @@ fn collect_memory_stats(out: &mut dyn std::io::Read) -> Result<OsMemoryStats, Go
     Ok(OsMemoryStats { total, used })
 }
 
+/// PORT: Go's `ticker := time.NewTicker(interval); defer ticker.Stop()` and
+/// its `for { select { case <-ctx.Done(): return; case <-ticker.C: … } }`
+/// loop in a background task. A `gostd::local::after_func` timer re-arms
+/// itself for the next tick, then runs `on_tick` (the `ticker.C` case); a
+/// tick that finds `ctx` done stops the timer instead (the `ctx.Done()`
+/// case). Each tick runs as part of the task's wait group, as Go's loop runs
+/// in its one `wg.Go` goroutine.
+fn run_local_ticker(ctx: Context, interval: Duration, on_tick: impl Fn() + 'static) {
+    let ticker: Rc<RefCell<Option<gostd::local::LocalTimer>>> = Rc::new(RefCell::new(None));
+    let tick_ticker = ticker.clone();
+    let timer = gostd::local::after_func(
+        interval,
+        Box::new(move || {
+            crate::core::go_wait_group_task(|| {
+                if ctx.err().is_some() {
+                    let stopped = tick_ticker.borrow_mut().take();
+                    if let Some(stopped) = stopped {
+                        stopped.stop();
+                    }
+                    return;
+                }
+                // The ticker sends the next tick after the interval.
+                if let Some(t) = tick_ticker.borrow().as_ref() {
+                    t.reset(interval);
+                }
+                on_tick();
+            })
+        }),
+    );
+    *ticker.borrow_mut() = Some(timer);
+}
+
 impl Session {
     // Go: project/session.go:734 StartPerformanceTelemetry
     // StartPerformanceTelemetry begins periodic collection and sending of performance
@@ -1392,39 +1424,12 @@ impl Session {
         let s = self.clone();
         self.background_queue.enqueue(&ctx, move |ctx| {
             let ctx = ctx.clone();
-            let ticker: Rc<RefCell<Option<gostd::local::LocalTimer>>> = Rc::new(RefCell::new(None));
-            let tick_ticker = ticker.clone();
-            let timer = gostd::local::after_func(
-                PERFORMANCE_TELEMETRY_INTERVAL,
-                Box::new(move || {
-                    // Go: each tick runs in the same wg.Go goroutine.
-                    crate::core::go_wait_group_task(|| {
-                        // Go: case <-ctx.Done(): return (defer ticker.Stop())
-                        if ctx.err().is_some() {
-                            let stopped = tick_ticker.borrow_mut().take();
-                            if let Some(stopped) = stopped {
-                                stopped.stop();
-                            }
-                            return;
-                        }
-                        // Go: case <-ticker.C (the ticker sends the next tick after the interval)
-                        if let Some(t) = tick_ticker.borrow().as_ref() {
-                            t.reset(PERFORMANCE_TELEMETRY_INTERVAL);
-                        }
-                        if s.client.is_none()
-                            || !s
-                                .client
-                                .as_ref()
-                                .unwrap_or_else(|| crate::core::go_nil_dereference())
-                                .is_active()
-                        {
-                            return; // Go: continue
-                        }
-                        s.send_performance_telemetry(&ctx);
-                    })
-                }),
-            );
-            *ticker.borrow_mut() = Some(timer);
+            run_local_ticker(ctx.clone(), PERFORMANCE_TELEMETRY_INTERVAL, move || {
+                if !s.client.as_ref().is_some_and(|client| client.is_active()) {
+                    return; // Go: continue
+                }
+                s.send_performance_telemetry(&ctx);
+            });
         });
     }
 
