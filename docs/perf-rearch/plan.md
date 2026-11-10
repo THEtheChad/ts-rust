@@ -1591,3 +1591,21 @@ once a **reconciliation step** is built and tested.
 - **Started:**
   - **B2:** the path case-sensitivity fixes D2, D1 and the call sites.
   - **Q7:** the leftover gating items, plus the flaky watch test.
+- **H7 finished** (`t3/api-parity-tier`, `87a7b52ab`..`6e97777e6`).
+  - **The tier:** an `api` parity tier with 38 hermetic `tsgo --api`
+    scenarios. It runs in 1.3 s full and 0.6 s quick, with 60 negative
+    controls.
+  - **11 known DIFFs, pinned for B2:**
+    - D1;
+    - the D2 family: 6 scenarios, plus the source-map `sources` path and
+      the tsbuildinfo root;
+    - B3 risk 10 (`x.TS` TS6054);
+    - B3 risks 12/13/15 (config `include` drops a case twin).
+  - **JS tsc has no comparable API,** so there is no JS referee for this
+    tier.
+  - **H7 also fixed a pre-existing false ERROR in the H5 tripwires:** an
+    fd inherited by a forked child closes after the watch starts. It now
+    ignores `IN_CLOSE_NOWRITE`. That is a loosening, so Astra reviews it
+    closely.
+  - Gate `runs/h7-head-ed6edf820-full`: PARITY OK.
+  - **B2 told:** fix all 11, rebase after H7 merges, remove the pins.
