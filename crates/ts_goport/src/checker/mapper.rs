@@ -169,6 +169,17 @@ impl TypeMapper {
             _ => panic!("interface conversion: not a *MergedTypeMapper"),
         }
     }
+
+    /// Go `castTypeMapper[CompositeTypeMapper](m, TypeMapperKindComposite)`. Panics on other
+    /// kinds, like Go (with the port's message).
+    // Go: checker/mapper.go:31 castTypeMapper
+    #[must_use]
+    pub fn as_composite_type_mapper(&self) -> &CompositeTypeMapper {
+        match self {
+            TypeMapper::Composite(m) => m,
+            _ => panic!("interface conversion: not *checker.CompositeTypeMapper"),
+        }
+    }
 }
 
 // TypeMapperBase

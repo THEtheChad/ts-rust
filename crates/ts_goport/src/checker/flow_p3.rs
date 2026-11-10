@@ -945,16 +945,27 @@ impl Checker {
         Node::NIL
     }
 
-    // Go: checker/flow.go:2466 getFlowTypeInConstructor
-    pub fn get_flow_type_in_constructor(&mut self, symbol: SymbolId, constructor: Node) -> TypeId {
+    /// The name node of `this.<symbol>`: a private identifier for a `#name` member. Go's
+    /// getFlowTypeInConstructor and getFlowTypeInStaticBlocks both build it.
+    fn this_property_access_name(&mut self, symbol: SymbolId) -> Node {
         let name = self.sym(symbol).name.clone();
-        let access_name = if name.starts_with(&format!("{}#", INTERNAL_SYMBOL_NAME_PREFIX)) {
+        if name.starts_with(&format!("{}#", INTERNAL_SYMBOL_NAME_PREFIX)) {
             // Go: symbol.Name[strings.Index(symbol.Name, "@")+1:]
             let start = name.find('@').map_or(0, |i| i + 1);
-            self.factory.new_private_identifier(&name[start..])
-        } else {
-            self.factory.new_identifier(name)
-        };
+            return self.factory.new_private_identifier(&name[start..]);
+        }
+        self.factory.new_identifier(name)
+    }
+
+    /// The flow type of a synthetic `this.<access_name>` at the end of `container` (a
+    /// constructor or a static block), with Go's implicit-any error for an auto type. Go's
+    /// getFlowTypeInConstructor and getFlowTypeInStaticBlocks repeat this block.
+    fn this_property_flow_type_at_return(
+        &mut self,
+        symbol: SymbolId,
+        access_name: Node,
+        container: Node,
+    ) -> TypeId {
         let this_keyword = self.factory.new_keyword_expression(SyntaxKind::ThisKeyword);
         let reference = self.factory.new_property_access_expression(
             this_keyword,
@@ -963,8 +974,8 @@ impl Checker {
             NodeFlags::NONE,
         );
         set_node_parent(reference.expression(), reference);
-        set_node_parent(reference, constructor);
-        set_node_flow_node(reference, constructor.return_flow_node());
+        set_node_parent(reference, container);
+        set_node_flow_node(reference, container.return_flow_node());
         let flow_type = self.get_flow_type_of_property(reference, symbol);
         if self.no_implicit_any
             && (flow_type == self.auto_type || flow_type == self.auto_array_type)
@@ -978,6 +989,13 @@ impl Checker {
                 args![symbol_text, type_text],
             );
         }
+        flow_type
+    }
+
+    // Go: checker/flow.go:2466 getFlowTypeInConstructor
+    pub fn get_flow_type_in_constructor(&mut self, symbol: SymbolId, constructor: Node) -> TypeId {
+        let access_name = self.this_property_access_name(symbol);
+        let flow_type = self.this_property_flow_type_at_return(symbol, access_name, constructor);
         // We don't infer a type if assignments are only null or undefined.
         if self.every_type(flow_type, &mut |c: &mut Checker, t: TypeId| {
             c.is_nullable_type(t)
@@ -993,38 +1011,10 @@ impl Checker {
         symbol: SymbolId,
         static_blocks: &[Node],
     ) -> TypeId {
-        let name = self.sym(symbol).name.clone();
-        let access_name = if name.starts_with(&format!("{}#", INTERNAL_SYMBOL_NAME_PREFIX)) {
-            // Go: symbol.Name[strings.Index(symbol.Name, "@")+1:]
-            let start = name.find('@').map_or(0, |i| i + 1);
-            self.factory.new_private_identifier(&name[start..])
-        } else {
-            self.factory.new_identifier(name)
-        };
+        let access_name = self.this_property_access_name(symbol);
         for &static_block in static_blocks {
-            let this_keyword = self.factory.new_keyword_expression(SyntaxKind::ThisKeyword);
-            let reference = self.factory.new_property_access_expression(
-                this_keyword,
-                Node::NIL,
-                access_name,
-                NodeFlags::NONE,
-            );
-            set_node_parent(reference.expression(), reference);
-            set_node_parent(reference, static_block);
-            set_node_flow_node(reference, static_block.return_flow_node());
-            let flow_type = self.get_flow_type_of_property(reference, symbol);
-            if self.no_implicit_any
-                && (flow_type == self.auto_type || flow_type == self.auto_array_type)
-            {
-                let value_declaration = self.sym(symbol).value_declaration;
-                let symbol_text = self.symbol_to_string(symbol);
-                let type_text = self.type_to_string_exported(flow_type);
-                self.error(
-                    value_declaration,
-                    diag::Member_0_implicitly_has_an_1_type,
-                    args![symbol_text, type_text],
-                );
-            }
+            let flow_type =
+                self.this_property_flow_type_at_return(symbol, access_name, static_block);
             // We don't infer a type if assignments are only null or undefined.
             if self.every_type(flow_type, &mut |c: &mut Checker, t: TypeId| {
                 c.is_nullable_type(t)

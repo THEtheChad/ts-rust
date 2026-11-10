@@ -385,6 +385,19 @@ struct Count {
     probed: u64,
 }
 
+impl Count {
+    /// The count of a new file: no steps yet, the first gap to go.
+    fn new() -> Count {
+        let gap = FIRST_GAP.min(SAMPLE_EVERY);
+        Count {
+            countdown: gap,
+            gap,
+            measured: 0,
+            probed: 0,
+        }
+    }
+}
+
 enum FileState {
     /// Not indexed yet (`FlowSkip::hot` holds the live count of the hot
     /// file).
@@ -719,54 +732,7 @@ impl Scan {
             SyntaxKind::EqualsEqualsToken
             | SyntaxKind::ExclamationEqualsToken
             | SyntaxKind::EqualsEqualsEqualsToken
-            | SyntaxKind::ExclamationEqualsEqualsToken => {
-                let left = reference_candidate(e.left());
-                let right = reference_candidate(e.right());
-                if left.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(right) {
-                    self.typeof_(left);
-                    return;
-                }
-                if right.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(left) {
-                    self.typeof_(right);
-                    return;
-                }
-                self.out.push(Ev::M(left, false));
-                self.out.push(Ev::M(right, false));
-                if self.strict {
-                    self.out.push(Ev::Oc(left));
-                    self.out.push(Ev::Oc(right));
-                }
-                self.d(left);
-                self.d(right);
-                // isMatchingConstructorReference (flow.go:750)
-                for side in [left, right] {
-                    let name = if is_property_access_expression(side) {
-                        side.name()
-                    } else if is_element_access_expression(side)
-                        && is_string_literal_like(side.argument_expression())
-                    {
-                        side.argument_expression()
-                    } else {
-                        Node::NIL
-                    };
-                    if name.is_some() && name.text() == "constructor" {
-                        self.out.push(Ev::M(side.expression(), false));
-                    }
-                }
-                // narrowTypeByBooleanComparison (flow.go:800)
-                let (expr, bool_value) = if is_boolean_literal(right) && !is_access_expression(left)
-                {
-                    (left, right)
-                } else if is_boolean_literal(left) && !is_access_expression(right) {
-                    (right, left)
-                } else {
-                    return;
-                };
-                let at = (at != (bool_value.kind() == SyntaxKind::TrueKeyword))
-                    != (operator != SyntaxKind::ExclamationEqualsEqualsToken
-                        && operator != SyntaxKind::ExclamationEqualsToken);
-                self.n(expr, at, d);
-            }
+            | SyntaxKind::ExclamationEqualsEqualsToken => self.equality(e, operator, at, d),
             SyntaxKind::InstanceOfKeyword => {
                 // narrowTypeByInstanceof (flow.go:811)
                 let left = reference_candidate(e.left());
@@ -802,14 +768,81 @@ impl Scan {
         }
     }
 
-    /// Go `narrowTypeByTypeof` (flow.go:614) when the operand does not match.
-    fn typeof_(&mut self, type_of_expr: Node) {
-        let target = reference_candidate(type_of_expr.expression());
-        self.out.push(Ev::M(target, false));
-        if self.strict {
-            self.out.push(Ev::Oc(target));
+    /// The events of the equality operators in Go
+    /// `narrowTypeByBinaryExpression` (flow.go:469): a `typeof` comparison,
+    /// else both operands in every role an equality gives them, then the
+    /// constructor and boolean comparison roles.
+    fn equality(&mut self, e: Node, operator: SyntaxKind, at: bool, d: u8) {
+        let left = reference_candidate(e.left());
+        let right = reference_candidate(e.right());
+        if left.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(right) {
+            self.typeof_(left);
+            return;
         }
-        self.d(target);
+        if right.kind() == SyntaxKind::TypeOfExpression && is_string_literal_like(left) {
+            self.typeof_(right);
+            return;
+        }
+        self.out.push(Ev::M(left, false));
+        self.out.push(Ev::M(right, false));
+        if self.strict {
+            self.out.push(Ev::Oc(left));
+            self.out.push(Ev::Oc(right));
+        }
+        self.d(left);
+        self.d(right);
+        self.constructor_reference(left);
+        self.constructor_reference(right);
+        self.boolean_comparison(left, right, operator, at, d);
+    }
+
+    /// The events of Go `isMatchingConstructorReference` (flow.go:750) on
+    /// one operand of an equality: `x.constructor` or `x["constructor"]`
+    /// matches `x`.
+    fn constructor_reference(&mut self, side: Node) {
+        let name = if is_property_access_expression(side) {
+            side.name()
+        } else if is_element_access_expression(side)
+            && is_string_literal_like(side.argument_expression())
+        {
+            side.argument_expression()
+        } else {
+            Node::NIL
+        };
+        if name.is_some() && name.text() == "constructor" {
+            self.out.push(Ev::M(side.expression(), false));
+        }
+    }
+
+    /// The events of Go `narrowTypeByBooleanComparison` (flow.go:800): an
+    /// equality with a boolean literal narrows the other operand as a
+    /// condition.
+    fn boolean_comparison(
+        &mut self,
+        left: Node,
+        right: Node,
+        operator: SyntaxKind,
+        at: bool,
+        d: u8,
+    ) {
+        let (expr, bool_value) = if is_boolean_literal(right) && !is_access_expression(left) {
+            (left, right)
+        } else if is_boolean_literal(left) && !is_access_expression(right) {
+            (right, left)
+        } else {
+            return;
+        };
+        let at = (at != (bool_value.kind() == SyntaxKind::TrueKeyword))
+            != (operator != SyntaxKind::ExclamationEqualsEqualsToken
+                && operator != SyntaxKind::ExclamationEqualsToken);
+        self.n(expr, at, d);
+    }
+
+    /// Go `narrowTypeByTypeof` (flow.go:614) when the operand does not match.
+    /// Its events are those of `t` with `at` true: the optional chain test
+    /// (flow.go:621) counts for either value of `assumeTrue`.
+    fn typeof_(&mut self, type_of_expr: Node) {
+        self.t(reference_candidate(type_of_expr.expression()), true);
     }
 
     /// Go `getTypeAtSwitchClause` (flow.go:1059) after the walk of the
@@ -1087,6 +1120,35 @@ impl Class {
     fn index(self) -> usize {
         usize::from(self.kind) * 6 + usize::from(self.union) * 3 + usize::from(self.cr)
     }
+
+    /// The bits (`slot`) of the resolves and blocks that Go evaluates for
+    /// this class: the base part of its kind, and the union part when the
+    /// declared type is a union.
+    #[inline]
+    fn bits(self) -> u8 {
+        slot(self.kind, false) | if self.union { slot(self.kind, true) } else { 0 }
+    }
+}
+
+/// The flow nodes of `file` when it is a static file (the CLI case), whose
+/// flow nodes live for the process: only such a file is indexed.
+#[inline]
+fn static_flow_nodes(file: usize) -> Option<&'static [FlowNode]> {
+    static_go_file(file)
+        .and_then(|g| g.flow_nodes.get())
+        .map(Vec::as_slice)
+}
+
+/// The local index of flow node `id` in `flows`, the flow nodes of `file`,
+/// or `None` when `id` is nil or lies outside them (another file or a
+/// synthetic node): the index only follows pointers inside its file.
+#[inline]
+fn local_flow(flows: &[FlowNode], file: usize, id: FlowNodeId) -> Option<u32> {
+    if id.is_nil() || id.file_index() != file || id.local_index() >= flows.len() {
+        None
+    } else {
+        Some(id.local_index() as u32)
+    }
 }
 
 const CLASSES: usize = KINDS * 6;
@@ -1096,13 +1158,7 @@ const CLASSES: usize = KINDS * 6;
 /// nests. A root has kind `ROOT_*`.
 fn next_of(flows: &[FlowNode], file: usize, flow: &FlowNode) -> Result<(u32, u32), u8> {
     let flags = flow.flags;
-    let local = |id: FlowNodeId| -> Result<u32, u8> {
-        if id.is_nil() || id.file_index() != file || id.local_index() >= flows.len() {
-            Err(ROOT_BLOCKED)
-        } else {
-            Ok(id.local_index() as u32)
-        }
-    };
+    let local = |id: FlowNodeId| local_flow(flows, file, id).ok_or(ROOT_BLOCKED);
     if flags.intersects(FlowFlags::ASSIGNMENT | FlowFlags::CALL) {
         Ok((local(flow.antecedent)?, 0))
     } else if flags.intersects(FlowFlags::CONDITION | FlowFlags::SWITCH_CLAUSE) {
@@ -1149,40 +1205,82 @@ fn is_candidate(flags: FlowFlags) -> bool {
         || flags.intersects(FlowFlags::CONDITION | FlowFlags::SWITCH_CLAUSE)
 }
 
-impl FileIndex {
-    fn build(file: usize, flows: &'static [FlowNode], strict: bool) -> FileIndex {
+impl Cand {
+    /// A candidate for flow node `node` with no events yet: `scan_candidates`
+    /// fills its call, pools and blocks.
+    fn new(node: u32) -> Cand {
+        Cand {
+            node,
+            call: Node::NIL,
+            res_start: 0,
+            res_end: 0,
+            blocked: 0,
+            alias_start: 0,
+            alias_end: 0,
+        }
+    }
+}
+
+/// The next-pointer forest of a file's flow nodes (pi in go-model.md 2.2),
+/// the first stage of `FileIndex::build`: each node's next pointer or root
+/// kind, and the candidates (the nodes whose events can stop a walk).
+struct Forest {
+    parent: Vec<u32>,
+    root_kind: Vec<u8>,
+    /// Whether the step from each node to its parent nests (1) or not (0).
+    nest_self: Vec<u32>,
+    cand_of: Vec<u32>,
+    cands: Vec<Cand>,
+}
+
+/// The Euler tour of a `Forest`, the second stage of `FileIndex::build`:
+/// entry and exit numbers of each reached node, and what the path from it
+/// to its root adds up to (nesting, steps, the nearest candidate, the
+/// root). Unreached nodes keep `NONE` entry numbers.
+struct Tour {
+    tin: Vec<u32>,
+    tout: Vec<u32>,
+    nest: Vec<u32>,
+    steps: Vec<u32>,
+    stop: Vec<u32>,
+    root_of: Vec<u32>,
+}
+
+impl Forest {
+    /// The next pointer (or root kind) of every flow node of `file`, and
+    /// its candidates in flow node order.
+    fn new(file: usize, flows: &[FlowNode]) -> Forest {
         let n = flows.len();
-        let mut parent = vec![NONE; n];
-        let mut root_kind = vec![0u8; n];
-        let mut nest_self = vec![0u32; n];
-        let mut cand_of = vec![NONE; n];
-        let mut cands: Vec<Cand> = Vec::new();
+        let mut forest = Forest {
+            parent: vec![NONE; n],
+            root_kind: vec![0u8; n],
+            nest_self: vec![0u32; n],
+            cand_of: vec![NONE; n],
+            cands: Vec::new(),
+        };
         for (i, flow) in flows.iter().enumerate() {
             match next_of(flows, file, flow) {
                 Ok((p, nest)) => {
-                    parent[i] = p;
-                    nest_self[i] = nest;
+                    forest.parent[i] = p;
+                    forest.nest_self[i] = nest;
                     if is_candidate(flow.flags) {
-                        cand_of[i] = cands.len() as u32;
-                        cands.push(Cand {
-                            node: i as u32,
-                            call: Node::NIL,
-                            res_start: 0,
-                            res_end: 0,
-                            blocked: 0,
-                            alias_start: 0,
-                            alias_end: 0,
-                        });
+                        forest.cand_of[i] = forest.cands.len() as u32;
+                        forest.cands.push(Cand::new(i as u32));
                     }
                 }
-                Err(kind) => root_kind[i] = kind,
+                Err(kind) => forest.root_kind[i] = kind,
             }
         }
-        // Children lists (CSR), then a DFS from the roots. Nodes on a cycle
-        // (a loop label whose only antecedent is a back edge) stay
-        // unreached: no skip there.
+        forest
+    }
+
+    /// The children lists of the forest in CSR form: the children of node
+    /// `x` are `children[child_start[x]..child_start[x + 1]]`, in node
+    /// order.
+    fn children(&self) -> (Vec<u32>, Vec<u32>) {
+        let n = self.parent.len();
         let mut child_start = vec![0u32; n + 1];
-        for &p in &parent {
+        for &p in &self.parent {
             if p != NONE {
                 child_start[p as usize + 1] += 1;
             }
@@ -1192,148 +1290,200 @@ impl FileIndex {
         }
         let mut fill = child_start.clone();
         let mut children = vec![0u32; child_start[n] as usize];
-        for (i, &p) in parent.iter().enumerate() {
+        for (i, &p) in self.parent.iter().enumerate() {
             if p != NONE {
                 children[fill[p as usize] as usize] = i as u32;
                 fill[p as usize] += 1;
             }
         }
-        drop(fill);
-        let mut tin = vec![NONE; n];
-        let mut tout = vec![NONE; n];
-        let mut nest = vec![0u32; n];
-        let mut steps = vec![0u32; n];
-        let mut stop = vec![NONE; n];
-        let mut root_of = vec![NONE; n];
+        (child_start, children)
+    }
+
+    /// A DFS from the roots in node order. Nodes on a cycle (a loop label
+    /// whose only antecedent is a back edge) stay unreached: no skip there.
+    fn tour(&self) -> Tour {
+        let n = self.parent.len();
+        let (child_start, children) = self.children();
+        let mut t = Tour {
+            tin: vec![NONE; n],
+            tout: vec![NONE; n],
+            nest: vec![0u32; n],
+            steps: vec![0u32; n],
+            stop: vec![NONE; n],
+            root_of: vec![NONE; n],
+        };
         let mut counter = 0u32;
         let mut stack: Vec<(u32, u32)> = Vec::new();
         for r in 0..n {
-            if root_kind[r] == 0 {
+            if self.root_kind[r] == 0 {
                 continue;
             }
-            tin[r] = counter;
+            t.tin[r] = counter;
             counter += 1;
-            steps[r] = 1;
-            stop[r] = r as u32;
-            root_of[r] = r as u32;
+            t.steps[r] = 1;
+            t.stop[r] = r as u32;
+            t.root_of[r] = r as u32;
             stack.push((r as u32, child_start[r]));
             while let Some(top) = stack.last_mut() {
                 let (x, ci) = *top;
                 if ci < child_start[x as usize + 1] {
                     top.1 += 1;
                     let c = children[ci as usize] as usize;
-                    tin[c] = counter;
+                    t.tin[c] = counter;
                     counter += 1;
-                    nest[c] = nest_self[c] + nest[x as usize];
-                    steps[c] = steps[x as usize] + 1;
-                    stop[c] = if cand_of[c] != NONE {
+                    t.nest[c] = self.nest_self[c] + t.nest[x as usize];
+                    t.steps[c] = t.steps[x as usize] + 1;
+                    t.stop[c] = if self.cand_of[c] != NONE {
                         c as u32
                     } else {
-                        stop[x as usize]
+                        t.stop[x as usize]
                     };
-                    root_of[c] = root_of[x as usize];
+                    t.root_of[c] = t.root_of[x as usize];
                     stack.push((c as u32, child_start[c]));
                 } else {
-                    tout[x as usize] = counter;
+                    t.tout[x as usize] = counter;
                     stack.pop();
                 }
             }
         }
-        drop(children);
-        drop(child_start);
-        // Events of the reached candidates.
-        let mut res_pool = Vec::new();
-        let mut alias_pool = Vec::new();
-        let mut mention_in = Vec::new();
-        let mut mention_out = Vec::new();
-        let mut chain_sites = Vec::new();
-        let mut scan = Scan {
-            strict,
-            out: Vec::new(),
-        };
-        let mut out = Out::default();
-        for cand in &mut cands {
-            let i = cand.node as usize;
-            if tin[i] == NONE {
-                continue;
-            }
-            let flow = &flows[i];
-            scan.out.clear();
-            let flags = flow.flags;
-            if flags.intersects(FlowFlags::ASSIGNMENT) {
-                scan.assignment(flow.node);
-            } else if flags.intersects(FlowFlags::CALL) {
-                cand.call = flow.node;
-                continue;
-            } else if flags.intersects(FlowFlags::CONDITION) {
-                scan.n(flow.node, flags.intersects(FlowFlags::TRUE_CONDITION), 0);
-            } else {
-                scan.switch(flow.node);
-            }
-            out.clear();
-            for &ev in &scan.out {
-                out.event(ev);
-            }
-            cand.blocked = out.blocked;
-            out.resolves.sort_unstable_by_key(|r| r.0);
-            cand.res_start = res_pool.len() as u32;
-            for &(x, bits) in &out.resolves {
-                let merge = res_pool.len() as u32 > cand.res_start;
-                match res_pool.last_mut() {
-                    Some((last, last_bits)) if merge && *last == x => *last_bits |= bits,
-                    _ => res_pool.push((x, bits)),
-                }
-            }
-            cand.res_end = res_pool.len() as u32;
-            cand.alias_start = alias_pool.len() as u32;
-            alias_pool.extend_from_slice(&out.aliases);
-            cand.alias_end = alias_pool.len() as u32;
-            out.mentions.sort_unstable();
-            out.mentions.dedup();
-            for &key in &out.mentions {
-                mention_in.push((key, tin[i]));
-                mention_out.push((key, tout[i]));
-            }
-            out.chains.sort_unstable();
-            out.chains.dedup();
-            for &(key, root) in &out.chains {
-                chain_sites.push((key, tin[i], tout[i], root));
+        t
+    }
+}
+
+impl Scan {
+    /// The events of candidate flow node `flow` into `self.out`, or false
+    /// for a call node, which has no events: its call goes to `cand.call`
+    /// and is judged by its effects signature per class.
+    fn candidate(&mut self, flow: &FlowNode, cand: &mut Cand) -> bool {
+        self.out.clear();
+        let flags = flow.flags;
+        if flags.intersects(FlowFlags::ASSIGNMENT) {
+            self.assignment(flow.node);
+        } else if flags.intersects(FlowFlags::CALL) {
+            cand.call = flow.node;
+            return false;
+        } else if flags.intersects(FlowFlags::CONDITION) {
+            self.n(flow.node, flags.intersects(FlowFlags::TRUE_CONDITION), 0);
+        } else {
+            self.switch(flow.node);
+        }
+        true
+    }
+}
+
+/// The pools and unsorted key lists of a file's candidates, the third
+/// stage of `FileIndex::build`.
+#[derive(Default)]
+struct Pools {
+    res_pool: Vec<(Node, u8)>,
+    alias_pool: Vec<Alias>,
+    mention_in: Vec<(u64, u32)>,
+    mention_out: Vec<(u64, u32)>,
+    chain_sites: Vec<(u64, u32, u32, Node)>,
+}
+
+impl Pools {
+    /// Adds what the events of `cand` mean (`out`) to the pools: its
+    /// resolves (one entry per identifier, bits merged), aliases, mentions
+    /// and chain sites at the node's entry and exit numbers.
+    fn add(&mut self, cand: &mut Cand, out: &mut Out, tin: u32, tout: u32) {
+        cand.blocked = out.blocked;
+        out.resolves.sort_unstable_by_key(|r| r.0);
+        cand.res_start = self.res_pool.len() as u32;
+        for &(x, bits) in &out.resolves {
+            let merge = self.res_pool.len() as u32 > cand.res_start;
+            match self.res_pool.last_mut() {
+                Some((last, last_bits)) if merge && *last == x => *last_bits |= bits,
+                _ => self.res_pool.push((x, bits)),
             }
         }
-        mention_in.sort_unstable();
-        mention_out.sort_unstable();
-        let mut mention_range = FxHashMap::default();
-        let mut start = 0;
-        while start < mention_in.len() {
-            let key = mention_in[start].0;
-            let mut end = start + 1;
-            while end < mention_in.len() && mention_in[end].0 == key {
-                end += 1;
-            }
-            mention_range.insert(key, (start as u32, end as u32));
-            start = end;
+        cand.res_end = self.res_pool.len() as u32;
+        cand.alias_start = self.alias_pool.len() as u32;
+        self.alias_pool.extend_from_slice(&out.aliases);
+        cand.alias_end = self.alias_pool.len() as u32;
+        out.mentions.sort_unstable();
+        out.mentions.dedup();
+        for &key in &out.mentions {
+            self.mention_in.push((key, tin));
+            self.mention_out.push((key, tout));
         }
-        let mention_in = mention_in.into_iter().map(|e| e.1).collect();
-        let mention_out = mention_out.into_iter().map(|e| e.1).collect();
-        chain_sites.sort_unstable_by_key(|s| (s.0, s.1));
+        out.chains.sort_unstable();
+        out.chains.dedup();
+        for &(key, root) in &out.chains {
+            self.chain_sites.push((key, tin, tout, root));
+        }
+    }
+}
+
+/// The events of the reached candidates, in candidate order, gathered into
+/// pools.
+fn scan_candidates(flows: &[FlowNode], strict: bool, cands: &mut [Cand], tour: &Tour) -> Pools {
+    let mut pools = Pools::default();
+    let mut scan = Scan {
+        strict,
+        out: Vec::new(),
+    };
+    let mut out = Out::default();
+    for cand in cands {
+        let i = cand.node as usize;
+        if tour.tin[i] == NONE || !scan.candidate(&flows[i], cand) {
+            continue;
+        }
+        out.clear();
+        for &ev in &scan.out {
+            out.event(ev);
+        }
+        pools.add(cand, &mut out, tour.tin[i], tour.tout[i]);
+    }
+    pools
+}
+
+/// The range of each key in `mention_in`, sorted by key: the part of the
+/// mention lists that `FileIndex::mentions_on_path` searches.
+fn mention_ranges(mention_in: &[(u64, u32)]) -> FxHashMap<u64, (u32, u32)> {
+    let mut mention_range = FxHashMap::default();
+    let mut start = 0;
+    while start < mention_in.len() {
+        let key = mention_in[start].0;
+        let mut end = start + 1;
+        while end < mention_in.len() && mention_in[end].0 == key {
+            end += 1;
+        }
+        mention_range.insert(key, (start as u32, end as u32));
+        start = end;
+    }
+    mention_range
+}
+
+impl FileIndex {
+    /// The index of one static file: its forest, the tour of it, and the
+    /// events of the reached candidates as sorted lookup lists.
+    fn build(file: usize, flows: &'static [FlowNode], strict: bool) -> FileIndex {
+        let mut forest = Forest::new(file, flows);
+        let tour = forest.tour();
+        let mut pools = scan_candidates(flows, strict, &mut forest.cands, &tour);
+        pools.mention_in.sort_unstable();
+        pools.mention_out.sort_unstable();
+        let mention_range = mention_ranges(&pools.mention_in);
+        pools.chain_sites.sort_unstable_by_key(|s| (s.0, s.1));
         FileIndex {
             flows,
             file,
-            parent,
-            root_kind,
-            nest,
-            steps,
-            tin,
-            stop,
-            root_of,
-            cand_of,
-            cands,
-            res_pool,
-            alias_pool,
-            mention_in,
-            mention_out,
+            parent: forest.parent,
+            root_kind: forest.root_kind,
+            nest: tour.nest,
+            steps: tour.steps,
+            tin: tour.tin,
+            stop: tour.stop,
+            root_of: tour.root_of,
+            cand_of: forest.cand_of,
+            cands: forest.cands,
+            res_pool: pools.res_pool,
+            alias_pool: pools.alias_pool,
+            mention_in: pools.mention_in.into_iter().map(|e| e.1).collect(),
+            mention_out: pools.mention_out.into_iter().map(|e| e.1).collect(),
             mention_range,
-            chain_sites,
+            chain_sites: pools.chain_sites,
             classes: (0..CLASSES).map(|_| None).collect(),
         }
     }
@@ -1359,6 +1509,66 @@ impl FileIndex {
             })
         })
     }
+
+    /// Whether a node on the path from the node with entry number `p` to
+    /// its root mentions one of `keys`.
+    #[inline]
+    fn mentions_any_on_path(&self, keys: &[u64], p: u32) -> bool {
+        keys.iter().any(|&key| self.mentions_on_path(key, p) > 0)
+    }
+
+    /// The refusals a walk from flow node `u` gets before its keys are
+    /// read: `u` is not reached by the forest, or its walk is shorter than
+    /// `min_steps` and its root cannot move to the containing function
+    /// (then Go's walk is cheaper than the test).
+    #[inline]
+    fn refuse_unreached_or_short(&self, u: usize, min_steps: u32) -> Result<(), Refusal> {
+        if u >= self.flows.len() || self.tin[u] == NONE {
+            return Err(Refusal::Unreached);
+        }
+        if self.steps[u] < min_steps {
+            let root = self.root_of[u] as usize;
+            if self.root_kind[root] != ROOT_START || self.flows[root].node.is_nil() {
+                return Err(Refusal::Short);
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the walk of a reference of kind `kind` goes at the root of
+    /// segment `seg`: `None` when it ends there, the flow node of the
+    /// containing function when it moves there (Go's rule, flow.go:189), or
+    /// the refusal of a root the index cannot follow.
+    #[inline]
+    fn segment_after(
+        &self,
+        seg: usize,
+        kind: u8,
+        flow_container: Node,
+    ) -> Result<Option<usize>, Refusal> {
+        let root = self.root_of[seg] as usize;
+        match self.root_kind[root] {
+            ROOT_UNREACHABLE => Ok(None),
+            ROOT_START => {
+                let container = self.flows[root].node;
+                let crosses = container.is_some()
+                    && container != flow_container
+                    && match kind {
+                        K_IDENT => true,
+                        K_THIS => is_arrow_function(container),
+                        _ => false,
+                    };
+                if !crosses {
+                    return Ok(None);
+                }
+                match local_flow(self.flows, self.file, container.flow_node()) {
+                    Some(outer) => Ok(Some(outer as usize)),
+                    None => Err(Refusal::Cross),
+                }
+            }
+            _ => Err(Refusal::Root),
+        }
+    }
 }
 
 /// Union-find with path halving.
@@ -1378,6 +1588,69 @@ struct RefKeys {
     mentions: SmallVec<[u64; 8]>,
     /// Chain-site keys: a site with one of them needs a resolved root.
     chains: SmallVec<[u64; 4]>,
+}
+
+impl RefKeys {
+    /// The keys of an identifier or `this` reference (`text` is `this` for
+    /// the keyword): its plain mention, and its discriminant mention for a
+    /// union declared type.
+    fn identifier(kind: u8, text: &str, union: bool) -> RefKeys {
+        let mut mentions = SmallVec::new();
+        mentions.push(chain_key(F_IDENT, &[], text));
+        if union {
+            mentions.push(chain_key(F_IDENT_U, &[], text));
+        }
+        RefKeys {
+            kind,
+            mentions,
+            chains: SmallVec::new(),
+        }
+    }
+
+    /// The keys of a plain access chain with `names` (from the top down,
+    /// at least one) on `root`: the prefix mentions, the mention of the
+    /// whole chain, and for an identifier root the chain-site keys.
+    fn access(names: &[&'static str], root: Node, union: bool) -> RefKeys {
+        let mut mentions = SmallVec::new();
+        let mut chains = SmallVec::new();
+        let kind = if root.kind() == SyntaxKind::Identifier {
+            K_ACC_IDENT
+        } else {
+            K_ACC_THIS
+        };
+        // Each proper prefix `names[i..]` (i >= 1) is one more name
+        // out from the root than the one before, so its keys come
+        // from one running hash: a chain of k names costs O(k),
+        // not O(k^2) (deep chains such as `a[0][0]...[0]`).
+        let mut mention = ChainHash::rooted(root_text(root));
+        mentions.push(mention.key(F_ACCP));
+        let mut chain = ChainHash::rootless();
+        for name in names[1..].iter().rev() {
+            mention.push(name);
+            mentions.push(mention.key(F_ACCP));
+            chain.push(name);
+            if kind == K_ACC_IDENT {
+                chains.push(chain.key(C_CM));
+            }
+        }
+        mention.push(names[0]);
+        mentions.push(mention.key(F_ACC));
+        if union {
+            mentions.push(mention.key(F_ACC_U));
+        }
+        if kind == K_ACC_IDENT {
+            chain.push(names[0]);
+            chains.push(chain.key(C_M));
+            if union {
+                chains.push(chain.key(C_M_U));
+            }
+        }
+        RefKeys {
+            kind,
+            mentions,
+            chains,
+        }
+    }
 }
 
 enum Settle {
@@ -1411,6 +1684,16 @@ struct Snapshot {
 }
 
 impl Checker {
+    /// The symbol that the checker has resolved for identifier `node` so
+    /// far, or nil. The flow skip only reads the node links: resolving
+    /// would be a lasting write that a skipped walk must not make.
+    #[inline]
+    fn flow_skip_resolved_symbol(&self, node: Node) -> SymbolId {
+        self.symbol_node_links
+            .try_get(node)
+            .map_or(SymbolId::NIL, |links| links.resolved_symbol)
+    }
+
     fn flow_skip_resolved(&self, node: Node) -> bool {
         self.symbol_node_links
             .try_get(node)
@@ -1420,109 +1703,63 @@ impl Checker {
     /// Kind and keys of `reference`, or `None` when the kind is not one
     /// the index knows (P2 in go-model.md 2.4).
     fn flow_skip_ref_keys(&self, reference: Node, union: bool) -> Option<RefKeys> {
-        let mut mentions = SmallVec::new();
-        let mut chains = SmallVec::new();
         match reference.kind() {
             SyntaxKind::Identifier => {
-                if is_this_in_type_query(reference) {
+                if !self.flow_skip_known_identifier(reference) {
                     return None;
                 }
-                let symbol = self.symbol_node_links.try_get(reference)?.resolved_symbol;
-                if symbol.is_nil() || symbol == self.unknown_symbol {
-                    return None;
-                }
-                mentions.push(chain_key(F_IDENT, &[], reference.text()));
-                if union {
-                    mentions.push(chain_key(F_IDENT_U, &[], reference.text()));
-                }
-                Some(RefKeys {
-                    kind: K_IDENT,
-                    mentions,
-                    chains,
-                })
+                Some(RefKeys::identifier(K_IDENT, reference.text(), union))
             }
-            SyntaxKind::ThisKeyword => {
-                mentions.push(chain_key(F_IDENT, &[], "this"));
-                if union {
-                    mentions.push(chain_key(F_IDENT_U, &[], "this"));
-                }
-                Some(RefKeys {
-                    kind: K_THIS,
-                    mentions,
-                    chains,
-                })
-            }
+            SyntaxKind::ThisKeyword => Some(RefKeys::identifier(K_THIS, "this", union)),
             SyntaxKind::PropertyAccessExpression | SyntaxKind::ElementAccessExpression => {
-                // A plain chain: no wrappers, literal element arguments.
-                let mut names: SmallVec<[&'static str; 4]> = SmallVec::new();
-                let mut x = reference;
-                let root = loop {
-                    match x.kind() {
-                        SyntaxKind::PropertyAccessExpression => {
-                            names.push(x.name().text());
-                            x = x.expression();
-                        }
-                        SyntaxKind::ElementAccessExpression => {
-                            let arg = x.argument_expression();
-                            if !is_string_or_numeric_literal_like(arg) {
-                                return None;
-                            }
-                            names.push(arg.text());
-                            x = x.expression();
-                        }
-                        SyntaxKind::Identifier => {
-                            if is_this_in_type_query(x) {
-                                return None;
-                            }
-                            let symbol = self.symbol_node_links.try_get(x)?.resolved_symbol;
-                            if symbol.is_nil() || symbol == self.unknown_symbol {
-                                return None;
-                            }
-                            break x;
-                        }
-                        SyntaxKind::ThisKeyword => break x,
-                        _ => return None,
-                    }
-                };
-                let kind = if root.kind() == SyntaxKind::Identifier {
-                    K_ACC_IDENT
-                } else {
-                    K_ACC_THIS
-                };
-                // Each proper prefix `names[i..]` (i >= 1) is one more name
-                // out from the root than the one before, so its keys come
-                // from one running hash: a chain of k names costs O(k),
-                // not O(k^2) (deep chains such as `a[0][0]...[0]`).
-                let mut mention = ChainHash::rooted(root_text(root));
-                mentions.push(mention.key(F_ACCP));
-                let mut chain = ChainHash::rootless();
-                for name in names[1..].iter().rev() {
-                    mention.push(name);
-                    mentions.push(mention.key(F_ACCP));
-                    chain.push(name);
-                    if kind == K_ACC_IDENT {
-                        chains.push(chain.key(C_CM));
-                    }
-                }
-                mention.push(names[0]);
-                mentions.push(mention.key(F_ACC));
-                if union {
-                    mentions.push(mention.key(F_ACC_U));
-                }
-                if kind == K_ACC_IDENT {
-                    chain.push(names[0]);
-                    chains.push(chain.key(C_M));
-                    if union {
-                        chains.push(chain.key(C_M_U));
-                    }
-                }
-                Some(RefKeys {
-                    kind,
-                    mentions,
-                    chains,
-                })
+                let (names, root) = self.flow_skip_plain_chain(reference)?;
+                Some(RefKeys::access(&names, root, union))
             }
             _ => None,
+        }
+    }
+
+    /// Whether identifier `x` can be the reference or the root of an
+    /// indexed reference: not `this` in a type query, and resolved to a
+    /// known symbol already.
+    #[inline]
+    fn flow_skip_known_identifier(&self, x: Node) -> bool {
+        if is_this_in_type_query(x) {
+            return false;
+        }
+        let symbol = self.flow_skip_resolved_symbol(x);
+        !symbol.is_nil() && symbol != self.unknown_symbol
+    }
+
+    /// The names (from the top down) and root of an access reference when
+    /// it is a plain chain: no wrappers, literal element arguments, and a
+    /// `this` or known identifier root (`flow_skip_known_identifier`).
+    fn flow_skip_plain_chain(
+        &self,
+        reference: Node,
+    ) -> Option<(SmallVec<[&'static str; 4]>, Node)> {
+        let mut names: SmallVec<[&'static str; 4]> = SmallVec::new();
+        let mut x = reference;
+        loop {
+            match x.kind() {
+                SyntaxKind::PropertyAccessExpression => {
+                    names.push(x.name().text());
+                    x = x.expression();
+                }
+                SyntaxKind::ElementAccessExpression => {
+                    let arg = x.argument_expression();
+                    if !is_string_or_numeric_literal_like(arg) {
+                        return None;
+                    }
+                    names.push(arg.text());
+                    x = x.expression();
+                }
+                SyntaxKind::Identifier if self.flow_skip_known_identifier(x) => {
+                    return Some((names, x));
+                }
+                SyntaxKind::ThisKeyword => return Some((names, x)),
+                _ => return None,
+            }
         }
     }
 
@@ -1532,7 +1769,7 @@ impl Checker {
         match node.kind() {
             SyntaxKind::ThisKeyword => Some(true),
             SyntaxKind::Identifier => {
-                let symbol = self.symbol_node_links.try_get(node)?.resolved_symbol;
+                let symbol = self.flow_skip_resolved_symbol(node);
                 if symbol.is_nil() {
                     return None;
                 }
@@ -1568,10 +1805,7 @@ impl Checker {
                 if !self.flow_skip_constant_reference_cached(node.expression())? {
                     return Some(false);
                 }
-                let symbol = self
-                    .symbol_node_links
-                    .try_get(node)
-                    .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+                let symbol = self.flow_skip_resolved_symbol(node);
                 if symbol.is_nil() {
                     return Some(false);
                 }
@@ -1651,6 +1885,9 @@ impl Checker {
         result.ok()
     }
 
+    /// The test past the countdown: makes the file of `flow` the hot file,
+    /// counts the walk while the file is not indexed, builds its index once
+    /// the count is reached, then checks the walk against the index.
     fn flow_skip_test_worker(
         &mut self,
         reference: Node,
@@ -1663,99 +1900,14 @@ impl Checker {
         }
         let file = flow.file_index();
         if self.flow_skip.hot_file != Some(file as u32) {
-            let count = match self.flow_skip.files.entry(file as u32) {
-                std::collections::hash_map::Entry::Occupied(entry) => match entry.into_mut() {
-                    FileState::Unsupported => return Err(Refusal::File),
-                    FileState::Built(_) => None,
-                    FileState::Counting(count) => Some(*count),
-                },
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Only a static file (the CLI case) is indexed: its flow
-                    // nodes live for the process.
-                    if static_go_file(file)
-                        .and_then(|g| g.flow_nodes.get())
-                        .is_none()
-                    {
-                        entry.insert(FileState::Unsupported);
-                        return Err(Refusal::File);
-                    }
-                    let gap = FIRST_GAP.min(SAMPLE_EVERY);
-                    let count = Count {
-                        countdown: gap,
-                        gap,
-                        measured: 0,
-                        probed: 0,
-                    };
-                    entry.insert(FileState::Counting(count));
-                    Some(count)
-                }
-            };
-            if let Some(count) = count {
-                // The hot file's count goes back to its entry.
-                let fs = &mut self.flow_skip;
-                if let Some(hot_file) = fs.hot_file
-                    && let Some(FileState::Counting(old)) = fs.files.get_mut(&hot_file)
-                {
-                    *old = fs.hot;
-                }
-                fs.hot_file = Some(file as u32);
-                fs.hot = count;
-            }
+            self.flow_skip_switch_hot_file(file)?;
         }
         if self.flow_skip.hot_file == Some(file as u32) {
             let build_steps = self.flow_skip.build_steps();
-            let hot = &mut self.flow_skip.hot;
             if build_steps > 0 {
-                hot.countdown -= 1;
-                if hot.countdown > 0 {
-                    return Err(Refusal::Counting);
-                }
-                let weight = hot.gap;
-                hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
-                hot.countdown = hot.gap;
-                let flows = static_go_file(file)
-                    .and_then(|g| g.flow_nodes.get())
-                    .expect("a counted file is static");
-                let u = flow.local_index();
-                let n = flows.len() as u64;
-                let confirm_steps = u64::from(CONFIRM_STEPS);
-                let check = hot.measured * 2 >= u64::from(build_steps) * n;
-                let (steps, passed) = if u < flows.len() {
-                    self.flow_skip_sample(reference, declared_type, flows, file, u, check)
-                } else {
-                    (0, false)
-                };
-                let hot = &mut self.flow_skip.hot;
-                let steps = u64::from(steps) * u64::from(weight);
-                hot.measured += steps;
-                if passed {
-                    hot.probed += steps;
-                }
-                if hot.measured * 2 >= u64::from(build_steps) * n {
-                    hot.gap = hot.gap.min(NEAR_GAP);
-                    hot.countdown = hot.countdown.min(hot.gap);
-                }
-                if hot.measured < u64::from(build_steps) * n || hot.probed < confirm_steps * n {
-                    return Err(Refusal::Counting);
-                }
+                self.flow_skip_count_walk(reference, declared_type, flow, build_steps)?;
             }
-            let flows = static_go_file(file)
-                .and_then(|g| g.flow_nodes.get())
-                .expect("a counted file is static");
-            #[cfg(feature = "diagnostics")]
-            let start = std::time::Instant::now();
-            let index = FileIndex::build(file, flows.as_slice(), self.strict_null_checks);
-            self.flow_skip
-                .files
-                .insert(file as u32, FileState::Built(Box::new(index)));
-            self.flow_skip.hot_file = None;
-            #[cfg(feature = "diagnostics")]
-            {
-                let stats = &mut self.flow_skip.stats;
-                stats.built += 1;
-                stats.built_nodes += flows.len() as u64;
-                stats.build_ns += start.elapsed().as_nanos() as u64;
-            }
+            self.flow_skip_build_index(file);
         }
         let mut files = std::mem::take(&mut self.flow_skip.files);
         let Some(FileState::Built(index)) = files.get_mut(&(file as u32)) else {
@@ -1768,6 +1920,112 @@ impl Checker {
         }
         self.flow_skip.files = files;
         result
+    }
+
+    /// Makes `file` the hot file when it is counting (a new static file
+    /// starts its count here): the old hot file's live count goes back to
+    /// its entry. A built file leaves the hot file as it is; a file that is
+    /// not static is refused.
+    #[inline]
+    fn flow_skip_switch_hot_file(&mut self, file: usize) -> Result<(), Refusal> {
+        let count = match self.flow_skip.files.entry(file as u32) {
+            std::collections::hash_map::Entry::Occupied(entry) => match entry.into_mut() {
+                FileState::Unsupported => return Err(Refusal::File),
+                FileState::Built(_) => None,
+                FileState::Counting(count) => Some(*count),
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                // Only a static file (the CLI case) is indexed: its flow
+                // nodes live for the process.
+                if static_flow_nodes(file).is_none() {
+                    entry.insert(FileState::Unsupported);
+                    return Err(Refusal::File);
+                }
+                let count = Count::new();
+                entry.insert(FileState::Counting(count));
+                Some(count)
+            }
+        };
+        if let Some(count) = count {
+            // The hot file's count goes back to its entry.
+            let fs = &mut self.flow_skip;
+            if let Some(hot_file) = fs.hot_file
+                && let Some(FileState::Counting(old)) = fs.files.get_mut(&hot_file)
+            {
+                *old = fs.hot;
+            }
+            fs.hot_file = Some(file as u32);
+            fs.hot = count;
+        }
+        Ok(())
+    }
+
+    /// Counts one walk of the hot file (see `Count`): the countdown, and
+    /// at its end a measured walk (`flow_skip_sample`) weighted by the gap.
+    /// `Ok` when the file has reached `build_steps` and `CONFIRM_STEPS` per
+    /// flow node and is to be indexed now.
+    #[inline]
+    fn flow_skip_count_walk(
+        &mut self,
+        reference: Node,
+        declared_type: TypeId,
+        flow: FlowNodeId,
+        build_steps: u32,
+    ) -> Result<(), Refusal> {
+        let file = flow.file_index();
+        let hot = &mut self.flow_skip.hot;
+        hot.countdown -= 1;
+        if hot.countdown > 0 {
+            return Err(Refusal::Counting);
+        }
+        let weight = hot.gap;
+        hot.gap = hot.gap.saturating_mul(2).min(SAMPLE_EVERY);
+        hot.countdown = hot.gap;
+        let flows = static_flow_nodes(file).expect("a counted file is static");
+        let u = flow.local_index();
+        let n = flows.len() as u64;
+        let confirm_steps = u64::from(CONFIRM_STEPS);
+        let check = hot.measured * 2 >= u64::from(build_steps) * n;
+        let (steps, passed) = if u < flows.len() {
+            self.flow_skip_sample(reference, declared_type, flows, file, u, check)
+        } else {
+            (0, false)
+        };
+        let hot = &mut self.flow_skip.hot;
+        let steps = u64::from(steps) * u64::from(weight);
+        hot.measured += steps;
+        if passed {
+            hot.probed += steps;
+        }
+        if hot.measured * 2 >= u64::from(build_steps) * n {
+            hot.gap = hot.gap.min(NEAR_GAP);
+            hot.countdown = hot.countdown.min(hot.gap);
+        }
+        if hot.measured < u64::from(build_steps) * n || hot.probed < confirm_steps * n {
+            return Err(Refusal::Counting);
+        }
+        Ok(())
+    }
+
+    /// Builds the index of the hot file `file` and ends its count. Runs
+    /// once per indexed file, so it stays out of line.
+    #[inline(never)]
+    fn flow_skip_build_index(&mut self, file: usize) {
+        let flows = static_flow_nodes(file).expect("a counted file is static");
+        #[cfg(feature = "diagnostics")]
+        let start = std::time::Instant::now();
+        let index = FileIndex::build(file, flows, self.strict_null_checks);
+        self.flow_skip
+            .files
+            .insert(file as u32, FileState::Built(Box::new(index)));
+        self.flow_skip.hot_file = None;
+        #[cfg(feature = "diagnostics")]
+        {
+            let stats = &mut self.flow_skip.stats;
+            stats.built += 1;
+            stats.built_nodes += flows.len() as u64;
+            stats.build_ns += start.elapsed().as_nanos() as u64;
+        }
     }
 
     /// The steps of pi(u) to its root (no move to an outer function, at
@@ -1850,79 +2108,12 @@ impl Checker {
         flow: FlowNodeId,
     ) -> Result<u32, Refusal> {
         let u = flow.local_index();
-        if u >= index.flows.len() || index.tin[u] == NONE {
-            return Err(Refusal::Unreached);
-        }
-        if index.steps[u] < self.flow_skip.min_steps() {
-            // A short walk: test it only when its root may move to the
-            // containing function.
-            let root = index.root_of[u] as usize;
-            if index.root_kind[root] != ROOT_START || index.flows[root].node.is_nil() {
-                return Err(Refusal::Short);
-            }
-        }
+        index.refuse_unreached_or_short(u, self.flow_skip.min_steps())?;
         let union = self.ty(declared_type).flags.intersects(TypeFlags::UNION);
         let Some(keys) = self.flow_skip_ref_keys(reference, union) else {
             return Err(Refusal::Kind);
         };
-        let mut segments: SmallVec<[u32; 4]> = SmallVec::new();
-        let mut seg = u;
-        let mut total_nest = 0u32;
-        loop {
-            let p = index.tin[seg];
-            if p == NONE {
-                return Err(Refusal::Unreached);
-            }
-            for &key in &keys.mentions {
-                if index.mentions_on_path(key, p) > 0 {
-                    return Err(Refusal::Mention);
-                }
-            }
-            for &key in &keys.chains {
-                let first = index.chain_sites.partition_point(|s| s.0 < key);
-                for &(k, site_tin, site_tout, root) in &index.chain_sites[first..] {
-                    if k != key || site_tin > p {
-                        break;
-                    }
-                    if site_tout > p && !self.flow_skip_resolved(root) {
-                        return Err(Refusal::Chain);
-                    }
-                }
-            }
-            total_nest += index.nest[seg];
-            if total_nest >= 2000 {
-                return Err(Refusal::Depth);
-            }
-            segments.push(seg as u32);
-            let root = index.root_of[seg] as usize;
-            match index.root_kind[root] {
-                ROOT_UNREACHABLE => break,
-                ROOT_START => {
-                    // Go's rule for moving to the containing function
-                    // (flow.go:189).
-                    let container = index.flows[root].node;
-                    let crosses = container.is_some()
-                        && container != flow_container
-                        && match keys.kind {
-                            K_IDENT => true,
-                            K_THIS => is_arrow_function(container),
-                            _ => false,
-                        };
-                    if !crosses {
-                        break;
-                    }
-                    let outer = container.flow_node();
-                    if outer.is_nil()
-                        || outer.file_index() != index.file
-                        || outer.local_index() >= index.flows.len()
-                    {
-                        return Err(Refusal::Cross);
-                    }
-                    seg = outer.local_index();
-                }
-                _ => return Err(Refusal::Root),
-            }
-        }
+        let (segments, total_nest) = self.flow_skip_segments(index, &keys, flow_container, u)?;
         let cr = match self.flow_skip_constant_reference_cached(reference) {
             Some(false) => 0,
             Some(true) => 1,
@@ -1934,51 +2125,137 @@ impl Checker {
             cr,
         };
         for &seg in &segments {
-            // Candidates on the path, through the joined ones.
-            let mut s = find(&mut index.class_state(class).next, seg);
-            loop {
-                let ci = index.cand_of[s as usize];
-                if ci == NONE {
-                    break;
-                }
-                let st = index.class_state(class).state[ci as usize];
-                match st {
-                    S_BLOCKED => return Err(Refusal::Blocked),
-                    S_EXTRAS => {
-                        let state = index.class_state(class);
-                        let extras = &state.extras[&ci];
-                        if !self.flow_skip_extras_ok(extras, &keys) {
-                            return Err(Refusal::Extras);
-                        }
-                    }
-                    _ => match self.flow_skip_settle(index, ci, class) {
-                        Settle::Joined => {
-                            let parent = index.parent[s as usize];
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_JOINED;
-                            state.next[s as usize] = parent;
-                        }
-                        Settle::Extras(extras) => {
-                            let ok = self.flow_skip_extras_ok(&extras, &keys);
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_EXTRAS;
-                            state.extras.insert(ci, extras);
-                            if !ok {
-                                return Err(Refusal::Extras);
-                            }
-                        }
-                        Settle::Unsettled => return Err(Refusal::Unsettled),
-                        Settle::Blocked => {
-                            index.class_state(class).state[ci as usize] = S_BLOCKED;
-                            return Err(Refusal::Blocked);
-                        }
-                    },
-                }
-                let parent = index.parent[s as usize];
-                s = find(&mut index.class_state(class).next, parent);
-            }
+            self.flow_skip_candidates_on_segment(index, seg, class, &keys)?;
         }
         Ok(total_nest)
+    }
+
+    /// The static tests of the walk from flow node `u`: per segment (the
+    /// path in one function, then in each containing function it moves to)
+    /// no mention of the reference's keys, every chain site with one of its
+    /// chain keys resolved, and a nesting count under Go's limit. Returns
+    /// the segments and the nesting count of the whole path.
+    #[inline]
+    fn flow_skip_segments(
+        &self,
+        index: &FileIndex,
+        keys: &RefKeys,
+        flow_container: Node,
+        u: usize,
+    ) -> Result<(SmallVec<[u32; 4]>, u32), Refusal> {
+        let mut segments: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut seg = u;
+        let mut total_nest = 0u32;
+        loop {
+            let p = index.tin[seg];
+            if p == NONE {
+                return Err(Refusal::Unreached);
+            }
+            if index.mentions_any_on_path(&keys.mentions, p) {
+                return Err(Refusal::Mention);
+            }
+            if !self.flow_skip_chain_sites_resolved(index, &keys.chains, p) {
+                return Err(Refusal::Chain);
+            }
+            total_nest += index.nest[seg];
+            if total_nest >= 2000 {
+                return Err(Refusal::Depth);
+            }
+            segments.push(seg as u32);
+            match index.segment_after(seg, keys.kind, flow_container)? {
+                Some(outer) => seg = outer,
+                None => return Ok((segments, total_nest)),
+            }
+        }
+    }
+
+    /// Whether every chain site with one of `chains` on the path from the
+    /// node with entry number `p` has its root identifier resolved: Go
+    /// resolves it there (flow.go:1625-1633), so an unresolved one would be
+    /// a lasting write.
+    #[inline]
+    fn flow_skip_chain_sites_resolved(&self, index: &FileIndex, chains: &[u64], p: u32) -> bool {
+        for &key in chains {
+            let first = index.chain_sites.partition_point(|s| s.0 < key);
+            for &(k, site_tin, site_tout, root) in &index.chain_sites[first..] {
+                if k != key || site_tin > p {
+                    break;
+                }
+                if site_tout > p && !self.flow_skip_resolved(root) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The candidates of `class` on the path from segment start `seg` to
+    /// its root, through the joined ones: each must be settled (or settle
+    /// now) with extras that the reference's keys pass.
+    #[inline]
+    fn flow_skip_candidates_on_segment(
+        &mut self,
+        index: &mut FileIndex,
+        seg: u32,
+        class: Class,
+        keys: &RefKeys,
+    ) -> Result<(), Refusal> {
+        let mut s = find(&mut index.class_state(class).next, seg);
+        loop {
+            let ci = index.cand_of[s as usize];
+            if ci == NONE {
+                return Ok(());
+            }
+            let st = index.class_state(class).state[ci as usize];
+            match st {
+                S_BLOCKED => return Err(Refusal::Blocked),
+                S_EXTRAS => {
+                    let extras = &index.class_state(class).extras[&ci];
+                    if !self.flow_skip_extras_ok(extras, keys) {
+                        return Err(Refusal::Extras);
+                    }
+                }
+                _ => self.flow_skip_settle_candidate(index, s, ci, class, keys)?,
+            }
+            let parent = index.parent[s as usize];
+            s = find(&mut index.class_state(class).next, parent);
+        }
+    }
+
+    /// Settles candidate `ci` (flow node `s`) for `class` the first time a
+    /// walk meets it, and records the outcome: a joined candidate links
+    /// `s` to its parent, extras are kept for later walks, a blocked one
+    /// refuses every later walk.
+    #[inline]
+    fn flow_skip_settle_candidate(
+        &mut self,
+        index: &mut FileIndex,
+        s: u32,
+        ci: u32,
+        class: Class,
+        keys: &RefKeys,
+    ) -> Result<(), Refusal> {
+        match self.flow_skip_settle(index, ci, class) {
+            Settle::Joined => {
+                let parent = index.parent[s as usize];
+                let state = index.class_state(class);
+                state.state[ci as usize] = S_JOINED;
+                state.next[s as usize] = parent;
+                Ok(())
+            }
+            Settle::Extras(extras) => {
+                let ok = self.flow_skip_extras_ok(&extras, keys);
+                let state = index.class_state(class);
+                state.state[ci as usize] = S_EXTRAS;
+                state.extras.insert(ci, extras);
+                if ok { Ok(()) } else { Err(Refusal::Extras) }
+            }
+            Settle::Unsettled => Err(Refusal::Unsettled),
+            Settle::Blocked => {
+                index.class_state(class).state[ci as usize] = S_BLOCKED;
+                Err(Refusal::Blocked)
+            }
+        }
     }
 
     /// `flow_skip_constant_reference` with the answer for an identifier
@@ -1989,10 +2266,7 @@ impl Checker {
         if reference.kind() != SyntaxKind::Identifier {
             return self.flow_skip_constant_reference(reference);
         }
-        let symbol = self
-            .symbol_node_links
-            .try_get(reference)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(reference);
         if let Some(&known) = self.flow_skip.constant_references.get(&symbol) {
             return Some(known);
         }
@@ -2017,10 +2291,8 @@ impl Checker {
     /// extras pass (go-model.md 4.3).
     fn flow_skip_settle(&mut self, index: &FileIndex, ci: u32, class: Class) -> Settle {
         let cand = &index.cands[ci as usize];
-        let k = usize::from(class.kind);
-        if cand.blocked & (1 << (k * 2)) != 0
-            || class.union && cand.blocked & (1 << (k * 2 + 1)) != 0
-        {
+        let bits = class.bits();
+        if cand.blocked & bits != 0 {
             return Settle::Blocked;
         }
         if cand.call.is_some() {
@@ -2037,12 +2309,6 @@ impl Checker {
                 return Settle::Blocked;
             }
         }
-        let bits = slot(class.kind, false)
-            | if class.union {
-                slot(class.kind, true)
-            } else {
-                0
-            };
         if !index.res_pool[cand.res_start as usize..cand.res_end as usize]
             .iter()
             .all(|&(x, b)| b & bits == 0 || self.flow_skip_resolved(x))
@@ -2083,10 +2349,7 @@ impl Checker {
         class: Class,
         extras: &mut Extras,
     ) -> Result<(), Settle> {
-        let symbol = self
-            .symbol_node_links
-            .try_get(x)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(x);
         if symbol.is_nil() {
             return Err(Settle::Unsettled);
         }
@@ -2125,10 +2388,7 @@ impl Checker {
         class: Class,
         extras: &mut Extras,
     ) -> Result<(), Settle> {
-        let symbol = self
-            .symbol_node_links
-            .try_get(x)
-            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let symbol = self.flow_skip_resolved_symbol(x);
         if symbol.is_nil() {
             return Err(Settle::Unsettled);
         }
@@ -2170,12 +2430,7 @@ impl Checker {
                 out.event(ev);
             }
         }
-        let bits = slot(class.kind, false)
-            | if class.union {
-                slot(class.kind, true)
-            } else {
-                0
-            };
+        let bits = class.bits();
         if out.blocked & bits != 0 {
             return Err(Settle::Blocked);
         }

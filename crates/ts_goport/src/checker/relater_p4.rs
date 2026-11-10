@@ -1054,6 +1054,48 @@ impl Checker {
             })
     }
 
+    /// The object and index types of `t` when it is an indexed access type: Go's
+    /// `t.flags&TypeFlagsIndexedAccess != 0 && t.AsIndexedAccessType()...` tests read as one let-chain.
+    #[inline]
+    fn indexed_access_parts(&self, t: TypeId) -> Option<(TypeId, TypeId)> {
+        (self.ty(t).flags)
+            .intersects(TypeFlags::INDEXED_ACCESS)
+            .then(|| self.indexed_access_pair(t))
+    }
+
+    /// The object and index types of the indexed access type `t`.
+    #[inline]
+    fn indexed_access_pair(&self, t: TypeId) -> (TypeId, TypeId) {
+        let d = self.ty(t).as_indexed_access_type();
+        (d.object_type, d.index_type)
+    }
+
+    /// Go's `r.c.isTypeMatchedByTemplateLiteralType(source, target, r.isRelatedToWorker)` for a
+    /// template literal `target`.
+    /// PORT: the target data is cloned so the checker is not borrowed during the call.
+    /// PERF (perffu1): most pairs fail Go's first test, which makes no type, so the clone comes
+    /// after it.
+    #[inline]
+    fn is_type_matched_by_template_literal_target(
+        &mut self,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if self.template_literal_match_fails_early(source, target) {
+            return false;
+        }
+        let target_template = self.ty(target).as_template_literal_type().clone();
+        let rr = r.clone();
+        self.is_type_matched_by_template_literal_type(
+            source,
+            &target_template,
+            &mut |c: &mut Checker, s: TypeId, t: TypeId, report_errors: bool| {
+                c.is_related_to_worker(&rr, s, t, report_errors)
+            },
+        )
+    }
+
     // Go: checker/relater.go:3294 structuredTypeRelatedToWorker
     pub fn structured_type_related_to_worker(
         &mut self,
@@ -1091,14 +1133,8 @@ impl Checker {
                     false, /*reportErrors*/
                 );
             } else if source_flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let (s_obj, s_idx) = {
-                    let d = self.ty(source).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
-                let (t_obj, t_idx) = {
-                    let d = self.ty(target).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
+                let (s_obj, s_idx) = self.indexed_access_pair(source);
+                let (t_obj, t_idx) = self.indexed_access_pair(target);
                 result = self.is_related_to(
                     r,
                     s_obj,
@@ -1418,14 +1454,8 @@ impl Checker {
             if source_flags.intersects(TypeFlags::INDEXED_ACCESS) {
                 // Relate components directly before falling back to constraint relationships
                 // A type S[K] is related to a type T[J] if S is related to T and K is related to J.
-                let (s_obj, s_idx) = {
-                    let d = self.ty(source).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
-                let (t_obj, t_idx) = {
-                    let d = self.ty(target).as_indexed_access_type();
-                    (d.object_type, d.index_type)
-                };
+                let (s_obj, s_idx) = self.indexed_access_pair(source);
+                let (t_obj, t_idx) = self.indexed_access_pair(target);
                 result = self.is_related_to(r, s_obj, t_obj, RecursionFlags::BOTH, report_errors);
                 if result != Ternary::FALSE {
                     result &=
@@ -1674,21 +1704,8 @@ impl Checker {
                 let report_unreliable_mapper = self.report_unreliable_mapper;
                 self.instantiate_type(source, report_unreliable_mapper);
             }
-            // PORT: the target data is cloned so the checker is not borrowed during the call.
-            // PERF (perffu1): most pairs fail Go's first test, which makes no
-            // type, so the clone comes after it.
-            if !self.template_literal_match_fails_early(source, target) {
-                let target_template = self.ty(target).as_template_literal_type().clone();
-                let rr = r.clone();
-                if self.is_type_matched_by_template_literal_type(
-                    source,
-                    &target_template,
-                    &mut |c: &mut Checker, s: TypeId, t: TypeId, report_errors: bool| {
-                        c.is_related_to_worker(&rr, s, t, report_errors)
-                    },
-                ) {
-                    return Ternary::TRUE;
-                }
+            if self.is_type_matched_by_template_literal_target(r, source, target) {
+                return Ternary::TRUE;
             }
         } else if target_flags.intersects(TypeFlags::STRING_MAPPING) {
             if !source_flags.intersects(TypeFlags::STRING_MAPPING)
@@ -1710,20 +1727,12 @@ impl Checker {
                 // If the mapped type has shape `{ [P in Q]: T[P] }`,
                 // source `S` is related to target if `T` = `S`, i.e. `S` is related to `{ [P in Q]: S[P] }`.
                 if !keys_remapped
-                    && self
-                        .ty(template_type)
-                        .flags
-                        .intersects(TypeFlags::INDEXED_ACCESS)
+                    && let Some((object_type, index_type)) =
+                        self.indexed_access_parts(template_type)
+                    && object_type == source
+                    && index_type == self.get_type_parameter_from_mapped_type(target)
                 {
-                    let (tt_obj, tt_idx) = {
-                        let d = self.ty(template_type).as_indexed_access_type();
-                        (d.object_type, d.index_type)
-                    };
-                    if tt_obj == source
-                        && tt_idx == self.get_type_parameter_from_mapped_type(target)
-                    {
-                        return Ternary::TRUE;
-                    }
+                    return Ternary::TRUE;
                 }
                 if !self.is_generic_mapped_type(source) {
                     // If target has shape `{ [P in Q as R]: T}`, then its keys have type `R`.
@@ -1767,29 +1776,15 @@ impl Checker {
                         // to avoid creating the (potentially very large) number of new intermediate types made by manufacturing `S[P]`.
                         let non_null_component =
                             self.extract_types_of_kind(template_type, !TypeFlags::NULLABLE);
-                        let non_null_indexed = {
-                            let nn = self.ty(non_null_component);
-                            if nn.flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                                let d = nn.as_indexed_access_type();
-                                Some((d.object_type, d.index_type))
-                            } else {
-                                None
-                            }
-                        };
-                        let fast_path_object = match non_null_indexed {
-                            Some((nn_obj, nn_idx))
-                                if !keys_remapped && nn_idx == type_parameter =>
-                            {
-                                nn_obj
-                            }
-                            _ => TypeId::NIL,
-                        };
-                        if fast_path_object.is_some() {
-                            let nn_obj = fast_path_object;
+                        if !keys_remapped
+                            && let Some((object_type, index_type)) =
+                                self.indexed_access_parts(non_null_component)
+                            && index_type == type_parameter
+                        {
                             result = self.is_related_to(
                                 r,
                                 source,
-                                nn_obj,
+                                object_type,
                                 RecursionFlags::TARGET,
                                 report_errors,
                             );
@@ -1807,11 +1802,8 @@ impl Checker {
                             // but the property is optional, so we only want to compare properties `R` that are common between `keyof S` and `R`.
                             let mut indexing_type = type_parameter;
                             if keys_remapped {
-                                indexing_type = if filtered_by_applicability.is_some() {
-                                    filtered_by_applicability
-                                } else {
-                                    target_keys
-                                };
+                                indexing_type =
+                                    filtered_by_applicability.get().unwrap_or(target_keys);
                             } else if filtered_by_applicability.is_some() {
                                 indexing_type = self.get_intersection_type(&[
                                     filtered_by_applicability,

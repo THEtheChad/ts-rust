@@ -35,6 +35,21 @@ pub struct ErrorOutputContainer {
 // Use `reborrow_error_reporter` to pass an optional reporter on more than once.
 pub type ErrorReporter<'a> = &'a mut dyn FnMut(&mut Checker, &'static Message, Vec<String>);
 
+// PORT: perf. Every rule of `is_simple_type_related_by_primitive_rules` (Go
+// isSimpleTypeRelatedTo from the string rule to the null rule) needs one of
+// these source flags, so one test skips them all for other sources.
+const PRIMITIVE_RULE_SOURCE: TypeFlags = TypeFlags(
+    TypeFlags::STRING_LIKE.bits()
+        | TypeFlags::NUMBER_LIKE.bits()
+        | TypeFlags::BIG_INT_LIKE.bits()
+        | TypeFlags::BOOLEAN_LIKE.bits()
+        | TypeFlags::ES_SYMBOL_LIKE.bits()
+        | TypeFlags::ENUM.bits()
+        | TypeFlags::ENUM_LITERAL.bits()
+        | TypeFlags::UNDEFINED.bits()
+        | TypeFlags::NULL.bits(),
+);
+
 // PORT: helper with no Go equivalent. Go passes the same `ErrorReporter`
 // value to several callees; in Rust the `Option<&mut dyn FnMut>` must be
 // reborrowed for each call.
@@ -553,6 +568,103 @@ impl Checker {
         false
     }
 
+    /// The string to null rules, part of Go `isSimpleTypeRelatedTo`, for a source with one of
+    /// the `PRIMITIVE_RULE_SOURCE` flags (`s` and `t` are the source and target flags). True when
+    /// one of them relates the pair; false lets the caller go on to the object rules.
+    #[inline(always)]
+    fn is_simple_type_related_by_primitive_rules(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        s: TypeFlags,
+        t: TypeFlags,
+        error_reporter: &mut Option<ErrorReporter<'_>>,
+    ) -> bool {
+        if s.intersects(TypeFlags::STRING_LIKE) && t.intersects(TypeFlags::STRING) {
+            return true;
+        }
+        if s.intersects(TypeFlags::STRING_LITERAL)
+            && s.intersects(TypeFlags::ENUM_LITERAL)
+            && t.intersects(TypeFlags::STRING_LITERAL)
+            && !t.intersects(TypeFlags::ENUM_LITERAL)
+            && self.ty(source).as_literal_type().value == self.ty(target).as_literal_type().value
+        {
+            return true;
+        }
+        if s.intersects(TypeFlags::NUMBER_LIKE) && t.intersects(TypeFlags::NUMBER) {
+            return true;
+        }
+        if s.intersects(TypeFlags::NUMBER_LITERAL)
+            && s.intersects(TypeFlags::ENUM_LITERAL)
+            && t.intersects(TypeFlags::NUMBER_LITERAL)
+            && !t.intersects(TypeFlags::ENUM_LITERAL)
+            && self.ty(source).as_literal_type().value == self.ty(target).as_literal_type().value
+        {
+            return true;
+        }
+        if s.intersects(TypeFlags::BIG_INT_LIKE) && t.intersects(TypeFlags::BIG_INT) {
+            return true;
+        }
+        if s.intersects(TypeFlags::BOOLEAN_LIKE) && t.intersects(TypeFlags::BOOLEAN) {
+            return true;
+        }
+        if s.intersects(TypeFlags::ES_SYMBOL_LIKE) && t.intersects(TypeFlags::ES_SYMBOL) {
+            return true;
+        }
+        let source_symbol = self.ty(source).symbol;
+        let target_symbol = self.ty(target).symbol;
+        if s.intersects(TypeFlags::ENUM)
+            && t.intersects(TypeFlags::ENUM)
+            && self.sym(source_symbol).name == self.sym(target_symbol).name
+            && self.is_enum_type_related_to(
+                source_symbol,
+                target_symbol,
+                reborrow_error_reporter(error_reporter),
+            )
+        {
+            return true;
+        }
+        if s.intersects(TypeFlags::ENUM_LITERAL) && t.intersects(TypeFlags::ENUM_LITERAL) {
+            if s.intersects(TypeFlags::UNION)
+                && t.intersects(TypeFlags::UNION)
+                && self.is_enum_type_related_to(
+                    source_symbol,
+                    target_symbol,
+                    reborrow_error_reporter(error_reporter),
+                )
+            {
+                return true;
+            }
+            if s.intersects(TypeFlags::LITERAL)
+                && t.intersects(TypeFlags::LITERAL)
+                && self.ty(source).as_literal_type().value
+                    == self.ty(target).as_literal_type().value
+                && self.is_enum_type_related_to(
+                    source_symbol,
+                    target_symbol,
+                    reborrow_error_reporter(error_reporter),
+                )
+            {
+                return true;
+            }
+        }
+        // In non-strictNullChecks mode, `undefined` and `null` are assignable to anything except `never`.
+        // Since unions and intersections may reduce to `never`, we exclude them here.
+        if s.intersects(TypeFlags::UNDEFINED)
+            && (!self.strict_null_checks && !t.intersects(TypeFlags::UNION_OR_INTERSECTION)
+                || t.intersects(TypeFlags::UNDEFINED | TypeFlags::VOID))
+        {
+            return true;
+        }
+        if s.intersects(TypeFlags::NULL)
+            && (!self.strict_null_checks && !t.intersects(TypeFlags::UNION_OR_INTERSECTION)
+                || t.intersects(TypeFlags::NULL))
+        {
+            return true;
+        }
+        false
+    }
+
     // Go: checker/relater.go:205 isSimpleTypeRelatedTo
     #[inline]
     pub fn is_simple_type_related_to(
@@ -591,104 +703,16 @@ impl Checker {
         if t.intersects(TypeFlags::NEVER) {
             return false;
         }
-        // PORT: perf. Every rule from here to the null rule needs one of
-        // these source flags, so one test skips them all for other sources.
-        const PRIMITIVE_RULE_SOURCE: TypeFlags = TypeFlags(
-            TypeFlags::STRING_LIKE.bits()
-                | TypeFlags::NUMBER_LIKE.bits()
-                | TypeFlags::BIG_INT_LIKE.bits()
-                | TypeFlags::BOOLEAN_LIKE.bits()
-                | TypeFlags::ES_SYMBOL_LIKE.bits()
-                | TypeFlags::ENUM.bits()
-                | TypeFlags::ENUM_LITERAL.bits()
-                | TypeFlags::UNDEFINED.bits()
-                | TypeFlags::NULL.bits(),
-        );
-        if s.intersects(PRIMITIVE_RULE_SOURCE) {
-            if s.intersects(TypeFlags::STRING_LIKE) && t.intersects(TypeFlags::STRING) {
-                return true;
-            }
-            if s.intersects(TypeFlags::STRING_LITERAL)
-                && s.intersects(TypeFlags::ENUM_LITERAL)
-                && t.intersects(TypeFlags::STRING_LITERAL)
-                && !t.intersects(TypeFlags::ENUM_LITERAL)
-                && self.ty(source).as_literal_type().value
-                    == self.ty(target).as_literal_type().value
-            {
-                return true;
-            }
-            if s.intersects(TypeFlags::NUMBER_LIKE) && t.intersects(TypeFlags::NUMBER) {
-                return true;
-            }
-            if s.intersects(TypeFlags::NUMBER_LITERAL)
-                && s.intersects(TypeFlags::ENUM_LITERAL)
-                && t.intersects(TypeFlags::NUMBER_LITERAL)
-                && !t.intersects(TypeFlags::ENUM_LITERAL)
-                && self.ty(source).as_literal_type().value
-                    == self.ty(target).as_literal_type().value
-            {
-                return true;
-            }
-            if s.intersects(TypeFlags::BIG_INT_LIKE) && t.intersects(TypeFlags::BIG_INT) {
-                return true;
-            }
-            if s.intersects(TypeFlags::BOOLEAN_LIKE) && t.intersects(TypeFlags::BOOLEAN) {
-                return true;
-            }
-            if s.intersects(TypeFlags::ES_SYMBOL_LIKE) && t.intersects(TypeFlags::ES_SYMBOL) {
-                return true;
-            }
-            let source_symbol = self.ty(source).symbol;
-            let target_symbol = self.ty(target).symbol;
-            if s.intersects(TypeFlags::ENUM)
-                && t.intersects(TypeFlags::ENUM)
-                && self.sym(source_symbol).name == self.sym(target_symbol).name
-                && self.is_enum_type_related_to(
-                    source_symbol,
-                    target_symbol,
-                    reborrow_error_reporter(&mut error_reporter),
-                )
-            {
-                return true;
-            }
-            if s.intersects(TypeFlags::ENUM_LITERAL) && t.intersects(TypeFlags::ENUM_LITERAL) {
-                if s.intersects(TypeFlags::UNION)
-                    && t.intersects(TypeFlags::UNION)
-                    && self.is_enum_type_related_to(
-                        source_symbol,
-                        target_symbol,
-                        reborrow_error_reporter(&mut error_reporter),
-                    )
-                {
-                    return true;
-                }
-                if s.intersects(TypeFlags::LITERAL)
-                    && t.intersects(TypeFlags::LITERAL)
-                    && self.ty(source).as_literal_type().value
-                        == self.ty(target).as_literal_type().value
-                    && self.is_enum_type_related_to(
-                        source_symbol,
-                        target_symbol,
-                        reborrow_error_reporter(&mut error_reporter),
-                    )
-                {
-                    return true;
-                }
-            }
-            // In non-strictNullChecks mode, `undefined` and `null` are assignable to anything except `never`.
-            // Since unions and intersections may reduce to `never`, we exclude them here.
-            if s.intersects(TypeFlags::UNDEFINED)
-                && (!self.strict_null_checks && !t.intersects(TypeFlags::UNION_OR_INTERSECTION)
-                    || t.intersects(TypeFlags::UNDEFINED | TypeFlags::VOID))
-            {
-                return true;
-            }
-            if s.intersects(TypeFlags::NULL)
-                && (!self.strict_null_checks && !t.intersects(TypeFlags::UNION_OR_INTERSECTION)
-                    || t.intersects(TypeFlags::NULL))
-            {
-                return true;
-            }
+        if s.intersects(PRIMITIVE_RULE_SOURCE)
+            && self.is_simple_type_related_by_primitive_rules(
+                source,
+                target,
+                s,
+                t,
+                &mut error_reporter,
+            )
+        {
+            return true;
         }
         if s.intersects(TypeFlags::OBJECT)
             && t.intersects(TypeFlags::NON_PRIMITIVE)
@@ -852,17 +876,12 @@ impl Checker {
                     if source_is_string || target_is_string {
                         if let Some(reporter) = error_reporter.as_mut() {
                             // Go: core.OrElse(sourceValue, targetValue)
-                            let known_string_value = if source_value.is_some() {
-                                &source_value
-                            } else {
-                                &target_value
-                            };
+                            let known_string_value =
+                                source_value.as_ref().or(target_value.as_ref());
                             let target_symbol_string = self.symbol_to_string(target_symbol);
                             let target_property_string = self.symbol_to_string(target_property);
                             let known_string = value_to_string(
-                                known_string_value
-                                    .as_ref()
-                                    .expect("unhandled value type in valueToString"),
+                                known_string_value.expect("unhandled value type in valueToString"),
                             );
                             (**reporter)(
                                 self,
@@ -937,6 +956,46 @@ impl Checker {
         self.check_type_related_to_ex(source, target, relation, error_node, None, None)
     }
 
+    /// Part of Go `checkTypeRelatedToEx`, where the relater overflowed: record the pair as
+    /// failed with a complexity overflow so the overflowing check does not run again, and trace
+    /// the depth limit. Its identity copy (`check_normalized_type_identical_to`) shares it.
+    pub(crate) fn record_complexity_overflow(
+        &mut self,
+        relation: &Rc<RefCell<Relation>>,
+        is_identity: bool,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        let (id, _) = self.get_relation_key(
+            source,
+            target,
+            IntersectionState::NONE,
+            is_identity,
+            false, /*ignoreConstraints*/
+        );
+        relation.borrow_mut().set(
+            id,
+            RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
+        );
+        if let Some(tr) = self.tracer {
+            let (depth, target_depth) = {
+                let rb = r.borrow();
+                (rb.source_stack.len(), rb.target_stack.len())
+            };
+            tr.instant(
+                crate::tracing::Phase::CheckTypes,
+                "checkTypeRelatedTo_DepthLimit",
+                vec![
+                    ("sourceId", source.into()),
+                    ("targetId", target.into()),
+                    ("depth", depth.into()),
+                    ("targetDepth", target_depth.into()),
+                ],
+            );
+        }
+    }
+
     // Go: checker/relater.go:358 checkTypeRelatedToEx
     // Check that source is related to target according to the given relation. When errorNode is non-nil, errors are
     // reported to the checker's diagnostic collection or through diagnosticOutput when non-nil. Callers can assume that
@@ -979,33 +1038,7 @@ impl Checker {
         if overflow {
             // Record this relation as having failed such that we don't attempt the overflowing operation again.
             let is_identity = Rc::ptr_eq(relation, &self.identity_relation);
-            let (id, _) = self.get_relation_key(
-                source,
-                target,
-                IntersectionState::NONE,
-                is_identity,
-                false, /*ignoreConstraints*/
-            );
-            relation.borrow_mut().set(
-                id,
-                RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
-            );
-            if let Some(tr) = self.tracer {
-                let (depth, target_depth) = {
-                    let rb = r.borrow();
-                    (rb.source_stack.len(), rb.target_stack.len())
-                };
-                tr.instant(
-                    crate::tracing::Phase::CheckTypes,
-                    "checkTypeRelatedTo_DepthLimit",
-                    vec![
-                        ("sourceId", source.into()),
-                        ("targetId", target.into()),
-                        ("depth", depth.into()),
-                        ("targetDepth", target_depth.into()),
-                    ],
-                );
-            }
+            self.record_complexity_overflow(relation, is_identity, &r, source, target);
             if error_node.is_nil() {
                 error_node = self.current_node;
             }
@@ -2003,35 +2036,7 @@ impl Checker {
     // instantiations is not infinitely expanding. Effectively, we will generate a false positive when two types are
     // structurally equal to at least maxDepth levels, but unequal at some level beyond that.
     pub fn is_deeply_nested_type(&mut self, t: TypeId, stack: &[TypeId], max_depth: i32) -> bool {
-        if stack.len() as i32 >= max_depth {
-            let target = self.get_recursion_identity_target(t);
-            if self.ty(target).flags.intersects(TypeFlags::INTERSECTION) {
-                for i in 0..self.ty(target).types().len() {
-                    if self.is_deeply_nested_type(self.type_at(target, i), stack, max_depth) {
-                        return true;
-                    }
-                }
-            } else {
-                let identity = self.get_recursion_identity_from_target(target);
-                let mut count: i32 = 0;
-                let mut last_type_id = TypeId(0);
-                for &t in stack {
-                    if self.has_matching_recursion_identity(t, identity) {
-                        // We only count occurrences with a higher type id than the previous occurrence, since higher
-                        // type ids are an indicator of newer instantiations caused by recursion.
-                        let id = t;
-                        if id >= last_type_id {
-                            count += 1;
-                            if count >= max_depth {
-                                return true;
-                            }
-                        }
-                        last_type_id = id;
-                    }
-                }
-            }
-        }
-        false
+        self.is_deeply_nested_type_with_ids(t, RecursionKey::NONE, stack, &[], max_depth)
     }
 
     // PORT: perf. The recursion id kept for each entry of the relater stacks
@@ -2058,9 +2063,11 @@ impl Checker {
         RecursionKey::new(Some(self.get_recursion_identity_from_target(t)))
     }
 
-    // PORT: perf. `is_deeply_nested_type` for the relater stacks, which keep
-    // recursion keys (`is_deeply_nested_relater_type`). `ids[i]` is
-    // `stack_recursion_key(stack[i])`. An entry with a key is compared
+    // PORT: perf. `is_deeply_nested_type` for stacks that keep recursion keys
+    // (the relater's, `is_deeply_nested_relater_type`). `ids` holds
+    // `stack_recursion_key(stack[i])` for a prefix of `stack` (empty for
+    // `is_deeply_nested_type`); the entries past it count as `RecursionKey::NONE`.
+    // An entry with a key is compared
     // directly: keys are equal only when their ids are equal. `probe_key` is
     // `stack_recursion_key(t)` when the caller has it, else
     // `RecursionKey::NONE`. A probe with a key is its own recursion identity
@@ -2077,7 +2084,7 @@ impl Checker {
         ids: &[RecursionKey],
         max_depth: i32,
     ) -> bool {
-        debug_assert_eq!(stack.len(), ids.len());
+        debug_assert!(ids.len() <= stack.len());
         debug_assert!(probe_key == RecursionKey::NONE || probe_key == self.stack_recursion_key(t));
         if stack.len() as i32 >= max_depth {
             let (identity, key) = if probe_key != RecursionKey::NONE {
@@ -2106,7 +2113,11 @@ impl Checker {
             };
             let mut count: i32 = 0;
             let mut last_type_id = TypeId(0);
-            for (&t, &entry_key) in stack.iter().zip(ids) {
+            let keys = ids
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(RecursionKey::NONE));
+            for (&t, entry_key) in stack.iter().zip(keys) {
                 let matching = if entry_key != RecursionKey::NONE {
                     entry_key == key
                 } else {

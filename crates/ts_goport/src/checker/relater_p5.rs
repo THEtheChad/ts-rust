@@ -718,18 +718,14 @@ impl Checker {
                         );
                     } else {
                         let prop_str = self.symbol_to_string(target_prop);
-                        let source_is_private =
-                            source_prop_flags.intersects(ModifierFlags::PRIVATE);
-                        let first = self.type_to_string_exported(if source_is_private {
-                            source
-                        } else {
-                            target
-                        });
-                        let second = self.type_to_string_exported(if source_is_private {
-                            target
-                        } else {
-                            source
-                        });
+                        let (private_type, public_type) =
+                            if source_prop_flags.intersects(ModifierFlags::PRIVATE) {
+                                (source, target)
+                            } else {
+                                (target, source)
+                            };
+                        let first = self.type_to_string_exported(private_type);
+                        let second = self.type_to_string_exported(public_type);
                         self.report_error(
                             r,
                             diag::Property_0_is_private_in_type_1_but_not_in_type_2,
@@ -742,14 +738,14 @@ impl Checker {
         } else if target_prop_flags.intersects(ModifierFlags::PROTECTED) {
             if !self.is_valid_override_of(source_prop, target_prop) {
                 if report_errors {
-                    let mut source_type = self.get_declaring_class(source_prop);
-                    if source_type.is_nil() {
-                        source_type = source;
-                    }
-                    let mut target_type = self.get_declaring_class(target_prop);
-                    if target_type.is_nil() {
-                        target_type = target;
-                    }
+                    let source_type = self
+                        .get_declaring_class(source_prop)
+                        .get()
+                        .unwrap_or(source);
+                    let target_type = self
+                        .get_declaring_class(target_prop)
+                        .get()
+                        .unwrap_or(target);
                     let prop_str = self.symbol_to_string(target_prop);
                     let source_str = self.type_to_string_exported(source_type);
                     let target_str = self.type_to_string_exported(target_type);
@@ -1704,22 +1700,15 @@ impl Checker {
         {
             let mut message = diag::The_intersection_0_was_reduced_to_never_because_property_1_has_conflicting_types_in_some_constituents;
             let props = self.get_properties_of_union_or_intersection_type(original_target);
-            let mut prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_discriminant_with_never_type(p) {
-                    prop = p;
-                    break;
-                }
-            }
+            let mut prop = (props.iter().copied())
+                .find(|&p| self.is_discriminant_with_never_type(p))
+                .unwrap_or(SymbolId::NIL);
             if prop.is_nil() {
                 message = diag::The_intersection_0_was_reduced_to_never_because_property_1_exists_in_multiple_constituents_and_is_private_in_some;
                 let props = self.get_properties_of_union_or_intersection_type(original_target);
-                for &p in &props {
-                    if self.is_conflicting_private_property(p) {
-                        prop = p;
-                        break;
-                    }
-                }
+                prop = (props.iter().copied())
+                    .find(|&p| self.is_conflicting_private_property(p))
+                    .unwrap_or(SymbolId::NIL);
             }
             if prop.is_some() {
                 let target_str = self.type_to_string_ex(
@@ -1758,6 +1747,34 @@ impl Checker {
         }
     }
 
+    /// Effect-TS/tsgo patch 004: collect the relation error for Effect diagnostics, when the
+    /// Effect rules are on and the error has a node in a source file. Go has no such step.
+    fn record_effect_relation_error(
+        &mut self,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        if self.compiler_options.effect.is_none() {
+            return;
+        }
+        let error_node = r.borrow().error_node;
+        if error_node.is_nil() {
+            return;
+        }
+        let sf = get_source_file_of_node(error_node);
+        if sf.is_some() {
+            self.effect_relation_errors
+                .entry(sf)
+                .or_default()
+                .push(crate::effect::RelationError {
+                    source,
+                    target,
+                    error_node,
+                });
+        }
+    }
+
     // Go: checker/relater.go:4784 reportRelationError
     pub fn report_relation_error(
         &mut self,
@@ -1766,22 +1783,7 @@ impl Checker {
         source: TypeId,
         target: TypeId,
     ) {
-        // Effect-TS/tsgo patch 004: collect the relation error for Effect diagnostics.
-        if self.compiler_options.effect.is_some() {
-            let error_node = r.borrow().error_node;
-            if error_node.is_some() {
-                let sf = get_source_file_of_node(error_node);
-                if sf.is_some() {
-                    self.effect_relation_errors.entry(sf).or_default().push(
-                        crate::effect::RelationError {
-                            source,
-                            target,
-                            error_node,
-                        },
-                    );
-                }
-            }
-        }
+        self.record_effect_relation_error(r, source, target);
         let (source_type, target_type) = self.get_type_names_for_error_display(source, target);
         let mut generalized_source = source;
         let mut generalized_source_type = source_type.clone();

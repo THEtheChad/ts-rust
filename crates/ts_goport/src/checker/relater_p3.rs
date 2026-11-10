@@ -253,20 +253,12 @@ impl Checker {
                 SyntaxKind::ArrayBindingPattern => {
                     if has_dot_dot_dot_token(node) {
                         let elements = node.name().elements();
-                        let last_element = if elements.is_empty() {
-                            Node::NIL
-                        } else {
-                            elements.get(elements.len() - 1)
-                        };
+                        let last_element = elements.last().unwrap_or(Node::NIL);
                         let last_element_is_binding_element_rest = last_element.is_some()
                             && is_binding_element(last_element)
                             && has_dot_dot_dot_token(last_element);
-                        let element_count = elements.len() as i32
-                            - if last_element_is_binding_element_rest {
-                                1
-                            } else {
-                                0
-                            };
+                        let element_count =
+                            elements.len() as i32 - i32::from(last_element_is_binding_element_rest);
                         if index < element_count {
                             let element = elements.get(index as usize);
                             if is_binding_element(element) {
@@ -960,6 +952,45 @@ impl Checker {
         false
     }
 
+    /// The string literal case of `infer_types_from_template_literal_type`.
+    ///
+    /// PORT: perf. Go passes `[]string{getStringLiteralValue(source)}`.
+    /// Here the text is matched in place and read again from the type
+    /// for each match, so the literal is not cloned. The types are
+    /// made in the same order as Go `addMatch` makes them.
+    /// The texts are matched on their Go bytes (see
+    /// `infer_from_literal_parts_to_template_literal`).
+    /// PERF: when the value and the target texts have no marker
+    /// (`go_plain`), they are their own Go bytes and are not converted.
+    #[inline]
+    fn infer_from_string_literal_to_template_literal(
+        &mut self,
+        source: TypeId,
+        target: &TemplateLiteralType,
+    ) -> TemplateLiteralInferences {
+        let source_plain = self.string_literal_go_plain(source);
+        let mut spans = LiteralPartMatches::new();
+        let source_bytes = [go_bytes_of(
+            self.get_string_literal_value_ref(source),
+            source_plain,
+        )];
+        let matched =
+            match_literal_parts_to_template_literal_target(&source_bytes, target, &mut spans);
+        let mut result = TemplateLiteralInferences::with_capacity(spans.len());
+        for m in &spans {
+            // A string literal is one text part, so every match is inside it.
+            debug_assert!(m.seg == 0 && m.s == 0);
+            let text = combine_surrogate_pairs(&go_value_from_bytes(
+                &go_bytes_of(self.get_string_literal_value_ref(source), source_plain)[m.pos..m.p],
+            ));
+            result.push(self.get_string_literal_type(&text));
+        }
+        if !matched {
+            return TemplateLiteralInferences::new();
+        }
+        result
+    }
+
     // Go: checker/relater.go:2379 inferTypesFromTemplateLiteralType
     // PORT: returns an empty list where Go returns nil. Go never returns a
     // non-nil empty slice here (a match always records at least one type).
@@ -971,43 +1002,7 @@ impl Checker {
     ) -> TemplateLiteralInferences {
         let flags = self.ty(source).flags;
         if flags.intersects(TypeFlags::STRING_LITERAL) {
-            // PORT: perf. Go passes `[]string{getStringLiteralValue(source)}`.
-            // Here the text is matched in place and read again from the type
-            // for each match, so the literal is not cloned. The types are
-            // made in the same order as Go `addMatch` makes them.
-            // The texts are matched on their Go bytes (see
-            // `infer_from_literal_parts_to_template_literal`).
-            // PERF: when the value and the target texts have no marker
-            // (`go_plain`), they are their own Go bytes and are not converted.
-            let source_plain = self.string_literal_go_plain(source);
-            let mut spans = LiteralPartMatches::new();
-            let source_bytes = [go_bytes_of(
-                self.get_string_literal_value_ref(source),
-                source_plain,
-            )];
-            let matched = if target.go_plain {
-                match_literal_parts_to_template_literal(&source_bytes, &target.texts, &mut spans)
-            } else {
-                match_literal_parts_to_template_literal(
-                    &source_bytes,
-                    &go_string_bytes_list(&target.texts),
-                    &mut spans,
-                )
-            };
-            let mut result = TemplateLiteralInferences::with_capacity(spans.len());
-            for m in &spans {
-                // A string literal is one text part, so every match is inside it.
-                debug_assert!(m.seg == 0 && m.s == 0);
-                let text = combine_surrogate_pairs(&go_value_from_bytes(
-                    &go_bytes_of(self.get_string_literal_value_ref(source), source_plain)
-                        [m.pos..m.p],
-                ));
-                result.push(self.get_string_literal_type(&text));
-            }
-            if !matched {
-                return TemplateLiteralInferences::new();
-            }
-            return result;
+            return self.infer_from_string_literal_to_template_literal(source, target);
         }
         if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
             let (source_texts, source_types, source_plain) = {
@@ -1015,23 +1010,22 @@ impl Checker {
                 (tl.texts.clone(), tl.types.clone(), tl.go_plain)
             };
             if source_texts == target.texts {
-                let mut result = TemplateLiteralInferences::with_capacity(source_types.len());
-                for (i, &s) in source_types.iter().enumerate() {
-                    let source_constraint = self.get_base_constraint_or_type(s);
-                    let target_constraint = self.get_base_constraint_or_type(target.types[i]);
-                    if compare_types(
-                        self,
-                        source_constraint,
-                        target_constraint,
-                        false, /*partialMatch*/
-                    ) != Ternary::FALSE
-                    {
-                        result.push(s);
-                    } else {
-                        result.push(self.get_string_like_type_for_type(s));
-                    }
-                }
-                return result;
+                return (source_types.iter().enumerate())
+                    .map(|(i, &s)| {
+                        let source_constraint = self.get_base_constraint_or_type(s);
+                        let target_constraint = self.get_base_constraint_or_type(target.types[i]);
+                        if compare_types(
+                            self,
+                            source_constraint,
+                            target_constraint,
+                            false, /*partialMatch*/
+                        ) != Ternary::FALSE
+                        {
+                            return s;
+                        }
+                        self.get_string_like_type_for_type(s)
+                    })
+                    .collect();
             }
             return self.infer_from_literal_parts_to_template_literal(
                 &source_texts,
@@ -1092,15 +1086,8 @@ impl Checker {
             go_string_bytes_list(source_texts)
         };
         let mut spans = LiteralPartMatches::new();
-        let matched = if target.go_plain {
-            match_literal_parts_to_template_literal(&source_bytes, &target.texts, &mut spans)
-        } else {
-            match_literal_parts_to_template_literal(
-                &source_bytes,
-                &go_string_bytes_list(&target.texts),
-                &mut spans,
-            )
-        };
+        let matched =
+            match_literal_parts_to_template_literal_target(&source_bytes, target, &mut spans);
         let mut result = TemplateLiteralInferences::with_capacity(spans.len());
         for m in &spans {
             // Go reads `getSourceText(s)`. That text is a prefix of
@@ -1539,6 +1526,32 @@ impl Checker {
         )
     }
 
+    /// Go's `isSimpleTypeRelatedTo(source, target, r.relation, core.IfElse(reportErrors,
+    /// r.reportError, nil))` of `isRelatedToEx`, at its two sites.
+    #[inline]
+    fn is_simple_type_related_to_reporting(
+        &mut self,
+        r: &Rc<RefCell<Relater>>,
+        source: TypeId,
+        target: TypeId,
+        kind: RelationKind,
+        report_errors: bool,
+    ) -> bool {
+        if !report_errors {
+            return self.is_simple_type_related_to_kind(source, target, kind, None);
+        }
+        self.is_simple_type_related_to_kind(
+            source,
+            target,
+            kind,
+            Some(
+                &mut |c: &mut Checker, message: &'static Message, args: Vec<String>| {
+                    c.report_error(r, message, args)
+                },
+            ),
+        )
+    }
+
     // Go: checker/relater.go:2634 isRelatedToEx
     #[allow(clippy::too_many_arguments)]
     pub fn is_related_to_ex(
@@ -1567,25 +1580,13 @@ impl Checker {
             if is_comparable
                 && !self.ty(original_target).flags.intersects(TypeFlags::NEVER)
                 && self.is_simple_type_related_to_kind(original_target, original_source, kind, None)
-                || if report_errors {
-                    self.is_simple_type_related_to_kind(
-                        original_source,
-                        original_target,
-                        kind,
-                        Some(&mut |c: &mut Checker,
-                                   message: &'static Message,
-                                   args: Vec<String>| {
-                            c.report_error(r, message, args)
-                        }),
-                    )
-                } else {
-                    self.is_simple_type_related_to_kind(
-                        original_source,
-                        original_target,
-                        kind,
-                        None,
-                    )
-                }
+                || self.is_simple_type_related_to_reporting(
+                    r,
+                    original_source,
+                    original_target,
+                    kind,
+                    report_errors,
+                )
             {
                 return Ternary::TRUE;
             }
@@ -1665,20 +1666,7 @@ impl Checker {
         if is_comparable
             && !self.ty(target).flags.intersects(TypeFlags::NEVER)
             && self.is_simple_type_related_to_kind(target, source, kind, None)
-            || if report_errors {
-                self.is_simple_type_related_to_kind(
-                    source,
-                    target,
-                    kind,
-                    Some(
-                        &mut |c: &mut Checker, message: &'static Message, args: Vec<String>| {
-                            c.report_error(r, message, args)
-                        },
-                    ),
-                )
-            } else {
-                self.is_simple_type_related_to_kind(source, target, kind, None)
-            }
+            || self.is_simple_type_related_to_reporting(r, source, target, kind, report_errors)
         {
             return Ternary::TRUE;
         }
@@ -2095,6 +2083,23 @@ fn literal_part_ends_match(
         && source_start_text.len() < target_start_text.len() + target_end_text.len())
         && source_start_text.starts_with(target_start_text)
         && source_end_text.ends_with(target_end_text)
+}
+
+/// `match_literal_parts_to_template_literal` against the texts of `target`, read on their Go
+/// bytes: in place when they have no marker (`go_plain`), else converted.
+fn match_literal_parts_to_template_literal_target<S: AsRef<[u8]>>(
+    source_texts: &[S],
+    target: &TemplateLiteralType,
+    matches: &mut LiteralPartMatches,
+) -> bool {
+    if target.go_plain {
+        return match_literal_parts_to_template_literal(source_texts, &target.texts, matches);
+    }
+    match_literal_parts_to_template_literal(
+        source_texts,
+        &go_string_bytes_list(&target.texts),
+        matches,
+    )
 }
 
 // PORT: perf. The text matching of Go `inferFromLiteralPartsToTemplateLiteral`

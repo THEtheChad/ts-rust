@@ -773,12 +773,7 @@ impl Checker {
                 }
                 let ctx = n.inferences;
                 if !self.inference_context(ctx).inferences[inference].is_fixed {
-                    let propagation_type = n.propagation_type;
-                    let candidate = if propagation_type.is_some() {
-                        propagation_type
-                    } else {
-                        source
-                    };
+                    let candidate = n.propagation_type.get().unwrap_or(source);
                     if candidate == self.blocked_string_type {
                         return;
                     }
@@ -818,12 +813,10 @@ impl Checker {
                     if !priority.intersects(InferencePriority::RETURN_TYPE)
                         && self.ty(target).flags.intersects(TypeFlags::TYPE_PARAMETER)
                         && self.inference_context(ctx).inferences[inference].top_level
+                        && !self.is_type_parameter_at_top_level(n.original_target, target, 0)
                     {
-                        let original_target = n.original_target;
-                        if !self.is_type_parameter_at_top_level(original_target, target, 0) {
-                            self.inference_context_mut(ctx).inferences[inference].top_level = false;
-                            self.clear_cached_inferences(ctx);
-                        }
+                        self.inference_context_mut(ctx).inferences[inference].top_level = false;
+                        self.clear_cached_inferences(ctx);
                     }
                 }
                 {
@@ -1427,12 +1420,8 @@ impl Checker {
                     if !sort {
                         self.infer_from_types(n, s, t);
                     }
-                    if !matched_sources.contains(&s) {
-                        matched_sources.push(s);
-                    }
-                    if !matched_targets.contains(&t) {
-                        matched_targets.push(t);
-                    }
+                    append_if_unique(&mut matched_sources, s);
+                    append_if_unique(&mut matched_targets, t);
                 }
             }
         }
@@ -1489,19 +1478,10 @@ impl Checker {
             let mut target_slot = NormalizedSlot::EMPTY;
             for (i, &s) in sources.iter().enumerate() {
                 let slots = (&mut source_slots[i], &mut target_slot);
-                let matched = if base {
-                    self.is_type_or_base_identical_to(s, t, slots)
-                } else {
-                    self.is_type_identical_in_matching(s, t, slots)
-                };
-                if matched {
+                if self.is_identical_in_matching(base, s, t, slots) {
                     self.infer_from_types(n, s, t);
-                    if !matched_sources.contains(&s) {
-                        matched_sources.push(s);
-                    }
-                    if !matched_targets.contains(&t) {
-                        matched_targets.push(t);
-                    }
+                    append_if_unique(&mut matched_sources, s);
+                    append_if_unique(&mut matched_targets, t);
                 }
             }
         }
@@ -1509,6 +1489,23 @@ impl Checker {
             Self::unmatched_types(sources, &matched_sources),
             Self::unmatched_types(targets, &matched_targets),
         )
+    }
+
+    /// The matcher of `infer_from_identical_types`: Go's isTypeOrBaseIdenticalTo when `base`,
+    /// else isTypeIdenticalTo, with the pair's normalization slots.
+    #[inline]
+    fn is_identical_in_matching(
+        &mut self,
+        base: bool,
+        source: TypeId,
+        target: TypeId,
+        slots: (&mut NormalizedSlot, &mut NormalizedSlot),
+    ) -> bool {
+        if base {
+            self.is_type_or_base_identical_to(source, target, slots)
+        } else {
+            self.is_type_identical_in_matching(source, target, slots)
+        }
     }
 
     // Go: checker/inference.go:411-416 inferFromMatchingTypes: the tail. It copies the list once, without the
@@ -1839,113 +1836,15 @@ impl Checker {
                                     all_type_flags =
                                         all_type_flags.without(TypeFlags::BIG_INT_LIKE);
                                 }
-                                let choose = |c: &mut Checker,
-                                              left: TypeId,
-                                              right: TypeId|
-                                 -> TypeId {
-                                    let left_flags = c.ty(left).flags;
-                                    let right_flags = c.ty(right).flags;
-                                    if !right_flags.intersects(all_type_flags) {
-                                        left
-                                    } else if left_flags.intersects(TypeFlags::STRING) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::STRING) {
-                                        source
-                                    } else if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::TEMPLATE_LITERAL)
-                                        // PERF (perffu1): Go's first test, before the clone.
-                                        && !c.string_literal_misses_template_literal_ends(source, right)
-                                        && {
-                                            let right_template =
-                                                c.ty(right).as_template_literal_type().clone();
-                                            let cmp = c.compare_types_assignable.clone();
-                                            c.is_type_matched_by_template_literal_type(
-                                            source,
-                                            &right_template,
-                                            &mut |c: &mut Checker, s: TypeId, t: TypeId, r: bool| cmp(c, s, t, r),
-                                        )
-                                        }
-                                    {
-                                        source
-                                    } else if left_flags.intersects(TypeFlags::STRING_MAPPING) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::STRING_MAPPING)
-                                        && str == c.apply_string_mapping(c.ty(right).symbol, &str)
-                                    {
-                                        source
-                                    } else if left_flags.intersects(TypeFlags::STRING_LITERAL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::STRING_LITERAL)
-                                        && c.get_string_literal_value_ref(right) == str
-                                    {
-                                        right
-                                    } else if left_flags.intersects(TypeFlags::NUMBER) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::NUMBER) {
-                                        c.get_number_literal_type(crate::jsnum::from_string(&str))
-                                    } else if left_flags.intersects(TypeFlags::ENUM) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::ENUM) {
-                                        c.get_number_literal_type(crate::jsnum::from_string(&str))
-                                    } else if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
-                                        && c.get_number_literal_value(right)
-                                            == crate::jsnum::from_string(&str)
-                                    {
-                                        right
-                                    } else if left_flags.intersects(TypeFlags::BIG_INT) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::BIG_INT) {
-                                        c.parse_big_int_literal_type(&str)
-                                    } else if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
-                                        && pseudo_big_int_to_string(
-                                            &c.get_big_int_literal_value(right),
-                                        ) == str
-                                    {
-                                        right
-                                    } else if left_flags.intersects(TypeFlags::BOOLEAN) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::BOOLEAN) {
-                                        if str == "true" {
-                                            c.true_type
-                                        } else if str == "false" {
-                                            c.false_type
-                                        } else {
-                                            c.boolean_type
-                                        }
-                                    } else if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
-                                        && (if c.get_boolean_literal_value(right) {
-                                            "true"
-                                        } else {
-                                            "false"
-                                        }) == str
-                                    {
-                                        right
-                                    } else if left_flags.intersects(TypeFlags::UNDEFINED) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::UNDEFINED)
-                                        && c.ty(right).as_intrinsic_type().intrinsic_name() == str
-                                    {
-                                        right
-                                    } else if left_flags.intersects(TypeFlags::NULL) {
-                                        left
-                                    } else if right_flags.intersects(TypeFlags::NULL)
-                                        && c.ty(right).as_intrinsic_type().intrinsic_name() == str
-                                    {
-                                        right
-                                    } else {
-                                        left
-                                    }
-                                };
                                 let mut matching_type = self.never_type;
                                 for t in self.ty(constraint).distributed() {
-                                    matching_type = choose(self, matching_type, t);
+                                    matching_type = self.choose_template_literal_placeholder_type(
+                                        source,
+                                        &str,
+                                        all_type_flags,
+                                        matching_type,
+                                        t,
+                                    );
                                 }
                                 if !self.ty(matching_type).flags.intersects(TypeFlags::NEVER) {
                                     self.infer_from_types(n, matching_type, target);
@@ -1957,6 +1856,116 @@ impl Checker {
                 }
                 self.infer_from_types(n, source, target);
             }
+        }
+    }
+
+    /// Go's `choose` closure of `inferToTemplateLiteralType`: which of `left` (the type chosen
+    /// so far) and `right` (the next constraint constituent) a string literal `source` with
+    /// value `str` infers to, given the constraint's flags `all_type_flags`.
+    // Go: checker/inference.go:614 choose
+    fn choose_template_literal_placeholder_type(
+        &mut self,
+        source: TypeId,
+        str: &str,
+        all_type_flags: TypeFlags,
+        left: TypeId,
+        right: TypeId,
+    ) -> TypeId {
+        let left_flags = self.ty(left).flags;
+        let right_flags = self.ty(right).flags;
+        if !right_flags.intersects(all_type_flags) {
+            left
+        } else if left_flags.intersects(TypeFlags::STRING) {
+            left
+        } else if right_flags.intersects(TypeFlags::STRING) {
+            source
+        } else if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+            left
+        } else if right_flags.intersects(TypeFlags::TEMPLATE_LITERAL)
+            // PERF (perffu1): Go's first test, before the clone.
+            && !self.string_literal_misses_template_literal_ends(source, right)
+            && {
+                let right_template =
+                    self.ty(right).as_template_literal_type().clone();
+                let cmp = self.compare_types_assignable.clone();
+                self.is_type_matched_by_template_literal_type(
+                source,
+                &right_template,
+                &mut |c: &mut Checker, s: TypeId, t: TypeId, r: bool| cmp(c, s, t, r),
+            )
+            }
+        {
+            source
+        } else if left_flags.intersects(TypeFlags::STRING_MAPPING) {
+            left
+        } else if right_flags.intersects(TypeFlags::STRING_MAPPING)
+            && str == self.apply_string_mapping(self.ty(right).symbol, str)
+        {
+            source
+        } else if left_flags.intersects(TypeFlags::STRING_LITERAL) {
+            left
+        } else if right_flags.intersects(TypeFlags::STRING_LITERAL)
+            && self.get_string_literal_value_ref(right) == str
+        {
+            right
+        } else if left_flags.intersects(TypeFlags::NUMBER) {
+            left
+        } else if right_flags.intersects(TypeFlags::NUMBER) {
+            self.get_number_literal_type(crate::jsnum::from_string(str))
+        } else if left_flags.intersects(TypeFlags::ENUM) {
+            left
+        } else if right_flags.intersects(TypeFlags::ENUM) {
+            self.get_number_literal_type(crate::jsnum::from_string(str))
+        } else if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
+            left
+        } else if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
+            && self.get_number_literal_value(right) == crate::jsnum::from_string(str)
+        {
+            right
+        } else if left_flags.intersects(TypeFlags::BIG_INT) {
+            left
+        } else if right_flags.intersects(TypeFlags::BIG_INT) {
+            self.parse_big_int_literal_type(str)
+        } else if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
+            left
+        } else if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
+            && pseudo_big_int_to_string(&self.get_big_int_literal_value(right)) == str
+        {
+            right
+        } else if left_flags.intersects(TypeFlags::BOOLEAN) {
+            left
+        } else if right_flags.intersects(TypeFlags::BOOLEAN) {
+            if str == "true" {
+                self.true_type
+            } else if str == "false" {
+                self.false_type
+            } else {
+                self.boolean_type
+            }
+        } else if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
+            left
+        } else if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
+            && (if self.get_boolean_literal_value(right) {
+                "true"
+            } else {
+                "false"
+            }) == str
+        {
+            right
+        } else if left_flags.intersects(TypeFlags::UNDEFINED) {
+            left
+        } else if right_flags.intersects(TypeFlags::UNDEFINED)
+            && self.ty(right).as_intrinsic_type().intrinsic_name() == str
+        {
+            right
+        } else if left_flags.intersects(TypeFlags::NULL) {
+            left
+        } else if right_flags.intersects(TypeFlags::NULL)
+            && self.ty(right).as_intrinsic_type().intrinsic_name() == str
+        {
+            right
+        } else {
+            left
         }
     }
 
@@ -1979,6 +1988,41 @@ impl Checker {
         let target_name_type = self.get_name_type_from_mapped_type(target);
         if source_name_type.is_some() && target_name_type.is_some() {
             self.infer_from_types(n, source_name_type, target_name_type);
+        }
+    }
+
+    /// The pair test of `infer_from_object_types`, with its answer kept for the rest of the inference.
+    ///
+    /// PORT: perf. Go N' (ts#64553) keys `invokeOnce` by the priority and
+    /// the variance too, so one inference can run this action again for a
+    /// pair it has seen. The first `types_definitely_unrelated` of a pair
+    /// runs here as in Go; a later one in the same inference can take the
+    /// kept answer. Go's later call gives the same answer and makes
+    /// nothing: the properties, the property types and the union and
+    /// intersection properties that it reads were made and cached by the
+    /// first call, and the type resolutions under way are the same at
+    /// every call of one inference (a nested inference has its own
+    /// state).
+    #[inline]
+    fn types_definitely_unrelated_in_inference(
+        &mut self,
+        n: &mut InferenceState,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let pair = (u64::from(source.0) << 32) | u64::from(target.0);
+        let generation = n.generation;
+        let cache = n.definitely_unrelated.get_or_insert_with(Default::default);
+        match cache.get(pair, generation) {
+            Some(unrelated) => unrelated,
+            None => {
+                let unrelated = self.types_definitely_unrelated(source, target);
+                n.definitely_unrelated
+                    .as_mut()
+                    .unwrap()
+                    .put(pair, generation, unrelated);
+                unrelated
+            }
         }
     }
 
@@ -2022,30 +2066,7 @@ impl Checker {
             }
         }
         // Infer from the members of source and target only if the two types are possibly related
-        // PORT: perf. Go N' (ts#64553) keys `invokeOnce` by the priority and
-        // the variance too, so one inference can run this action again for a
-        // pair it has seen. The first `types_definitely_unrelated` of a pair
-        // runs here as in Go; a later one in the same inference can take the
-        // kept answer. Go's later call gives the same answer and makes
-        // nothing: the properties, the property types and the union and
-        // intersection properties that it reads were made and cached by the
-        // first call, and the type resolutions under way are the same at
-        // every call of one inference (a nested inference has its own
-        // state).
-        let pair = (u64::from(source.0) << 32) | u64::from(target.0);
-        let generation = n.generation;
-        let cache = n.definitely_unrelated.get_or_insert_with(Default::default);
-        let unrelated = match cache.get(pair, generation) {
-            Some(unrelated) => unrelated,
-            None => {
-                let unrelated = self.types_definitely_unrelated(source, target);
-                n.definitely_unrelated
-                    .as_mut()
-                    .unwrap()
-                    .put(pair, generation, unrelated);
-                unrelated
-            }
-        };
+        let unrelated = self.types_definitely_unrelated_in_inference(n, source, target);
         if unrelated {
             return;
         }
@@ -2124,26 +2145,25 @@ impl Checker {
                             // Middle of target is [...T, ...U] and source is tuple type
                             let target_info =
                                 self.get_inference_info_for_type(n, element_types[sl]);
-                            if let Some(target_info) = target_info {
-                                let ctx = n.inferences;
-                                let implied_arity = self.inference_context(ctx).inferences
-                                    [target_info]
-                                    .implied_arity;
-                                if implied_arity >= 0 {
-                                    // Infer slices from source based on implied arity of T.
-                                    let slice = self.slice_tuple_type(
-                                        source,
-                                        start_length,
-                                        end_length + source_arity - implied_arity,
-                                    );
-                                    self.infer_from_types(n, slice, element_types[sl]);
-                                    let slice = self.slice_tuple_type(
-                                        source,
-                                        start_length + implied_arity,
-                                        end_length,
-                                    );
-                                    self.infer_from_types(n, slice, element_types[sl + 1]);
-                                }
+                            let implied_arity = target_info.map(|info| {
+                                self.inference_context(n.inferences).inferences[info].implied_arity
+                            });
+                            if let Some(implied_arity) = implied_arity
+                                && implied_arity >= 0
+                            {
+                                // Infer slices from source based on implied arity of T.
+                                let slice = self.slice_tuple_type(
+                                    source,
+                                    start_length,
+                                    end_length + source_arity - implied_arity,
+                                );
+                                self.infer_from_types(n, slice, element_types[sl]);
+                                let slice = self.slice_tuple_type(
+                                    source,
+                                    start_length + implied_arity,
+                                    end_length,
+                                );
+                                self.infer_from_types(n, slice, element_types[sl + 1]);
                             }
                         } else if target_element_flags(self, sl).intersects(ElementFlags::VARIADIC)
                             && target_element_flags(self, sl + 1).intersects(ElementFlags::REST)
@@ -2540,8 +2560,7 @@ impl Checker {
         {
             let mut result = false;
             for t in self.ty(constraint_type).types_list() {
-                let r = self.infer_to_mapped_type(n, source, target, t);
-                result = r || result;
+                result |= self.infer_to_mapped_type(n, source, target, t);
             }
             return result;
         }
@@ -2552,33 +2571,28 @@ impl Checker {
             // such that direct inferences to T get priority over inferences to Partial<T>, for example.
             let index_target = self.ty(constraint_type).as_index_type().target;
             let inference = self.get_inference_info_for_type(n, index_target);
-            if let Some(inference) = inference {
-                let ctx = n.inferences;
-                let (is_fixed, type_parameter) = {
-                    let info = &self.inference_context(ctx).inferences[inference];
-                    (info.is_fixed, info.type_parameter)
-                };
-                if !is_fixed && !self.is_from_inference_blocked_source(source) {
-                    let inferred_type = self.infer_type_for_homomorphic_mapped_type(
-                        source,
-                        target,
-                        constraint_type,
-                    );
-                    if inferred_type.is_some() {
-                        // We assign a lower priority to inferences made from types containing non-inferrable
-                        // types because we may only have a partial result (i.e. we may have failed to make
-                        // reverse inferences for some properties).
-                        let priority = if self
-                            .ty(source)
-                            .object_flags
-                            .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
-                        {
-                            InferencePriority::PARTIAL_HOMOMORPHIC_MAPPED_TYPE
-                        } else {
-                            InferencePriority::HOMOMORPHIC_MAPPED_TYPE
-                        };
-                        self.infer_with_priority(n, inferred_type, type_parameter, priority);
-                    }
+            if let Some(inference) = inference
+                && !self.inference_context(n.inferences).inferences[inference].is_fixed
+                && !self.is_from_inference_blocked_source(source)
+            {
+                let inferred_type =
+                    self.infer_type_for_homomorphic_mapped_type(source, target, constraint_type);
+                if inferred_type.is_some() {
+                    // We assign a lower priority to inferences made from types containing non-inferrable
+                    // types because we may only have a partial result (i.e. we may have failed to make
+                    // reverse inferences for some properties).
+                    let priority = if self
+                        .ty(source)
+                        .object_flags
+                        .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
+                    {
+                        InferencePriority::PARTIAL_HOMOMORPHIC_MAPPED_TYPE
+                    } else {
+                        InferencePriority::HOMOMORPHIC_MAPPED_TYPE
+                    };
+                    let type_parameter =
+                        self.inference_context(n.inferences).inferences[inference].type_parameter;
+                    self.infer_with_priority(n, inferred_type, type_parameter, priority);
                 }
             }
             return true;
@@ -2618,18 +2632,17 @@ impl Checker {
             }
             // If no inferences can be made to K's constraint, infer from a union of the property types
             // in the source to the template type X.
-            let mut prop_types: Vec<TypeId> = Vec::new();
-            for prop in self.get_properties_of_type(source) {
-                prop_types.push(self.get_type_of_symbol(prop));
-            }
-            let mut index_types: Vec<TypeId> = Vec::new();
-            for info in self.get_index_infos_of_type(source) {
-                if info != self.enum_number_index_info {
-                    index_types.push(self.index_info(info).value_type);
-                } else {
-                    index_types.push(self.never_type);
-                }
-            }
+            let mut prop_types: Vec<TypeId> = (self.get_properties_of_type(source).into_iter())
+                .map(|prop| self.get_type_of_symbol(prop))
+                .collect();
+            let index_types: Vec<TypeId> = (self.get_index_infos_of_type(source).into_iter())
+                .map(|info| {
+                    if info != self.enum_number_index_info {
+                        return self.index_info(info).value_type;
+                    }
+                    self.never_type
+                })
+                .collect();
             prop_types.extend(index_types);
             let union = self.get_union_type(&prop_types);
             let template_type = self.get_template_type_from_mapped_type(target);
@@ -2637,6 +2650,15 @@ impl Checker {
             return true;
         }
         false
+    }
+}
+
+/// Go's `core.AppendIfUnique` on the short matched lists of `infer_from_matching_types`.
+// Go: core/core.go:380 AppendIfUnique
+#[inline]
+fn append_if_unique(list: &mut SmallVec<[TypeId; 8]>, t: TypeId) {
+    if !list.contains(&t) {
+        list.push(t);
     }
 }
 

@@ -132,29 +132,20 @@ impl Checker {
     // arrow function, but is considered partially inferable because property 'a' has an inferable type.
     // Go: checker/inference.go:1071 isPartiallyInferableType
     pub fn is_partially_inferable_type(&mut self, t: TypeId) -> bool {
-        if !self
+        !self
             .ty(t)
             .object_flags
             .intersects(ObjectFlags::NON_INFERRABLE_TYPE)
-        {
-            return true;
-        }
-        if self.is_object_literal_type(t) {
-            for prop in self.get_properties_of_type(t) {
-                let prop_type = self.get_type_of_symbol(prop);
-                if self.is_partially_inferable_type(prop_type) {
-                    return true;
-                }
-            }
-        }
-        if self.is_tuple_type(t) {
-            for e in self.get_element_types(t) {
-                if self.is_partially_inferable_type(e) {
-                    return true;
-                }
-            }
-        }
-        false
+            || self.is_object_literal_type(t)
+                && self.get_properties_of_type(t).into_iter().any(|prop| {
+                    let prop_type = self.get_type_of_symbol(prop);
+                    self.is_partially_inferable_type(prop_type)
+                })
+            || self.is_tuple_type(t)
+                && self
+                    .get_element_types(t)
+                    .into_iter()
+                    .any(|e| self.is_partially_inferable_type(e))
     }
 
     // Go: checker/inference.go:1077 inferReverseMappedType
@@ -520,7 +511,8 @@ impl Checker {
                 && self.ty(s).flags.intersects(TypeFlags::NUMBER_LITERAL)
     }
 
-    // Go: checker/relater.go:117 isTypeIdenticalTo for one pair of `inferFromMatchingTypes` (inference.go:381).
+    // Go: checker/relater.go:169 isTypeRelatedTo (the identity relation, as Go's isTypeIdenticalTo at relater.go:117
+    // calls it) for one pair of `inferFromMatchingTypes` (inference.go:381).
     // `slots` are the pair's source and target slots of `infer_from_identical_types`.
     // PORT: perf (identmatch1). This is Go's `isTypeRelatedTo` (relater.go:169) with identityRelation. A pair that
     // Go sends to the normalization of isRelatedToEx (relater.go:2654 getNormalizedType) runs that part in
@@ -746,33 +738,8 @@ impl Checker {
         };
         if overflow {
             // Record this relation as having failed such that we don't attempt the overflowing operation again.
-            let (id, _) = self.get_relation_key(
-                source,
-                target,
-                IntersectionState::NONE,
-                true,  /*isIdentity*/
-                false, /*ignoreConstraints*/
-            );
-            self.identity_relation.borrow_mut().set(
-                id,
-                RelationComparisonResult::FAILED | RelationComparisonResult::COMPLEXITY_OVERFLOW,
-            );
-            if let Some(tr) = self.tracer {
-                let (depth, target_depth) = {
-                    let rb = r.borrow();
-                    (rb.source_stack.len(), rb.target_stack.len())
-                };
-                tr.instant(
-                    crate::tracing::Phase::CheckTypes,
-                    "checkTypeRelatedTo_DepthLimit",
-                    vec![
-                        ("sourceId", source.into()),
-                        ("targetId", target.into()),
-                        ("depth", depth.into()),
-                        ("targetDepth", target_depth.into()),
-                    ],
-                );
-            }
+            let relation = self.identity_relation.clone();
+            self.record_complexity_overflow(&relation, true, &r, source, target);
             let source_string = self.type_to_string(source);
             let target_string = self.type_to_string(target);
             let diagnostic = new_diagnostic_for_node(
@@ -1069,50 +1036,31 @@ impl Checker {
                                             self.inference_context(n).inferences[index]
                                                 .contra_candidates(),
                                         );
-                                    let mut some = false;
-                                    for t in contra_candidates {
-                                        if self.is_type_assignable_to(inferred_covariant_type, t) {
-                                            some = true;
-                                            break;
-                                        }
-                                    }
-                                    some
+                                    contra_candidates.into_iter().any(|t| {
+                                        self.is_type_assignable_to(inferred_covariant_type, t)
+                                    })
                                 }
-                                && {
-                                    let count = self.inference_context(n).inferences.len();
-                                    let mut every = true;
-                                    for j in 0..count {
-                                        let other_type_parameter =
-                                            self.inference_context(n).inferences[j].type_parameter;
-                                        let ok = j != index
-                                            && self.get_constraint_of_type_parameter(
-                                                other_type_parameter,
-                                            ) != type_parameter
-                                            || {
-                                                let other_candidates: SmallVec<[TypeId; 8]> =
-                                                    SmallVec::from_slice(
-                                                        self.inference_context(n).inferences[j]
-                                                            .candidates(),
-                                                    );
-                                                let mut all = true;
-                                                for t in other_candidates {
-                                                    if !self.is_type_assignable_to(
-                                                        t,
-                                                        inferred_covariant_type,
-                                                    ) {
-                                                        all = false;
-                                                        break;
-                                                    }
-                                                }
-                                                all
-                                            };
-                                        if !ok {
-                                            every = false;
-                                            break;
+                                && (0..self.inference_context(n).inferences.len()).all(|j| {
+                                    let other_type_parameter =
+                                        self.inference_context(n).inferences[j].type_parameter;
+                                    j != index
+                                        && self
+                                            .get_constraint_of_type_parameter(other_type_parameter)
+                                            != type_parameter
+                                        || {
+                                            let other_candidates: SmallVec<[TypeId; 8]> =
+                                                SmallVec::from_slice(
+                                                    self.inference_context(n).inferences[j]
+                                                        .candidates(),
+                                                );
+                                            other_candidates.into_iter().all(|t| {
+                                                self.is_type_assignable_to(
+                                                    t,
+                                                    inferred_covariant_type,
+                                                )
+                                            })
                                         }
-                                    }
-                                    every
-                                });
+                                }));
                     if prefer_covariant_type {
                         inferred_type = inferred_covariant_type;
                         fallback_type = inferred_contravariant_type;
@@ -1143,18 +1091,14 @@ impl Checker {
             } else {
                 inferred_type = self.get_type_from_inference(n, index);
             }
-            self.inference_context_mut(n).inferences[index].inferred_type = inferred_type;
-            if self.inference_context(n).inferences[index]
-                .inferred_type
-                .is_nil()
-            {
-                let t = if n_flags.intersects(InferenceFlags::ANY_DEFAULT) {
+            self.inference_context_mut(n).inferences[index].inferred_type =
+                if inferred_type.is_some() {
+                    inferred_type
+                } else if n_flags.intersects(InferenceFlags::ANY_DEFAULT) {
                     self.any_type
                 } else {
                     self.unknown_type
                 };
-                self.inference_context_mut(n).inferences[index].inferred_type = t;
-            }
             let constraint = self.get_constraint_of_type_parameter(type_parameter);
             if constraint.is_some() {
                 let non_fixing_mapper = self.inference_context(n).non_fixing_mapper;
