@@ -780,19 +780,7 @@ impl QuickInfoWriter<'_> {
             self.dpw.borrow_mut().write(&text);
             return;
         }
-        let mut p = new_printer(
-            PrinterOptions {
-                new_line: NewLineKind::LF,
-                ..Default::default()
-            },
-            PrintHandlers::default(),
-            Some(emit_context),
-        );
-        let id_to_symbol = std::mem::take(&mut nb.borrow().impl_.borrow_mut().id_to_symbol);
-        p.id_to_symbol = Some(id_to_symbol);
-        let temp_dpw = new_display_parts_writer(true);
-        p.write_exported(type_node, self.source_file, temp_dpw.clone(), None);
-        self.dpw.borrow_mut().write_from(&temp_dpw.borrow());
+        self.write_built_node_classified(type_node, &nb, emit_context);
     }
 
     // Go: ls/hover.go:475 writeSignatureClassified (closure)
@@ -851,6 +839,19 @@ impl QuickInfoWriter<'_> {
             self.dpw.borrow_mut().write(&text);
             return;
         }
+        self.write_built_node_classified(sig_node, &nb, emit_context);
+    }
+
+    /// The printing step of Go `writeTypeClassified` and
+    /// `writeSignatureClassified`: prints `node`, built by `nb`, into `dpw`
+    /// with classification. Go's printer shares the builder's idToSymbol map;
+    /// here the map moves from the builder into the printer.
+    fn write_built_node_classified(
+        &mut self,
+        node: Node,
+        nb: &Rc<RefCell<NodeBuilder>>,
+        emit_context: Rc<EmitContext>,
+    ) {
         let mut p = new_printer(
             PrinterOptions {
                 new_line: NewLineKind::LF,
@@ -862,7 +863,7 @@ impl QuickInfoWriter<'_> {
         let id_to_symbol = std::mem::take(&mut nb.borrow().impl_.borrow_mut().id_to_symbol);
         p.id_to_symbol = Some(id_to_symbol);
         let temp_dpw = new_display_parts_writer(true);
-        p.write_exported(sig_node, self.source_file, temp_dpw.clone(), None);
+        p.write_exported(node, self.source_file, temp_dpw.clone(), None);
         self.dpw.borrow_mut().write_from(&temp_dpw.borrow());
     }
 
@@ -1091,18 +1092,17 @@ impl QuickInfoWriter<'_> {
             }
         }
         let symbol_flags = self.c.sym(symbol).flags;
-        let mut flags = if self.meaning == SemanticMeaning::VALUE {
-            symbol_flags & (SymbolFlags::VALUE | SymbolFlags::SIGNATURE)
-        } else if self.meaning == SemanticMeaning::TYPE {
-            symbol_flags & SymbolFlags::TYPE
-        } else if self.meaning == SemanticMeaning::NAMESPACE {
-            symbol_flags & SymbolFlags::NAMESPACE
-        } else {
-            symbol_flags
-                & (SymbolFlags::VALUE
-                    | SymbolFlags::SIGNATURE
-                    | SymbolFlags::TYPE
-                    | SymbolFlags::NAMESPACE)
+        let mut flags = match self.meaning {
+            SemanticMeaning::VALUE => symbol_flags & (SymbolFlags::VALUE | SymbolFlags::SIGNATURE),
+            SemanticMeaning::TYPE => symbol_flags & SymbolFlags::TYPE,
+            SemanticMeaning::NAMESPACE => symbol_flags & SymbolFlags::NAMESPACE,
+            _ => {
+                symbol_flags
+                    & (SymbolFlags::VALUE
+                        | SymbolFlags::SIGNATURE
+                        | SymbolFlags::TYPE
+                        | SymbolFlags::NAMESPACE)
+            }
         };
         if flags.is_empty() {
             if self.alias_level != 0 || !self.dpw.borrow().string().is_empty() {
@@ -1239,17 +1239,15 @@ impl QuickInfoWriter<'_> {
                     self.write_type_classified(t, container, TYPE_FORMAT_FLAGS);
                 }
             }
-            let declaration = if value_declaration.is_some() {
-                value_declaration
-            } else {
-                self.c
-                    .sym(symbol)
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(Node::NIL)
-            };
-            self.set_declaration(declaration);
+            // Go: core.OrElse(symbol.ValueDeclaration(), core.FirstOrNil(symbol.Declarations()))
+            let first_declaration = self
+                .c
+                .sym(symbol)
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(Node::NIL);
+            self.set_declaration(or_else_node(value_declaration, first_declaration));
         }
         if flags.intersects(SymbolFlags::ENUM_MEMBER) {
             self.write_new_line();

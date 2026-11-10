@@ -337,71 +337,66 @@ pub fn get_references_for_this_keyword(
     } else {
         source_files.to_vec()
     };
-    // core.Map(core.FlatMap(filesToSearch, ..), newNodeEntry)
-    let mut reference_nodes: Vec<Node> = Vec::new();
-    for &source_file in &files_to_search {
-        // cancellationToken.throwIfCancellationRequested();
-        let container = if search_space_node.kind() == SyntaxKind::SourceFile {
-            source_file
-        } else {
-            search_space_node
-        };
-        for node in get_possible_symbol_reference_nodes(source_file, "this", container) {
-            let keep = (|| {
-                if !is_this(node) {
-                    return false;
-                }
-                let container = get_this_container(
-                    node, false, /*includeArrowFunctions*/
-                    false, /*includeClassComputedPropertyName*/
-                );
-                if !can_have_symbol(container) {
-                    return false;
-                }
-                match search_space_node.kind() {
-                    SyntaxKind::FunctionExpression | SyntaxKind::FunctionDeclaration => {
-                        search_space_node.symbol() == container.symbol()
+    // Go: core.Map(core.FlatMap(filesToSearch, ..), newNodeEntry)
+    let reference_nodes: Vec<Node> = files_to_search
+        .iter()
+        .flat_map(|&source_file| {
+            // cancellationToken.throwIfCancellationRequested();
+            let container = if search_space_node.kind() == SyntaxKind::SourceFile {
+                source_file
+            } else {
+                search_space_node
+            };
+            get_possible_symbol_reference_nodes(source_file, "this", container)
+                .into_iter()
+                .filter(|&node| {
+                    if !is_this(node) {
+                        return false;
                     }
-                    SyntaxKind::MethodDeclaration | SyntaxKind::MethodSignature => {
-                        is_object_literal_method(search_space_node)
-                            && search_space_node.symbol() == container.symbol()
+                    let container = get_this_container(
+                        node, false, /*includeArrowFunctions*/
+                        false, /*includeClassComputedPropertyName*/
+                    );
+                    if !can_have_symbol(container) {
+                        return false;
                     }
-                    SyntaxKind::ClassExpression
-                    | SyntaxKind::ClassDeclaration
-                    | SyntaxKind::ObjectLiteralExpression => {
-                        // Make sure the container belongs to the same class/object literals
-                        // and has the appropriate static modifier from the original container.
-                        container.parent().is_some()
-                            && can_have_symbol(container.parent())
-                            && search_space_node.symbol() == container.parent().symbol()
-                            && is_static(container) == (static_flag != ModifierFlags::NONE)
+                    match search_space_node.kind() {
+                        SyntaxKind::FunctionExpression | SyntaxKind::FunctionDeclaration => {
+                            search_space_node.symbol() == container.symbol()
+                        }
+                        SyntaxKind::MethodDeclaration | SyntaxKind::MethodSignature => {
+                            is_object_literal_method(search_space_node)
+                                && search_space_node.symbol() == container.symbol()
+                        }
+                        SyntaxKind::ClassExpression
+                        | SyntaxKind::ClassDeclaration
+                        | SyntaxKind::ObjectLiteralExpression => {
+                            // Make sure the container belongs to the same class/object literals
+                            // and has the appropriate static modifier from the original container.
+                            container.parent().is_some()
+                                && can_have_symbol(container.parent())
+                                && search_space_node.symbol() == container.parent().symbol()
+                                && is_static(container) == (static_flag != ModifierFlags::NONE)
+                        }
+                        SyntaxKind::SourceFile => {
+                            container.kind() == SyntaxKind::SourceFile
+                                && !is_external_module(container)
+                                && !is_parameter_name(node)
+                        }
+                        _ => false,
                     }
-                    SyntaxKind::SourceFile => {
-                        container.kind() == SyntaxKind::SourceFile
-                            && !is_external_module(container)
-                            && !is_parameter_name(node)
-                    }
-                    _ => false,
-                }
-            })();
-            if keep {
-                reference_nodes.push(node);
-            }
-        }
-    }
+                })
+                .collect::<Vec<Node>>()
+        })
+        .collect();
     let references: Vec<Rc<RefCell<ReferenceEntry>>> =
         reference_nodes.into_iter().map(new_node_entry).collect();
 
-    // core.FirstNonNil
+    // Go: core.FirstNonNil
     let mut this_parameter = references
         .iter()
-        .find_map(|reference| {
-            let node = reference.borrow().node;
-            if node.parent().kind() == SyntaxKind::Parameter {
-                return Some(node);
-            }
-            None
-        })
+        .map(|reference| reference.borrow().node)
+        .find(|node| node.parent().kind() == SyntaxKind::Parameter)
         .unwrap_or(Node::NIL);
     if this_parameter.is_nil() {
         this_parameter = this_or_super_keyword;
@@ -2313,22 +2308,17 @@ impl<'c, P: ProgramView> RefState<'c, P> {
             return false;
         }
 
-        // core.Some(declarations, core.Some(superTypeNodes, ..))
+        // Go: core.Some(declarations, core.Some(superTypeNodes, ..))
         let declarations = self.checker.sym(symbol).declarations.clone();
-        let mut inherits = false;
-        'declarations: for declaration in declarations {
+        let inherits = declarations.into_iter().any(|declaration| {
             let super_type_nodes = get_all_super_type_nodes(declaration);
-            for type_reference in super_type_nodes {
+            super_type_nodes.into_iter().any(|type_reference| {
                 let typ = self.checker.get_type_at_location(type_reference);
-                if typ.is_some() {
-                    let typ_symbol = self.checker.ty(typ).symbol;
-                    if typ_symbol.is_some() && self.explicitly_inherits_from(typ_symbol, parent) {
-                        inherits = true;
-                        break 'declarations;
-                    }
-                }
-            }
-        }
+                typ.is_some()
+                    && self.checker.ty(typ).symbol.is_some()
+                    && self.explicitly_inherits_from(self.checker.ty(typ).symbol, parent)
+            })
+        });
 
         // Update cache with the actual result
         self.inherits_from_cache.insert(key, inherits);

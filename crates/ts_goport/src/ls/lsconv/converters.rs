@@ -10,7 +10,6 @@ use crate::locale;
 use crate::lsp::lsproto;
 use crate::scanner_util::{go_byte_offset, port_byte_offset};
 use crate::spanmap::{self, Feature, Fidelity, SpanMap};
-use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::LazyLock;
 
@@ -770,7 +769,7 @@ pub fn file_name_to_document_uri(file_name: &str) -> lsproto::DocumentUri {
         return lsproto::DocumentUri(file_name.to_string());
     }
     if tspath::is_dynamic_file_name(file_name) {
-        return dynamic_file_name_to_document_uri(file_name);
+        return lsproto::dynamic_file_name_to_document_uri(file_name);
     }
 
     let (mut volume, file_name, _) = tspath::split_volume_path(file_name);
@@ -786,49 +785,6 @@ pub fn file_name_to_document_uri(file_name: &str) -> lsproto::DocumentUri {
         .collect();
 
     lsproto::DocumentUri(format!("file://{volume}{}", parts.join("/")))
-}
-
-// Go: lsp/lsproto/lsp.go:85 DynamicFileNameToDocumentUri (ts#64544)
-// PORT: Go has it in lsproto. The server lane owns `lsp/lsproto/lsp.rs`, so
-// the ls lane keeps this copy until lsproto has it. It decodes both the
-// encoded names (`^/~ts-uri~/...`) and the literal names that
-// `DocumentUri::file_name` gives before its ts#64544 part.
-fn dynamic_file_name_to_document_uri(file_name: &str) -> lsproto::DocumentUri {
-    // Go: lsp/lsproto/lsp.go:97 dynamicFileNameToDocumentUri, strict = false
-    let encoded = tspath::is_encoded_dynamic_file_name(file_name);
-    let start = if encoded {
-        tspath::DYNAMIC_URI_FILE_NAME_PREFIX.len()
-    } else {
-        2
-    };
-    let invalid = || -> ! { crate::core::go_panic(format!("invalid file name: {file_name}")) };
-    let Some((scheme, rest)) = file_name[start..].split_once('/') else {
-        invalid();
-    };
-    let Some((authority, uri_path)) = rest.split_once('/') else {
-        invalid();
-    };
-    let has_authority = authority != "ts-nul-authority";
-    let authority = if encoded {
-        Cow::Owned(tspath::decode_dynamic_uri_path_segment(authority))
-    } else {
-        Cow::Borrowed(authority)
-    };
-    if encoded
-        && has_authority
-        && let Some(suffix) = tspath::decode_dynamic_uri_no_path(uri_path)
-    {
-        return lsproto::DocumentUri(format!("{scheme}://{authority}{suffix}"));
-    }
-    let uri_path = if encoded {
-        Cow::Owned(tspath::decode_dynamic_uri_path(uri_path))
-    } else {
-        Cow::Borrowed(uri_path)
-    };
-    if !has_authority {
-        return lsproto::DocumentUri(format!("{scheme}:{uri_path}"));
-    }
-    lsproto::DocumentUri(format!("{scheme}://{authority}/{uri_path}"))
 }
 
 /// Go `utf16.RuneLen(r)`.

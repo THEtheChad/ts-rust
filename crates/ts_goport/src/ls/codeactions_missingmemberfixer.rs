@@ -551,7 +551,7 @@ impl<'a> MissingMemberFixer<'a> {
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 
@@ -565,7 +565,7 @@ impl<'a> MissingMemberFixer<'a> {
                     type_node,
                     fn_.full_signature(),
                     fn_.equals_greater_than_token(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 
@@ -610,7 +610,7 @@ impl<'a> MissingMemberFixer<'a> {
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 

@@ -1455,14 +1455,8 @@ impl LanguageService {
                     original_node
                 };
 
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
@@ -1478,30 +1472,18 @@ impl LanguageService {
                 if node.is_nil() {
                     return None;
                 }
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
                 Some(ReferencedSymbolDefinitionInfo {
                     node,
                     location: loc,
-                    display_text: Some(lsproto::VSClassifiedTextElement {
-                        runs: vec![Some(lsproto::VSClassifiedTextRun {
-                            text: node.text().to_string(),
-                            classification_type_name: lsproto::ClassificationTypeName::TEXT
-                                .0
-                                .to_string(),
-                            ..Default::default()
-                        })],
-                        ..Default::default()
-                    }),
+                    display_text: Some(classified_text_element(
+                        node.text().to_string(),
+                        lsproto::ClassificationTypeName::TEXT,
+                    )),
                 })
             }
 
@@ -1511,30 +1493,18 @@ impl LanguageService {
                     return None;
                 }
                 let name = token_to_string(node.kind());
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
                 Some(ReferencedSymbolDefinitionInfo {
                     node,
                     location: loc,
-                    display_text: Some(lsproto::VSClassifiedTextElement {
-                        runs: vec![Some(lsproto::VSClassifiedTextRun {
-                            text: name.to_string(),
-                            classification_type_name: lsproto::ClassificationTypeName::KEYWORD
-                                .0
-                                .to_string(),
-                            ..Default::default()
-                        })],
-                        ..Default::default()
-                    }),
+                    display_text: Some(classified_text_element(
+                        name.to_string(),
+                        lsproto::ClassificationTypeName::KEYWORD,
+                    )),
                 })
             }
 
@@ -1549,14 +1519,8 @@ impl LanguageService {
                 }
                 let element =
                     self.get_definition_kind_and_display_parts(ctx, symbol, node, vs_capability);
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
@@ -1572,30 +1536,18 @@ impl LanguageService {
                 if node.is_nil() {
                     return None;
                 }
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
                 Some(ReferencedSymbolDefinitionInfo {
                     node,
                     location: loc,
-                    display_text: Some(lsproto::VSClassifiedTextElement {
-                        runs: vec![Some(lsproto::VSClassifiedTextRun {
-                            text: node.text().to_string(),
-                            classification_type_name: lsproto::ClassificationTypeName::STRING
-                                .0
-                                .to_string(),
-                            ..Default::default()
-                        })],
-                        ..Default::default()
-                    }),
+                    display_text: Some(classified_text_element(
+                        node.text().to_string(),
+                        lsproto::ClassificationTypeName::STRING,
+                    )),
                 })
             }
 
@@ -1607,14 +1559,8 @@ impl LanguageService {
                     return None;
                 }
                 let node = triple_slash_file_ref.file;
-                let (loc, ok) = self.get_location_of_entry_for_feature(
-                    &Rc::new(RefCell::new(ReferenceEntry {
-                        kind: EntryKind::NODE,
-                        node,
-                        ..Default::default()
-                    })),
-                    feature,
-                );
+                let (loc, ok) =
+                    self.get_location_of_entry_for_feature(&plain_node_entry(node), feature);
                 if !ok {
                     return None;
                 }
@@ -1626,16 +1572,10 @@ impl LanguageService {
                 Some(ReferencedSymbolDefinitionInfo {
                     node,
                     location: loc,
-                    display_text: Some(lsproto::VSClassifiedTextElement {
-                        runs: vec![Some(lsproto::VSClassifiedTextRun {
-                            text: format!("\"{reference_file_name}\""),
-                            classification_type_name: lsproto::ClassificationTypeName::STRING
-                                .0
-                                .to_string(),
-                            ..Default::default()
-                        })],
-                        ..Default::default()
-                    }),
+                    display_text: Some(classified_text_element(
+                        format!("\"{reference_file_name}\""),
+                        lsproto::ClassificationTypeName::STRING,
+                    )),
                 })
             }
 
@@ -2311,6 +2251,32 @@ impl<P: ProgramView> LanguageService<P> {
                 module_references_of_export_target.unwrap_or_default(),
             ],
         )
+    }
+}
+
+/// Go `&ReferenceEntry{kind: entryKindNode, node: node}`: a node entry
+/// without `newNodeEntry`'s name and context lookups.
+fn plain_node_entry(node: Node) -> Rc<RefCell<ReferenceEntry>> {
+    Rc::new(RefCell::new(ReferenceEntry {
+        kind: EntryKind::NODE,
+        node,
+        ..Default::default()
+    }))
+}
+
+/// Go `&lsproto.VSClassifiedTextElement{Runs: []*lsproto.VSClassifiedTextRun{{Text: text,
+/// ClassificationTypeName: string(classification)}}}`.
+fn classified_text_element(
+    text: String,
+    classification: lsproto::ClassificationTypeName,
+) -> lsproto::VSClassifiedTextElement {
+    lsproto::VSClassifiedTextElement {
+        runs: vec![Some(lsproto::VSClassifiedTextRun {
+            text,
+            classification_type_name: classification.0.to_string(),
+            ..Default::default()
+        })],
+        ..Default::default()
     }
 }
 

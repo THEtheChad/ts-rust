@@ -522,219 +522,178 @@ impl FieldValue {
 
 // Go: ls/lsutil/userpreferences.go:300 typeParsers (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
 // typeParsers maps reflect.Type to a function that parses a value into that type.
-// PORT: the Go map is a match on the field type.
+// PORT: the Go map is a match on the field type. Each enum parser is the
+// generated `parsePreference<Type>` of the pin.
 fn type_parsers(t: FieldType) -> Option<fn(&LspAny) -> FieldValue> {
     match t {
-        FieldType::Tristate => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::Bool(b) = val {
-                if *b {
-                    return FieldValue::Tristate(Tristate::True);
-                }
-                return FieldValue::Tristate(Tristate::False);
-            }
-            FieldValue::Tristate(Tristate::Unknown)
-        }),
-        FieldType::IndentStyle => {
-            Some(|val: &LspAny| -> FieldValue { FieldValue::IndentStyle(parse_indent_style(val)) })
+        FieldType::Tristate => Some(|val| FieldValue::Tristate(parse_tristate(val))),
+        FieldType::IndentStyle => Some(|val| FieldValue::IndentStyle(parse_indent_style(val))),
+        FieldType::SemicolonPreference => {
+            Some(|val| FieldValue::SemicolonPreference(parse_semicolon_preference(val)))
         }
-        FieldType::SemicolonPreference => Some(|val: &LspAny| -> FieldValue {
-            FieldValue::SemicolonPreference(parse_semicolon_preference(val))
+        FieldType::QuotePreference => {
+            Some(|val| FieldValue::QuotePreference(parse_preference_quote_preference(val)))
+        }
+        FieldType::WorkspaceSymbolsScope => Some(|val| {
+            FieldValue::WorkspaceSymbolsScope(parse_preference_workspace_symbols_scope(val))
         }),
-        FieldType::QuotePreference => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "auto" => return FieldValue::QuotePreference(QuotePreference::AUTO),
-                    "double" => return FieldValue::QuotePreference(QuotePreference::DOUBLE),
-                    "single" => return FieldValue::QuotePreference(QuotePreference::SINGLE),
-                    _ => {}
-                }
-            }
-            FieldValue::QuotePreference(QuotePreference::UNKNOWN)
+        FieldType::JsxAttributeCompletionStyle => Some(|val| {
+            FieldValue::JsxAttributeCompletionStyle(
+                parse_preference_jsx_attribute_completion_style(val),
+            )
         }),
-        // Go: ls/lsutil/userpreferences_generated.go:371 parsePreferenceWorkspaceSymbolsScope
-        // (ts#64554): case-insensitive, and any other value is "".
-        FieldType::WorkspaceSymbolsScope => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "allopenprojects" => {
-                        return FieldValue::WorkspaceSymbolsScope(
-                            WorkspaceSymbolsScope::ALL_OPEN_PROJECTS,
-                        );
-                    }
-                    "currentproject" => {
-                        return FieldValue::WorkspaceSymbolsScope(
-                            WorkspaceSymbolsScope::CURRENT_PROJECT,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::WorkspaceSymbolsScope(WorkspaceSymbolsScope(Cow::Borrowed("")))
+        FieldType::IncludeInlayParameterNameHints => Some(|val| {
+            FieldValue::IncludeInlayParameterNameHints(
+                parse_preference_include_inlay_parameter_name_hints(val),
+            )
         }),
-        FieldType::JsxAttributeCompletionStyle => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "braces" => {
-                        return FieldValue::JsxAttributeCompletionStyle(
-                            JsxAttributeCompletionStyle::BRACES,
-                        );
-                    }
-                    "none" => {
-                        return FieldValue::JsxAttributeCompletionStyle(
-                            JsxAttributeCompletionStyle::NONE,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::JsxAttributeCompletionStyle(JsxAttributeCompletionStyle::AUTO)
+        FieldType::OrganizeImportsSort => {
+            Some(|val| FieldValue::OrganizeImportsSort(parse_preference_organize_imports_sort(val)))
+        }
+        FieldType::OrganizeImportsCollation => Some(|val| {
+            FieldValue::OrganizeImportsCollation(parse_preference_organize_imports_collation(val))
         }),
-        // Go: ls/lsutil/userpreferences_generated.go:179 parsePreferenceIncludeInlayParameterNameHints
-        // (ts#64554): case-insensitive.
-        FieldType::IncludeInlayParameterNameHints => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "all" => {
-                        return FieldValue::IncludeInlayParameterNameHints(
-                            IncludeInlayParameterNameHints::ALL,
-                        );
-                    }
-                    "literals" => {
-                        return FieldValue::IncludeInlayParameterNameHints(
-                            IncludeInlayParameterNameHints::LITERALS,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::IncludeInlayParameterNameHints(IncludeInlayParameterNameHints::NONE)
+        FieldType::OrganizeImportsCaseFirst => Some(|val| {
+            FieldValue::OrganizeImportsCaseFirst(parse_preference_organize_imports_case_first(val))
         }),
-        FieldType::OrganizeImportsSort => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "ordinal" => {
-                        return FieldValue::OrganizeImportsSort(OrganizeImportsSort::ORDINAL);
-                    }
-                    "ordinalignorecase" => {
-                        return FieldValue::OrganizeImportsSort(
-                            OrganizeImportsSort::ORDINAL_IGNORE_CASE,
-                        );
-                    }
-                    "natural" => {
-                        return FieldValue::OrganizeImportsSort(OrganizeImportsSort::NATURAL);
-                    }
-                    "naturalignorecase" => {
-                        return FieldValue::OrganizeImportsSort(
-                            OrganizeImportsSort::NATURAL_IGNORE_CASE,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::OrganizeImportsSort(OrganizeImportsSort::AUTO)
+        FieldType::OrganizeImportsTypeOrder => Some(|val| {
+            FieldValue::OrganizeImportsTypeOrder(parse_preference_organize_imports_type_order(val))
         }),
-        FieldType::OrganizeImportsCollation => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val
-                && strings_to_lower(s) == "unicode"
-            {
-                return FieldValue::OrganizeImportsCollation(OrganizeImportsCollation::UNICODE);
-            }
-            FieldValue::OrganizeImportsCollation(OrganizeImportsCollation::ORDINAL)
+        FieldType::ImportModuleSpecifierPreference => Some(|val| {
+            FieldValue::ImportModuleSpecifierPreference(
+                parse_preference_import_module_specifier_preference(val),
+            )
         }),
-        // Go: ls/lsutil/userpreferences_generated.go:227 parsePreferenceOrganizeImportsCaseFirst
-        // (ts#64554): case-insensitive.
-        FieldType::OrganizeImportsCaseFirst => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "lower" => {
-                        return FieldValue::OrganizeImportsCaseFirst(
-                            OrganizeImportsCaseFirst::LOWER,
-                        );
-                    }
-                    "upper" => {
-                        return FieldValue::OrganizeImportsCaseFirst(
-                            OrganizeImportsCaseFirst::UPPER,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::OrganizeImportsCaseFirst(OrganizeImportsCaseFirst::FALSE)
-        }),
-        // Go: ls/lsutil/userpreferences_generated.go:312 parsePreferenceOrganizeImportsTypeOrder
-        // (ts#64554): case-insensitive.
-        FieldType::OrganizeImportsTypeOrder => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "last" => {
-                        return FieldValue::OrganizeImportsTypeOrder(
-                            OrganizeImportsTypeOrder::LAST,
-                        );
-                    }
-                    "inline" => {
-                        return FieldValue::OrganizeImportsTypeOrder(
-                            OrganizeImportsTypeOrder::INLINE,
-                        );
-                    }
-                    "first" => {
-                        return FieldValue::OrganizeImportsTypeOrder(
-                            OrganizeImportsTypeOrder::FIRST,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::OrganizeImportsTypeOrder(OrganizeImportsTypeOrder::AUTO)
-        }),
-        FieldType::ImportModuleSpecifierPreference => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "project-relative" => {
-                        return FieldValue::ImportModuleSpecifierPreference(
-                            ImportModuleSpecifierPreference::ProjectRelative,
-                        );
-                    }
-                    "relative" => {
-                        return FieldValue::ImportModuleSpecifierPreference(
-                            ImportModuleSpecifierPreference::Relative,
-                        );
-                    }
-                    "non-relative" => {
-                        return FieldValue::ImportModuleSpecifierPreference(
-                            ImportModuleSpecifierPreference::NonRelative,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            FieldValue::ImportModuleSpecifierPreference(ImportModuleSpecifierPreference::Shortest)
-        }),
-        FieldType::ImportModuleSpecifierEndingPreference => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "minimal" => {
-                        return FieldValue::ImportModuleSpecifierEndingPreference(
-                            ImportModuleSpecifierEndingPreference::Minimal,
-                        );
-                    }
-                    "index" => {
-                        return FieldValue::ImportModuleSpecifierEndingPreference(
-                            ImportModuleSpecifierEndingPreference::Index,
-                        );
-                    }
-                    "js" => {
-                        return FieldValue::ImportModuleSpecifierEndingPreference(
-                            ImportModuleSpecifierEndingPreference::Js,
-                        );
-                    }
-                    _ => {}
-                }
-            }
+        FieldType::ImportModuleSpecifierEndingPreference => Some(|val| {
             FieldValue::ImportModuleSpecifierEndingPreference(
-                ImportModuleSpecifierEndingPreference::Auto,
+                parse_preference_import_module_specifier_ending_preference(val),
             )
         }),
         _ => None,
+    }
+}
+
+/// Go `value.(string)` and `strings.ToLower(value)` of the generated parsers:
+/// the lower-cased text of a string value, `None` for any other value.
+fn lower_string_value(val: &LspAny) -> Option<String> {
+    match val {
+        LspAny::String(s) => Some(strings_to_lower(s)),
+        _ => None,
+    }
+}
+
+/// The `core.Tristate` entry of Go `typeParsers`: a bool is true or false,
+/// anything else unknown.
+fn parse_tristate(val: &LspAny) -> Tristate {
+    match val {
+        LspAny::Bool(true) => Tristate::True,
+        LspAny::Bool(false) => Tristate::False,
+        _ => Tristate::Unknown,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:343 parsePreferenceQuotePreference
+fn parse_preference_quote_preference(val: &LspAny) -> QuotePreference {
+    match lower_string_value(val).as_deref() {
+        Some("auto") => QuotePreference::AUTO,
+        Some("double") => QuotePreference::DOUBLE,
+        Some("single") => QuotePreference::SINGLE,
+        _ => QuotePreference::UNKNOWN,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:371 parsePreferenceWorkspaceSymbolsScope
+// (ts#64554): case-insensitive, and any other value is "".
+fn parse_preference_workspace_symbols_scope(val: &LspAny) -> WorkspaceSymbolsScope {
+    match lower_string_value(val).as_deref() {
+        Some("allopenprojects") => WorkspaceSymbolsScope::ALL_OPEN_PROJECTS,
+        Some("currentproject") => WorkspaceSymbolsScope::CURRENT_PROJECT,
+        _ => WorkspaceSymbolsScope(Cow::Borrowed("")),
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:213 parsePreferenceJsxAttributeCompletionStyle
+fn parse_preference_jsx_attribute_completion_style(val: &LspAny) -> JsxAttributeCompletionStyle {
+    match lower_string_value(val).as_deref() {
+        Some("braces") => JsxAttributeCompletionStyle::BRACES,
+        Some("none") => JsxAttributeCompletionStyle::NONE,
+        _ => JsxAttributeCompletionStyle::AUTO,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:179 parsePreferenceIncludeInlayParameterNameHints
+// (ts#64554): case-insensitive.
+fn parse_preference_include_inlay_parameter_name_hints(
+    val: &LspAny,
+) -> IncludeInlayParameterNameHints {
+    match lower_string_value(val).as_deref() {
+        Some("all") => IncludeInlayParameterNameHints::ALL,
+        Some("literals") => IncludeInlayParameterNameHints::LITERALS,
+        _ => IncludeInlayParameterNameHints::NONE,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:277 parsePreferenceOrganizeImportsSort
+fn parse_preference_organize_imports_sort(val: &LspAny) -> OrganizeImportsSort {
+    match lower_string_value(val).as_deref() {
+        Some("ordinal") => OrganizeImportsSort::ORDINAL,
+        Some("ordinalignorecase") => OrganizeImportsSort::ORDINAL_IGNORE_CASE,
+        Some("natural") => OrganizeImportsSort::NATURAL,
+        Some("naturalignorecase") => OrganizeImportsSort::NATURAL_IGNORE_CASE,
+        _ => OrganizeImportsSort::AUTO,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:254 parsePreferenceOrganizeImportsCollation
+fn parse_preference_organize_imports_collation(val: &LspAny) -> OrganizeImportsCollation {
+    match lower_string_value(val).as_deref() {
+        Some("unicode") => OrganizeImportsCollation::UNICODE,
+        _ => OrganizeImportsCollation::ORDINAL,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:227 parsePreferenceOrganizeImportsCaseFirst
+// (ts#64554): case-insensitive.
+fn parse_preference_organize_imports_case_first(val: &LspAny) -> OrganizeImportsCaseFirst {
+    match lower_string_value(val).as_deref() {
+        Some("lower") => OrganizeImportsCaseFirst::LOWER,
+        Some("upper") => OrganizeImportsCaseFirst::UPPER,
+        _ => OrganizeImportsCaseFirst::FALSE,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:312 parsePreferenceOrganizeImportsTypeOrder
+// (ts#64554): case-insensitive.
+fn parse_preference_organize_imports_type_order(val: &LspAny) -> OrganizeImportsTypeOrder {
+    match lower_string_value(val).as_deref() {
+        Some("last") => OrganizeImportsTypeOrder::LAST,
+        Some("inline") => OrganizeImportsTypeOrder::INLINE,
+        Some("first") => OrganizeImportsTypeOrder::FIRST,
+        _ => OrganizeImportsTypeOrder::AUTO,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:399 parsePreferenceImportModuleSpecifierPreference
+fn parse_preference_import_module_specifier_preference(
+    val: &LspAny,
+) -> ImportModuleSpecifierPreference {
+    match lower_string_value(val).as_deref() {
+        Some("project-relative") => ImportModuleSpecifierPreference::ProjectRelative,
+        Some("relative") => ImportModuleSpecifierPreference::Relative,
+        Some("non-relative") => ImportModuleSpecifierPreference::NonRelative,
+        _ => ImportModuleSpecifierPreference::Shortest,
+    }
+}
+
+// Go: ls/lsutil/userpreferences_generated.go:383 parsePreferenceImportModuleSpecifierEndingPreference
+fn parse_preference_import_module_specifier_ending_preference(
+    val: &LspAny,
+) -> ImportModuleSpecifierEndingPreference {
+    match lower_string_value(val).as_deref() {
+        Some("minimal") => ImportModuleSpecifierEndingPreference::Minimal,
+        Some("index") => ImportModuleSpecifierEndingPreference::Index,
+        Some("js") => ImportModuleSpecifierEndingPreference::Js,
+        _ => ImportModuleSpecifierEndingPreference::Auto,
     }
 }
 
@@ -745,68 +704,11 @@ fn type_parsers(t: FieldType) -> Option<fn(&LspAny) -> FieldValue> {
 // `val.(T)` panics on another type, as the `let .. else` does here.
 fn type_serializers(t: FieldType) -> Option<fn(&FieldValue) -> LspAny> {
     match t {
-        FieldType::Tristate => Some(|val: &FieldValue| -> LspAny {
-            let FieldValue::Tristate(v) = val else {
-                panic!("interface conversion: interface {{}} is not core.Tristate")
-            };
-            match *v {
-                Tristate::True => LspAny::Bool(true),
-                Tristate::False => LspAny::Bool(false),
-                _ => LspAny::Null,
-            }
-        }),
-        FieldType::OrganizeImportsSort => Some(|val: &FieldValue| -> LspAny {
-            let FieldValue::OrganizeImportsSort(v) = val else {
-                panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsSort")
-            };
-            match *v {
-                OrganizeImportsSort::ORDINAL => LspAny::String("ordinal".to_string()),
-                OrganizeImportsSort::ORDINAL_IGNORE_CASE => {
-                    LspAny::String("ordinalIgnoreCase".to_string())
-                }
-                OrganizeImportsSort::NATURAL => LspAny::String("natural".to_string()),
-                OrganizeImportsSort::NATURAL_IGNORE_CASE => {
-                    LspAny::String("naturalIgnoreCase".to_string())
-                }
-                _ => LspAny::String("auto".to_string()),
-            }
-        }),
-        FieldType::OrganizeImportsCollation => Some(|val: &FieldValue| -> LspAny {
-            let FieldValue::OrganizeImportsCollation(v) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not lsutil.OrganizeImportsCollation"
-                )
-            };
-            if *v == OrganizeImportsCollation::UNICODE {
-                return LspAny::String("unicode".to_string());
-            }
-            LspAny::String("ordinal".to_string())
-        }),
-        FieldType::OrganizeImportsCaseFirst => Some(|val: &FieldValue| -> LspAny {
-            let FieldValue::OrganizeImportsCaseFirst(v) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not lsutil.OrganizeImportsCaseFirst"
-                )
-            };
-            match *v {
-                OrganizeImportsCaseFirst::LOWER => LspAny::String("lower".to_string()),
-                OrganizeImportsCaseFirst::UPPER => LspAny::String("upper".to_string()),
-                _ => LspAny::String("default".to_string()),
-            }
-        }),
-        FieldType::OrganizeImportsTypeOrder => Some(|val: &FieldValue| -> LspAny {
-            let FieldValue::OrganizeImportsTypeOrder(v) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not lsutil.OrganizeImportsTypeOrder"
-                )
-            };
-            match *v {
-                OrganizeImportsTypeOrder::LAST => LspAny::String("last".to_string()),
-                OrganizeImportsTypeOrder::INLINE => LspAny::String("inline".to_string()),
-                OrganizeImportsTypeOrder::FIRST => LspAny::String("first".to_string()),
-                _ => LspAny::String("auto".to_string()),
-            }
-        }),
+        FieldType::Tristate => Some(serialize_tristate),
+        FieldType::OrganizeImportsSort => Some(serialize_organize_imports_sort),
+        FieldType::OrganizeImportsCollation => Some(serialize_organize_imports_collation),
+        FieldType::OrganizeImportsCaseFirst => Some(serialize_organize_imports_case_first),
+        FieldType::OrganizeImportsTypeOrder => Some(serialize_organize_imports_type_order),
         // These enums distinguish an unset zero value (e.g. "") from their effective
         // default (e.g. "auto"): the parser promotes unset/unknown input to the
         // non-zero default. Plain string serialization would therefore write "" for
@@ -823,51 +725,130 @@ fn type_serializers(t: FieldType) -> Option<fn(&FieldValue) -> LspAny> {
         // already omits ""). The consumer must then treat the zero value as the
         // effective default. The two module-specifier enums are safe to convert (all
         // read sites already treat the "" zero identically to the promoted default).
-        FieldType::JsxAttributeCompletionStyle => Some(|val: &FieldValue| -> LspAny {
-            // TODO: make consistent with other enums (see note above). Unlike the
-            // module-specifier enums, the consumer in completions.go distinguishes
-            // JsxAttributeCompletionStyleUnknown from ...Auto, so converting this one
-            // requires updating that consumer to treat the zero value as "auto".
-            let FieldValue::JsxAttributeCompletionStyle(v) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not lsutil.JsxAttributeCompletionStyle"
-                )
-            };
-            if *v != JsxAttributeCompletionStyle::UNKNOWN {
-                return LspAny::String(v.0.to_string());
-            }
-            LspAny::Null
-        }),
-        FieldType::ImportModuleSpecifierPreference => Some(|val: &FieldValue| -> LspAny {
-            // TODO: make consistent with other enums (see note above): have the parser
-            // return the zero value (None) as its fallback and drop this serializer.
-            let FieldValue::ImportModuleSpecifierPreference(_) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierPreference"
-                )
-            };
-            let v = val.string();
-            if !v.is_empty() {
-                return LspAny::String(v);
-            }
-            LspAny::Null
-        }),
-        FieldType::ImportModuleSpecifierEndingPreference => Some(|val: &FieldValue| -> LspAny {
-            // TODO: make consistent with other enums (see note above): have the parser
-            // return the zero value (None) as its fallback and drop this serializer.
-            let FieldValue::ImportModuleSpecifierEndingPreference(_) = val else {
-                panic!(
-                    "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierEndingPreference"
-                )
-            };
-            let v = val.string();
-            if !v.is_empty() {
-                return LspAny::String(v);
-            }
-            LspAny::Null
-        }),
+        FieldType::JsxAttributeCompletionStyle => Some(serialize_jsx_attribute_completion_style),
+        FieldType::ImportModuleSpecifierPreference => {
+            Some(serialize_import_module_specifier_preference)
+        }
+        FieldType::ImportModuleSpecifierEndingPreference => {
+            Some(serialize_import_module_specifier_ending_preference)
+        }
         _ => None,
     }
+}
+
+/// The `core.Tristate` entry of Go `typeSerializers`: unknown is omitted (nil).
+fn serialize_tristate(val: &FieldValue) -> LspAny {
+    let FieldValue::Tristate(v) = val else {
+        panic!("interface conversion: interface {{}} is not core.Tristate")
+    };
+    match *v {
+        Tristate::True => LspAny::Bool(true),
+        Tristate::False => LspAny::Bool(false),
+        _ => LspAny::Null,
+    }
+}
+
+/// The `OrganizeImportsSort` entry of Go `typeSerializers`.
+fn serialize_organize_imports_sort(val: &FieldValue) -> LspAny {
+    let FieldValue::OrganizeImportsSort(v) = val else {
+        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsSort")
+    };
+    let text = match *v {
+        OrganizeImportsSort::ORDINAL => "ordinal",
+        OrganizeImportsSort::ORDINAL_IGNORE_CASE => "ordinalIgnoreCase",
+        OrganizeImportsSort::NATURAL => "natural",
+        OrganizeImportsSort::NATURAL_IGNORE_CASE => "naturalIgnoreCase",
+        _ => "auto",
+    };
+    LspAny::String(text.to_string())
+}
+
+/// The `OrganizeImportsCollation` entry of Go `typeSerializers`.
+fn serialize_organize_imports_collation(val: &FieldValue) -> LspAny {
+    let FieldValue::OrganizeImportsCollation(v) = val else {
+        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsCollation")
+    };
+    if *v == OrganizeImportsCollation::UNICODE {
+        return LspAny::String("unicode".to_string());
+    }
+    LspAny::String("ordinal".to_string())
+}
+
+/// The `OrganizeImportsCaseFirst` entry of Go `typeSerializers`.
+fn serialize_organize_imports_case_first(val: &FieldValue) -> LspAny {
+    let FieldValue::OrganizeImportsCaseFirst(v) = val else {
+        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsCaseFirst")
+    };
+    let text = match *v {
+        OrganizeImportsCaseFirst::LOWER => "lower",
+        OrganizeImportsCaseFirst::UPPER => "upper",
+        _ => "default",
+    };
+    LspAny::String(text.to_string())
+}
+
+/// The `OrganizeImportsTypeOrder` entry of Go `typeSerializers`.
+fn serialize_organize_imports_type_order(val: &FieldValue) -> LspAny {
+    let FieldValue::OrganizeImportsTypeOrder(v) = val else {
+        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsTypeOrder")
+    };
+    let text = match *v {
+        OrganizeImportsTypeOrder::LAST => "last",
+        OrganizeImportsTypeOrder::INLINE => "inline",
+        OrganizeImportsTypeOrder::FIRST => "first",
+        _ => "auto",
+    };
+    LspAny::String(text.to_string())
+}
+
+/// The `JsxAttributeCompletionStyle` entry of Go `typeSerializers`: the unset
+/// value is omitted (see the note in `type_serializers`).
+fn serialize_jsx_attribute_completion_style(val: &FieldValue) -> LspAny {
+    // TODO: make consistent with other enums (see note above). Unlike the
+    // module-specifier enums, the consumer in completions.go distinguishes
+    // JsxAttributeCompletionStyleUnknown from ...Auto, so converting this one
+    // requires updating that consumer to treat the zero value as "auto".
+    let FieldValue::JsxAttributeCompletionStyle(v) = val else {
+        panic!("interface conversion: interface {{}} is not lsutil.JsxAttributeCompletionStyle")
+    };
+    if *v != JsxAttributeCompletionStyle::UNKNOWN {
+        return LspAny::String(v.0.to_string());
+    }
+    LspAny::Null
+}
+
+/// The `ImportModuleSpecifierPreference` entry of Go `typeSerializers`: the
+/// unset value is omitted (see the note in `type_serializers`).
+fn serialize_import_module_specifier_preference(val: &FieldValue) -> LspAny {
+    // TODO: make consistent with other enums (see note above): have the parser
+    // return the zero value (None) as its fallback and drop this serializer.
+    let FieldValue::ImportModuleSpecifierPreference(_) = val else {
+        panic!(
+            "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierPreference"
+        )
+    };
+    non_empty_string_or_null(val.string())
+}
+
+/// The `ImportModuleSpecifierEndingPreference` entry of Go `typeSerializers`:
+/// the unset value is omitted (see the note in `type_serializers`).
+fn serialize_import_module_specifier_ending_preference(val: &FieldValue) -> LspAny {
+    // TODO: make consistent with other enums (see note above): have the parser
+    // return the zero value (None) as its fallback and drop this serializer.
+    let FieldValue::ImportModuleSpecifierEndingPreference(_) = val else {
+        panic!(
+            "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierEndingPreference"
+        )
+    };
+    non_empty_string_or_null(val.string())
+}
+
+/// A string value, or nil (omitted) for "".
+fn non_empty_string_or_null(v: String) -> LspAny {
+    if v.is_empty() {
+        return LspAny::Null;
+    }
+    LspAny::String(v)
 }
 
 // Go: ls/lsutil/userpreferences.go:525 configPathParsers (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
