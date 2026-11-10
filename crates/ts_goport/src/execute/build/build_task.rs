@@ -28,6 +28,7 @@ use crate::frontend::prelude::*;
 use crate::gostd::GoError;
 // PORT: testing
 use crate::execute::tsc::CommandLineTesting;
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime};
 
@@ -1438,6 +1439,27 @@ impl BuildTask {
         false
     }
 
+    /// PORT: not in Go (perf). Takes the parts that a prefetch thread made
+    /// for the up-to-date check (`StatusParts`), when they are for
+    /// `build_info_directory` and the file lists of `resolved` and
+    /// `build_info`; a prefetch for other inputs drops here.
+    fn matching_status_prefetch(
+        &mut self,
+        build_info_directory: &str,
+        resolved: &ParsedCommandLine,
+        build_info: &BuildInfo,
+    ) -> DropInBackground<Arc<StatusPrefetch>> {
+        let prefetched = self
+            .build_info_entry
+            .as_mut()
+            .and_then(|entry| entry.status_prefetch.take());
+        DropInBackground(prefetched.filter(|prefetched| {
+            prefetched.build_info_directory == build_info_directory
+                && prefetched.input_paths.len() == resolved.file_names().len()
+                && prefetched.file_names.len() == build_info.file_names.as_ref().map_or(0, Vec::len)
+        }))
+    }
+
     // Go: build/buildtask.go:348 (*BuildTask).getUpToDateStatus
     pub fn get_up_to_date_status(
         &mut self,
@@ -1538,19 +1560,19 @@ impl BuildTask {
             &build_info_path,
             &orchestrator.compare_paths_options().current_directory,
         ));
-        // PORT: perf. The parts that a prefetch thread computed, when
-        // they are for this directory and these file lists. They free on a
-        // thread when the check returns (`DropInBackground`).
-        let mut prefetched = DropInBackground(
-            self.build_info_entry
-                .as_mut()
-                .and_then(|entry| entry.status_prefetch.take()),
-        );
-        *prefetched = prefetched.take().filter(|prefetched| {
-            prefetched.build_info_directory == build_info_directory
-                && prefetched.input_paths.len() == resolved.file_names().len()
-                && prefetched.file_names.len() == build_info.file_names.as_ref().map_or(0, Vec::len)
-        });
+        // PORT: perf. The parts that a prefetch thread made, or else this
+        // check makes (`StatusParts`).
+        let mut parts = StatusParts {
+            prefetched: self.matching_status_prefetch(
+                &build_info_directory,
+                &resolved,
+                &build_info,
+            ),
+            build_info: &build_info,
+            build_info_directory: &build_info_directory,
+            compare_paths_options: orchestrator.compare_paths_options(),
+            own_reader: std::cell::OnceCell::new(),
+        };
         if options.is_incremental() {
             if !build_info.is_incremental() {
                 // Program options out of date
@@ -1602,32 +1624,12 @@ impl BuildTask {
         // PORT: perf. With a prefetch, the prefetch thread made the set
         // (`StatusPrefetch::input_path_set`).
         let mut own_seen_roots: FxHashSet<Path> = FxHashSet::default();
-        // Go `getBuildInfoRootInfoReader`, made once.
-        let mut owned_reader = None;
-        let make_reader = |owned_reader: &mut Option<BuildInfoRootInfoReader>| {
-            if prefetched.is_none() && owned_reader.is_none() {
-                *owned_reader = Some(build_info.get_build_info_root_info_reader(
-                    &build_info_directory,
-                    orchestrator.compare_paths_options(),
-                ));
-            }
-        };
         for (index, input_file) in resolved.file_names().iter().enumerate() {
             // PORT: perf. `toPath` first, so the mtime lookup does not
             // compute it again (`get_m_time_of_path`).
-            let owned_path;
-            let input_path = match &*prefetched {
-                Some(prefetched) => &prefetched.input_paths[index],
-                None => {
-                    owned_path = orchestrator.to_path(input_file);
-                    &owned_path
-                }
-            };
-            let prefetched_time = prefetched
-                .as_ref()
-                .and_then(|prefetched| prefetched.input_m_times.get(index).copied().flatten());
+            let input_path = parts.input_path(index, input_file, orchestrator);
             let input_time =
-                orchestrator.get_m_time_of_path(input_file, input_path, prefetched_time);
+                orchestrator.get_m_time_of_path(input_file, &input_path, parts.input_m_time(index));
             if input_time.is_none() {
                 return UpToDateStatus::with_data(
                     UpToDateStatusType::InputFileMissing,
@@ -1638,10 +1640,8 @@ impl BuildTask {
                 let mut version = String::new();
                 let mut current_version = String::new();
                 if build_info.is_incremental() {
-                    make_reader(&mut owned_reader);
-                    let reader = reader_of(&prefetched, &owned_reader);
                     let (build_info_file_info, resolved_input_path) =
-                        reader.get_build_info_file_info(input_path);
+                        parts.reader().get_build_info_file_info(&input_path);
                     if let Some(file_info) = build_info_file_info.map(|b| b.get_file_info())
                         && !file_info.version().is_empty()
                     {
@@ -1672,17 +1672,13 @@ impl BuildTask {
                     time: input_time,
                 };
             }
-            if prefetched.is_none() {
-                own_seen_roots.insert(input_path.clone());
+            if let Cow::Owned(input_path) = input_path {
+                own_seen_roots.insert(input_path);
             }
         }
-        let seen_roots = match &*prefetched {
-            Some(prefetched) => &prefetched.input_path_set,
-            None => &own_seen_roots,
-        };
+        let seen_roots = parts.seen_roots(&own_seen_roots);
 
-        make_reader(&mut owned_reader);
-        let reader = reader_of(&prefetched, &owned_reader);
+        let reader = parts.reader();
         for root in reader.roots() {
             let root: &Path = root;
             if !seen_roots.contains(root) {
@@ -1700,21 +1696,7 @@ impl BuildTask {
         }
 
         if build_info.is_incremental() {
-            let own_resolved_roots: FxHashSet<Path>;
-            let resolved_roots = match &*prefetched {
-                Some(prefetched) => &prefetched.resolved_roots,
-                None => {
-                    let mut resolved_roots = FxHashSet::default();
-                    for root in reader.roots() {
-                        let (_, resolved) = reader.get_build_info_file_info(root);
-                        if !resolved.as_str().is_empty() {
-                            resolved_roots.insert(resolved);
-                        }
-                    }
-                    own_resolved_roots = resolved_roots;
-                    &own_resolved_roots
-                }
-            };
+            let resolved_roots = parts.resolved_roots();
             let file_names = build_info.file_names.as_deref().unwrap_or_default();
             for (index, build_info_file_info) in build_info.file_infos.iter().flatten().enumerate()
             {
@@ -1724,22 +1706,8 @@ impl BuildTask {
                 if is_build_info_file_name_default_library(build_info_file_name) {
                     continue;
                 }
-                let owned: (String, Path);
-                let (input_file, input_path) = match &*prefetched {
-                    Some(prefetched) => {
-                        let (file, path) = &prefetched.file_names[index];
-                        (file, path)
-                    }
-                    None => {
-                        let input_file = get_normalized_absolute_path(
-                            build_info_file_name,
-                            &build_info_directory,
-                        );
-                        let input_path = orchestrator.to_path(&input_file);
-                        owned = (input_file, input_path);
-                        (&owned.0, &owned.1)
-                    }
-                };
+                let input = parts.build_info_input(index, build_info_file_name, orchestrator);
+                let (input_file, input_path) = (&input.0, &input.1);
                 // Root files are already checked
                 if seen_roots.contains(input_path) || resolved_roots.contains(input_path) {
                     continue;
@@ -1750,11 +1718,11 @@ impl BuildTask {
                 {
                     continue;
                 }
-                let prefetched_time = prefetched
-                    .as_ref()
-                    .and_then(|prefetched| prefetched.file_m_times.get(index).copied().flatten());
-                let input_time =
-                    orchestrator.get_m_time_of_path(input_file, input_path, prefetched_time);
+                let input_time = orchestrator.get_m_time_of_path(
+                    input_file,
+                    input_path,
+                    parts.file_m_time(index),
+                );
                 if input_time.is_none() {
                     // Input file that was part of the program is missing (eg: dependency was removed)
                     return UpToDateStatus::with_data(
@@ -1830,15 +1798,11 @@ impl BuildTask {
             // we can't be out of date because of it
             // inputTime will not be present if we just built this project or updated timestamps
             // - in that case we do want to either build or update timestamps
-            let skip = match upstream.task.borrow().status().input_output_file_and_time() {
-                Some(ref_input_output_file_and_time) => {
-                    ref_input_output_file_and_time.input.time.is_some()
-                        && ref_input_output_file_and_time.input.time
-                            < oldest_output_file_and_time.time
-                }
-                None => false,
-            };
-            if skip {
+            if let Some(ref_input_output_file_and_time) =
+                upstream.task.borrow().status().input_output_file_and_time()
+                && ref_input_output_file_and_time.input.time.is_some()
+                && ref_input_output_file_and_time.input.time < oldest_output_file_and_time.time
+            {
                 continue;
             }
 
@@ -1908,21 +1872,7 @@ impl BuildTask {
 
         // PORT: perf. Go normalizes each list twice, for the checks and for
         // `t.packageJsons`; here once, or on a prefetch thread.
-        let (package_jsons, missing_package_jsons) =
-            match prefetched.as_mut().and_then(Arc::get_mut) {
-                Some(prefetched) => (
-                    std::mem::take(&mut prefetched.package_jsons),
-                    std::mem::take(&mut prefetched.missing_package_jsons),
-                ),
-                None => (
-                    build_info
-                        .get_package_jsons(&build_info_directory)
-                        .collect::<Vec<_>>(),
-                    build_info
-                        .get_missing_package_jsons(&build_info_directory)
-                        .collect::<Vec<_>>(),
-                ),
-            };
+        let (package_jsons, missing_package_jsons) = parts.take_package_jsons();
         for package_json in &package_jsons {
             let package_json_time = orchestrator.get_m_time(package_json);
             if package_json_time.is_none() {
@@ -2355,15 +2305,123 @@ impl BuildTask {
     // PORT: see `new_task_write_file`.
 }
 
-/// The root info reader of an up-to-date check: the prefetched one, or the
-/// one that the check made.
-fn reader_of<'a>(
-    prefetched: &'a Option<Arc<StatusPrefetch>>,
-    owned: &'a Option<BuildInfoRootInfoReader>,
-) -> &'a BuildInfoRootInfoReader {
-    match prefetched {
-        Some(prefetched) => &prefetched.root_info_reader,
-        None => owned.as_ref().expect("the check made its root info reader"),
+/// PORT: not in Go (perf). The parts of `BuildTask::get_up_to_date_status`
+/// that a prefetch thread can make (`StatusPrefetch`): taken from the
+/// prefetch when there is one, else made by the check as Go makes them.
+/// The prefetch frees on a thread when the check returns
+/// (`DropInBackground`).
+struct StatusParts<'a> {
+    prefetched: DropInBackground<Arc<StatusPrefetch>>,
+    build_info: &'a BuildInfo,
+    build_info_directory: &'a str,
+    compare_paths_options: &'a ComparePathsOptions,
+    /// The root info reader that the check makes without a prefetch, once.
+    own_reader: std::cell::OnceCell<BuildInfoRootInfoReader>,
+}
+
+impl StatusParts<'_> {
+    /// Go `getBuildInfoRootInfoReader()` (a `core.Memoize`).
+    fn reader(&self) -> &BuildInfoRootInfoReader {
+        match &*self.prefetched {
+            Some(prefetched) => &prefetched.root_info_reader,
+            None => self.own_reader.get_or_init(|| {
+                self.build_info.get_build_info_root_info_reader(
+                    self.build_info_directory,
+                    self.compare_paths_options,
+                )
+            }),
+        }
+    }
+
+    /// The path of the root file `input_file` at `index` of
+    /// `resolved.FileNames()`. Owned when the check made it.
+    fn input_path(
+        &self,
+        index: usize,
+        input_file: &str,
+        orchestrator: &dyn BuildTaskOrchestrator,
+    ) -> Cow<'_, Path> {
+        match &*self.prefetched {
+            Some(prefetched) => Cow::Borrowed(&prefetched.input_paths[index]),
+            None => Cow::Owned(orchestrator.to_path(input_file)),
+        }
+    }
+
+    /// The prefetched mtime of the root file at `index`, if it was read.
+    fn input_m_time(&self, index: usize) -> Option<Option<SystemTime>> {
+        self.prefetched
+            .as_ref()
+            .and_then(|prefetched| prefetched.input_m_times.get(index).copied().flatten())
+    }
+
+    /// Go `seenRoots` after the loop over the root files: the prefetched
+    /// set, or `own`, the set that the check made.
+    fn seen_roots<'b>(&'b self, own: &'b FxHashSet<Path>) -> &'b FxHashSet<Path> {
+        match &*self.prefetched {
+            Some(prefetched) => &prefetched.input_path_set,
+            None => own,
+        }
+    }
+
+    /// Part of Go `getUpToDateStatus`: `resolvedRoots`, the resolved path
+    /// of each root of the root info reader.
+    fn resolved_roots(&self) -> Cow<'_, FxHashSet<Path>> {
+        if let Some(prefetched) = &*self.prefetched {
+            return Cow::Borrowed(&prefetched.resolved_roots);
+        }
+        let reader = self.reader();
+        let mut resolved_roots = FxHashSet::default();
+        for root in reader.roots() {
+            let (_, resolved) = reader.get_build_info_file_info(root);
+            if !resolved.as_str().is_empty() {
+                resolved_roots.insert(resolved);
+            }
+        }
+        Cow::Owned(resolved_roots)
+    }
+
+    /// The build info file name `build_info_file_name` at `index`, made
+    /// absolute in the build info directory, and its path.
+    fn build_info_input(
+        &self,
+        index: usize,
+        build_info_file_name: &str,
+        orchestrator: &dyn BuildTaskOrchestrator,
+    ) -> Cow<'_, (String, Path)> {
+        if let Some(prefetched) = &*self.prefetched {
+            return Cow::Borrowed(&prefetched.file_names[index]);
+        }
+        let input_file =
+            get_normalized_absolute_path(build_info_file_name, self.build_info_directory);
+        let input_path = orchestrator.to_path(&input_file);
+        Cow::Owned((input_file, input_path))
+    }
+
+    /// The prefetched mtime of the build info file at `index`, if it was
+    /// read.
+    fn file_m_time(&self, index: usize) -> Option<Option<SystemTime>> {
+        self.prefetched
+            .as_ref()
+            .and_then(|prefetched| prefetched.file_m_times.get(index).copied().flatten())
+    }
+
+    /// Go `buildInfo.GetPackageJsons(buildInfoDirectory)` and
+    /// `GetMissingPackageJsons`, collected, or taken from the prefetch.
+    fn take_package_jsons(&mut self) -> (Vec<String>, Vec<String>) {
+        match self.prefetched.as_mut().and_then(Arc::get_mut) {
+            Some(prefetched) => (
+                std::mem::take(&mut prefetched.package_jsons),
+                std::mem::take(&mut prefetched.missing_package_jsons),
+            ),
+            None => (
+                self.build_info
+                    .get_package_jsons(self.build_info_directory)
+                    .collect::<Vec<_>>(),
+                self.build_info
+                    .get_missing_package_jsons(self.build_info_directory)
+                    .collect::<Vec<_>>(),
+            ),
+        }
     }
 }
 
