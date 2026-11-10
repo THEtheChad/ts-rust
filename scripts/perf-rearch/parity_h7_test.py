@@ -25,6 +25,7 @@ the Go oracle. Each finding of Astra's H7 review has its control:
                    (the proxy fails: DIFF); fds: the server has no fd but 0, 1 and 2
   7 regen --only of Astra's version 3 file: refused (unit)
   8 a changed Go stderr changes Go's pinned evidence (unit)
+  9 dyn-config-include-dirs-insensitive exists, is in the quick manifest and is pinned for B2 (unit)
 and the round 1 controls: pass, wrong-path (LOST and NEW: PARITY FAIL), crash, late-exit, malformed, hang,
 nondet (rs-nondet; as Go, GO-BROKEN in full and quick), home-write, read-typings, and the cache controls on
 a scenario of its own (a second run reads the cache; another case flag, one fixture byte more and a
@@ -284,6 +285,19 @@ def unit():
               r.returncode == 1 and 'version 3' in r.stdout and not out.exists(), r.stdout + r.stderr)
     else:
         check('regen --only: Astra\'s version 3 file and the evidence runs exist', False, (v3, full))
+
+    # finding 9: the directory-collision scenario exists, quick runs it, and B2's pin tracks it
+    name9 = 'dyn-config-include-dirs-insensitive'
+    try:
+        sc9 = next((x for x in api.load_scenarios() if x['name'] == name9), None)
+        files9 = sorted((sc9 or {}).get('fs', {}).get('files', {}))
+        pins = grandfather.load((HERE / 'parity-grandfathered.json').read_text(), 'checkout')
+        ok9 = (sc9 is not None and sc9.get('caseSensitive') is False and any(f.endswith('/src/A/x.ts') for f in files9)
+               and any(f.endswith('/src/a/y.ts') for f in files9) and name9 in api.modes.working_manifest().api
+               and 'B2' in pins.get(f'api/{name9}', {}).get('reason', ''))
+        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick, pinned for B2', ok9, files9)
+    except Exception as e:  # noqa: BLE001 (an older harness lacks what this reads)
+        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick, pinned for B2', False, e)
 
     try:
         grandfather.validate({'about': 'x', 'version': grandfather.VERSION, 'items': {'api/x-y': {
