@@ -225,3 +225,30 @@ No switch added or removed.
   API.
 - `crate::checker::if_else` imported from scanner_p2, binder_p1, printer_p1
   and module/entrypoints (no change to checker files).
+
+## Round 2 (Astra: ACCEPT WITH FIXES on d40740836)
+
+Rebased onto `perf/first-principles` @ `0f4f1bf8e` (Q6, W2-CC, W2-EF,
+W2-EF2): no file in common with this lane, no conflict. The lib blobs are
+not stale after the rebase (`lib-blobs.sh stale` exit 0). Code head
+`0745ade5e` (the rebased d40740836; logs under `~/.cache/perf-rearch/w2-fe/r2*`).
+
+- **Gating** (`quality.sh gating 0745ade5e`): **GATING OK**, 0 findings not
+  allowed, 3 allowed, 0 stale allow entries.
+- **Tests** on this source (`run-cargo-capped.sh test --release
+  --workspace`, `TS_GO_REPO` at the pin): plain 52 binaries, 2,189 passed,
+  0 failed, 2 ignored; with `ts_goport/diagnostics,ts_goport/test-hooks`
+  53 binaries, 2,217 passed, 0 failed, 2 ignored. (The counts are higher than
+  round 1's because the base now has the merged lanes' tests.)
+- **Clippy**: CI's command on 1.95.0 (`cargo clippy --locked -p ts_goport
+  -p goport_core -p goport_util -p goport_lsproto --all-targets -- -D
+  warnings`), plain and with the features: clean, 0 warnings.
+- **Parity quick** (release bin of `0745ade5e`, base `base-current`,
+  `parity-quick-0745ade5e`): **PARITY OK**: 142,793 items, 0 lost, 0 not run, 0
+  new items not good, 0 crashes on good items, 2 grandfathered. cli 24 MATCH;
+  tests 137,774 PASS, 1,729 ignored; lsp 1,761 MATCH, 5 GO-BROKEN; fuzz 1,498
+  MATCH, 2 DIFF (grandfathered).
+
+Left as root asked: `common_directory_of_files` (outputpaths.rs, the Go
+difference that predates this lane) and the `crate::checker::if_else`
+imports (Q8 moves the helper).
