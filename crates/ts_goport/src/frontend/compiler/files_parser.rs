@@ -518,6 +518,159 @@ fn all_roots_cached(
         })
 }
 
+/// The parse worker pool of a load (Go `parse`'s goroutines), or `None`
+/// when the load runs without workers: a single-threaded load, a host with
+/// its own file cache, or a host that gives every root file from its cache.
+/// An early pool (`start_default_lib_prefetch`) goes when it can't be used.
+// PORT: not in Go (perf), where each parse task is a goroutine.
+fn prefetch_pool_for_load(
+    single_threaded: bool,
+    loader: &FileLoader,
+    tasks: &[ParseTaskRef],
+) -> Option<PrefetchPool> {
+    // Workers that `start_default_lib_prefetch` started for this load.
+    let mut early = EARLY_POOL.with(|early| early.borrow_mut().take());
+    // The worker parses of these paths are freeable file versions
+    // (`PrefetchQueue::freeable`). An early pool queued its jobs before
+    // this set existed, so its parses would be static: it goes.
+    let freeable = if loader.host.freeable_worker_parses() {
+        crate::ast::published_paths()
+    } else {
+        Arc::default()
+    };
+    if !freeable.is_empty()
+        && let Some(early) = early.take()
+    {
+        early.discard();
+    }
+    // A host with its own file cache (`CompilerHost::prefetch_parses`)
+    // gets no workers. This does not set `single_threaded`, so the
+    // queue order stays that of a parallel load.
+    let mut workers = if single_threaded || !loader.host.prefetch_parses() {
+        0
+    } else {
+        prefetch_worker_count()
+    };
+    // PERF: a later `tsc -b` program gets its shared `.d.ts` and `.json`
+    // files from the build host's cache, and a language server project
+    // that is made again gets most files from the parse cache. A worker
+    // parse of such a file is not used: it takes CPU, the loader waits
+    // for running parses at the end, and its nodes stay in the worker's
+    // AST arena. The workers still resolve their references, as Go parse
+    // tasks do for a file that the host gives from its cache.
+    let cached = if workers == 0 {
+        FxHashMap::default()
+    } else {
+        loader.host.cached_source_file_refs()
+    };
+    // When the host gives every root file from its cache, no worker
+    // parse can be used, so no worker starts. The loader parses the
+    // other files itself, as a load with no workers.
+    if !cached.is_empty() && all_roots_cached(loader, tasks, &cached) {
+        CACHED_LOADS.fetch_add(1, AtomicOrdering::Relaxed);
+        workers = 0;
+    }
+    if workers == 0 {
+        if let Some(early) = early {
+            early.discard();
+        }
+        return None;
+    }
+    Some(start_prefetch_pool(
+        loader, early, workers, cached, freeable,
+    ))
+}
+
+/// The pool of a load's `workers`: the early pool when it fits this load,
+/// else a new one, set up with the load's view, the host stat cache, the
+/// resolve config, the `cached` and `freeable` files and the project
+/// reference redirects (`set_prefetch_redirects`).
+// PORT: not in Go (perf).
+fn start_prefetch_pool(
+    loader: &FileLoader,
+    early: Option<PrefetchPool>,
+    workers: usize,
+    cached: FxHashMap<String, Arc<FileRefs>>,
+    freeable: Arc<FxHashSet<String>>,
+) -> PrefetchPool {
+    POOL_LOADS.fetch_add(1, AtomicOrdering::Relaxed);
+    let config = PrefetchConfig::of_loader(loader);
+    // The workers use the cache of the loader's file system
+    // (`SharedStatCache`). Only on the plain OS file system: another
+    // file system caches other files than the workers read. It is set
+    // before the resolve config, so a worker's resolver sees it
+    // (`WorkerResolver::new`).
+    let build_host_cache = loader
+        .host
+        .stat_cache()
+        .filter(|_| loader.host.is_plain_os_fs());
+    let resolve = WorkerResolveConfig::of_loader(loader);
+    // An early pool whose workers resolve already (its root jobs) fits
+    // only with the same config, and with no host cache, which they
+    // did not see.
+    let fits = |pool: &PrefetchPool| {
+        pool.shared.config == config
+            && pool.shared.resolve.get().is_none_or(|early| {
+                build_host_cache.is_none()
+                    && match (early, &resolve) {
+                        (Some(early), Some(resolve)) => early.same(resolve),
+                        (early, resolve) => early.is_none() && resolve.is_none(),
+                    }
+            })
+    };
+    let mut pool = match early {
+        Some(pool) if fits(&pool) => pool,
+        other => {
+            if let Some(other) = other {
+                other.discard();
+            }
+            PrefetchPool::start(config, workers)
+        }
+    };
+    prefetch_count!(pool.shared, |c| c.loader_started =
+        Some(std::time::Instant::now()));
+    pool.shared.take_load_view();
+    if let Some(cache) = build_host_cache {
+        cache.start_load();
+        let _ = pool.shared.stats.host.set(cache);
+    }
+    // An early pool with root jobs has this config already.
+    let _ = pool.shared.resolve.set(resolve);
+    {
+        let mut queue = lock(&pool.shared.queue);
+        queue.cached = cached;
+        queue.freeable = freeable;
+    }
+    set_prefetch_redirects(loader, &pool);
+    pool
+}
+
+/// A program that does not use the sources of its references loads their
+/// output `.d.ts` files in place of the sources (Go `getParseFileRedirect`),
+/// so the workers parse those.
+// PORT: not in Go (perf).
+fn set_prefetch_redirects(loader: &FileLoader, pool: &PrefetchPool) {
+    if loader.opts.can_use_project_reference_source() {
+        return;
+    }
+    let redirects: FxHashMap<String, (String, Path)> = loader
+        .project_reference_file_mapper
+        .borrow()
+        .source_to_project_reference
+        .values()
+        .filter(|reference| !reference.output_dts.is_empty())
+        .map(|reference| {
+            let output = reference.output_dts.clone();
+            let path = loader.to_path(&output);
+            (reference.source.clone(), (output, path))
+        })
+        .collect();
+    pool.shared
+        .has_redirects
+        .store(!redirects.is_empty(), AtomicOrdering::Relaxed);
+    lock(&pool.shared.queue).redirects = redirects;
+}
+
 impl FilesParser {
     // Go: filesparser.go:268 (*filesParser).parse
     pub fn parse(&mut self, loader: &FileLoader, tasks: &[ParseTaskRef]) {
@@ -527,129 +680,29 @@ impl FilesParser {
         }
         // A large program gets more parse workers (below) and bind threads.
         let large = crate::program::note_program_load(tasks.len());
-        // Workers that `start_default_lib_prefetch` started for this load.
-        let mut early = EARLY_POOL.with(|early| early.borrow_mut().take());
-        // The worker parses of these paths are freeable file versions
-        // (`PrefetchQueue::freeable`). An early pool queued its jobs before
-        // this set existed, so its parses would be static: it goes.
-        let freeable = if loader.host.freeable_worker_parses() {
-            crate::ast::published_paths()
-        } else {
-            Arc::default()
-        };
-        if !freeable.is_empty()
-            && let Some(early) = early.take()
-        {
-            early.discard();
-        }
-        // A host with its own file cache (`CompilerHost::prefetch_parses`)
-        // gets no workers. This does not set `single_threaded`, so the
-        // queue order stays that of a parallel load.
-        let mut workers = if self.single_threaded || !loader.host.prefetch_parses() {
-            0
-        } else {
-            prefetch_worker_count()
-        };
-        // PERF: a later `tsc -b` program gets its shared `.d.ts` and `.json`
-        // files from the build host's cache, and a language server project
-        // that is made again gets most files from the parse cache. A worker
-        // parse of such a file is not used: it takes CPU, the loader waits
-        // for running parses at the end, and its nodes stay in the worker's
-        // AST arena. The workers still resolve their references, as Go parse
-        // tasks do for a file that the host gives from its cache.
-        let cached = if workers == 0 {
-            FxHashMap::default()
-        } else {
-            loader.host.cached_source_file_refs()
-        };
-        // When the host gives every root file from its cache, no worker
-        // parse can be used, so no worker starts. The loader parses the
-        // other files itself, as a load with no workers.
-        if !cached.is_empty() && all_roots_cached(loader, tasks, &cached) {
-            CACHED_LOADS.fetch_add(1, AtomicOrdering::Relaxed);
-            workers = 0;
-        }
-        if workers == 0 {
-            if let Some(early) = early {
-                early.discard();
-            }
-            // Tests (diagnostics): see the hook below.
+        let Some(pool) = prefetch_pool_for_load(self.single_threaded, loader, tasks) else {
+            // Tests (diagnostics): see the hook in `parse_with_workers`.
             #[cfg(feature = "diagnostics")]
             if super::resolve_ahead::mode() == super::resolve_ahead::Mode::Off {
                 super::resolve_ahead::after_first_load_workers();
             }
             self.run(loader, tasks);
             return;
-        }
-        POOL_LOADS.fetch_add(1, AtomicOrdering::Relaxed);
-        let config = PrefetchConfig::of_loader(loader);
-        // The workers use the cache of the loader's file system
-        // (`SharedStatCache`). Only on the plain OS file system: another
-        // file system caches other files than the workers read. It is set
-        // before the resolve config, so a worker's resolver sees it
-        // (`WorkerResolver::new`).
-        let build_host_cache = loader
-            .host
-            .stat_cache()
-            .filter(|_| loader.host.is_plain_os_fs());
-        let resolve = WorkerResolveConfig::of_loader(loader);
-        // An early pool whose workers resolve already (its root jobs) fits
-        // only with the same config, and with no host cache, which they
-        // did not see.
-        let fits = |pool: &PrefetchPool| {
-            pool.shared.config == config
-                && pool.shared.resolve.get().is_none_or(|early| {
-                    build_host_cache.is_none()
-                        && match (early, &resolve) {
-                            (Some(early), Some(resolve)) => early.same(resolve),
-                            (early, resolve) => early.is_none() && resolve.is_none(),
-                        }
-                })
         };
-        let mut pool = match early {
-            Some(pool) if fits(&pool) => pool,
-            other => {
-                if let Some(other) = other {
-                    other.discard();
-                }
-                PrefetchPool::start(config, workers)
-            }
-        };
-        prefetch_count!(pool.shared, |c| c.loader_started =
-            Some(std::time::Instant::now()));
-        pool.shared.take_load_view();
-        if let Some(cache) = build_host_cache {
-            cache.start_load();
-            let _ = pool.shared.stats.host.set(cache);
-        }
-        // An early pool with root jobs has this config already.
-        let _ = pool.shared.resolve.set(resolve);
-        {
-            let mut queue = lock(&pool.shared.queue);
-            queue.cached = cached;
-            queue.freeable = freeable;
-        }
-        // A program that does not use the sources of its references loads
-        // their output `.d.ts` files in place of the sources (Go
-        // `getParseFileRedirect`), so the workers parse those.
-        if !loader.opts.can_use_project_reference_source() {
-            let redirects: FxHashMap<String, (String, Path)> = loader
-                .project_reference_file_mapper
-                .borrow()
-                .source_to_project_reference
-                .values()
-                .filter(|reference| !reference.output_dts.is_empty())
-                .map(|reference| {
-                    let output = reference.output_dts.clone();
-                    let path = loader.to_path(&output);
-                    (reference.source.clone(), (output, path))
-                })
-                .collect();
-            pool.shared
-                .has_redirects
-                .store(!redirects.is_empty(), AtomicOrdering::Relaxed);
-            lock(&pool.shared.queue).redirects = redirects;
-        }
+        self.parse_with_workers(loader, tasks, pool, large);
+    }
+
+    /// Go `parse` with the parse workers of `pool` (`prefetch_pool_for_load`):
+    /// queue the root tasks, run the queue, then close the pool and free its
+    /// state off this thread.
+    // PORT: not in Go (perf), where each parse task is a goroutine.
+    fn parse_with_workers(
+        &mut self,
+        loader: &FileLoader,
+        tasks: &[ParseTaskRef],
+        mut pool: PrefetchPool,
+        large: bool,
+    ) {
         let prefetch = PrefetchGuard::install(pool.shared.clone());
         self.start(loader, tasks, 0);
         pool.shared
