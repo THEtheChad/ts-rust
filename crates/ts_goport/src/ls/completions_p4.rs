@@ -1508,11 +1508,11 @@ impl LanguageService {
                         LiteralValue::String(v) => {
                             let literal = factory.new_string_literal(
                                 v,
-                                if quote_preference == lsutil::QuotePreference::SINGLE {
-                                    TokenFlags::SINGLE_QUOTE
-                                } else {
-                                    TokenFlags::NONE
-                                },
+                                if_else(
+                                    quote_preference == lsutil::QuotePreference::SINGLE,
+                                    TokenFlags::SINGLE_QUOTE,
+                                    TokenFlags::NONE,
+                                ),
                             );
                             elements.push(literal);
                         }
@@ -1575,11 +1575,11 @@ impl LanguageService {
                 sort_text: Some(SORT_TEXT_GLOBALS_OR_KEYWORDS.to_string()),
                 insert_text: str_ptr_to(&insert_text),
                 additional_text_edits,
-                insert_text_format: if client_supports_item_snippet(ctx) {
-                    Some(lsproto::InsertTextFormat::SNIPPET)
-                } else {
-                    None
-                },
+                insert_text_format: if_else(
+                    client_supports_item_snippet(ctx),
+                    Some(lsproto::InsertTextFormat::SNIPPET),
+                    None,
+                ),
                 data: Some(lsproto::CompletionItemData {
                     file_name: source_file_original_file_name(file).to_string(),
                     position,

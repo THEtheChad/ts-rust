@@ -941,13 +941,13 @@ impl Checker {
                         let target_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
                             let p = self
                                 .get_property_of_type(tuple_or_array_like_target_parts, &prop_name);
-                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                            self.sym(or_else(p, self.unknown_symbol))
                                 .flags
                                 .intersects(SymbolFlags::OPTIONAL)
                         };
                         let source_is_optional = prop_name != INTERNAL_SYMBOL_NAME_MISSING && {
                             let p = self.get_property_of_type(source, &prop_name);
-                            self.sym(or_else_symbol(p, self.unknown_symbol))
+                            self.sym(or_else(p, self.unknown_symbol))
                                 .flags
                                 .intersects(SymbolFlags::OPTIONAL)
                         };

@@ -1094,10 +1094,12 @@ impl Checker {
             self.inference_context_mut(n).inferences[index].inferred_type =
                 if inferred_type.is_some() {
                     inferred_type
-                } else if n_flags.intersects(InferenceFlags::ANY_DEFAULT) {
-                    self.any_type
                 } else {
-                    self.unknown_type
+                    if_else(
+                        n_flags.intersects(InferenceFlags::ANY_DEFAULT),
+                        self.any_type,
+                        self.unknown_type,
+                    )
                 };
             let constraint = self.get_constraint_of_type_parameter(type_parameter);
             if constraint.is_some() {
@@ -1132,24 +1134,23 @@ impl Checker {
                             filtered_by_constraint = self.map_type(
                                 inferred_type,
                                 &mut |c: &mut Checker, t: TypeId| -> TypeId {
-                                    if (*cmp)(c, t, constraint_with_this, false) != Ternary::FALSE {
-                                        t
-                                    } else {
-                                        c.never_type
-                                    }
+                                    if_else(
+                                        (*cmp)(c, t, constraint_with_this, false) != Ternary::FALSE,
+                                        t,
+                                        c.never_type,
+                                    )
                                 },
                             );
                         }
-                        inferred_type = if filtered_by_constraint.is_some()
-                            && !self
-                                .ty(filtered_by_constraint)
-                                .flags
-                                .intersects(TypeFlags::NEVER)
-                        {
-                            filtered_by_constraint
-                        } else {
-                            TypeId::NIL
-                        };
+                        inferred_type = if_else(
+                            filtered_by_constraint.is_some()
+                                && !self
+                                    .ty(filtered_by_constraint)
+                                    .flags
+                                    .intersects(TypeFlags::NEVER),
+                            filtered_by_constraint,
+                            TypeId::NIL,
+                        );
                     }
                 }
                 if inferred_type.is_nil() {
@@ -1163,11 +1164,8 @@ impl Checker {
                         (*compare_types)(self, fallback_type, fallback_with_this, false)
                             != Ternary::FALSE
                     };
-                    inferred_type = if fallback_satisfies {
-                        fallback_type
-                    } else {
-                        instantiated_constraint
-                    };
+                    inferred_type =
+                        if_else(fallback_satisfies, fallback_type, instantiated_constraint);
                 }
                 self.inference_context_mut(n).inferences[index].inferred_type = inferred_type;
             }

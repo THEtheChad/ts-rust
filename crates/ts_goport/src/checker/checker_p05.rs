@@ -286,7 +286,7 @@ impl Checker {
                 // iteratedType may be undefined. In this case, we still want to check the structure of
                 // varExpr, in particular making sure it's a valid LeftHandSideExpression. But we'd like
                 // to short circuit the type relation checking as much as possible, so we pass the unknownType.
-                let source_type = or_else_type(iterated_type, self.error_type);
+                let source_type = or_else(iterated_type, self.error_type);
                 self.check_destructuring_assignment(
                     var_expr,
                     source_type,
@@ -389,7 +389,7 @@ impl Checker {
                 }
             } else if self.get_return_type_from_annotation(container).is_some() {
                 let unwrapped = self.unwrap_return_type(return_type, function_flags);
-                let unwrapped_return_type = or_else_type(unwrapped, return_type);
+                let unwrapped_return_type = or_else(unwrapped, return_type);
                 self.check_return_expression(
                     container,
                     unwrapped_return_type,
@@ -781,7 +781,7 @@ impl Checker {
                     self.check_type_assignable_to(
                         static_type,
                         without_signatures,
-                        or_else_node(node.name(), node),
+                        or_else(node.name(), node),
                         Some(
                             diag::Class_static_side_0_incorrectly_extends_base_class_static_side_1,
                         ),
@@ -794,7 +794,7 @@ impl Checker {
                 {
                     if !self.is_mixin_constructor_type(static_type) {
                         self.error(
-                            or_else_node(node.name(), node),
+                            or_else(node.name(), node),
                             diag::A_mixin_class_must_have_a_constructor_with_a_single_rest_parameter_of_type_any,
                             args![],
                         );
@@ -810,7 +810,7 @@ impl Checker {
                         }) && !has_syntactic_modifier(node, ModifierFlags::ABSTRACT)
                         {
                             self.error(
-                                or_else_node(node.name(), node),
+                                or_else(node.name(), node),
                                 diag::A_mixin_class_that_extends_from_a_type_variable_containing_an_abstract_construct_signature_must_also_be_declared_abstract,
                                 args![],
                             );
@@ -1136,7 +1136,7 @@ impl Checker {
                     if !self.check_type_assignable_to_ex(
                         prop_type,
                         base_prop_type,
-                        or_else_node(member.name(), member),
+                        or_else(member.name(), member),
                         None, /*headMessage*/
                         Some(&mut diags),
                     ) {
@@ -1159,7 +1159,7 @@ impl Checker {
             self.check_type_assignable_to(
                 type_with_this,
                 base_with_this,
-                or_else_node(node.name(), node),
+                or_else(node.name(), node),
                 Some(broad_diag),
             );
         }
@@ -1316,12 +1316,12 @@ impl Checker {
                     let overridden_instance_accessor = base_property_flags == SymbolFlags::PROPERTY
                         && derived_property_flags != SymbolFlags::PROPERTY;
                     if overridden_instance_property || overridden_instance_accessor {
-                        let error_message = if overridden_instance_property {
-                            diag::X_0_is_defined_as_an_accessor_in_class_1_but_is_overridden_here_in_2_as_an_instance_property
-                        } else {
-                            diag::X_0_is_defined_as_a_property_in_class_1_but_is_overridden_here_in_2_as_an_accessor
-                        };
-                        let error_node = or_else_node(
+                        let error_message = if_else(
+                            overridden_instance_property,
+                            diag::X_0_is_defined_as_an_accessor_in_class_1_but_is_overridden_here_in_2_as_an_instance_property,
+                            diag::X_0_is_defined_as_a_property_in_class_1_but_is_overridden_here_in_2_as_an_accessor,
+                        );
+                        let error_node = or_else(
                             get_name_of_declaration(derived_value_declaration),
                             derived_value_declaration,
                         );
@@ -1364,7 +1364,7 @@ impl Checker {
                                 )
                             {
                                 let error_message = diag::Property_0_will_overwrite_the_base_property_in_1_If_this_is_intentional_add_an_initializer_Otherwise_add_a_declare_modifier_or_remove_the_redundant_declaration;
-                                let error_node = or_else_node(
+                                let error_node = or_else(
                                     get_name_of_declaration(derived_value_declaration),
                                     derived_value_declaration,
                                 );
@@ -1394,7 +1394,7 @@ impl Checker {
                 } else {
                     error_message = diag::Class_0_defines_instance_member_property_1_but_extended_class_2_defines_it_as_instance_member_function;
                 }
-                let error_node = or_else_node(
+                let error_node = or_else(
                     get_name_of_declaration(derived_value_declaration),
                     derived_value_declaration,
                 );

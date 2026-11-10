@@ -1104,13 +1104,11 @@ pub fn get_meaning_from_location(node: Node) -> SemanticMeaning {
         //     import a = |b.c|.d; // Namespace
         let mut name = node;
         if node.kind() != SyntaxKind::QualifiedName {
-            name = if node.parent().kind() == SyntaxKind::QualifiedName
-                && node.parent().right() == node
-            {
-                node.parent()
-            } else {
-                Node::NIL
-            };
+            name = if_else(
+                node.parent().kind() == SyntaxKind::QualifiedName && node.parent().right() == node,
+                node.parent(),
+                Node::NIL,
+            );
         }
         if name.is_some() && name.parent().kind() == SyntaxKind::ImportEqualsDeclaration {
             return SemanticMeaning::ALL;
@@ -2034,11 +2032,6 @@ pub fn go_check_slice_bounds(text: &str, lo: i32, hi: i32) {
             "runtime error: slice bounds out of range [{lo}:{hi}]"
         ));
     }
-}
-
-/// Go `core.OrElse(value, fallback)` on nodes: `value` unless it is nil.
-pub fn or_else_node(value: Node, fallback: Node) -> Node {
-    if value.is_some() { value } else { fallback }
 }
 
 #[cfg(test)]

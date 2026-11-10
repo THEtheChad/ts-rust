@@ -1265,8 +1265,8 @@ impl Checker {
             iteration_types =
                 self.get_iteration_types_of_generator_function_return_type(return_type, is_async);
         }
-        let signature_yield_type = or_else_type(iteration_types.yield_type, self.any_type);
-        let signature_next_type = or_else_type(iteration_types.next_type, self.any_type);
+        let signature_yield_type = or_else(iteration_types.yield_type, self.any_type);
+        let signature_next_type = or_else(iteration_types.next_type, self.any_type);
         let yielded_type = self.get_yielded_type_of_yield_expression(
             node,
             yield_expression_type,
@@ -1274,7 +1274,7 @@ impl Checker {
             is_async,
         );
         if return_type.is_some() && yielded_type.is_some() {
-            let error_node = or_else_node(node.expression(), node);
+            let error_node = or_else(node.expression(), node);
             self.check_type_assignable_to_and_optionally_elaborate(
                 yielded_type,
                 signature_yield_type,
@@ -1296,7 +1296,7 @@ impl Checker {
                 yield_expression_type,
                 node.expression(),
             );
-            return or_else_type(t, self.any_type);
+            return or_else(t, self.any_type);
         }
         if return_type.is_some() {
             let t = self.get_iteration_type_of_generator_function_return_type(
@@ -1304,7 +1304,7 @@ impl Checker {
                 return_type,
                 is_async,
             );
-            return or_else_type(t, self.any_type);
+            return or_else(t, self.any_type);
         }
         let mut t = self.get_contextual_iteration_type(IterationTypeKind::NEXT, fn_);
         if t.is_nil() {

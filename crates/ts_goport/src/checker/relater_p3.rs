@@ -1690,11 +1690,11 @@ impl Checker {
                 && self.has_excess_properties(r, source, target, report_errors)
             {
                 if report_errors {
-                    let error_target = if self.ty(original_target).alias.is_some() {
-                        original_target
-                    } else {
-                        target
-                    };
+                    let error_target = if_else(
+                        self.ty(original_target).alias.is_some(),
+                        original_target,
+                        target,
+                    );
                     self.report_relation_error(r, head_message, source, error_target);
                 }
                 return Ternary::FALSE;
@@ -1721,18 +1721,16 @@ impl Checker {
                 && !self.has_common_properties(source, target, is_comparing_jsx_attributes)
             {
                 if report_errors {
-                    let source_string =
-                        self.type_to_string_exported(if self.ty(original_source).alias.is_some() {
-                            original_source
-                        } else {
-                            source
-                        });
-                    let target_string =
-                        self.type_to_string_exported(if self.ty(original_target).alias.is_some() {
-                            original_target
-                        } else {
-                            target
-                        });
+                    let source_string = self.type_to_string_exported(if_else(
+                        self.ty(original_source).alias.is_some(),
+                        original_source,
+                        source,
+                    ));
+                    let target_string = self.type_to_string_exported(if_else(
+                        self.ty(original_target).alias.is_some(),
+                        original_target,
+                        target,
+                    ));
                     let calls = self.get_signatures_of_type(source, SignatureKind::CALL);
                     let constructs = self.get_signatures_of_type(source, SignatureKind::CONSTRUCT);
                     if !calls.is_empty() && {

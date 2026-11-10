@@ -314,12 +314,10 @@ impl Checker {
                     }
                     if single_prop.is_nil() {
                         single_prop = prop;
-                        let accessor = prop_symbol_flags & SymbolFlags::ACCESSOR;
-                        prop_flags = if accessor != SymbolFlags::NONE {
-                            accessor
-                        } else {
-                            SymbolFlags::PROPERTY
-                        };
+                        prop_flags = or_else(
+                            prop_symbol_flags & SymbolFlags::ACCESSOR,
+                            SymbolFlags::PROPERTY,
+                        );
                     } else if prop != single_prop {
                         let is_instantiation =
                             self.get_target_symbol(prop) == self.get_target_symbol(single_prop);

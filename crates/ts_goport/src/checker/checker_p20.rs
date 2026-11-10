@@ -1077,11 +1077,11 @@ impl Checker {
                 // Widening an empty object literal transitions from a highly restrictive type to
                 // a highly inclusive one. For that reason we perform subtype reduction here if the
                 // union includes empty object types (e.g. reducing {} | string to just {}).
-                let reduction = if widened_types.iter().any(|&w| self.is_empty_object_type(w)) {
-                    UnionReduction::SUBTYPE
-                } else {
-                    UnionReduction::LITERAL
-                };
+                let reduction = if_else(
+                    widened_types.iter().any(|&w| self.is_empty_object_type(w)),
+                    UnionReduction::SUBTYPE,
+                    UnionReduction::LITERAL,
+                );
                 result = self.get_union_type_ex(&widened_types, reduction, None, TypeId::NIL);
             } else if flags.intersects(TypeFlags::INTERSECTION) {
                 let types = self.ty(t).types_list();

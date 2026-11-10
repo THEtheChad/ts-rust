@@ -212,14 +212,14 @@ impl Checker {
         // otherwise it will conflict with some local declaration). Note that in addition to normal flags we include matching SymbolFlags.Export*
         // in order to prevent collisions with declarations that were exported from the current module (they still contribute to local names).
         let export_symbol = self.sym(symbol).export_symbol;
-        symbol = self.get_merged_symbol(or_else_symbol(export_symbol, symbol));
+        symbol = self.get_merged_symbol(or_else(export_symbol, symbol));
         let target_flags = self.get_symbol_flags(target);
         // A type-only import/export will already have a grammar error in a JS file, so no need to issue more errors within
         if is_in_js_file(node)
             && !target_flags.intersects(SymbolFlags::VALUE)
             && !is_type_only_import_or_export_declaration(node)
         {
-            let error_node = or_else_node(node.property_name_or_name(), node);
+            let error_node = or_else(node.property_name_or_name(), node);
             debug_assert!(node.kind() != SyntaxKind::NamespaceExport);
             if is_export_specifier(node) {
                 // PORT: Go mutates the diagnostic returned by `c.error` after it

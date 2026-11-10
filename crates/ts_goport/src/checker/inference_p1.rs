@@ -1945,11 +1945,7 @@ impl Checker {
         } else if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
             left
         } else if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
-            && (if self.get_boolean_literal_value(right) {
-                "true"
-            } else {
-                "false"
-            }) == str
+            && if_else(self.get_boolean_literal_value(right), "true", "false") == str
         {
             right
         } else if left_flags.intersects(TypeFlags::UNDEFINED) {

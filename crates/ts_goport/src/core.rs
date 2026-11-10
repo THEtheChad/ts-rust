@@ -4779,6 +4779,34 @@ pub fn go_panic_text(f: impl FnOnce()) -> String {
     }
 }
 
+// Go: core/core.go:400 IfElse
+/// Go `core.IfElse(b, whenTrue, whenFalse)`: one of two values that are both
+/// already evaluated, as Go evaluates both arguments. Use it only where Go
+/// calls `core.IfElse` at that spot, and only with plain values: no checker
+/// call, diagnostic, node or type creation, or panic in either argument
+/// (`docs/perf-rearch/cleanup/w2-brief.md`, "Go helper idioms"). Where Go
+/// writes `if`/`else`, Rust writes `if`/`else` too.
+#[inline(always)]
+pub fn if_else<T>(b: bool, when_true: T, when_false: T) -> T {
+    if b { when_true } else { when_false }
+}
+
+// Go: core/core.go:409 OrElse
+/// Go `core.OrElse(value, defaultValue)`: `value` unless it is the zero value
+/// of `T`, otherwise `default_value`. Go's zero value `*new(T)` is
+/// `T::default()` here: nil for every handle (`Node`, `SymbolId`, `TypeId`,
+/// `SignatureId`, ...), whose derived `==` is the same test as `is_some()`.
+/// Both arguments are evaluated, as in Go, so `default_value` follows the
+/// rule of `if_else`. Use it only where Go calls `core.OrElse`.
+#[inline(always)]
+pub fn or_else<T: PartialEq + Default>(value: T, default_value: T) -> T {
+    if value != T::default() {
+        value
+    } else {
+        default_value
+    }
+}
+
 /// One version of a loaded source file: one per file id. The file registry
 /// (`ast/store.rs`) owns it from `publish_file_stores` on, or the
 /// `FileVersion` of a freeable file version (lsshells M3b); read it with

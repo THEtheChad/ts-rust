@@ -438,16 +438,12 @@ impl<'a> MissingMemberFixer<'a> {
 
         let is_js = is_in_js_file(enclosing_declaration);
         let mut parameters = signature_declaration.parameter_list();
-        let mut type_parameters = if is_js {
-            NodeList::NIL
-        } else {
-            signature_declaration.type_parameter_list()
-        };
-        let mut type_node = if is_js {
-            Node::NIL
-        } else {
-            signature_declaration.type_()
-        };
+        let mut type_parameters = if_else(
+            is_js,
+            NodeList::NIL,
+            signature_declaration.type_parameter_list(),
+        );
+        let mut type_node = if_else(is_js, Node::NIL, signature_declaration.type_());
 
         if type_parameters.is_some() && !type_parameters.nodes().is_empty() {
             let mut nodes: Vec<Node> = Vec::with_capacity(type_parameters.nodes().len());
@@ -509,11 +505,7 @@ impl<'a> MissingMemberFixer<'a> {
                             parameter.modifiers(),
                             parameter.dot_dot_dot_token(),
                             parameter.name(),
-                            if is_js {
-                                Node::NIL
-                            } else {
-                                parameter.question_token()
-                            },
+                            if_else(is_js, Node::NIL, parameter.question_token()),
                             parameter_type_node,
                             parameter.initializer(),
                         ),
@@ -542,16 +534,12 @@ impl<'a> MissingMemberFixer<'a> {
                     fn_,
                     modifiers,
                     fn_.asterisk_token(),
-                    if name.is_some() && is_identifier(name) {
-                        name
-                    } else {
-                        Node::NIL
-                    },
+                    if_else(name.is_some() && is_identifier(name), name, Node::NIL),
                     type_parameters,
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    or_else_node(body, fn_.body()),
+                    or_else(body, fn_.body()),
                 )
             }
 
@@ -565,7 +553,7 @@ impl<'a> MissingMemberFixer<'a> {
                     type_node,
                     fn_.full_signature(),
                     fn_.equals_greater_than_token(),
-                    or_else_node(body, fn_.body()),
+                    or_else(body, fn_.body()),
                 )
             }
 
@@ -576,11 +564,7 @@ impl<'a> MissingMemberFixer<'a> {
                 // always runs.
                 let empty_name = factory.new_identifier("");
                 let property_name = create_property_name(factory, name, quote_preference);
-                let method_name = if name.is_nil() {
-                    empty_name
-                } else {
-                    property_name
-                };
+                let method_name = if_else(name.is_nil(), empty_name, property_name);
                 factory.update_method_declaration(
                     method,
                     modifiers,
@@ -601,16 +585,12 @@ impl<'a> MissingMemberFixer<'a> {
                     fn_,
                     modifiers,
                     fn_.asterisk_token(),
-                    if name.is_some() && is_identifier(name) {
-                        name
-                    } else {
-                        Node::NIL
-                    },
+                    if_else(name.is_some() && is_identifier(name), name, Node::NIL),
                     type_parameters,
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    or_else_node(body, fn_.body()),
+                    or_else(body, fn_.body()),
                 )
             }
 
