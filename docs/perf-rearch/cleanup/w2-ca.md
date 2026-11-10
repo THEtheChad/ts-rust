@@ -149,4 +149,36 @@ CI's command on 1.95.0 (`clippy --locked -p ts_goport -p goport_core -p goport_u
 `ts_goport/diagnostics,ts_goport/test-hooks`: clean at `3c3e43592` (the first run
 found `needless_borrow` ×5 and `items_after_test_module` in the inference splits;
 fixed there).
+At `1efc6429f`, `--force-warn clippy::type_complexity` on goport_core is 86, as at
+the base (the primitive-rules split takes the `ErrorReporter` alias).
+
+## Parity
+
+`parity.sh full` on the release bin of `bdd395ffa` (the commits after it are a
+clippy fix, a type alias and docs), base `base-current`:
+`~/.cache/perf-rearch/w2-ca/parity-full-bdd395ffa`. **PARITY OK**: 187,196
+items compared, 0 lost, 0 not run, 0 new items not good, 0 crashes on good
+items, 0 newly good by a referee (GO-BROKEN 0, GO-PARTITION 0, JS-AGREES 0),
+36 grandfathered (fuzz: Go timeouts and the Go crashes tsc-rs reproduces).
+Tiers: cli 170 MATCH; tests 139,909 PASS, 1 FLAKY
+(`tsgo_stdio_end/watch_ends_soon_after_sigint_or_sigterm`, failed then passed
+alone), 1,731 ignored; lsp 2,629 MATCH, 29 GO-BROKEN (in the base); fuzz 29,955
+MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (in the base); corpus
+12,727 MATCH. Load at the start 35.8 (other agents).
+
+## Tests
+
+`run-cargo-capped.sh test --release` with `TS_GO_REPO` at the pin, at
+`3c3e43592`: plain 51 binaries, 2,121 passed, 0 failed, 2 ignored; with
+`ts_goport/diagnostics,ts_goport/test-hooks` 52 binaries, 2,143 passed, 0
+failed, 2 ignored.
+
+## Quality (`quality.sh report HEAD --base perf/first-principles`, at 739aadded)
+
+- Prod functions over cog 25: 691 → 683; over 50: 216 → 212; max 490 → 461; sum 91,722 → 91,371.
+- Go-relative: port Δ ≥ 10 rows 149 → 135, Δ ≥ 25 rows 20 → 17, port excess 6,147 → 5,867; own > 25 146 → 140, own > 50 31 → 29, own excess 2,343 → 2,222.
+- Duplication 3.55% → 3.51% (693 → 686 blocks, no new block).
+- Escape hatches 13 → 13 (switches 4 → 4); hygiene unchanged; clippy (repo config) 1 → 1.
+
+No switch added or removed.
 
