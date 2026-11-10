@@ -10,7 +10,9 @@ set -uo pipefail
 base=$(realpath "$1"); head=$(realpath "$2"); out=$3; runs=${4:-2}
 here=$(cd -- "$(dirname -- "$0")/.." && pwd)
 P=$HOME/.cache/perf-rearch/projects
-scratch=$HOME/.cache/perf-rearch/c1/icount-scratch
+# A private scratch dir per invocation (fixed-length name, so path lengths, and with them instruction counts, match across runs); two concurrent runs used to delete each other's output (W2-CC).
+mkdir -p "$HOME/.cache/perf-rearch/c1"
+scratch=$(mktemp -d "$HOME/.cache/perf-rearch/c1/icount-scratch.XXXXXX")
 projects=("query:$P/query:packages/query-core/tsconfig.prod.json" "umami:$P/umami:tsconfig.json"
           "hono:$P/hono:tsconfig.build.json")
 plain=(--incremental false --composite false --pretty false)
