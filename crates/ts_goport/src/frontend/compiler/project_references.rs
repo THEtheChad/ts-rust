@@ -211,45 +211,32 @@ impl<'a> ProjectReferenceParser<'a> {
                     .insert(path.clone(), resolved.clone());
                 mapper.use_source_of_project_reference
             };
-            if let Some(resolved) = &resolved {
-                // PORT: Go compares `*TsConfigSourceFile` pointers. The config
-                // source file node identifies the parsed config file.
-                let is_root_config = {
-                    let mapper = self.loader.project_reference_file_mapper.borrow();
-                    mapper.config.config_file.as_ref().map(|c| c.source_file)
-                        == resolved.config_file.as_ref().map(|c| c.source_file)
-                };
-                if !is_root_config {
-                    // Map current task's files first, before recursing into subtasks.
-                    // This matches TypeScript's behavior where child project references
-                    // overwrite parent entries when a file belongs to multiple projects.
-                    {
-                        let mut mapper = self.loader.project_reference_file_mapper.borrow_mut();
-                        for (k, v) in resolved.source_to_project_reference().into_iter().flatten() {
-                            mapper
-                                .source_to_project_reference
-                                .insert(k.clone(), v.clone());
-                        }
-                        for (k, v) in resolved
-                            .output_dts_to_project_reference()
-                            .into_iter()
-                            .flatten()
-                        {
-                            mapper
-                                .output_dts_to_project_reference
-                                .insert(k.clone(), v.clone());
-                        }
+            if let Some(resolved) = &resolved
+                && !self.is_root_config_file(resolved)
+            {
+                // Map current task's files first, before recursing into subtasks.
+                // This matches TypeScript's behavior where child project references
+                // overwrite parent entries when a file belongs to multiple projects.
+                {
+                    let mut mapper = self.loader.project_reference_file_mapper.borrow_mut();
+                    maps_copy(
+                        &mut mapper.source_to_project_reference,
+                        resolved.source_to_project_reference(),
+                    );
+                    maps_copy(
+                        &mut mapper.output_dts_to_project_reference,
+                        resolved.output_dts_to_project_reference(),
+                    );
+                }
+                if can_use_project_reference_source {
+                    let options = resolved.compiler_options();
+                    let mut decl_dir = options.declaration_dir.clone();
+                    if decl_dir.is_empty() {
+                        decl_dir = options.out_dir.clone();
                     }
-                    if can_use_project_reference_source {
-                        let options = resolved.compiler_options();
-                        let mut decl_dir = options.declaration_dir.clone();
-                        if decl_dir.is_empty() {
-                            decl_dir = options.out_dir.clone();
-                        }
-                        if !decl_dir.is_empty() {
-                            let decl_dir_path = self.loader.to_path(&decl_dir);
-                            self.loader.dts_directories.insert(decl_dir_path);
-                        }
+                    if !decl_dir.is_empty() {
+                        let decl_dir_path = self.loader.to_path(&decl_dir);
+                        self.loader.dts_directories.insert(decl_dir_path);
                     }
                 }
             }
@@ -262,6 +249,29 @@ impl<'a> ProjectReferenceParser<'a> {
                 .insert(path, references_in_config);
         }
         results
+    }
+
+    /// Go `p.loader.projectReferences.config.ConfigFile == task.resolved.ConfigFile`
+    /// in `initMapperWorker`: `resolved` is the root config itself.
+    // PORT: Go compares `*TsConfigSourceFile` pointers. The config source
+    // file node identifies the parsed config file.
+    #[inline]
+    fn is_root_config_file(&self, resolved: &ParsedCommandLine) -> bool {
+        let mapper = self.loader.project_reference_file_mapper.borrow();
+        mapper.config.config_file.as_ref().map(|c| c.source_file)
+            == resolved.config_file.as_ref().map(|c| c.source_file)
+    }
+}
+
+/// Go `maps.Copy(dst, src)` on a project reference map, in `initMapperWorker`.
+/// A nil `src` (`None`, before `ParseInputOutputNames`) copies nothing.
+#[inline]
+fn maps_copy(
+    dst: &mut FxHashMap<Path, Rc<SourceOutputAndProjectReference>>,
+    src: Option<&FxHashMap<Path, Rc<SourceOutputAndProjectReference>>>,
+) {
+    for (k, v) in src.into_iter().flatten() {
+        dst.insert(k.clone(), v.clone());
     }
 }
 
