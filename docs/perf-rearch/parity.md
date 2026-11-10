@@ -536,7 +536,7 @@ run in sequence, except tests, which runs beside them. Wall times:
 | lsp | 50 s (7 sessions, 4 at a time) | 137 s (12 sessions, tsc-rs ×3) | 252 s (Go ×4 per scenario) |
 | fuzz | 38 s | 516 s (30,000 × tsc-rs ×2) | 24 min |
 | corpus | – | 135 s | 10 min |
-| api (lane H7) | 1 s (17 scenarios) | 2 s (38 scenarios, tsc-rs ×2) | 3 s (Go ×2 per scenario) |
+| api (lane H7) | 0.6 s (17 scenarios) | 1.3 s (38 scenarios, tsc-rs ×2) | 1.7 s (Go ×2 per scenario) |
 | **total** | **about 4 min** (tests-bound), plus the go_baselines build after a change | **about 17 min** (994 s plus the test build) | about 45 min |
 
 The lsp times are from 2026-11-04 on the head bin `tsgo-head-b2febcd86-goport-w1`, at a load of
@@ -784,7 +784,8 @@ material allows.
 
 **Fail closed.** In lspdiff's namespace (so in every server's), each guarded dir that exists
 (`~/.cache/typescript`, `~/.npm`, `~/.config`) is covered by a read-only bait dir of the session's
-own, which inotify watches for every access, reads included (`parity_watch.ACCESS`). The typings bait
+own, which inotify watches for every access, reads included (`parity_watch.ACCESS`; since lane H7
+without IN_CLOSE_NOWRITE, see "The tripwire race"). The typings bait
 holds what ATA's init reads first (`7.1/package.json`, `package-lock.json`,
 `node_modules/types-registry/index.json`). Any access makes the session ERROR ("a process of the
 session touched an unkeyed path") and discards every staged Go and JS entry of the tier. The watch
@@ -2099,7 +2100,7 @@ entry. Any other change also fails the gate: another wrong answer, nondeterminis
 `regen --only` is new: it rebuilds only the matching entries and keeps every other entry byte for
 byte. A plain `regen` from this lane's binary would have re-pinned the 36 fuzz entries to it.
 
-### Negative controls (`parity_h7_test.py`, 52 checks, `H7 SELFTEST OK`)
+### Negative controls (`parity_h7_test.py`, 60 checks, `H7 SELFTEST OK`)
 
 The fake tsc-rs servers are Python proxies in front of the Go oracle, run through the real tier and
 `parity_compare.py compare`.
@@ -2121,11 +2122,61 @@ The fake tsc-rs servers are Python proxies in front of the Go oracle, run throug
 | the format (unit): a `layer` filesystem, a `host` symlink, no filesystem, build steps without a fixture, an unknown key, an absolute fixture path, an unknown request | refused |
 | the judge (unit): its order, a written file, a home write, stderr | as above |
 | grandfather (unit) | an api item is a valid entry; an lsp item is still refused |
+| the tripwire race (see below): 400 watches while 4 threads fork | no false access; a read, a listing and a listing of a subdir after the watch started are seen |
 
 The H4, H6 and referee self-tests pass on this lane's harness (`H4 SELFTEST OK`, `H6 SELFTEST OK`,
 `SELFTEST OK`).
 
-GATE_SECTION
+### The tripwire race (found by this lane's first gate run)
+
+The first full gate of this lane (`runs/h7-head-ed6edf820-full-stopped`, stopped after its api tier)
+had one lsp ERROR: `lsp/hono-f12-p6: a process of the session touched an unkeyed path:
+/home/agent/.config (close-nowrite /home/agent/.config)`. The first event on the bait was a close,
+with no open after the watch started. That is the race lane H4 found for IN_CLOSE_WRITE, now on H5's
+access mask:
+
+- `Watch.__init__` lists the bait dirs (`os.scandir`), then drops its own events (`_discard`).
+- Another thread of the tier forks a process (`subprocess`) during that listing. The child has a copy
+  of the dir fd and closes it (`close_fds`), and the description's last close comes after `_discard`.
+- The close alone was counted as an access.
+
+Every real access after the watch starts opens the file or dir first (IN_OPEN), so `ACCESS` no longer
+holds IN_CLOSE_NOWRITE. `parity_h7_test.py` has the race: 400 watches while 4 threads fork. The old
+mask tripped 15 to 42 of them in three runs, the new one none. A read, a listing and a listing of a
+subdir after the watch started still trip. `parity_h5_test.py` passes (`H5 SELFTEST OK`). The lsp tier's
+tripwires had the same latent flake since H5. The api tier builds its watches from 8 threads, so it
+would have hit the flake more often.
+
+### Gate run
+
+`parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel --base ~/.cache/perf-rearch/parity/base-current
+--accepted-ref 5ae5006ca` (this lane's manifest and grandfather file; root accepts them by merging; the
+tests tier on this lane's checkout, whose `crates/` equal `ed6edf820`). `base-current` was
+`runs/head-ed6edf820-full`, root's accepted run of the same binary (sha256 `310f56f918c3…`, built from
+`ed6edf820` in root's checkout). Run `runs/h7-head-ed6edf820-full`, 26 min (09:40 to 10:06 UTC, load 4 to
+34): **PARITY OK**.
+
+- 187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not
+  as pinned, 0 new items not good, 0 crashes on good items, **47 grandfathered** (the 36 fuzz entries
+  and the 11 new api entries, each failing exactly as pinned), 0 stale entries, 0 recovered, 0 newly
+  good by a referee.
+- api: **27 MATCH, 11 DIFF** (the known differences above), 1.3 s. The 74 new items are all new to the
+  base: the 27 MATCHes count as good, and the 11 DIFFs pass only through their entries.
+- cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731
+  IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN,
+  1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+
+### Cost
+
+- **api tier, warm:** 0.6 s quick (17 scenarios, tsc-rs once), 1.3 s full (38 scenarios, tsc-rs twice).
+  A session takes 0.03 to 0.06 s; the build-orchestrator scenarios about 0.1 s. 8 scenarios run side by
+  side.
+- **Cold** (every Go entry new, as after an edit of `parity_api_session.py`): 1.7 s, at a load of 24.
+- **Inputs:** the 5 fixtures (3 distinct) are a few KB each, made once. Checking them, the ancestors'
+  state and the watches cost under 0.1 s.
+- **Go cache:** one JSON entry per scenario (2 Go sessions, with the written files' texts): 38 entries,
+  0.4 MB.
+- **Self-test:** `parity_h7_test.py` takes about 25 s (the tripwire race about 10 s); `--unit` about 12 s.
 
 ## Files
 
@@ -2142,7 +2193,7 @@ GATE_SECTION
 - `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
 - `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
   in its sandbox (keyed: its sha is in every api key); `parity-api-scenarios.json`: the scenarios;
-  `parity_h7_test.py`: lane H7's negative controls (about 15 seconds; `--unit` in 1 s).
+  `parity_h7_test.py`: lane H7's negative controls (about 25 seconds; `--unit` about 12 s).
 - `ata_typings.py`: builds and checks the frozen typings store (`build`, `check`, `path`);
   `ata-typings.json`: its manifest (hash, versions, every file's sha256; the store itself is in
   `~/.cache/perf-rearch/ata-typings/<sha>/`); `parity_h5_test.py`: lane H5's negative controls (unit
