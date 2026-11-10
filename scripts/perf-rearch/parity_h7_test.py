@@ -4,7 +4,10 @@
 usage: parity_h7_test.py [--unit]      prints H7 SELFTEST OK, or each FAIL; exit 1 on a failure
 
 Unit checks (seconds): the key holds every effective input (each change below is another key), the
-scenario format refuses what is not hermetic, the judge's order, and api grandfather entries.
+scenario format refuses what is not hermetic, the judge's order, and api grandfather entries. The
+tripwire checks (about 10 s): parity_watch.ACCESS sees a read and a listing after the watch started,
+and no false access from the watch's own listing under 4 threads that fork (the race that made
+lsp/hono-f12-p6 ERROR; the old mask with IN_CLOSE_NOWRITE is run beside it for the record).
 End-to-end checks (about a minute; real sessions in the sandbox, through `parity_api.py` and
 `parity_compare.py compare`): fake tsc-rs servers are Python proxies in front of the Go oracle
 (written to SCRATCH at run time):
@@ -210,6 +213,49 @@ def unit():
         check('grandfather: an lsp item is still refused', True)
 
 
+def tripwire():
+    """The access mask (parity_watch.ACCESS) against the inherited-fd race, and that real reads still trip."""
+    import threading
+    import parity_watch as w
+    base = Path(tempfile.mkdtemp(prefix='tripwire-', dir=SCRATCH))
+
+    def trips(mask, n=400):
+        stop = []
+
+        def forker():
+            while not stop:
+                subprocess.run(['/bin/true'])
+        threads = [threading.Thread(target=forker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        hit = 0
+        try:
+            for i in range(n):
+                d = base / f'{mask:x}-{i}'
+                (d / 'sub').mkdir(parents=True)
+                with w.Watch([str(d)], mask=mask) as g:
+                    time.sleep(0.005)
+                    hit += bool(g.dirty())
+        finally:
+            stop.append(1)
+            for t in threads:
+                t.join()
+        return hit
+    old = trips(w.ACCESS | w.IN_CLOSE_NOWRITE)
+    new = trips(w.ACCESS)
+    print(f'     (the old mask with IN_CLOSE_NOWRITE: {old} false trips of 400)')
+    check('tripwire: the watch\'s own listing, inherited by children other threads fork, is no access (0 of 400)', new == 0, new)
+    d = base / 'real'
+    (d / 'sub').mkdir(parents=True)
+    (d / 'f').write_text('x')
+    for what, act in (('a read', lambda: (d / 'f').read_text()), ('a listing', lambda: os.listdir(d)),
+                      ('a listing of a subdir', lambda: os.listdir(d / 'sub'))):
+        with w.Watch([str(d)], mask=w.ACCESS) as g:
+            act()
+            check(f'tripwire: {what} after the watch started is seen', bool(g.dirty()))
+    inputs.remove_tree(base)
+
+
 # ---- end to end ------------------------------------------------------------------------------
 
 def e2e():
@@ -314,7 +360,9 @@ def e2e():
 
 
 def main():
+    SCRATCH.mkdir(parents=True, exist_ok=True)
     unit()
+    tripwire()
     if '--unit' not in sys.argv:
         e2e()
     print('H7 SELFTEST OK' if not FAILS else f'H7 SELFTEST FAIL ({len(FAILS)}): {", ".join(FAILS)}')

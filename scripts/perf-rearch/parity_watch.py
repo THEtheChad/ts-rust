@@ -50,10 +50,15 @@ IN_CLOEXEC = 0o2000000
 # a close-write event on a just-written input in about 1 case in 1,000.
 CHANGES = (IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
            | IN_DELETE_SELF | IN_MOVE_SELF)
-# Every access, reads too: the tripwires of parity_lsp.py (lane H5), dirs no process of a session may
-# read. A read or a directory listing opens the file or dir, which makes IN_OPEN; a lookup of a name that
-# does not exist makes no event.
-ACCESS = CHANGES | IN_ACCESS | IN_OPEN | IN_CLOSE_NOWRITE
+# Every access, reads too: the tripwires of parity_lsp.py (lane H5) and parity_api.py (lane H7), dirs no
+# process of a session may read. A read or a directory listing opens the file or dir, which makes IN_OPEN;
+# a lookup of a name that does not exist makes no event. IN_CLOSE_NOWRITE is not watched (lane H7): every
+# access after the watch started opens first, and a close alone is the late close of a file description
+# opened before it: the watch's own listing of the dirs (os.scandir), whose fd a child that another
+# thread forked at that moment inherited and closes after _discard() (subprocess's close_fds). That made
+# lsp/hono-f12-p6 ERROR ("touched ~/.config (close-nowrite)") in a full gate, and 42 of 400 watches trip
+# under 4 forking threads in parity_h7_test.py's race check (0 without it).
+ACCESS = CHANGES | IN_ACCESS | IN_OPEN
 NAMES = {IN_ACCESS: 'access', IN_OPEN: 'open', IN_CLOSE_NOWRITE: 'close-nowrite', IN_MODIFY: 'modify', IN_ATTRIB: 'attrib', IN_CLOSE_WRITE: 'close-write', IN_MOVED_FROM: 'moved-from',
          IN_MOVED_TO: 'moved-to', IN_CREATE: 'create', IN_DELETE: 'delete', IN_DELETE_SELF: 'delete-self',
          IN_MOVE_SELF: 'move-self', IN_Q_OVERFLOW: 'queue overflow'}
