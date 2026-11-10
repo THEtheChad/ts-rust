@@ -2184,6 +2184,18 @@ pub(crate) struct PrepAdd {
 }
 
 impl PrepCommit {
+    /// Maps an ambient module that the file declares to an empty
+    /// resolution, as the loader does (fileloader.go:887).
+    fn insert_ambient_module(&mut self, name: &str, mode: ResolutionMode) {
+        self.resolutions.insert(
+            ModeAwareCacheKey {
+                name: name.to_string(),
+                mode,
+            },
+            Arc::new(ResolvedModule::default()),
+        );
+    }
+
     /// Adds the answer of module name `index` with `mode`. `adds` is Go's
     /// import index condition (a synthetic import, or `import_adds_file`).
     /// False when the loader must decide for the file: no answer, or a
@@ -4540,16 +4552,7 @@ impl WorkerResolver {
         prep: Option<PrepInput>,
         names: &mut Vec<String>,
     ) -> Option<FilePrep> {
-        // S1a: the package scope of the file's directory, once per worker,
-        // for the loader's metadata of its first file there
-        // (`Caches::package_scope_ahead`).
-        if let Some(scopes) = &self.first_load_scopes {
-            let directory = get_directory_path(&refs.file_name);
-            if !scopes.borrow().contains(&directory) && !shared.is_closed() {
-                self.resolver.publish_package_scope(&directory);
-                scopes.borrow_mut().insert(directory);
-            }
-        }
+        self.publish_package_scope_ahead(shared, &refs.file_name);
         if prep.is_none()
             && refs.type_reference_directives.is_empty()
             && refs.import_specifiers.is_empty()
@@ -4560,16 +4563,7 @@ impl WorkerResolver {
             return None;
         };
         let file_name = refs.file_name.as_str();
-        let redirect = if config.redirects.is_empty() {
-            None
-        } else {
-            let path = to_path(
-                file_name,
-                &shared.config.current_directory,
-                shared.config.use_case_sensitive_file_names,
-            );
-            self.redirect_of(config, &path)
-        };
+        let redirect = self.redirect_of_file(shared, config, file_name);
         let (containing_file, options) = match &redirect {
             Some((source, redirect)) => (*source, redirect.options.clone()),
             None => (file_name, self.options.clone()),
@@ -4605,27 +4599,15 @@ impl WorkerResolver {
                     .enumerate()
                     .all(|(index, specifier)| names.get(index).0 == specifier)
         });
-        for reference in &refs.type_reference_directives {
-            if shared.is_closed() {
-                return None;
-            }
-            // Go: fileloader.go:1038 getModeForTypeReferenceDirectiveInFile
-            let mode = if reference.resolution_mode != RESOLUTION_MODE_NONE {
-                reference.resolution_mode
-            } else {
-                super::file_loader::get_default_resolution_mode_for_file(file_name, &meta, &options)
-            };
-            let (resolved, _) = self.resolver.resolve_type_reference_directive(
-                &reference.file_name,
-                containing_file,
-                mode,
-                redirect,
-            );
-            if resolved.is_resolved() {
-                names.push(normalize_path(&resolved.resolved_file_name));
-            }
-        }
-        let guessed_mode = super::file_loader::guess_import_mode(file_name, &meta, &options);
+        self.resolve_type_reference_directives_ahead(
+            shared,
+            refs,
+            containing_file,
+            &meta,
+            &options,
+            redirect,
+            names,
+        )?;
         // The shared cache keeps the first answer of each key with its
         // lookup logs: the prep takes that entry.
         let answers_from = synthetic
@@ -4638,16 +4620,133 @@ impl WorkerResolver {
                     get_redirect_config_name(redirect),
                 )
             });
-        let synthetic_names = synthetic
-            .as_ref()
-            .map_or(0, |synthetic| synthetic.names().count());
+        let (modes, answers, commit) = self.resolve_imports_ahead(
+            shared,
+            refs,
+            containing_file,
+            &meta,
+            &options,
+            redirect,
+            synthetic.as_ref(),
+            import_names.as_deref(),
+            answers_from.as_ref(),
+            names,
+        )?;
+        let (_, _, redirect) = answers_from?;
+        Some(FilePrep {
+            meta,
+            redirect,
+            containing_file: containing_file.to_string(),
+            synthetic: synthetic?,
+            imports: refs.import_specifiers.len(),
+            modes,
+            answers,
+            names: import_names,
+            commit,
+        })
+    }
+
+    /// S1a: the package scope of the directory of `file_name`, once per
+    /// worker, for the loader's metadata of its first file there
+    /// (`Caches::package_scope_ahead`).
+    fn publish_package_scope_ahead(&self, shared: &PrefetchShared, file_name: &str) {
+        let Some(scopes) = &self.first_load_scopes else {
+            return;
+        };
+        let directory = get_directory_path(file_name);
+        if !scopes.borrow().contains(&directory) && !shared.is_closed() {
+            self.resolver.publish_package_scope(&directory);
+            scopes.borrow_mut().insert(directory);
+        }
+    }
+
+    /// The project reference redirect of `file_name` (`redirect_of`); no
+    /// path is made when the load has no redirects.
+    fn redirect_of_file<'c>(
+        &self,
+        shared: &PrefetchShared,
+        config: &'c WorkerResolveConfig,
+        file_name: &str,
+    ) -> Option<(&'c str, Rc<WorkerRedirect>)> {
+        if config.redirects.is_empty() {
+            return None;
+        }
+        let path = to_path(
+            file_name,
+            &shared.config.current_directory,
+            shared.config.use_case_sensitive_file_names,
+        );
+        self.redirect_of(config, &path)
+    }
+
+    /// Resolves the type reference directives of `refs` as the loader does
+    /// (`resolve_type_reference_directives`), and adds to `names` the files
+    /// that resolve. `None` when the queue closes.
+    fn resolve_type_reference_directives_ahead(
+        &self,
+        shared: &PrefetchShared,
+        refs: &FileRefs,
+        containing_file: &str,
+        meta: &SourceFileMetaData,
+        options: &CompilerOptions,
+        redirect: Option<&dyn ModuleResolvedProjectReference>,
+        names: &mut Vec<String>,
+    ) -> Option<()> {
+        for reference in &refs.type_reference_directives {
+            if shared.is_closed() {
+                return None;
+            }
+            // Go: fileloader.go:1038 getModeForTypeReferenceDirectiveInFile
+            let mode = if reference.resolution_mode != RESOLUTION_MODE_NONE {
+                reference.resolution_mode
+            } else {
+                super::file_loader::get_default_resolution_mode_for_file(
+                    &refs.file_name,
+                    meta,
+                    options,
+                )
+            };
+            let (resolved, _) = self.resolver.resolve_type_reference_directive(
+                &reference.file_name,
+                containing_file,
+                mode,
+                redirect,
+            );
+            if resolved.is_resolved() {
+                names.push(normalize_path(&resolved.resolved_file_name));
+            }
+        }
+        Some(())
+    }
+
+    /// Resolves the `synthetic` imports and the imports of `refs` as the
+    /// loader does (`resolve_imports_and_module_augmentations`), and adds
+    /// to `names` the files that the loader would add. Gives each module
+    /// name's mode and, with `answers_from`, its answer in the shared cache
+    /// and the commit of them all (`PrepCommit`, loadpar3b) while they fit
+    /// one. `None` when the queue closes.
+    fn resolve_imports_ahead(
+        &self,
+        shared: &PrefetchShared,
+        refs: &FileRefs,
+        containing_file: &str,
+        meta: &SourceFileMetaData,
+        options: &CompilerOptions,
+        redirect: Option<&dyn ModuleResolvedProjectReference>,
+        synthetic: Option<&SyntheticImports>,
+        import_names: Option<&ImportNames>,
+        answers_from: Option<&PrepAnswerSource<'_>>,
+        names: &mut Vec<String>,
+    ) -> Option<PrepAnswers> {
+        let file_name = refs.file_name.as_str();
+        let guessed_mode = super::file_loader::guess_import_mode(file_name, meta, options);
+        let synthetic_names = synthetic.map_or(0, |synthetic| synthetic.names().count());
         let mut answers = Vec::with_capacity(synthetic_names + refs.import_specifiers.len());
         let mut modes = Vec::with_capacity(synthetic_names + refs.import_specifiers.len());
-        // loadpar3b: the commit of the answers (`PrepCommit`), with the
-        // loader's map capacity: its module names are the synthetic imports
-        // and the names that the worker read.
+        // loadpar3b: the commit of the answers, with the loader's map
+        // capacity: its module names are the synthetic imports and the
+        // names that the worker read.
         let mut commit = import_names
-            .as_ref()
             .filter(|_| answers_from.is_some())
             .map(|names| {
                 let mut resolutions = ModeAwareCache::default();
@@ -4659,7 +4758,7 @@ impl WorkerResolver {
             });
         let mut file_emit_mode = None;
         let specifiers = synthetic
-            .iter()
+            .into_iter()
             .flat_map(SyntheticImports::names)
             .chain(refs.import_specifiers.iter().map(String::as_str));
         for (index, specifier) in specifiers.enumerate() {
@@ -4670,14 +4769,14 @@ impl WorkerResolver {
             // `ImportUsage::Other`), so the guessed mode is its mode.
             let usage = index
                 .checked_sub(synthetic_names)
-                .zip(import_names.as_ref())
+                .zip(import_names)
                 .map(|(import, names)| names.get(import));
             let mode = match usage {
                 Some((_, usage, _, _)) => super::file_loader::mode_for_import_usage(
                     usage,
                     file_name,
-                    &meta,
-                    Some(&options),
+                    meta,
+                    Some(options),
                     &mut file_emit_mode,
                 ),
                 None => guessed_mode,
@@ -4698,13 +4797,7 @@ impl WorkerResolver {
                 .any(|name| name == specifier)
             {
                 if let Some(commit) = &mut commit {
-                    commit.resolutions.insert(
-                        ModeAwareCacheKey {
-                            name: specifier.to_string(),
-                            mode,
-                        },
-                        Arc::new(ResolvedModule::default()),
-                    );
+                    commit.insert_ambient_module(specifier, mode);
                 }
                 answers.push(None);
                 continue;
@@ -4717,22 +4810,17 @@ impl WorkerResolver {
                 self.resolver
                     .resolve_module_name(specifier, containing_file, mode, redirect);
             debug_assert!(err.is_none(), "the default resolver failed on {specifier}");
-            if let Some((cache, directory, redirect_name)) = &answers_from {
-                let answer = cache.get_module(&(
-                    directory.as_str(),
+            if let Some(source) = answers_from {
+                let adds = usage.is_none_or(|(_, _, adds, _)| adds != Some(false));
+                answers.push(take_prep_answer(
+                    source,
+                    &mut commit,
+                    index,
                     specifier,
                     mode,
-                    redirect_name.as_str(),
+                    adds,
+                    options,
                 ));
-                // The commit reads the stored answer, which the loader
-                // takes, not `resolved`.
-                if let Some(committed) = &mut commit {
-                    let adds = usage.is_none_or(|(_, _, adds, _)| adds != Some(false));
-                    if !committed.push(index, specifier, mode, answer.as_ref(), adds, &options) {
-                        commit = None;
-                    }
-                }
-                answers.push(answer);
             }
             if !resolved.is_resolved() {
                 continue;
@@ -4747,19 +4835,43 @@ impl WorkerResolver {
             }
             names.push(normalize_path(resolved_file_name));
         }
-        let (_, _, redirect) = answers_from?;
-        Some(FilePrep {
-            meta,
-            redirect,
-            containing_file: containing_file.to_string(),
-            synthetic: synthetic?,
-            imports: refs.import_specifiers.len(),
-            modes,
-            answers,
-            names: import_names,
-            commit,
-        })
+        Some((modes, answers, commit))
     }
+}
+
+/// Where a worker's prep takes its answers (`WorkerResolver::resolve`):
+/// the loader's shared cache, then the directory of the containing file
+/// and the redirect's config name, the other parts of the cache key.
+type PrepAnswerSource<'c> = (&'c SharedResolutionCache, String, String);
+
+/// The modes, the answers and the commit of a worker's prep (`FilePrep`).
+type PrepAnswers = (
+    Vec<ResolutionMode>,
+    Vec<Option<SharedResolution<Arc<ResolvedModule>>>>,
+    Option<Box<PrepCommit>>,
+);
+
+/// The shared cache's answer of one import (`source`): the entry that the
+/// loader takes, with its lookup logs. The commit reads it too, not the
+/// worker's own resolution, and goes when the answer does not fit it
+/// (`PrepCommit::push`).
+fn take_prep_answer(
+    source: &PrepAnswerSource<'_>,
+    commit: &mut Option<Box<PrepCommit>>,
+    index: usize,
+    specifier: &str,
+    mode: ResolutionMode,
+    adds: bool,
+    options: &CompilerOptions,
+) -> Option<SharedResolution<Arc<ResolvedModule>>> {
+    let (cache, directory, redirect_name) = source;
+    let answer = cache.get_module(&(directory.as_str(), specifier, mode, redirect_name.as_str()));
+    if let Some(committed) = commit
+        && !committed.push(index, specifier, mode, answer.as_ref(), adds, options)
+    {
+        *commit = None;
+    }
+    answer
 }
 
 /// What a parse worker knows of its file for the prep (`FilePrep`) before
