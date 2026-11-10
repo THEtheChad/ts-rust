@@ -66,69 +66,89 @@ fn remove_exit_transformation(
 
     match transformation.kind {
         TransformationKind::DataFirst | TransformationKind::DataLast | TransformationKind::Call => {
-            let call_node = direct_call_for_callee(transformation.callee);
-            if call_node.is_nil()
-                || call_node.argument_list().is_nil()
-                || call_node.arguments().len() != 1
-            {
-                return false;
-            }
-            let replacement = tracker
-                .node_factory()
-                .deep_clone_node(call_node.arguments().get(0));
-            tracker.replace_node(sf, call_node, replacement, None);
-            true
+            remove_direct_exit_call(tracker, sf, transformation.callee)
         }
         TransformationKind::Pipe | TransformationKind::Pipeable => {
-            let (call_node, argument_index) =
-                containing_call_argument_for_exit(transformation.callee);
-            if call_node.is_nil() || call_node.argument_list().is_nil() || argument_index < 0 {
-                return false;
-            }
-            let arguments = call_node.arguments();
-            let argument_index = argument_index as usize;
-            let minimum_arguments = if transformation.kind == TransformationKind::Pipe {
-                2 // Function.pipe also contains its subject.
-            } else {
-                1
-            };
-            if arguments.len() == minimum_arguments {
-                let mut subject = Node::NIL;
-                if transformation.kind == TransformationKind::Pipe {
-                    subject = arguments.get(0);
-                } else if call_node.expression().is_some()
-                    && call_node.expression().kind() == SyntaxKind::PropertyAccessExpression
-                {
-                    subject = call_node.expression().expression();
-                }
-                if subject.is_nil() {
-                    return false;
-                }
-                let replacement = tracker.node_factory().deep_clone_node(subject);
-                tracker.replace_node(sf, call_node, replacement, None);
-                return true;
-            }
-
-            if argument_index < arguments.len() - 1 {
-                let start = get_token_pos_of_node(arguments.get(argument_index), sf, false);
-                let end = get_token_pos_of_node(arguments.get(argument_index + 1), sf, false);
-                tracker.delete_range(sf, TextRange::new(start, end));
-                return true;
-            }
-            if argument_index > 0 {
-                tracker.delete_range(
-                    sf,
-                    TextRange::new(
-                        arguments.get(argument_index - 1).end(),
-                        arguments.get(argument_index).end(),
-                    ),
-                );
-                return true;
-            }
-            false
+            remove_exit_pipe_argument(tracker, sf, transformation)
         }
         _ => false,
     }
+}
+
+/// Replaces the direct call `Effect.exit(x)` (of a data-first, data-last or
+/// single-argument call step) with its one argument.
+fn remove_direct_exit_call(tracker: &mut Tracker, sf: Node, callee: Node) -> bool {
+    let call_node = direct_call_for_callee(callee);
+    if call_node.is_nil() || call_node.argument_list().is_nil() || call_node.arguments().len() != 1
+    {
+        return false;
+    }
+    let replacement = tracker
+        .node_factory()
+        .deep_clone_node(call_node.arguments().get(0));
+    tracker.replace_node(sf, call_node, replacement, None);
+    true
+}
+
+/// Removes the `Effect.exit` argument of a `pipe(...)` or `.pipe(...)` call:
+/// the whole call becomes its subject when `Effect.exit` is its only step,
+/// else the argument is deleted with the separator after (or before) it.
+fn remove_exit_pipe_argument(
+    tracker: &mut Tracker,
+    sf: Node,
+    transformation: &PipingFlowTransformation,
+) -> bool {
+    let (call_node, argument_index) = containing_call_argument_for_exit(transformation.callee);
+    if call_node.is_nil() || call_node.argument_list().is_nil() || argument_index < 0 {
+        return false;
+    }
+    let arguments = call_node.arguments();
+    let argument_index = argument_index as usize;
+    let minimum_arguments = if transformation.kind == TransformationKind::Pipe {
+        2 // Function.pipe also contains its subject.
+    } else {
+        1
+    };
+    if arguments.len() == minimum_arguments {
+        let subject = exit_pipe_subject(transformation.kind, call_node);
+        if subject.is_nil() {
+            return false;
+        }
+        let replacement = tracker.node_factory().deep_clone_node(subject);
+        tracker.replace_node(sf, call_node, replacement, None);
+        return true;
+    }
+
+    if argument_index < arguments.len() - 1 {
+        let start = get_token_pos_of_node(arguments.get(argument_index), sf, false);
+        let end = get_token_pos_of_node(arguments.get(argument_index + 1), sf, false);
+        tracker.delete_range(sf, TextRange::new(start, end));
+        return true;
+    }
+    if argument_index > 0 {
+        tracker.delete_range(
+            sf,
+            TextRange::new(
+                arguments.get(argument_index - 1).end(),
+                arguments.get(argument_index).end(),
+            ),
+        );
+        return true;
+    }
+    false
+}
+
+/// The subject of a pipe call: the first argument of `pipe(subject, ...)`,
+/// the receiver of `subject.pipe(...)`, or `Node::NIL`.
+fn exit_pipe_subject(kind: TransformationKind, call_node: Node) -> Node {
+    if kind == TransformationKind::Pipe {
+        return call_node.arguments().get(0);
+    }
+    let expression = call_node.expression();
+    if expression.is_some() && expression.kind() == SyntaxKind::PropertyAccessExpression {
+        return expression.expression();
+    }
+    Node::NIL
 }
 
 // Go: fixables/run_of_exit_to_run_exit.go:105 directCallForCallee
