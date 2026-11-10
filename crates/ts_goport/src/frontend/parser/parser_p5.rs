@@ -1871,7 +1871,8 @@ impl<'a> Parser<'a> {
         self.check_js_syntax_in_js_file(node)
     }
 
-    /// `check_js_syntax` in the parse of a JS file.
+    /// `check_js_syntax` in the parse of a JS file: the body of Go
+    /// `checkJSSyntax` after its JS file test.
     #[inline(never)]
     fn check_js_syntax_in_js_file(&mut self, node: Node) -> Node {
         if !node.flags().intersects(NodeFlags::JAVA_SCRIPT_FILE)
