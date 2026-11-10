@@ -12,6 +12,7 @@
 
 use std::rc::Rc;
 
+#[cfg(feature = "diagnostics")]
 use ts_goport::program::ls_program;
 use ts_goport::project::Session;
 

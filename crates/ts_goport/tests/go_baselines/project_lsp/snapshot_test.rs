@@ -10,6 +10,7 @@ use ts_goport::frontend::tspath::Path;
 use ts_goport::frontend::vfs::Fs;
 use ts_goport::lsp::lsproto;
 use ts_goport::options::{CompilerOptions, Tristate};
+#[cfg(feature = "diagnostics")]
 use ts_goport::program::ls_program;
 use ts_goport::project::{
     APICreateProgramRequest, APISnapshotRequest, CompilerHost, ConfiguredProjectID, FileChange,
@@ -17,7 +18,9 @@ use ts_goport::project::{
     Session, inferred_project_id, new_synthetic_project_id, parse_configured_project_id,
 };
 
-use super::projecttestutil::{FileMap, files, with_request_id};
+#[cfg(feature = "diagnostics")]
+use super::projecttestutil::with_request_id;
+use super::projecttestutil::{FileMap, files};
 use super::util::*;
 
 // Go: snapshot_test.go:21 setup
