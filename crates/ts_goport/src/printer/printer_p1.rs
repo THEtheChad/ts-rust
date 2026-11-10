@@ -4,7 +4,7 @@
 //!
 //! Other parts (printer_p2 to printer_p5) add more `impl Printer` blocks.
 
-use crate::checker::if_else;
+use crate::core::if_else;
 use crate::flags_macros::go_enum;
 use crate::gostd::debug::kind_string;
 use crate::prelude::*;

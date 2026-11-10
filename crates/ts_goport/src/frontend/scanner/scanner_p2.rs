@@ -11,7 +11,7 @@
 use crate::frontend::prelude::*;
 use std::borrow::Cow;
 
-use crate::checker::if_else;
+use crate::core::if_else;
 use crate::scanner_util::push_js_string_rune;
 
 use super::scanner_p1::{

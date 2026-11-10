@@ -15,12 +15,6 @@ use crate::jsnum::{Number, PseudoBigInt};
 use crate::prelude::*;
 use std::sync::LazyLock;
 
-// W2-FE: on its branch `binder_p1`, `frontend/module/entrypoints`,
-// `frontend/scanner/scanner_p2` and `printer_p1` import `if_else` from
-// `crate::checker`. Remove this re-export after root merges W2-FE and those
-// imports name `crate::core` (or the prelude).
-pub(crate) use crate::core::if_else;
-
 // Go: checker/checker.go:53 TypeSystemEntity
 // PORT: Go `TypeSystemEntity any`. The Go callers of `pushTypeResolution`
 // pass a declaration node, a symbol, a type or a signature, so the Rust type

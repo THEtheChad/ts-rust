@@ -12,7 +12,7 @@
 
 use crate::frontend::prelude::*;
 
-use crate::checker::if_else;
+use crate::core::if_else;
 use crate::flags_macros::go_enum;
 
 /// Go `(*resolved).isResolved` on a possibly nil `*resolved`.

@@ -13,7 +13,7 @@
 //! arena, and the other fields are not in the `GoFile` yet.
 
 use crate::astdata::NodeData;
-use crate::checker::if_else;
+use crate::core::if_else;
 use crate::prelude::*;
 
 // Go: binder/binder.go:44 ExpandoAssignmentInfo
