@@ -1,0 +1,13 @@
+# Reviewed exceptions of `quality.sh gating` (qgating.py): one per line,
+#   <rule> <subject>  # <reason>
+# The reason is required. An entry that matches no finding is listed as stale; remove it then.
+# Add an entry only for code that is not diagnostics, verification or test-hook code. A stateless
+# no-op stub passes the module rule by itself (qgating.py `stub_check`). A real finding is fixed by
+# gating the code whole.
+
+# Product code with a reserved-looking name
+module goport_util::diag  # TypeScript's diagnostic messages (Go `diagnostics` package, generated), not diagnostics code
+module goport_core::effect::diag  # the Effect plugin's diagnostic messages (generated), product code behind TSC_RS_EFFECT
+
+# Name collisions of the `dead` rule
+dead lsp/lsproto/lsp_generated/enumerations.rs::NAME  # a generated LSP enum const; the features build's extra `NAME` is a fn-local static in emitter/program_emit.rs

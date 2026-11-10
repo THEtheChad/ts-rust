@@ -3,14 +3,24 @@
 # usage: scripts/perf-rearch/quality.sh report <rev> [--base <rev>] [--no-clippy] [--no-go-relative] [--hatches] [--top N] [--out DIR]
 #        scripts/perf-rearch/quality.sh ranking <rev> [--top 60] [--out FILE]
 #        scripts/perf-rearch/quality.sh history [--base main] [--branch perf/first-principles] [--out DIR]
+#        scripts/perf-rearch/quality.sh gating <rev> [--wasm] [--out DIR]
 #        scripts/perf-rearch/quality.sh install     build rust-code-analysis-cli into ~/.cache/perf-rearch/tools/rca
-#        scripts/perf-rearch/quality.sh clean       remove the clippy worktree and the snapshot cache
+#        scripts/perf-rearch/quality.sh clean       remove the clippy and expansion worktrees and the snapshot caches
 #        scripts/perf-rearch/quality.sh help        this text
 # - report: one snapshot (and a delta against --base) as markdown on stdout, plus report.json and report.md
 #   under ~/.cache/perf-rearch/quality/reports/<rev>[-vs-<base>]/ (or --out). Clippy runs here only
 #   (cargo clippy --workspace, lib+bins, the workspace lints) in the reusable detached worktree
 #   ~/.cache/perf-rearch/quality/clippy-wt with its own target dir: about 4 min cold, about 1-2 min
-#   warm; --no-clippy skips it. --hatches prints the full escape-hatch inventory.
+#   warm; --no-clippy skips it. The repo-config pass runs on CI's toolchain (ci.yml RUSTUP_TOOLCHAIN),
+#   the forced clippy::all audit on stable. --hatches prints the full escape-hatch inventory.
+# - Shipped source: the escape-hatch inventory reads rustc's cfg-expanded source (qexpand.py: cargo
+#   check --release on CI's toolchain with -Zunpretty=expanded, in the detached worktree
+#   ~/.cache/perf-rearch/quality/expand-wt), the default build and the diagnostics,test-hooks build.
+#   About 1 min of cargo per build for a new crates/ tree (more while another Cargo run holds the
+#   slot), cached by tree under ~/.cache/perf-rearch/quality/expand.
+# - gating: diagnostics, verification and test-hook code in the default build (qgating.py rules env,
+#   module, topic, dead, name; --wasm adds the wasm32-wasip1 build). Exits 1 on a finding that
+#   scripts/perf-rearch/gating-allow.txt does not allow. Lanes run it before reporting.
 # - Go-relative (in report, on by default; --no-go-relative skips it): each Rust prod function mapped to
 #   its Go counterpart at the pin (`// Go:` markers, then names; gorel.py, Go side scripts/perf-rearch/gocog),
 #   ranked as port bloat (Rust cog - Go cog) and own code over cog 25, with per-area totals and, with
@@ -21,7 +31,7 @@
 #   each delta against the previous point; no clippy. About 10 s per new crates/ tree, cached.
 # - Lanes: run `quality.sh report HEAD --base perf/first-principles` before reporting and paste the summary.
 # - Metrics: per-function cognitive and cyclomatic complexity (rust-code-analysis), escape hatches
-#   (GOPORT_*/TSC_RS_* env reads, bool gates, branches), duplication (token windows), churn
+#   (GOPORT_*/TSC_RS_*/TSGO_* env reads, bool gates, branches), duplication (token windows), churn
 #   (prod/test lines), hygiene (unsafe, unwrap, expect, panics, allow attributes, TODO markers), clippy.
 #   docs/perf-rearch/quality.md explains each one and its weaknesses.
 # - The source is read with `git archive` into a temporary directory; no checkout is touched.
@@ -39,9 +49,10 @@ install)
   ;;
 clean)
   if [[ -d "$cache/clippy-wt" ]]; then git -C "$here" worktree remove --force "$cache/clippy-wt"; fi
-  rm -rf "$cache/snap" "$cache/tmp"
+  if [[ -d "$cache/expand-wt" ]]; then git -C "$here" worktree remove --force "$cache/expand-wt"; fi
+  rm -rf "$cache/snap" "$cache/tmp" "$cache/expand"
   ;;
-report | history | ranking)
+report | history | ranking | gating)
   if [[ ! -x "$tools/rca/bin/rust-code-analysis-cli" ]]; then
     echo "rust-code-analysis-cli is missing: run $0 install" >&2
     exit 2
