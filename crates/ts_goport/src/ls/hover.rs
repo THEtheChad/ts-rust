@@ -1091,18 +1091,17 @@ impl QuickInfoWriter<'_> {
             }
         }
         let symbol_flags = self.c.sym(symbol).flags;
-        let mut flags = if self.meaning == SemanticMeaning::VALUE {
-            symbol_flags & (SymbolFlags::VALUE | SymbolFlags::SIGNATURE)
-        } else if self.meaning == SemanticMeaning::TYPE {
-            symbol_flags & SymbolFlags::TYPE
-        } else if self.meaning == SemanticMeaning::NAMESPACE {
-            symbol_flags & SymbolFlags::NAMESPACE
-        } else {
-            symbol_flags
-                & (SymbolFlags::VALUE
-                    | SymbolFlags::SIGNATURE
-                    | SymbolFlags::TYPE
-                    | SymbolFlags::NAMESPACE)
+        let mut flags = match self.meaning {
+            SemanticMeaning::VALUE => symbol_flags & (SymbolFlags::VALUE | SymbolFlags::SIGNATURE),
+            SemanticMeaning::TYPE => symbol_flags & SymbolFlags::TYPE,
+            SemanticMeaning::NAMESPACE => symbol_flags & SymbolFlags::NAMESPACE,
+            _ => {
+                symbol_flags
+                    & (SymbolFlags::VALUE
+                        | SymbolFlags::SIGNATURE
+                        | SymbolFlags::TYPE
+                        | SymbolFlags::NAMESPACE)
+            }
         };
         if flags.is_empty() {
             if self.alias_level != 0 || !self.dpw.borrow().string().is_empty() {
@@ -1239,17 +1238,15 @@ impl QuickInfoWriter<'_> {
                     self.write_type_classified(t, container, TYPE_FORMAT_FLAGS);
                 }
             }
-            let declaration = if value_declaration.is_some() {
-                value_declaration
-            } else {
-                self.c
-                    .sym(symbol)
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(Node::NIL)
-            };
-            self.set_declaration(declaration);
+            // Go: core.OrElse(symbol.ValueDeclaration(), core.FirstOrNil(symbol.Declarations()))
+            let first_declaration = self
+                .c
+                .sym(symbol)
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(Node::NIL);
+            self.set_declaration(or_else_node(value_declaration, first_declaration));
         }
         if flags.intersects(SymbolFlags::ENUM_MEMBER) {
             self.write_new_line();

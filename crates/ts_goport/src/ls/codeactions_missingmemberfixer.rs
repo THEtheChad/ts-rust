@@ -1008,8 +1008,3 @@ fn create_property_name(
     }
     factory.deep_clone_node(node)
 }
-
-/// Go `core.OrElse(value, fallback)` on nodes: `value` unless it is nil.
-fn or_else_node(value: Node, fallback: Node) -> Node {
-    if value.is_some() { value } else { fallback }
-}
