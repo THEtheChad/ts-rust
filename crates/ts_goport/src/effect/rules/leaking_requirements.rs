@@ -38,113 +38,124 @@ fn run_leaking_requirements(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic> {
 
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-        let mut types_to_check: Vec<TypeToCheck> = Vec::new();
-
-        match node.kind() {
-            SyntaxKind::CallExpression => {
-                let call = node;
-                if call.expression().is_some()
-                    && call.expression().kind() == SyntaxKind::PropertyAccessExpression
-                {
-                    let prop_access = call.expression();
-                    if prop_access.name().is_some()
-                        && prop_access.name().kind() == SyntaxKind::Identifier
-                    {
-                        let name = get_text_of_node(prop_access.name());
-                        if name == "GenericTag" || name == "Service" {
-                            let node_type = ctx.tp.get_type_at_location(node);
-                            if node_type.is_some() {
-                                types_to_check.push(TypeToCheck {
-                                    t: node_type,
-                                    report_node: node,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            SyntaxKind::ClassDeclaration => {
-                if node.name().is_some() && !node.heritage_clauses().is_nil() {
-                    let class_sym = ctx.tp.get_symbol_at_location(node.name());
-                    if class_sym.is_some() {
-                        let class_type = ctx
-                            .tp
-                            .checker
-                            .get_type_of_symbol_at_location(class_sym, node);
-                        if class_type.is_some() {
-                            types_to_check.push(TypeToCheck {
-                                t: class_type,
-                                report_node: node.name(),
-                            });
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if types_to_check.is_empty() {
-            // No patterns matched, enqueue children
-            node_to_visit.extend(order.children(i));
-            continue;
-        }
+        let types_to_check = service_types_to_check(ctx.tp, node);
 
         // Check each collected type
         let mut matched = false;
         for ttc in &types_to_check {
-            // Try ContextTag first, fall back to ServiceType
-            let mut service = ctx.tp.context_tag(ttc.t);
-            if service.is_none() {
-                service = ctx.tp.service_type(ttc.t);
-            }
-            let Some(service) = service else {
-                continue;
-            };
-
-            let mut leaked = parse_leaked_requirements(ctx.tp, service.shape, node);
-            if !leaked.is_empty() {
-                leaked =
-                    filter_expected_leaking_requirements(ctx.tp.checker, ttc.report_node, leaked);
-            }
-            if !leaked.is_empty() {
-                matched = true;
-
-                // Sort deterministically by type name (alphabetical)
-                // PORT: Go's sort.Slice calls TypeToString in the comparator; the
-                // names are computed first here. Go's sort is not stable.
-                let mut keyed: Vec<(String, TypeId)> = leaked
-                    .iter()
-                    .map(|&t| (ctx.tp.checker.type_to_string_exported(t), t))
-                    .collect();
-                crate::gostd::slices::stable_sort_by(&mut keyed, |a, b| a.0.cmp(&b.0));
-                leaked = keyed.into_iter().map(|(_, t)| t).collect();
-
-                // Format as "TypeA | TypeB | TypeC"
-                let mut type_names: Vec<String> = Vec::new();
-                for &t in &leaked {
-                    type_names.push(ctx.tp.checker.type_to_string_exported(t));
-                }
-                let formatted = type_names.join(" | ");
-
-                diags.push(ctx.new_diagnostic(
-                    ctx.source_file,
-                    ctx.get_error_range(ttc.report_node),
-                    diag::Methods_of_this_Service_require_0_from_every_caller_The_requirement_becomes_part_of_the_public_service_surface_instead_of_remaining_internal_to_Layer_implementation_Resolve_these_dependencies_at_Layer_creation_and_provide_them_to_each_method_so_the_service_s_type_reflects_its_purpose_not_its_implementation_To_suppress_this_diagnostic_for_specific_dependency_types_that_are_intentionally_passed_through_e_g_HttpServerRequest_add_effect_leakable_service_JSDoc_to_their_interface_declarations_or_to_this_service_by_adding_a_effect_expect_leaking_0_JSDoc_More_info_and_examples_at_https_Colon_Slash_Slasheffect_website_Slashdocs_Slashrequirements_management_Slashlayers_Slash_avoiding_requirement_leakage_effect_leakingRequirements,
-                    Vec::new(),
-                    vec![formatted],
-                ));
-            } else {
-                matched = true;
-            }
+            matched |= check_service_type_for_leaks(ctx, node, ttc, &mut diags);
         }
 
         if !matched {
-            // Type resolution failed for all candidates, continue visiting children
+            // No patterns matched, or type resolution failed for all
+            // candidates: continue visiting children
             node_to_visit.extend(order.children(i));
         }
     }
 
     diags
+}
+
+/// The service types that `node` declares: a `X.GenericTag(...)` or
+/// `X.Service(...)` call, reported on the call, or a named class with
+/// heritage clauses, reported on its name.
+fn service_types_to_check(tp: &mut TypeParser<'_>, node: Node) -> Vec<TypeToCheck> {
+    let mut types_to_check: Vec<TypeToCheck> = Vec::new();
+    match node.kind() {
+        SyntaxKind::CallExpression => {
+            let prop_access = node.expression();
+            if prop_access.is_nil() || prop_access.kind() != SyntaxKind::PropertyAccessExpression {
+                return types_to_check;
+            }
+            let name = prop_access.name();
+            if name.is_nil() || name.kind() != SyntaxKind::Identifier {
+                return types_to_check;
+            }
+            let name = get_text_of_node(name);
+            if name == "GenericTag" || name == "Service" {
+                let node_type = tp.get_type_at_location(node);
+                if node_type.is_some() {
+                    types_to_check.push(TypeToCheck {
+                        t: node_type,
+                        report_node: node,
+                    });
+                }
+            }
+        }
+        SyntaxKind::ClassDeclaration => {
+            if node.name().is_nil() || node.heritage_clauses().is_nil() {
+                return types_to_check;
+            }
+            let class_sym = tp.get_symbol_at_location(node.name());
+            if class_sym.is_some() {
+                let class_type = tp.checker.get_type_of_symbol_at_location(class_sym, node);
+                if class_type.is_some() {
+                    types_to_check.push(TypeToCheck {
+                        t: class_type,
+                        report_node: node.name(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    types_to_check
+}
+
+/// Checks the service type `ttc` (a context tag, or else a service type) of
+/// `node` and reports its leaked requirements. Returns false when it is
+/// neither, so the walk visits the children of `node`.
+fn check_service_type_for_leaks(
+    ctx: &mut RuleContext<'_, '_>,
+    node: Node,
+    ttc: &TypeToCheck,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    // Try ContextTag first, fall back to ServiceType
+    let mut service = ctx.tp.context_tag(ttc.t);
+    if service.is_none() {
+        service = ctx.tp.service_type(ttc.t);
+    }
+    let Some(service) = service else {
+        return false;
+    };
+
+    let mut leaked = parse_leaked_requirements(ctx.tp, service.shape, node);
+    if !leaked.is_empty() {
+        leaked = filter_expected_leaking_requirements(ctx.tp.checker, ttc.report_node, leaked);
+    }
+    if leaked.is_empty() {
+        return true;
+    }
+    let formatted = format_leaked_requirements(ctx.tp.checker, leaked);
+    diags.push(ctx.new_diagnostic(
+        ctx.source_file,
+        ctx.get_error_range(ttc.report_node),
+        diag::Methods_of_this_Service_require_0_from_every_caller_The_requirement_becomes_part_of_the_public_service_surface_instead_of_remaining_internal_to_Layer_implementation_Resolve_these_dependencies_at_Layer_creation_and_provide_them_to_each_method_so_the_service_s_type_reflects_its_purpose_not_its_implementation_To_suppress_this_diagnostic_for_specific_dependency_types_that_are_intentionally_passed_through_e_g_HttpServerRequest_add_effect_leakable_service_JSDoc_to_their_interface_declarations_or_to_this_service_by_adding_a_effect_expect_leaking_0_JSDoc_More_info_and_examples_at_https_Colon_Slash_Slasheffect_website_Slashdocs_Slashrequirements_management_Slashlayers_Slash_avoiding_requirement_leakage_effect_leakingRequirements,
+        Vec::new(),
+        vec![formatted],
+    ));
+    true
+}
+
+/// The leaked requirement types as "TypeA | TypeB | TypeC", sorted by type
+/// name.
+fn format_leaked_requirements(c: &mut Checker, leaked: Vec<TypeId>) -> String {
+    // Sort deterministically by type name (alphabetical)
+    // PORT: Go's sort.Slice calls TypeToString in the comparator; the
+    // names are computed first here. Go's sort is not stable.
+    let mut keyed: Vec<(String, TypeId)> = leaked
+        .iter()
+        .map(|&t| (c.type_to_string_exported(t), t))
+        .collect();
+    crate::gostd::slices::stable_sort_by(&mut keyed, |a, b| a.0.cmp(&b.0));
+
+    // Format as "TypeA | TypeB | TypeC"
+    let mut type_names: Vec<String> = Vec::new();
+    for (_, t) in keyed {
+        type_names.push(c.type_to_string_exported(t));
+    }
+    type_names.join(" | ")
 }
 
 fn filter_expected_leaking_requirements(
@@ -286,27 +297,7 @@ fn parse_leaked_requirements(
 
         // Try to get the Effect's R type - either directly from the property type
         // or from the return type of a single call signature
-        let mut effect_context_type = TypeId::NIL;
-
-        let effect = tp.effect_type(service_property_type);
-        if let Some(effect) = effect {
-            effect_context_type = effect.r;
-        } else {
-            // Try call signature: if exactly 1 call signature, parse return type as Effect
-            let sigs = tp
-                .checker
-                .get_signatures_of_type_exported(service_property_type, SignatureKind::CALL);
-            if sigs.len() == 1 {
-                let ret_type = tp.checker.get_return_type_of_signature_exported(sigs[0]);
-                if ret_type.is_some() {
-                    let ret_effect = tp.effect_type(ret_type);
-                    if let Some(ret_effect) = ret_effect {
-                        effect_context_type = ret_effect.r;
-                    }
-                }
-            }
-        }
-
+        let effect_context_type = effect_member_context_type(tp, service_property_type);
         if effect_context_type.is_nil() {
             continue;
         }
@@ -350,6 +341,28 @@ fn parse_leaked_requirements(
     }
 
     leaked
+}
+
+/// The requirements type of a service member of type `t`: the R of an
+/// Effect type, or of the Effect that its single call signature returns.
+/// Nil when it is neither.
+fn effect_member_context_type(tp: &mut TypeParser<'_>, t: TypeId) -> TypeId {
+    if let Some(effect) = tp.effect_type(t) {
+        return effect.r;
+    }
+    // Try call signature: if exactly 1 call signature, parse return type as Effect
+    let sigs = tp
+        .checker
+        .get_signatures_of_type_exported(t, SignatureKind::CALL);
+    if sigs.len() != 1 {
+        return TypeId::NIL;
+    }
+    let ret_type = tp.checker.get_return_type_of_signature_exported(sigs[0]);
+    if ret_type.is_nil() {
+        return TypeId::NIL;
+    }
+    tp.effect_type(ret_type)
+        .map_or(TypeId::NIL, |ret_effect| ret_effect.r)
 }
 
 // hasLeakableServiceAnnotation checks if a type's declarations contain the

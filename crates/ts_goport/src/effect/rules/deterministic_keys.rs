@@ -254,60 +254,14 @@ fn match_custom_pattern(
         heritage_clauses.nodes().iter().collect();
 
     while let Some(current) = nodes_to_visit.pop_front() {
-        if is_call_expression(current) {
-            let call = current;
-            let arguments = call.argument_list();
-            if arguments.is_some() {
-                for (i, arg) in arguments.nodes().iter().enumerate() {
-                    if !is_string_literal(arg) {
-                        continue;
-                    }
-
-                    let sig = c.get_resolved_signature_exported(current);
-                    if sig.is_nil() {
-                        continue;
-                    }
-
-                    let params = c.sig(sig).parameters.clone();
-                    if i >= params.len() {
-                        continue;
-                    }
-
-                    let param = params[i];
-                    let declarations: Vec<Node> = c.sym(param).declarations.to_vec();
-                    if declarations.is_empty() {
-                        continue;
-                    }
-
-                    for decl in declarations {
-                        let param_sf = get_source_file_of_node(decl);
-                        if param_sf.is_nil() {
-                            continue;
-                        }
-                        let param_text = source_file_text(param_sf);
-                        let pos = decl.pos();
-                        let end = decl.end();
-                        if pos >= 0 && end >= pos && (end as usize) <= param_text.len() {
-                            // PORT: Go slices the bytes; the text is lowered as Go
-                            // `strings.ToLower` does (one rune at a time).
-                            let decl_text = String::from_utf8_lossy(
-                                &param_text.as_bytes()[pos as usize..end as usize],
-                            );
-                            let lowered: String = decl_text
-                                .chars()
-                                .map(crate::gostd::unicode::to_lower)
-                                .collect();
-                            if lowered.contains("@effect-identifier") {
-                                return Some(DeterministicKeyMatchInner {
-                                    class_name: class_node.name(),
-                                    key_string_literal: arg,
-                                    target: "custom".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+        if is_call_expression(current)
+            && let Some(arg) = effect_identifier_string_argument(c, current)
+        {
+            return Some(DeterministicKeyMatchInner {
+                class_name: class_node.name(),
+                key_string_literal: arg,
+                target: "custom".to_string(),
+            });
         }
 
         // Visit children
@@ -318,6 +272,63 @@ fn match_custom_pattern(
     }
 
     None
+}
+
+/// The first string literal argument of `call` whose parameter (in the
+/// call's resolved signature) has a declaration annotated
+/// `@effect-identifier`.
+fn effect_identifier_string_argument(c: &mut Checker, call: Node) -> Option<Node> {
+    let arguments = call.argument_list();
+    if arguments.is_nil() {
+        return None;
+    }
+    for (i, arg) in arguments.nodes().iter().enumerate() {
+        if !is_string_literal(arg) {
+            continue;
+        }
+
+        let sig = c.get_resolved_signature_exported(call);
+        if sig.is_nil() {
+            continue;
+        }
+
+        let params = c.sig(sig).parameters.clone();
+        if i >= params.len() {
+            continue;
+        }
+
+        let declarations: Vec<Node> = c.sym(params[i]).declarations.to_vec();
+        if declarations
+            .into_iter()
+            .any(declaration_has_effect_identifier_annotation)
+        {
+            return Some(arg);
+        }
+    }
+    None
+}
+
+/// Whether the source text of `decl` mentions `@effect-identifier` (in any
+/// case).
+fn declaration_has_effect_identifier_annotation(decl: Node) -> bool {
+    let param_sf = get_source_file_of_node(decl);
+    if param_sf.is_nil() {
+        return false;
+    }
+    let param_text = source_file_text(param_sf);
+    let pos = decl.pos();
+    let end = decl.end();
+    if pos < 0 || end < pos || (end as usize) > param_text.len() {
+        return false;
+    }
+    // PORT: Go slices the bytes; the text is lowered as Go
+    // `strings.ToLower` does (one rune at a time).
+    let decl_text = String::from_utf8_lossy(&param_text.as_bytes()[pos as usize..end as usize]);
+    let lowered: String = decl_text
+        .chars()
+        .map(crate::gostd::unicode::to_lower)
+        .collect();
+    lowered.contains("@effect-identifier")
 }
 
 // Go: rules/deterministic_keys.go getPackageJsonDirectory

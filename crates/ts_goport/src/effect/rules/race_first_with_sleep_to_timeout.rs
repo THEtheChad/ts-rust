@@ -61,49 +61,9 @@ pub fn analyze_race_first_with_sleep_to_timeout(
             if transformation.callee.is_nil() {
                 continue;
             }
-
-            let mut left: Option<Rc<PartialPipingFlow>> = None;
-            let mut right: Option<Rc<PartialPipingFlow>> = None;
-            if tp
-                .is_node_reference_to_effect_module_api(transformation.callee, member!("raceFirst"))
-            {
-                // An onWinner option has observable behavior that timeoutOrElse
-                // cannot carry over, so only match the two-arm form.
-                if transformation.args.len() != 1 {
-                    continue;
-                }
-                left = flow.copy_prefix(i as i32);
-                if let Some(right_flow) = tp.longest_piping_flow_at(transformation.args[0], true) {
-                    right = Some(Rc::new(right_flow.partial_piping_flow.clone()));
-                }
-            } else if tp.is_node_reference_to_effect_module_api(
-                transformation.callee,
-                member!("raceAllFirst"),
-            ) {
-                let input = flow.copy_prefix(i as i32);
-                let Some(input) = input else {
-                    continue;
-                };
-                if input.subject.node.is_nil() {
-                    continue;
-                }
-                let array = skip_parentheses(input.subject.node);
-                if array.is_nil()
-                    || array.kind() != SyntaxKind::ArrayLiteralExpression
-                    || array.elements().len() != 2
-                {
-                    continue;
-                }
-                if let Some(left_flow) = tp.longest_piping_flow_at(array.elements().get(0), true) {
-                    left = Some(Rc::new(left_flow.partial_piping_flow.clone()));
-                }
-                if let Some(right_flow) = tp.longest_piping_flow_at(array.elements().get(1), true) {
-                    right = Some(Rc::new(right_flow.partial_piping_flow.clone()));
-                }
-            } else {
+            let Some((left, right)) = race_arms(tp, flow, i) else {
                 continue;
-            }
-
+            };
             if is_race_first_timer_flow(tp, left.as_deref())
                 == is_race_first_timer_flow(tp, right.as_deref())
             {
@@ -116,6 +76,49 @@ pub fn analyze_race_first_with_sleep_to_timeout(
         }
     }
     matches
+}
+
+/// One arm of a race: the longest piping flow of the arm expression.
+type RaceArm = Option<Rc<PartialPipingFlow>>;
+
+/// The longest piping flow rooted at the race arm `node`.
+fn longest_race_arm_at(tp: &mut TypeParser<'_>, node: Node) -> RaceArm {
+    tp.longest_piping_flow_at(node, true)
+        .map(|found| Rc::new(found.partial_piping_flow.clone()))
+}
+
+/// The two arms of the race at step `i` of `flow`: the flow before it and
+/// the argument of a two-arm `raceFirst`, or the two elements of the array
+/// that `raceAllFirst` races. `None` when the step is neither.
+fn race_arms(tp: &mut TypeParser<'_>, flow: &PipingFlow, i: usize) -> Option<(RaceArm, RaceArm)> {
+    let transformation = &flow.transformations[i];
+    if tp.is_node_reference_to_effect_module_api(transformation.callee, member!("raceFirst")) {
+        // An onWinner option has observable behavior that timeoutOrElse
+        // cannot carry over, so only match the two-arm form.
+        if transformation.args.len() != 1 {
+            return None;
+        }
+        let left = flow.copy_prefix(i as i32);
+        let right = longest_race_arm_at(tp, transformation.args[0]);
+        return Some((left, right));
+    }
+    if !tp.is_node_reference_to_effect_module_api(transformation.callee, member!("raceAllFirst")) {
+        return None;
+    }
+    let input = flow.copy_prefix(i as i32)?;
+    if input.subject.node.is_nil() {
+        return None;
+    }
+    let array = skip_parentheses(input.subject.node);
+    if array.is_nil()
+        || array.kind() != SyntaxKind::ArrayLiteralExpression
+        || array.elements().len() != 2
+    {
+        return None;
+    }
+    let left = longest_race_arm_at(tp, array.elements().get(0));
+    let right = longest_race_arm_at(tp, array.elements().get(1));
+    Some((left, right))
 }
 
 // Go: rules/race_first_with_sleep_to_timeout.go isRaceFirstTimerFlow

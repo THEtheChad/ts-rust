@@ -172,33 +172,73 @@ pub fn effect_context_walk(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, n
         return false;
     }
 
-    {
-        let links = tp.links();
-        if node.parent().is_some() {
-            // inherit from parent, if any
-            let parent_flags = *links.effect_context_flags.get(node.parent());
-            *links.effect_context_flags.get(node) = parent_flags;
-            if !links.effect_yield_generator_function.has(node) {
-                let parent_generator = *links.effect_yield_generator_function.get(node.parent());
-                *links.effect_yield_generator_function.get(node) = parent_generator;
-            }
-        } else {
-            // default, no flags.
-            *links.effect_context_flags.get(node) = EffectContextFlags::NONE;
-        }
+    inherit_effect_context_flags(tp, w, node);
+    propagate_pending_effect_context_flags(tp, w, node);
 
-        // disable pending disable flags
-        if let Some(&disable) = w.pending_disable_flags.get(&node) {
-            let flags = links.effect_context_flags.get(node);
-            *flags = flags.without(disable);
-        }
+    // logic for this node
+    enable_effect_generator_body(tp, w, node);
+    mark_effect_thunk_argument(tp, w, node);
 
-        // merge pending state for this node
-        if let Some(&enable) = w.pending_enable_flags.get(&node) {
-            *links.effect_context_flags.get(node) |= enable;
-        }
+    // Function-like nodes create a new scope, so they should not directly inherit
+    // yieldability from an outer Effect scope. Matching Effect helpers re-enable the
+    // flag on the specific body node below.
+    if is_function_like(node) {
+        node.for_each_child(|child| w.reset_child_function_scope_flags(child));
     }
 
+    // reset stores correlated to a flag set here.
+    if !tp
+        .links()
+        .effect_context_flags
+        .get(node)
+        .intersects(EffectContextFlags::CAN_YIELD_EFFECT)
+    {
+        *tp.links().effect_yield_generator_function.get(node) = CachedNode::default();
+    }
+
+    node.for_each_child(|child| effect_context_walk(tp, w, child));
+    false
+}
+
+/// The flags of `node` from its parent (none at the root), with its pending
+/// disable and enable flags applied, and the parent's generator function
+/// unless `node` has its own.
+fn inherit_effect_context_flags(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, node: Node) {
+    let links = tp.links();
+    if node.parent().is_some() {
+        // inherit from parent, if any
+        let parent_flags = *links.effect_context_flags.get(node.parent());
+        *links.effect_context_flags.get(node) = parent_flags;
+        if !links.effect_yield_generator_function.has(node) {
+            let parent_generator = *links.effect_yield_generator_function.get(node.parent());
+            *links.effect_yield_generator_function.get(node) = parent_generator;
+        }
+    } else {
+        // default, no flags.
+        *links.effect_context_flags.get(node) = EffectContextFlags::NONE;
+    }
+
+    // disable pending disable flags
+    if let Some(&disable) = w.pending_disable_flags.get(&node) {
+        let flags = links.effect_context_flags.get(node);
+        *flags = flags.without(disable);
+    }
+
+    // merge pending state for this node
+    if let Some(&enable) = w.pending_enable_flags.get(&node) {
+        *links.effect_context_flags.get(node) |= enable;
+    }
+}
+
+/// Passes the pending flags of `node` on: an Effect thunk function marks its
+/// body, a `try` object marks its `try` property, a transparent expression
+/// passes them to its inner expression, and anything else resets them on
+/// its children.
+fn propagate_pending_effect_context_flags(
+    tp: &mut TypeParser<'_>,
+    w: &mut EffectContextWalk,
+    node: Node,
+) {
     if tp
         .links()
         .effect_context_flags
@@ -251,8 +291,11 @@ pub fn effect_context_walk(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, n
     {
         node.for_each_child(|child| w.reset_pending_flags(child));
     }
+}
 
-    // logic for this node
+/// Marks the generator body of an `Effect.gen` call, or of a generator
+/// `Effect.fn` call, as able to yield Effects.
+fn enable_effect_generator_body(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, node: Node) {
     if let Some(effect_gen) = tp.effect_gen_call(node) {
         let body_node = effect_gen.body;
         w.set_pending_enable_flags(body_node, EffectContextFlags::CAN_YIELD_EFFECT);
@@ -269,7 +312,12 @@ pub fn effect_context_walk(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, n
             *tp.links().effect_yield_generator_function.get(body_node) = CachedNode::new(gen_fn);
         }
     }
+}
 
+/// Marks the first argument of `Effect.sync`, `promise`, `callback` and
+/// `suspend` calls as an Effect thunk, and of `Effect.try` and `tryPromise`
+/// also as a `try` object.
+fn mark_effect_thunk_argument(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, node: Node) {
     if node.kind() == SyntaxKind::CallExpression {
         let call = node;
         let arguments = call.arguments();
@@ -296,24 +344,4 @@ pub fn effect_context_walk(tp: &mut TypeParser<'_>, w: &mut EffectContextWalk, n
             }
         }
     }
-
-    // Function-like nodes create a new scope, so they should not directly inherit
-    // yieldability from an outer Effect scope. Matching Effect helpers re-enable the
-    // flag on the specific body node below.
-    if is_function_like(node) {
-        node.for_each_child(|child| w.reset_child_function_scope_flags(child));
-    }
-
-    // reset stores correlated to a flag set here.
-    if !tp
-        .links()
-        .effect_context_flags
-        .get(node)
-        .intersects(EffectContextFlags::CAN_YIELD_EFFECT)
-    {
-        *tp.links().effect_yield_generator_function.get(node) = CachedNode::default();
-    }
-
-    node.for_each_child(|child| effect_context_walk(tp, w, child));
-    false
 }

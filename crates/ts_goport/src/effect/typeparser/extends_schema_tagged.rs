@@ -50,34 +50,12 @@ impl TypeParser<'_> {
         }
 
         for element in heritage_elements {
-            if element.is_nil() {
+            if element.is_nil() || element.expression().is_nil() {
                 continue;
             }
-
-            let ewta = element;
-            if ewta.is_nil() || ewta.expression().is_nil() {
+            let Some((outer_call, inner_call)) = curried_schema_call(element.expression()) else {
                 continue;
-            }
-
-            // The expression should be a CallExpression (the outer call)
-            let outer_call_node = ewta.expression();
-            if !is_call_expression(outer_call_node) {
-                continue;
-            }
-            let outer_call = outer_call_node;
-            if outer_call.is_nil() {
-                continue;
-            }
-
-            // The outer call's expression should also be a CallExpression (the inner call)
-            let inner_call_node = outer_call.expression();
-            if inner_call_node.is_nil() || !is_call_expression(inner_call_node) {
-                continue;
-            }
-            let inner_call = inner_call_node;
-            if inner_call.is_nil() {
-                continue;
-            }
+            };
 
             // The inner call must have type arguments (Schema.TaggedClass<Self>())
             let inner_type_arguments = inner_call.type_argument_list();
@@ -86,39 +64,20 @@ impl TypeParser<'_> {
             }
 
             // Check if the inner call's expression resolves to Schema.<memberName>
-            if inner_call.expression().is_nil() {
-                continue;
-            }
-            if !self.is_node_reference_to_effect_schema_module_api(inner_call.expression(), member)
+            if inner_call.expression().is_nil()
+                || !self
+                    .is_node_reference_to_effect_schema_module_api(inner_call.expression(), member)
             {
                 continue;
-            }
-
-            // Extract keyStringLiteral from inner call's first argument (if it's a string literal)
-            let mut key_string_literal = Node::NIL;
-            let inner_arguments = inner_call.argument_list();
-            if inner_arguments.is_some() && !inner_arguments.nodes().is_empty() {
-                let arg = inner_arguments.nodes().get(0);
-                if is_string_literal(arg) {
-                    key_string_literal = arg;
-                }
-            }
-
-            // Extract tagStringLiteral from outer call's first argument (if it's a string literal)
-            let mut tag_string_literal = Node::NIL;
-            let outer_arguments = outer_call.argument_list();
-            if outer_arguments.is_some() && !outer_arguments.nodes().is_empty() {
-                let arg = outer_arguments.nodes().get(0);
-                if is_string_literal(arg) {
-                    tag_string_literal = arg;
-                }
             }
 
             return Some(Rc::new(SchemaTaggedResult {
                 class_name: class_node.name(),
                 self_type_node: inner_type_arguments.nodes().get(0),
-                key_string_literal,
-                tag_string_literal,
+                // Extract keyStringLiteral from inner call's first argument (if it's a string literal)
+                key_string_literal: first_string_literal_argument(inner_call),
+                // Extract tagStringLiteral from outer call's first argument (if it's a string literal)
+                tag_string_literal: first_string_literal_argument(outer_call),
             }));
         }
 
@@ -166,4 +125,31 @@ impl TypeParser<'_> {
             self.extends_schema_tagged(class_node, member!("TaggedRequest"))
         })
     }
+}
+
+/// The outer and inner calls of the heritage expression `outer_call_node`
+/// when it is a call of a call (`Schema.TaggedClass<Self>()(...)`).
+fn curried_schema_call(outer_call_node: Node) -> Option<(Node, Node)> {
+    // The expression should be a CallExpression (the outer call)
+    if outer_call_node.is_nil() || !is_call_expression(outer_call_node) {
+        return None;
+    }
+    // The outer call's expression should also be a CallExpression (the inner call)
+    let inner_call_node = outer_call_node.expression();
+    if inner_call_node.is_nil() || !is_call_expression(inner_call_node) {
+        return None;
+    }
+    Some((outer_call_node, inner_call_node))
+}
+
+/// The first argument of `call` when it is a string literal, else nil.
+fn first_string_literal_argument(call: Node) -> Node {
+    let arguments = call.argument_list();
+    if arguments.is_some() && !arguments.nodes().is_empty() {
+        let arg = arguments.nodes().get(0);
+        if is_string_literal(arg) {
+            return arg;
+        }
+    }
+    Node::NIL
 }

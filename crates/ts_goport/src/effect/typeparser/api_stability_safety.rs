@@ -13,6 +13,8 @@
 
 use crate::effect::typeparser::*;
 use crate::prelude::*;
+use smallvec::SmallVec;
+use smallvec::smallvec;
 
 /// Go `apiStabilitySafety`.
 /// apiStabilitySafety is the verdict of the pre-flight recursion guard that runs
@@ -1249,26 +1251,9 @@ impl ApiStabilitySafetyScan<'_> {
             {
                 return argument.t;
             }
-            if self
-                .materializing
-                .get(&argument.t)
-                .copied()
-                .unwrap_or(false)
-            {
-                return TypeId::NIL;
-            }
-            self.materializing.insert(argument.t, true);
-            let (mapped, replaced) = self.mapped_parameter_value(
-                tp,
-                argument.t,
-                &argument.subst,
-                argument.bindings.as_ref(),
-            );
-            self.materializing.remove(&argument.t);
-            if replaced {
-                return mapped;
-            }
-            return argument.t;
+            return self
+                .guarded_parameter_value(tp, argument.t, argument)
+                .unwrap_or(argument.t);
         }
         if argument.node.is_nil() {
             return TypeId::NIL;
@@ -1292,43 +1277,44 @@ impl ApiStabilitySafetyScan<'_> {
             return intrinsic;
         }
         if argument.node.kind() == SyntaxKind::TypeReference {
-            let symbol = self
-                .a
-                .symbol_at_type_name_node(tp, argument.node.type_name());
-            if symbol.is_some()
-                && tp
-                    .checker
-                    .sym(symbol)
-                    .flags
-                    .intersects(SymbolFlags::TYPE_PARAMETER)
+            let parameter = self.type_reference_parameter(tp, argument.node);
+            if parameter.is_some()
+                && let Some(value) = self.guarded_parameter_value(tp, parameter, argument)
             {
-                self.a.note_materializing_symbol_read(
-                    ApiStabilityMaterializationReadKind::DeclaredType,
-                    symbol,
-                );
-                let parameter = tp.checker.get_declared_type_of_symbol_exported(symbol);
-                if parameter.is_some() {
-                    if self.materializing.get(&parameter).copied().unwrap_or(false) {
-                        return TypeId::NIL;
-                    }
-                    self.materializing.insert(parameter, true);
-                    let (mapped, replaced) = self.mapped_parameter_value(
-                        tp,
-                        parameter,
-                        &argument.subst,
-                        argument.bindings.as_ref(),
-                    );
-                    self.materializing.remove(&parameter);
-                    if replaced {
-                        return mapped;
-                    }
-                }
+                return value;
             }
         }
-        // A concrete argument annotation (a reference to a declaration, an
-        // application, a literal) is only resolved when the guard establishes that
-        // its own resolution is bounded. The nested verification shares this
-        // analysis's work counter and never recurses into the same argument.
+        self.materialize_annotation_if_safe(tp, argument)
+    }
+
+    /// The value that the substitution and bindings of `argument` give the
+    /// type parameter `parameter`: `None` when they do not replace it, nil
+    /// when it is already being materialized (a cycle).
+    fn guarded_parameter_value(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        parameter: TypeId,
+        argument: &ApiStabilitySafetyArg,
+    ) -> Option<TypeId> {
+        if self.materializing.get(&parameter).copied().unwrap_or(false) {
+            return Some(TypeId::NIL);
+        }
+        self.materializing.insert(parameter, true);
+        let (mapped, replaced) =
+            self.mapped_parameter_value(tp, parameter, &argument.subst, argument.bindings.as_ref());
+        self.materializing.remove(&parameter);
+        replaced.then_some(mapped)
+    }
+
+    /// A concrete argument annotation (a reference to a declaration, an
+    /// application, a literal) is only resolved when the guard establishes that
+    /// its own resolution is bounded. The nested verification shares this
+    /// analysis's work counter and never recurses into the same argument.
+    fn materialize_annotation_if_safe(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        argument: &ApiStabilitySafetyArg,
+    ) -> TypeId {
         if self
             .materializing_nodes
             .get(&argument.node)
@@ -1788,74 +1774,34 @@ impl ApiStabilitySafetyScan<'_> {
             return false;
         }
         active.insert(t, true);
-        let original = t;
-        let result = 'body: {
-            let t = non_distributed_parameter(tp.checker, t);
-            let flags = tp.checker.ty(t).flags();
-            if flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                let (parameter, replaced) = self.mapped_parameter_value(tp, t, subst, bindings);
-                if replaced {
-                    if parameter.is_nil() {
-                        break 'body true;
-                    }
-                    if parameter == t {
-                        break 'body false;
-                    }
-                    break 'body self
-                        .contains_unbound_parameter(tp, parameter, subst, bindings, active);
-                }
-                break 'body true;
-            }
-            if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-                let members = tp.checker.ty(t).types().to_vec();
-                for member in members {
-                    if self.contains_unbound_parameter(tp, member, subst, bindings, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::OBJECT)
-                && tp
-                    .checker
-                    .ty(t)
-                    .object_flags()
-                    .intersects(ObjectFlags::REFERENCE)
-            {
-                for argument in checker_integration::get_resolved_type_arguments(tp.checker, t) {
-                    if self.contains_unbound_parameter(tp, argument, subst, bindings, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::CONDITIONAL) {
-                let conditional = tp.checker.ty(t).as_conditional_type();
-                let (check, extends) = (conditional.check_type, conditional.extends_type);
-                break 'body self.contains_unbound_parameter(tp, check, subst, bindings, active)
-                    || self.contains_unbound_parameter(tp, extends, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let indexed = tp.checker.ty(t).as_indexed_access_type();
-                let (object_type, index_type) = (indexed.object_type, indexed.index_type);
-                break 'body self.contains_unbound_parameter(
-                    tp,
-                    object_type,
-                    subst,
-                    bindings,
-                    active,
-                ) || self
-                    .contains_unbound_parameter(tp, index_type, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::INDEX) {
-                let target = tp.checker.ty(t).as_index_type().target;
-                break 'body self.contains_unbound_parameter(tp, target, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
-                for part in parts {
-                    if self.contains_unbound_parameter(tp, part, subst, bindings, active) {
-                        break 'body true;
-                    }
-                }
-            }
-            false
-        };
-        active.remove(&original);
+        let result = self.contains_unbound_parameter_body(tp, t, subst, bindings, active);
+        active.remove(&t);
         result
+    }
+
+    /// PORT: the body of Go `containsUnboundParameter` after the `active`
+    /// insert (Go `defer delete(active, t)`).
+    fn contains_unbound_parameter_body(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        t: TypeId,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        active: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        let t = non_distributed_parameter(tp.checker, t);
+        let flags = tp.checker.ty(t).flags();
+        if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            let (parameter, replaced) = self.mapped_parameter_value(tp, t, subst, bindings);
+            if !replaced || parameter.is_nil() {
+                return true;
+            }
+            return parameter != t
+                && self.contains_unbound_parameter(tp, parameter, subst, bindings, active);
+        }
+        type_containment_operands(tp.checker, t, flags)
+            .into_iter()
+            .any(|operand| self.contains_unbound_parameter(tp, operand, subst, bindings, active))
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.containsReplacedParameter
@@ -1883,83 +1829,46 @@ impl ApiStabilitySafetyScan<'_> {
             return false;
         }
         active.insert(t, true);
-        let original = t;
-        let result = 'body: {
-            let t = non_distributed_parameter(tp.checker, t);
-            let flags = tp.checker.ty(t).flags();
-            if flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                let (_, replaced) = self.mapped_parameter_value(tp, t, subst, bindings);
-                break 'body replaced;
-            }
-            if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-                let members = tp.checker.ty(t).types().to_vec();
-                for member in members {
-                    if self.contains_replaced_parameter(tp, member, subst, bindings, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::OBJECT) {
-                let object_flags = tp.checker.ty(t).object_flags();
-                if object_flags.intersects(ObjectFlags::REFERENCE) {
-                    for argument in checker_integration::get_resolved_type_arguments(tp.checker, t)
-                    {
-                        if self.contains_replaced_parameter(tp, argument, subst, bindings, active) {
-                            break 'body true;
-                        }
-                    }
-                    break 'body false;
-                }
-                if object_flags.intersects(ObjectFlags::INSTANTIATED) {
-                    // The represented instantiation substitutes its members through
-                    // its own mapper; the relation-operand scan refuses any raw member
-                    // parameter it cannot bind, so no additional raw detection applies.
-                    break 'body false;
-                }
-                // An anonymous compound the checker has not instantiated still
-                // contains its raw member annotations. A replaced parameter inside one
-                // of them is instantiated before the relation compares the operand,
-                // which the represented structure does not show, so the operand is
-                // refused.
-                let symbol = tp.checker.ty(t).symbol();
-                break 'body self
-                    .raw_declarations_mention_replaced_parameter(tp, symbol, subst, bindings);
-            } else if flags.intersects(TypeFlags::CONDITIONAL) {
-                let conditional = tp.checker.ty(t).as_conditional_type();
-                let (check, extends) = (conditional.check_type, conditional.extends_type);
-                break 'body self.contains_replaced_parameter(tp, check, subst, bindings, active)
-                    || self.contains_replaced_parameter(tp, extends, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let indexed = tp.checker.ty(t).as_indexed_access_type();
-                let (object_type, index_type) = (indexed.object_type, indexed.index_type);
-                break 'body self.contains_replaced_parameter(
-                    tp,
-                    object_type,
-                    subst,
-                    bindings,
-                    active,
-                ) || self
-                    .contains_replaced_parameter(tp, index_type, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::INDEX) {
-                let target = tp.checker.ty(t).as_index_type().target;
-                break 'body self.contains_replaced_parameter(tp, target, subst, bindings, active);
-            } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
-                for part in parts {
-                    if self.contains_replaced_parameter(tp, part, subst, bindings, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::SUBSTITUTION) {
-                let substitution = tp.checker.ty(t).as_substitution_type();
-                let (base_type, constraint) = (substitution.base_type, substitution.constraint);
-                break 'body self
-                    .contains_replaced_parameter(tp, base_type, subst, bindings, active)
-                    || self.contains_replaced_parameter(tp, constraint, subst, bindings, active);
-            }
-            false
-        };
-        active.remove(&original);
+        let result = self.contains_replaced_parameter_body(tp, t, subst, bindings, active);
+        active.remove(&t);
         result
+    }
+
+    /// PORT: the body of Go `containsReplacedParameter` after the `active`
+    /// insert (Go `defer delete(active, t)`).
+    fn contains_replaced_parameter_body(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        t: TypeId,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        active: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        let t = non_distributed_parameter(tp.checker, t);
+        let flags = tp.checker.ty(t).flags();
+        if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            let (_, replaced) = self.mapped_parameter_value(tp, t, subst, bindings);
+            return replaced;
+        }
+        let object_flags = tp.checker.ty(t).object_flags();
+        if flags.intersects(TypeFlags::OBJECT) && !object_flags.intersects(ObjectFlags::REFERENCE) {
+            if object_flags.intersects(ObjectFlags::INSTANTIATED) {
+                // The represented instantiation substitutes its members through
+                // its own mapper; the relation-operand scan refuses any raw member
+                // parameter it cannot bind, so no additional raw detection applies.
+                return false;
+            }
+            // An anonymous compound the checker has not instantiated still
+            // contains its raw member annotations. A replaced parameter inside one
+            // of them is instantiated before the relation compares the operand,
+            // which the represented structure does not show, so the operand is
+            // refused.
+            let symbol = tp.checker.ty(t).symbol();
+            return self.raw_declarations_mention_replaced_parameter(tp, symbol, subst, bindings);
+        }
+        type_containment_operands_with_substitution(tp.checker, t, flags)
+            .into_iter()
+            .any(|operand| self.contains_replaced_parameter(tp, operand, subst, bindings, active))
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.typeNodeMentionsUnboundParameter
@@ -2004,219 +1913,120 @@ impl ApiStabilitySafetyScan<'_> {
             return false;
         }
         visiting.insert(node, true);
-        let result = 'body: {
-            match node.kind() {
-                SyntaxKind::InferType => break 'body false,
-                SyntaxKind::TypeReference => {
-                    let symbol = self.a.symbol_at_type_name_node(tp, node.type_name());
-                    if symbol.is_some()
-                        && tp
-                            .checker
-                            .sym(symbol)
-                            .flags
-                            .intersects(SymbolFlags::TYPE_PARAMETER)
-                    {
-                        self.a.note_materializing_symbol_read(
-                            ApiStabilityMaterializationReadKind::DeclaredType,
-                            symbol,
-                        );
-                        let parameter = tp.checker.get_declared_type_of_symbol_exported(symbol);
-                        if parameter.is_some() && !scope.get(&parameter).copied().unwrap_or(false) {
-                            let (_, replaced) =
-                                self.mapped_parameter_value(tp, parameter, subst, bindings);
-                            if !replaced {
-                                break 'body true;
-                            }
-                        }
-                    }
-                    for argument in node.type_argument_list().nodes().iter() {
-                        if self.type_node_mentions_unbound_parameter_scoped(
-                            tp, argument, subst, bindings, visiting, scope,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::ParenthesizedType
-                | SyntaxKind::OptionalType
-                | SyntaxKind::RestType
-                | SyntaxKind::TypeOperator
-                | SyntaxKind::NamedTupleMember
-                | SyntaxKind::PropertySignature
-                | SyntaxKind::PropertyDeclaration => {
-                    break 'body self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.type_(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    );
-                }
-                SyntaxKind::ArrayType => {
-                    break 'body self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.element_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    );
-                }
-                SyntaxKind::TupleType => {
-                    for element in node.elements().iter() {
-                        if self.type_node_mentions_unbound_parameter_scoped(
-                            tp, element, subst, bindings, visiting, scope,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::UnionType | SyntaxKind::IntersectionType => {
-                    for member in node.types().nodes().iter() {
-                        if self.type_node_mentions_unbound_parameter_scoped(
-                            tp, member, subst, bindings, visiting, scope,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::TemplateLiteralType => {
-                    for span in node.template_spans().nodes().iter() {
-                        if span.is_nil() || span.kind() != SyntaxKind::TemplateLiteralTypeSpan {
-                            continue;
-                        }
-                        if self.type_node_mentions_unbound_parameter_scoped(
-                            tp,
-                            span.type_(),
-                            subst,
-                            bindings,
-                            visiting,
-                            scope,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::IndexedAccessType => {
-                    break 'body self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.object_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    ) || self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.index_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    );
-                }
-                SyntaxKind::ConditionalType => {
-                    break 'body self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.check_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    ) || self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.extends_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    );
-                }
-                SyntaxKind::TypeLiteral => {
-                    for member in node.members().iter() {
-                        if member.is_nil() {
-                            continue;
-                        }
-                        if api_stability_has_function_like_data(member) {
-                            if self.function_like_mentions_unbound_parameter(
-                                tp, member, subst, bindings, visiting, scope,
-                            ) {
-                                break 'body true;
-                            }
-                            continue;
-                        }
-                        if self.type_node_mentions_unbound_parameter_scoped(
-                            tp, member, subst, bindings, visiting, scope,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::IndexSignature => {
-                    let parameters = node.parameters();
-                    if parameters.len() == 1
-                        && parameters.get(0).kind() == SyntaxKind::Parameter
-                        && self.type_node_mentions_unbound_parameter_scoped(
-                            tp,
-                            parameters.get(0).type_(),
-                            subst,
-                            bindings,
-                            visiting,
-                            scope,
-                        )
-                    {
-                        break 'body true;
-                    }
-                    break 'body self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.type_(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    );
-                }
-                SyntaxKind::MappedType => {
-                    if self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.name_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    ) || self.type_node_mentions_unbound_parameter_scoped(
-                        tp,
-                        node.type_(),
-                        subst,
-                        bindings,
-                        visiting,
-                        scope,
-                    ) {
-                        break 'body true;
-                    }
-                    let type_parameter = node.type_parameter();
-                    if type_parameter.is_some() {
-                        break 'body self.type_node_mentions_unbound_parameter_scoped(
-                            tp,
-                            type_parameter.constraint(),
-                            subst,
-                            bindings,
-                            visiting,
-                            scope,
-                        );
-                    }
-                }
-                SyntaxKind::FunctionType | SyntaxKind::ConstructorType => {
-                    break 'body self.function_like_mentions_unbound_parameter(
-                        tp, node, subst, bindings, visiting, scope,
-                    );
-                }
-                _ => {}
-            }
-            false
-        };
+        let result = self
+            .type_node_mentions_unbound_parameter_body(tp, node, subst, bindings, visiting, scope);
         visiting.remove(&node);
         result
+    }
+
+    /// PORT: the body of Go `typeNodeMentionsUnboundParameterScoped` after the
+    /// visiting insert (Go `defer delete(visiting, node)`).
+    fn type_node_mentions_unbound_parameter_body(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        node: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        visiting: &mut FxHashMap<Node, bool>,
+        scope: &FxHashMap<TypeId, bool>,
+    ) -> bool {
+        if let Some(hit) = any_structural_type_node_child(node, |child| {
+            self.type_node_mentions_unbound_parameter_scoped(
+                tp, child, subst, bindings, visiting, scope,
+            )
+        }) {
+            return hit;
+        }
+        match node.kind() {
+            SyntaxKind::TypeReference => {
+                let parameter = self.type_reference_parameter(tp, node);
+                if parameter.is_some() && !scope.get(&parameter).copied().unwrap_or(false) {
+                    let (_, replaced) = self.mapped_parameter_value(tp, parameter, subst, bindings);
+                    if !replaced {
+                        return true;
+                    }
+                }
+                node.type_argument_list().nodes().iter().any(|argument| {
+                    self.type_node_mentions_unbound_parameter_scoped(
+                        tp, argument, subst, bindings, visiting, scope,
+                    )
+                })
+            }
+            SyntaxKind::PropertySignature | SyntaxKind::PropertyDeclaration => self
+                .type_node_mentions_unbound_parameter_scoped(
+                    tp,
+                    node.type_(),
+                    subst,
+                    bindings,
+                    visiting,
+                    scope,
+                ),
+            SyntaxKind::ConditionalType => [node.check_type(), node.extends_type()]
+                .into_iter()
+                .any(|operand| {
+                    self.type_node_mentions_unbound_parameter_scoped(
+                        tp, operand, subst, bindings, visiting, scope,
+                    )
+                }),
+            SyntaxKind::TypeLiteral => node.members().iter().any(|member| {
+                if member.is_nil() {
+                    return false;
+                }
+                if api_stability_has_function_like_data(member) {
+                    return self.function_like_mentions_unbound_parameter(
+                        tp, member, subst, bindings, visiting, scope,
+                    );
+                }
+                self.type_node_mentions_unbound_parameter_scoped(
+                    tp, member, subst, bindings, visiting, scope,
+                )
+            }),
+            SyntaxKind::IndexSignature => {
+                let parameters = node.parameters();
+                let key =
+                    if parameters.len() == 1 && parameters.get(0).kind() == SyntaxKind::Parameter {
+                        parameters.get(0).type_()
+                    } else {
+                        Node::NIL
+                    };
+                [key, node.type_()].into_iter().any(|operand| {
+                    self.type_node_mentions_unbound_parameter_scoped(
+                        tp, operand, subst, bindings, visiting, scope,
+                    )
+                })
+            }
+            SyntaxKind::MappedType => mapped_type_operands(node).into_iter().any(|operand| {
+                self.type_node_mentions_unbound_parameter_scoped(
+                    tp, operand, subst, bindings, visiting, scope,
+                )
+            }),
+            SyntaxKind::FunctionType | SyntaxKind::ConstructorType => self
+                .function_like_mentions_unbound_parameter(
+                    tp, node, subst, bindings, visiting, scope,
+                ),
+            // An infer binder is bound by its own conditional.
+            _ => false,
+        }
+    }
+
+    /// The declared type of the type parameter that the type reference `node`
+    /// names, or nil when it names no type parameter.
+    fn type_reference_parameter(&mut self, tp: &mut TypeParser<'_>, node: Node) -> TypeId {
+        let symbol = self.a.symbol_at_type_name_node(tp, node.type_name());
+        if !symbol.is_some()
+            || !tp
+                .checker
+                .sym(symbol)
+                .flags
+                .intersects(SymbolFlags::TYPE_PARAMETER)
+        {
+            return TypeId::NIL;
+        }
+        self.a.note_materializing_symbol_read(
+            ApiStabilityMaterializationReadKind::DeclaredType,
+            symbol,
+        );
+        tp.checker.get_declared_type_of_symbol_exported(symbol)
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.functionLikeMentionsUnboundParameter
@@ -2240,29 +2050,7 @@ impl ApiStabilitySafetyScan<'_> {
         let type_parameters = function_like.type_parameter_list();
         let mut own_scope = None;
         if type_parameters.is_some() {
-            let mut own = scope.clone();
-            for type_parameter in type_parameters.nodes().iter() {
-                if type_parameter.is_nil() || type_parameter.kind() != SyntaxKind::TypeParameter {
-                    continue;
-                }
-                let name = get_name_of_declaration(type_parameter);
-                if name.is_some() {
-                    let symbol = self.a.symbol_at_type_name_node(tp, name);
-                    if symbol.is_some() {
-                        // The reference symbol of a type parameter can be a
-                        // distinct instance; the declared type is the shared
-                        // identity, so it is the scope key.
-                        self.a.note_materializing_symbol_read(
-                            ApiStabilityMaterializationReadKind::DeclaredType,
-                            symbol,
-                        );
-                        let declared = tp.checker.get_declared_type_of_symbol_exported(symbol);
-                        if declared.is_some() {
-                            own.insert(declared, true);
-                        }
-                    }
-                }
-            }
+            let own = self.function_like_own_scope(tp, type_parameters, scope);
             for type_parameter in type_parameters.nodes().iter() {
                 if type_parameter.is_nil() || type_parameter.kind() != SyntaxKind::TypeParameter {
                     continue;
@@ -2284,20 +2072,22 @@ impl ApiStabilitySafetyScan<'_> {
             own_scope = Some(own);
         }
         let own = own_scope.as_ref().unwrap_or(scope);
-        for parameter in function_like_parameter_nodes(function_like) {
-            if parameter.is_some()
-                && parameter.kind() == SyntaxKind::Parameter
-                && self.type_node_mentions_unbound_parameter_scoped(
-                    tp,
-                    parameter.type_(),
-                    subst,
-                    bindings,
-                    visiting,
-                    own,
-                )
-            {
-                return true;
-            }
+        let mentions_in_parameter = function_like_parameter_nodes(function_like)
+            .into_iter()
+            .any(|parameter| {
+                parameter.is_some()
+                    && parameter.kind() == SyntaxKind::Parameter
+                    && self.type_node_mentions_unbound_parameter_scoped(
+                        tp,
+                        parameter.type_(),
+                        subst,
+                        bindings,
+                        visiting,
+                        own,
+                    )
+            });
+        if mentions_in_parameter {
+            return true;
         }
         let return_type = function_like.type_();
         return_type.is_some()
@@ -2309,6 +2099,42 @@ impl ApiStabilitySafetyScan<'_> {
                 visiting,
                 own,
             )
+    }
+
+    /// `scope` plus the declared types of the type parameters `type_parameters`
+    /// of a callable, which the callable binds itself.
+    fn function_like_own_scope(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        type_parameters: NodeList,
+        scope: &FxHashMap<TypeId, bool>,
+    ) -> FxHashMap<TypeId, bool> {
+        let mut own = scope.clone();
+        for type_parameter in type_parameters.nodes().iter() {
+            if type_parameter.is_nil() || type_parameter.kind() != SyntaxKind::TypeParameter {
+                continue;
+            }
+            let name = get_name_of_declaration(type_parameter);
+            if name.is_nil() {
+                continue;
+            }
+            let symbol = self.a.symbol_at_type_name_node(tp, name);
+            if symbol.is_nil() {
+                continue;
+            }
+            // The reference symbol of a type parameter can be a
+            // distinct instance; the declared type is the shared
+            // identity, so it is the scope key.
+            self.a.note_materializing_symbol_read(
+                ApiStabilityMaterializationReadKind::DeclaredType,
+                symbol,
+            );
+            let declared = tp.checker.get_declared_type_of_symbol_exported(symbol);
+            if declared.is_some() {
+                own.insert(declared, true);
+            }
+        }
+        own
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.typeNodeMentionsInfer
@@ -2323,82 +2149,50 @@ impl ApiStabilitySafetyScan<'_> {
             return false;
         }
         visiting.insert(node, true);
-        let result = 'body: {
-            match node.kind() {
-                SyntaxKind::InferType => break 'body true,
-                SyntaxKind::ParenthesizedType
-                | SyntaxKind::OptionalType
-                | SyntaxKind::RestType
-                | SyntaxKind::TypeOperator
-                | SyntaxKind::NamedTupleMember => {
-                    break 'body self.type_node_mentions_infer(tp, node.type_(), visiting);
-                }
-                SyntaxKind::ArrayType => {
-                    break 'body self.type_node_mentions_infer(tp, node.element_type(), visiting);
-                }
-                SyntaxKind::TupleType => {
-                    for element in node.elements().iter() {
-                        if self.type_node_mentions_infer(tp, element, visiting) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::UnionType | SyntaxKind::IntersectionType => {
-                    for member in node.types().nodes().iter() {
-                        if self.type_node_mentions_infer(tp, member, visiting) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::TemplateLiteralType => {
-                    for span in node.template_spans().nodes().iter() {
-                        if span.is_some()
-                            && span.kind() == SyntaxKind::TemplateLiteralTypeSpan
-                            && self.type_node_mentions_infer(tp, span.type_(), visiting)
-                        {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::IndexedAccessType => {
-                    break 'body self.type_node_mentions_infer(tp, node.object_type(), visiting)
-                        || self.type_node_mentions_infer(tp, node.index_type(), visiting);
-                }
-                SyntaxKind::ConditionalType => {
-                    break 'body self.type_node_mentions_infer(tp, node.check_type(), visiting)
-                        || self.type_node_mentions_infer(tp, node.extends_type(), visiting)
-                        || self.type_node_mentions_infer(tp, node.true_type(), visiting)
-                        || self.type_node_mentions_infer(tp, node.false_type(), visiting);
-                }
-                SyntaxKind::TypeReference => {
-                    for argument in node.type_argument_list().nodes().iter() {
-                        if self.type_node_mentions_infer(tp, argument, visiting) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::FunctionType | SyntaxKind::ConstructorType => {
-                    for parameter in function_like_parameter_nodes(node) {
-                        if parameter.is_some()
-                            && parameter.kind() == SyntaxKind::Parameter
-                            && self.type_node_mentions_infer(tp, parameter.type_(), visiting)
-                        {
-                            break 'body true;
-                        }
-                    }
-                    let return_type = node.type_();
-                    if return_type.is_some()
-                        && self.type_node_mentions_infer(tp, return_type, visiting)
-                    {
-                        break 'body true;
-                    }
-                }
-                _ => {}
-            }
-            false
-        };
+        let result = self.type_node_mentions_infer_body(tp, node, visiting);
         visiting.remove(&node);
         result
+    }
+
+    /// PORT: the body of Go `typeNodeMentionsInfer` after the visiting insert
+    /// (Go `defer delete(visiting, node)`).
+    fn type_node_mentions_infer_body(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        node: Node,
+        visiting: &mut FxHashMap<Node, bool>,
+    ) -> bool {
+        if let Some(hit) = any_structural_type_node_child(node, |child| {
+            self.type_node_mentions_infer(tp, child, visiting)
+        }) {
+            return hit;
+        }
+        match node.kind() {
+            SyntaxKind::InferType => true,
+            SyntaxKind::ConditionalType => conditional_type_branches(node)
+                .into_iter()
+                .any(|operand| self.type_node_mentions_infer(tp, operand, visiting)),
+            SyntaxKind::TypeReference => node
+                .type_argument_list()
+                .nodes()
+                .iter()
+                .any(|argument| self.type_node_mentions_infer(tp, argument, visiting)),
+            SyntaxKind::FunctionType | SyntaxKind::ConstructorType => {
+                let in_parameter =
+                    function_like_parameter_nodes(node)
+                        .into_iter()
+                        .any(|parameter| {
+                            parameter.is_some()
+                                && parameter.kind() == SyntaxKind::Parameter
+                                && self.type_node_mentions_infer(tp, parameter.type_(), visiting)
+                        });
+                let return_type = node.type_();
+                in_parameter
+                    || (return_type.is_some()
+                        && self.type_node_mentions_infer(tp, return_type, visiting))
+            }
+            _ => false,
+        }
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.rawDeclarationsMentionReplacedParameter
@@ -2572,186 +2366,51 @@ impl ApiStabilitySafetyScan<'_> {
                 .function_like_mentions_replaced_parameter(tp, node, subst, bindings, visiting);
         }
         visiting.insert(node, true);
-        let result = 'body: {
-            match node.kind() {
-                SyntaxKind::InferType => break 'body false,
-                SyntaxKind::TypeReference => {
-                    let symbol = self.a.symbol_at_type_name_node(tp, node.type_name());
-                    if symbol.is_some()
-                        && tp
-                            .checker
-                            .sym(symbol)
-                            .flags
-                            .intersects(SymbolFlags::TYPE_PARAMETER)
-                    {
-                        self.a.note_materializing_symbol_read(
-                            ApiStabilityMaterializationReadKind::DeclaredType,
-                            symbol,
-                        );
-                        let parameter = tp.checker.get_declared_type_of_symbol_exported(symbol);
-                        if parameter.is_some() {
-                            let (_, replaced) =
-                                self.mapped_parameter_value(tp, parameter, subst, bindings);
-                            if replaced {
-                                break 'body true;
-                            }
-                        }
-                    }
-                    for argument in node.type_argument_list().nodes().iter() {
-                        if self.type_node_mentions_replaced_parameter(
-                            tp, argument, subst, bindings, visiting,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::ParenthesizedType
-                | SyntaxKind::OptionalType
-                | SyntaxKind::RestType
-                | SyntaxKind::TypeOperator
-                | SyntaxKind::NamedTupleMember
-                | SyntaxKind::PropertySignature
-                | SyntaxKind::PropertyDeclaration
-                | SyntaxKind::Parameter => {
-                    break 'body self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.type_(),
-                        subst,
-                        bindings,
-                        visiting,
-                    );
-                }
-                SyntaxKind::ArrayType => {
-                    break 'body self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.element_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    );
-                }
-                SyntaxKind::TupleType => {
-                    for element in node.elements().iter() {
-                        if self.type_node_mentions_replaced_parameter(
-                            tp, element, subst, bindings, visiting,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::UnionType | SyntaxKind::IntersectionType => {
-                    for member in node.types().nodes().iter() {
-                        if self.type_node_mentions_replaced_parameter(
-                            tp, member, subst, bindings, visiting,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::TemplateLiteralType => {
-                    for span in node.template_spans().nodes().iter() {
-                        if span.is_nil() || span.kind() != SyntaxKind::TemplateLiteralTypeSpan {
-                            continue;
-                        }
-                        if self.type_node_mentions_replaced_parameter(
-                            tp,
-                            span.type_(),
-                            subst,
-                            bindings,
-                            visiting,
-                        ) {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::IndexedAccessType => {
-                    break 'body self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.object_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) || self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.index_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    );
-                }
-                SyntaxKind::ConditionalType => {
-                    break 'body self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.check_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) || self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.extends_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) || self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.true_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) || self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.false_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    );
-                }
-                SyntaxKind::TypeLiteral => {
-                    for member in node.members().iter() {
-                        if member.is_some()
-                            && self.type_node_mentions_replaced_parameter(
-                                tp, member, subst, bindings, visiting,
-                            )
-                        {
-                            break 'body true;
-                        }
-                    }
-                }
-                SyntaxKind::MappedType => {
-                    if self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.name_type(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) || self.type_node_mentions_replaced_parameter(
-                        tp,
-                        node.type_(),
-                        subst,
-                        bindings,
-                        visiting,
-                    ) {
-                        break 'body true;
-                    }
-                    let type_parameter = node.type_parameter();
-                    if type_parameter.is_some() {
-                        break 'body self.type_node_mentions_replaced_parameter(
-                            tp,
-                            type_parameter.constraint(),
-                            subst,
-                            bindings,
-                            visiting,
-                        );
-                    }
-                }
-                // PORT: Go keeps an `IndexSignature` case here, but an index
-                // signature has function-like data, so the check above takes it.
-                _ => {}
-            }
-            false
-        };
+        let result =
+            self.type_node_mentions_replaced_parameter_body(tp, node, subst, bindings, visiting);
         visiting.remove(&node);
         result
+    }
+
+    /// PORT: the body of Go `typeNodeMentionsReplacedParameter` after the
+    /// visiting insert (Go `defer delete(visiting, node)`).
+    fn type_node_mentions_replaced_parameter_body(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        node: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        visiting: &mut FxHashMap<Node, bool>,
+    ) -> bool {
+        if let Some(hit) = any_structural_type_node_child(node, |child| {
+            self.type_node_mentions_replaced_parameter(tp, child, subst, bindings, visiting)
+        }) {
+            return hit;
+        }
+        let operands: SmallVec<[Node; 4]> = match node.kind() {
+            SyntaxKind::TypeReference => {
+                let parameter = self.type_reference_parameter(tp, node);
+                if parameter.is_some() {
+                    let (_, replaced) = self.mapped_parameter_value(tp, parameter, subst, bindings);
+                    if replaced {
+                        return true;
+                    }
+                }
+                node.type_argument_list().nodes().iter().collect()
+            }
+            SyntaxKind::PropertySignature
+            | SyntaxKind::PropertyDeclaration
+            | SyntaxKind::Parameter => smallvec![node.type_()],
+            SyntaxKind::ConditionalType => conditional_type_branches(node).into_iter().collect(),
+            SyntaxKind::TypeLiteral => node.members().iter().filter(|m| m.is_some()).collect(),
+            SyntaxKind::MappedType => mapped_type_operands(node).into_iter().collect(),
+            // PORT: Go keeps an `IndexSignature` case here, but an index
+            // signature has function-like data, so the check above takes it.
+            _ => return false,
+        };
+        operands.into_iter().any(|operand| {
+            self.type_node_mentions_replaced_parameter(tp, operand, subst, bindings, visiting)
+        })
     }
 }
 
@@ -2847,25 +2506,7 @@ impl ApiStabilitySafetyScan<'_> {
                 if self.member_has_late_bound_name(member) {
                     return Unknown;
                 }
-                let annotation = member.type_();
-                if annotation.is_nil() && self.relation_operands {
-                    // The relation compares the member's resolved type. A property
-                    // without an annotation is only resolvable by inference (an
-                    // initializer or an implicit `any`), which the guard refuses to
-                    // force unless the checker already materialized the component.
-                    let symbol = self.member_symbol_of_declaration(tp, member);
-                    if symbol.is_some() {
-                        let materialized =
-                            checker_integration::get_resolved_type_of_symbol_if_materialized(
-                                tp.checker, symbol,
-                            );
-                        if materialized.is_some() {
-                            return self.type_value(tp, materialized, subst, bindings, true);
-                        }
-                    }
-                    return Unknown;
-                }
-                self.type_node(tp, annotation, subst, bindings, true)
+                self.property_member_annotation(tp, member, subst, bindings)
             }
             SyntaxKind::MethodSignature
             | SyntaxKind::MethodDeclaration
@@ -2887,6 +2528,36 @@ impl ApiStabilitySafetyScan<'_> {
                 Safe
             }
         }
+    }
+
+    /// A projected property member of [`Self::member_annotation`]: its
+    /// annotation, or for a relation operand without one, its materialized
+    /// type.
+    fn property_member_annotation(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        member: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+    ) -> ApiStabilitySafety {
+        let annotation = member.type_();
+        if annotation.is_some() || !self.relation_operands {
+            return self.type_node(tp, annotation, subst, bindings, true);
+        }
+        // The relation compares the member's resolved type. A property
+        // without an annotation is only resolvable by inference (an
+        // initializer or an implicit `any`), which the guard refuses to
+        // force unless the checker already materialized the component.
+        let symbol = self.member_symbol_of_declaration(tp, member);
+        if symbol.is_some() {
+            let materialized = checker_integration::get_resolved_type_of_symbol_if_materialized(
+                tp.checker, symbol,
+            );
+            if materialized.is_some() {
+                return self.type_value(tp, materialized, subst, bindings, true);
+            }
+        }
+        Unknown
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.functionLikeResolution
@@ -3311,66 +2982,77 @@ impl ApiStabilitySafetyScan<'_> {
                     if type_node.is_nil() {
                         continue;
                     }
-                    // An interface heritage entry is written as a type reference,
-                    // a class heritage entry as an expression with type arguments.
-                    let (base_symbol, arguments) = match type_node.kind() {
-                        SyntaxKind::TypeReference => (
-                            self.a.symbol_at_type_name_node(tp, type_node.type_name()),
-                            type_node.type_argument_list(),
-                        ),
-                        SyntaxKind::ExpressionWithTypeArguments => (
-                            self.a.symbol_at_type_name_node(tp, type_node.expression()),
-                            type_node.type_argument_list(),
-                        ),
-                        _ => continue,
-                    };
-                    if base_symbol.is_nil() {
-                        verdict = combine_safety(verdict, Unknown);
-                        continue;
-                    }
-                    if arguments.is_some() {
-                        verdict = combine_safety(
-                            verdict,
-                            self.type_arguments(tp, arguments, subst, bindings),
-                        );
-                    }
-                    let base_params = tp
-                        .checker
-                        .get_local_type_parameters_of_class_or_interface_or_type_alias_exported(
-                            base_symbol,
-                        );
-                    if base_params.is_empty() {
-                        verdict = combine_safety(
-                            verdict,
-                            self.declaration_structure(tp, base_symbol, subst, bindings, project),
-                        );
-                        continue;
-                    }
-                    let mut args = vec![ApiStabilitySafetyArg::default(); base_params.len()];
-                    for (index, argument) in arguments.nodes().iter().enumerate() {
-                        if index >= base_params.len() || argument.is_nil() {
-                            continue;
-                        }
-                        args[index] = ApiStabilitySafetyArg {
-                            node: argument,
-                            subst: subst.clone(),
-                            bindings: bindings.cloned(),
-                            ..Default::default()
-                        };
-                    }
-                    let frame = Rc::new(ApiStabilitySafetyBinding {
-                        parent: bindings.cloned(),
-                        params: base_params,
-                        args,
-                    });
                     verdict = combine_safety(
                         verdict,
-                        self.declaration_structure(tp, base_symbol, subst, Some(&frame), project),
+                        self.heritage_entry(tp, type_node, subst, bindings, project),
                     );
                 }
             }
         }
         verdict
+    }
+
+    /// One heritage entry `type_node` of [`Self::heritage`]: its type
+    /// arguments, and the base declaration's structure with the base's own
+    /// type parameters bound to those arguments.
+    fn heritage_entry(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        type_node: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        project: bool,
+    ) -> ApiStabilitySafety {
+        // An interface heritage entry is written as a type reference,
+        // a class heritage entry as an expression with type arguments.
+        let (base_symbol, arguments) = match type_node.kind() {
+            SyntaxKind::TypeReference => (
+                self.a.symbol_at_type_name_node(tp, type_node.type_name()),
+                type_node.type_argument_list(),
+            ),
+            SyntaxKind::ExpressionWithTypeArguments => (
+                self.a.symbol_at_type_name_node(tp, type_node.expression()),
+                type_node.type_argument_list(),
+            ),
+            _ => return Safe,
+        };
+        if base_symbol.is_nil() {
+            return Unknown;
+        }
+        let mut verdict = Safe;
+        if arguments.is_some() {
+            verdict = combine_safety(verdict, self.type_arguments(tp, arguments, subst, bindings));
+        }
+        let base_params = tp
+            .checker
+            .get_local_type_parameters_of_class_or_interface_or_type_alias_exported(base_symbol);
+        if base_params.is_empty() {
+            return combine_safety(
+                verdict,
+                self.declaration_structure(tp, base_symbol, subst, bindings, project),
+            );
+        }
+        let mut args = vec![ApiStabilitySafetyArg::default(); base_params.len()];
+        for (index, argument) in arguments.nodes().iter().enumerate() {
+            if index >= base_params.len() || argument.is_nil() {
+                continue;
+            }
+            args[index] = ApiStabilitySafetyArg {
+                node: argument,
+                subst: subst.clone(),
+                bindings: bindings.cloned(),
+                ..Default::default()
+            };
+        }
+        let frame = Rc::new(ApiStabilitySafetyBinding {
+            parent: bindings.cloned(),
+            params: base_params,
+            args,
+        });
+        combine_safety(
+            verdict,
+            self.declaration_structure(tp, base_symbol, subst, Some(&frame), project),
+        )
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.memberTable
@@ -3574,6 +3256,109 @@ pub fn declaration_annotation_node_of(declaration: Node) -> Node {
         }
         _ => Node::NIL,
     }
+}
+
+/// Calls `f` on the type annotation children of `node` for the structural
+/// kinds that every raw annotation walk (Go `typeNodeMentions*`) follows the
+/// same way: wrapped types (parenthesized, optional, rest, type operator and
+/// named tuple member), arrays, tuples, unions and intersections, template
+/// literal spans and indexed access. Returns whether `f` answered true for
+/// one of them (it stops at the first), or `None` when `node` is of another
+/// kind, which each walk handles itself.
+pub fn any_structural_type_node_child(node: Node, mut f: impl FnMut(Node) -> bool) -> Option<bool> {
+    let hit = match node.kind() {
+        SyntaxKind::ParenthesizedType
+        | SyntaxKind::OptionalType
+        | SyntaxKind::RestType
+        | SyntaxKind::TypeOperator
+        | SyntaxKind::NamedTupleMember => f(node.type_()),
+        SyntaxKind::ArrayType => f(node.element_type()),
+        SyntaxKind::TupleType => node.elements().iter().any(&mut f),
+        SyntaxKind::UnionType | SyntaxKind::IntersectionType => {
+            node.types().nodes().iter().any(&mut f)
+        }
+        SyntaxKind::TemplateLiteralType => node.template_spans().nodes().iter().any(|span| {
+            span.is_some() && span.kind() == SyntaxKind::TemplateLiteralTypeSpan && f(span.type_())
+        }),
+        SyntaxKind::IndexedAccessType => f(node.object_type()) || f(node.index_type()),
+        _ => return None,
+    };
+    Some(hit)
+}
+
+/// The check, extends, true and false types of the conditional type node
+/// `node`, in that order.
+pub fn conditional_type_branches(node: Node) -> [Node; 4] {
+    [
+        node.check_type(),
+        node.extends_type(),
+        node.true_type(),
+        node.false_type(),
+    ]
+}
+
+/// The name type, the template type and the type parameter constraint (nil
+/// without a type parameter) of the mapped type node `node`, in that order.
+pub fn mapped_type_operands(node: Node) -> [Node; 3] {
+    let type_parameter = node.type_parameter();
+    let constraint = if type_parameter.is_some() {
+        type_parameter.constraint()
+    } else {
+        Node::NIL
+    };
+    [node.name_type(), node.type_(), constraint]
+}
+
+/// The operand types that the represented-type containment scans (Go
+/// `containsUnboundParameter` and `containsReplacedParameter`) follow into
+/// for the compound kinds they share: union and intersection members, the
+/// resolved arguments of a type reference, the check and extends types of a
+/// conditional, the object and index of an indexed access, the target of an
+/// index type and the parts of a template literal. Empty for other types.
+pub(crate) fn type_containment_operands(
+    c: &Checker,
+    t: TypeId,
+    flags: TypeFlags,
+) -> SmallVec<[TypeId; 4]> {
+    let ty = c.ty(t);
+    if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
+        ty.types().iter().copied().collect()
+    } else if flags.intersects(TypeFlags::OBJECT) {
+        checker_integration::get_resolved_type_arguments(c, t)
+            .into_iter()
+            .collect()
+    } else if flags.intersects(TypeFlags::CONDITIONAL) {
+        let conditional = ty.as_conditional_type();
+        smallvec![conditional.check_type, conditional.extends_type]
+    } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+        let indexed = ty.as_indexed_access_type();
+        smallvec![indexed.object_type, indexed.index_type]
+    } else if flags.intersects(TypeFlags::INDEX) {
+        smallvec![ty.as_index_type().target]
+    } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+        ty.as_template_literal_type()
+            .types
+            .iter()
+            .copied()
+            .collect()
+    } else {
+        SmallVec::new()
+    }
+}
+
+/// [`type_containment_operands`], plus the base type and constraint of a
+/// substitution type (the scans that follow substitutions:
+/// `containsReplacedParameter`, `representedContainsTypeParameter`).
+pub(crate) fn type_containment_operands_with_substitution(
+    c: &Checker,
+    t: TypeId,
+    flags: TypeFlags,
+) -> SmallVec<[TypeId; 4]> {
+    if flags.intersects(TypeFlags::SUBSTITUTION) {
+        let substitution = c.ty(t).as_substitution_type();
+        return smallvec![substitution.base_type, substitution.constraint];
+    }
+    type_containment_operands(c, t, flags)
 }
 
 #[cfg(test)]

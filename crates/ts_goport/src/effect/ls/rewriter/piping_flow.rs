@@ -358,36 +358,10 @@ impl Tracker {
         {
             return false;
         }
-        let mut steps: FxHashMap<Node, i32> = FxHashMap::default();
-        let mut emptied_pipes: FxHashMap<Node, TransformationKind> = FxHashMap::default();
-        for i in start..=end {
-            let node = piping_flow_transformation_node(&flow.transformations[i as usize]);
-            if node.is_nil() {
-                return false;
-            }
-            steps.insert(node, i);
-            let kind = flow.transformations[i as usize].kind;
-            if i < end && (kind == TransformationKind::Pipe || kind == TransformationKind::Pipeable)
-            {
-                let (call, _) = containing_call_argument(node);
-                emptied_pipes.insert(call, kind);
-            }
-        }
-        // Find the smallest source subtree containing all edited steps. Pipe
-        // arguments require their containing call so they can be removed as a list.
-        let mut target = piping_flow_transformation_node(&flow.transformations[end as usize]);
-        for i in start..=end {
-            let mut node = piping_flow_transformation_node(&flow.transformations[i as usize]);
-            if is_piping_flow_argument(flow.transformations[i as usize].kind) {
-                node = containing_call_argument(node).0;
-            }
-            if node.is_nil() {
-                return false;
-            }
-            while target.is_some() && !node_within(node, target) {
-                target = target.parent();
-            }
-        }
+        let Some((steps, emptied_pipes)) = collapsed_steps(flow, start, end) else {
+            return false;
+        };
+        let target = collapse_target(flow, start, end);
         if target.is_nil() {
             return false;
         }
@@ -397,69 +371,12 @@ impl Tracker {
                 |node: Node, v| {
                     let Some(&index) = steps.get(&node) else {
                         let updated = v.visit_each_child(node);
-                        if let Some(&kind) = emptied_pipes.get(&node) {
-                            // Go: rewriter/piping_flow.go:335 `updated.AsCallExpression()`
-                            if !is_call_expression(updated) {
-                                go_node_as_panic(updated, "CallExpression");
-                            }
-                            let arguments = updated.argument_list();
-                            if kind == TransformationKind::Pipeable
-                                && (arguments.is_nil() || arguments.nodes().is_empty())
-                            {
-                                // Go: rewriter/piping_flow.go:337
-                                // `call.Expression.AsPropertyAccessExpression()`
-                                let access = updated.expression();
-                                if access.kind() != SyntaxKind::PropertyAccessExpression {
-                                    go_node_as_panic(access, "PropertyAccessExpression");
-                                }
-                                return access.expression();
-                            }
-                            if kind == TransformationKind::Pipe
-                                && arguments.is_some()
-                                && arguments.nodes().len() == 1
-                            {
-                                return arguments.nodes().get(0);
-                            }
-                        }
-                        return updated;
+                        return match emptied_pipes.get(&node) {
+                            Some(&kind) => unwrap_emptied_pipe(updated, kind),
+                            None => updated,
+                        };
                     };
-                    let step = &flow.transformations[index as usize];
-                    if is_piping_flow_argument(step.kind) {
-                        if index < end {
-                            return Node::NIL;
-                        }
-                        return piping_flow_operator(v.factory(), replacement);
-                    }
-                    let input = flow.transformation_input_node(index);
-                    if input.is_nil() {
-                        return node;
-                    }
-                    let subject = v.visit_node(input);
-                    if index < end {
-                        return subject;
-                    }
-                    let f = v.factory();
-                    let mut arguments = clone_node_list_nodes(f, replacement.arguments);
-                    match step.kind {
-                        TransformationKind::DataFirst => arguments.insert(0, subject),
-                        TransformationKind::DataLast => arguments.push(subject),
-                        _ => {
-                            return f.new_call_expression(
-                                piping_flow_operator(f, replacement),
-                                Node::NIL,
-                                NodeList::NIL,
-                                f.new_node_list(&[subject]),
-                                NodeFlags::NONE,
-                            );
-                        }
-                    }
-                    f.new_call_expression(
-                        replacement.callee,
-                        Node::NIL,
-                        replacement.type_arguments,
-                        f.new_node_list(&arguments),
-                        NodeFlags::NONE,
-                    )
+                    collapsed_step_node(v, flow, index, end, replacement, node)
                 },
                 Some(f),
                 NodeVisitorHooks::default(),
@@ -495,4 +412,124 @@ fn node_within(node: Node, ancestor: Node) -> bool {
         node = node.parent();
     }
     false
+}
+
+/// The edited steps `start..=end` of `flow` by transformation node, and the
+/// pipe calls that lose every argument but the last step's (with the
+/// transformation kind that emptied them). `None` when a step has no node.
+fn collapsed_steps(
+    flow: &PipingFlow,
+    start: i32,
+    end: i32,
+) -> Option<(FxHashMap<Node, i32>, FxHashMap<Node, TransformationKind>)> {
+    let mut steps: FxHashMap<Node, i32> = FxHashMap::default();
+    let mut emptied_pipes: FxHashMap<Node, TransformationKind> = FxHashMap::default();
+    for i in start..=end {
+        let node = piping_flow_transformation_node(&flow.transformations[i as usize]);
+        if node.is_nil() {
+            return None;
+        }
+        steps.insert(node, i);
+        let kind = flow.transformations[i as usize].kind;
+        if i < end && (kind == TransformationKind::Pipe || kind == TransformationKind::Pipeable) {
+            let (call, _) = containing_call_argument(node);
+            emptied_pipes.insert(call, kind);
+        }
+    }
+    Some((steps, emptied_pipes))
+}
+
+/// The smallest source subtree containing all edited steps `start..=end` of
+/// `flow`. Pipe arguments require their containing call so they can be
+/// removed as a list. Nil when there is none.
+fn collapse_target(flow: &PipingFlow, start: i32, end: i32) -> Node {
+    let mut target = piping_flow_transformation_node(&flow.transformations[end as usize]);
+    for i in start..=end {
+        let mut node = piping_flow_transformation_node(&flow.transformations[i as usize]);
+        if is_piping_flow_argument(flow.transformations[i as usize].kind) {
+            node = containing_call_argument(node).0;
+        }
+        if node.is_nil() {
+            return Node::NIL;
+        }
+        while target.is_some() && !node_within(node, target) {
+            target = target.parent();
+        }
+    }
+    target
+}
+
+/// The visited pipe call `updated` that lost its edited arguments: a
+/// pipeable call left without arguments becomes its receiver, and a pipe
+/// call left with one argument becomes that argument.
+fn unwrap_emptied_pipe(updated: Node, kind: TransformationKind) -> Node {
+    // Go: rewriter/piping_flow.go:335 `updated.AsCallExpression()`
+    if !is_call_expression(updated) {
+        go_node_as_panic(updated, "CallExpression");
+    }
+    let arguments = updated.argument_list();
+    if kind == TransformationKind::Pipeable && (arguments.is_nil() || arguments.nodes().is_empty())
+    {
+        // Go: rewriter/piping_flow.go:337
+        // `call.Expression.AsPropertyAccessExpression()`
+        let access = updated.expression();
+        if access.kind() != SyntaxKind::PropertyAccessExpression {
+            go_node_as_panic(access, "PropertyAccessExpression");
+        }
+        return access.expression();
+    }
+    if kind == TransformationKind::Pipe && arguments.is_some() && arguments.nodes().len() == 1 {
+        return arguments.nodes().get(0);
+    }
+    updated
+}
+
+/// The rewrite of the edited step `index` (at `node`) of `flow`: earlier
+/// steps collapse into their subject (or vanish as pipe arguments), and the
+/// last step `end` becomes the `replacement` call on the subject.
+fn collapsed_step_node(
+    v: &mut NodeVisitor<'_, ()>,
+    flow: &PipingFlow,
+    index: i32,
+    end: i32,
+    replacement: PipingFlowTransformationReplacement,
+    node: Node,
+) -> Node {
+    let step = &flow.transformations[index as usize];
+    if is_piping_flow_argument(step.kind) {
+        if index < end {
+            return Node::NIL;
+        }
+        return piping_flow_operator(v.factory(), replacement);
+    }
+    let input = flow.transformation_input_node(index);
+    if input.is_nil() {
+        return node;
+    }
+    let subject = v.visit_node(input);
+    if index < end {
+        return subject;
+    }
+    let f = v.factory();
+    let mut arguments = clone_node_list_nodes(f, replacement.arguments);
+    match step.kind {
+        TransformationKind::DataFirst => arguments.insert(0, subject),
+        TransformationKind::DataLast => arguments.push(subject),
+        _ => {
+            return f.new_call_expression(
+                piping_flow_operator(f, replacement),
+                Node::NIL,
+                NodeList::NIL,
+                f.new_node_list(&[subject]),
+                NodeFlags::NONE,
+            );
+        }
+    }
+    f.new_call_expression(
+        replacement.callee,
+        Node::NIL,
+        replacement.type_arguments,
+        f.new_node_list(&arguments),
+        NodeFlags::NONE,
+    )
 }

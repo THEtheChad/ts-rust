@@ -66,6 +66,7 @@ pub mod missing_layer_context;
 pub mod missing_pipeable_signature;
 pub mod missing_return_yield_star;
 pub mod missing_star_in_yield_effect_gen;
+pub mod module_references;
 pub mod multiple_catch_tag;
 pub mod multiple_effect_provide;
 pub mod nested_effect_gen_yield;

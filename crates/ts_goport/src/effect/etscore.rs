@@ -680,6 +680,19 @@ impl EffectPluginOptions {
     #[must_use]
     pub fn to_value(&self) -> CompilerOptionsValue {
         let mut m = IndexMap::new();
+        self.insert_scalar_values(&mut m);
+        self.insert_import_values(&mut m);
+        self.insert_rule_values(&mut m);
+        if !self.overrides.is_empty() {
+            let overrides = self.overrides.iter().map(override_value).collect();
+            m.insert("overrides".into(), CompilerOptionsValue::List(overrides));
+        }
+        CompilerOptionsValue::Map(m)
+    }
+
+    /// The feature switches and editor options of [`Self::to_value`], each
+    /// only when set.
+    fn insert_scalar_values(&self, m: &mut IndexMap<String, CompilerOptionsValue>) {
         let mut b = |k: &str, v: bool| {
             if v {
                 m.insert(k.to_string(), CompilerOptionsValue::Bool(true));
@@ -724,24 +737,20 @@ impl EffectPluginOptions {
         if self.inlays {
             m.insert("inlays".into(), CompilerOptionsValue::Bool(true));
         }
-        let list = |v: &[String]| {
-            CompilerOptionsValue::List(
-                v.iter()
-                    .cloned()
-                    .map(CompilerOptionsValue::String)
-                    .collect(),
-            )
-        };
+    }
+
+    /// The import style options of [`Self::to_value`], each only when set.
+    fn insert_import_values(&self, m: &mut IndexMap<String, CompilerOptionsValue>) {
         if !self.namespace_import_packages.is_empty() {
             m.insert(
                 "namespaceImportPackages".into(),
-                list(&self.namespace_import_packages),
+                string_list_value(&self.namespace_import_packages),
             );
         }
         if !self.barrel_import_packages.is_empty() {
             m.insert(
                 "barrelImportPackages".into(),
-                list(&self.barrel_import_packages),
+                string_list_value(&self.barrel_import_packages),
             );
         }
         if !self.import_aliases.is_empty() {
@@ -770,6 +779,11 @@ impl EffectPluginOptions {
                 );
             }
         }
+    }
+
+    /// The rule options of [`Self::to_value`] (also allowed in an override),
+    /// each only when set.
+    fn insert_rule_values(&self, m: &mut IndexMap<String, CompilerOptionsValue>) {
         if !self.key_patterns.is_empty() {
             m.insert("keyPatterns".into(), key_patterns_value(&self.key_patterns));
         }
@@ -787,88 +801,20 @@ impl EffectPluginOptions {
         }
         // Go `omitzero` leaves out only a nil slice, so `[]` is written.
         if let Some(apis) = &self.allowed_unstable_apis {
-            m.insert("allowedUnstableApis".into(), list(apis));
+            m.insert("allowedUnstableApis".into(), string_list_value(apis));
         }
         if let Some(apis) = &self.allowed_experimental_apis {
-            m.insert("allowedExperimentalApis".into(), list(apis));
+            m.insert("allowedExperimentalApis".into(), string_list_value(apis));
         }
         if let Some(pkgs) = &self.allowed_duplicated_packages {
-            m.insert("allowedDuplicatedPackages".into(), list(pkgs));
+            m.insert("allowedDuplicatedPackages".into(), string_list_value(pkgs));
         }
         if !self.effect_fn.is_empty() {
-            m.insert("effectFn".into(), list(&self.effect_fn));
+            m.insert("effectFn".into(), string_list_value(&self.effect_fn));
         }
         if let Some(severity) = &self.diagnostic_severity {
             m.insert("diagnosticSeverity".into(), severity_value(severity));
         }
-        if !self.overrides.is_empty() {
-            let overrides = self
-                .overrides
-                .iter()
-                .map(|o| {
-                    let mut om = IndexMap::new();
-                    if !o.include.is_empty() {
-                        om.insert("include".to_string(), list(&o.include));
-                    }
-                    if !o.exclude.is_empty() {
-                        om.insert("exclude".to_string(), list(&o.exclude));
-                    }
-                    let mut opts = IndexMap::new();
-                    if let Some(sev) = &o.options.diagnostic_severity {
-                        opts.insert("diagnosticSeverity".to_string(), severity_value(sev));
-                    }
-                    if let Some(n) = o.options.pipeable_min_arg_count {
-                        opts.insert(
-                            "pipeableMinArgCount".to_string(),
-                            CompilerOptionsValue::Int(n),
-                        );
-                    }
-                    // A nil slice is written as `[]` (json v2), as a non-nil one.
-                    if let Some(kp) = &o.options.key_patterns {
-                        opts.insert(
-                            "keyPatterns".to_string(),
-                            key_patterns_value(kp.as_deref().unwrap_or_default()),
-                        );
-                    }
-                    if let Some(b) = o.options.extended_key_detection {
-                        opts.insert(
-                            "extendedKeyDetection".to_string(),
-                            CompilerOptionsValue::Bool(b),
-                        );
-                    }
-                    if let Some(p) = &o.options.allowed_unstable_apis {
-                        opts.insert(
-                            "allowedUnstableApis".to_string(),
-                            list(p.as_deref().unwrap_or_default()),
-                        );
-                    }
-                    if let Some(p) = &o.options.allowed_experimental_apis {
-                        opts.insert(
-                            "allowedExperimentalApis".to_string(),
-                            list(p.as_deref().unwrap_or_default()),
-                        );
-                    }
-                    if let Some(p) = &o.options.allowed_duplicated_packages {
-                        opts.insert(
-                            "allowedDuplicatedPackages".to_string(),
-                            list(p.as_deref().unwrap_or_default()),
-                        );
-                    }
-                    if let Some(v) = &o.options.effect_fn {
-                        opts.insert(
-                            "effectFn".to_string(),
-                            list(v.as_deref().unwrap_or_default()),
-                        );
-                    }
-                    if !opts.is_empty() {
-                        om.insert("options".to_string(), CompilerOptionsValue::Map(opts));
-                    }
-                    CompilerOptionsValue::Map(om)
-                })
-                .collect();
-            m.insert("overrides".into(), CompilerOptionsValue::List(overrides));
-        }
-        CompilerOptionsValue::Map(m)
     }
 
     /// The options from their JSON value (`to_value`). Missing fields are
@@ -996,6 +942,81 @@ fn key_patterns_value(patterns: &[KeyPattern]) -> CompilerOptionsValue {
             })
             .collect(),
     )
+}
+
+/// A list of strings as a compiler options value.
+fn string_list_value(v: &[String]) -> CompilerOptionsValue {
+    CompilerOptionsValue::List(
+        v.iter()
+            .cloned()
+            .map(CompilerOptionsValue::String)
+            .collect(),
+    )
+}
+
+/// One entry of the `overrides` option of [`EffectPluginOptions::to_value`]:
+/// its non-empty `include` and `exclude` lists and its set options.
+fn override_value(o: &Override) -> CompilerOptionsValue {
+    let mut om = IndexMap::new();
+    if !o.include.is_empty() {
+        om.insert("include".to_string(), string_list_value(&o.include));
+    }
+    if !o.exclude.is_empty() {
+        om.insert("exclude".to_string(), string_list_value(&o.exclude));
+    }
+    let opts = override_options_value(&o.options);
+    if !opts.is_empty() {
+        om.insert("options".to_string(), CompilerOptionsValue::Map(opts));
+    }
+    CompilerOptionsValue::Map(om)
+}
+
+/// The options of an override that it sets.
+fn override_options_value(options: &OverrideOptions) -> IndexMap<String, CompilerOptionsValue> {
+    let mut opts = IndexMap::new();
+    if let Some(sev) = &options.diagnostic_severity {
+        opts.insert("diagnosticSeverity".to_string(), severity_value(sev));
+    }
+    if let Some(n) = options.pipeable_min_arg_count {
+        opts.insert(
+            "pipeableMinArgCount".to_string(),
+            CompilerOptionsValue::Int(n),
+        );
+    }
+    // A nil slice is written as `[]` (json v2), as a non-nil one.
+    if let Some(kp) = &options.key_patterns {
+        opts.insert(
+            "keyPatterns".to_string(),
+            key_patterns_value(kp.as_deref().unwrap_or_default()),
+        );
+    }
+    if let Some(b) = options.extended_key_detection {
+        opts.insert(
+            "extendedKeyDetection".to_string(),
+            CompilerOptionsValue::Bool(b),
+        );
+    }
+    let lists = [
+        ("allowedUnstableApis", &options.allowed_unstable_apis),
+        (
+            "allowedExperimentalApis",
+            &options.allowed_experimental_apis,
+        ),
+        (
+            "allowedDuplicatedPackages",
+            &options.allowed_duplicated_packages,
+        ),
+        ("effectFn", &options.effect_fn),
+    ];
+    for (name, list) in lists {
+        if let Some(p) = list {
+            opts.insert(
+                name.to_string(),
+                string_list_value(p.as_deref().unwrap_or_default()),
+            );
+        }
+    }
+    opts
 }
 
 #[cfg(test)]

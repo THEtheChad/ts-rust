@@ -37,133 +37,21 @@ fn run_any_unknown_in_error_context(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagno
     // Pop from the end (stack)
     while let Some(i) = node_to_visit.pop() {
         let node = order.node(i);
-
-        // Skip type nodes
-        if is_type_node(node) {
+        if skips_any_unknown_subtree(ctx.tp, node) {
             continue;
-        }
-        // Skip type alias declarations
-        if node.kind() == SyntaxKind::TypeAliasDeclaration {
-            continue;
-        }
-        // Skip interface declarations
-        if node.kind() == SyntaxKind::InterfaceDeclaration {
-            continue;
-        }
-        // Skip "as any" expressions
-        if node.kind() == SyntaxKind::AsExpression {
-            let type_node = node.type_();
-            if type_node.is_some() && type_node.kind() == SyntaxKind::AnyKeyword {
-                continue;
-            }
-        }
-
-        // If this is a parameter, property, or variable declaration with explicit
-        // Effect or Layer type annotation, skip it entirely (user intentionally typed it)
-        if node.kind() == SyntaxKind::Parameter
-            || node.kind() == SyntaxKind::PropertyDeclaration
-            || node.kind() == SyntaxKind::VariableDeclaration
-        {
-            let type_node = node.type_();
-            if type_node.is_some() {
-                let annotation_type = ctx.tp.get_type_at_location(type_node);
-                if annotation_type.is_some() {
-                    if ctx.tp.strict_effect_type(annotation_type).is_some() {
-                        continue;
-                    }
-                    if ctx.tp.layer_type(annotation_type).is_some() {
-                        continue;
-                    }
-                }
-            }
         }
 
         // Enqueue children for visiting
         node_to_visit.extend(order.children(i));
 
-        // Get the type at this location
-        let mut t = ctx.tp.get_type_at_location(node);
-
-        // For call expressions, use the resolved signature's return type
-        if node.kind() == SyntaxKind::CallExpression {
-            let sig = ctx.tp.checker.get_resolved_signature_exported(node);
-            if sig.is_some() {
-                t = ctx.tp.checker.get_return_type_of_signature_exported(sig);
-            }
-        }
-
-        if t.is_nil() {
+        let Some(message_text) = any_unknown_channels_message(ctx.tp, node) else {
             continue;
-        }
-
-        // Try strict Effect type first, then Layer type
-        let mut e_type = TypeId::NIL;
-        let mut r_type = TypeId::NIL;
-        if let Some(eff) = ctx.tp.strict_effect_type(t) {
-            e_type = eff.e;
-            r_type = eff.r;
-        } else if let Some(layer) = ctx.tp.layer_type(t) {
-            e_type = layer.e;
-            r_type = layer.r_in;
-        }
-
-        if e_type.is_nil() || r_type.is_nil() {
-            continue;
-        }
-
-        let r_flags = ctx.tp.checker.ty(r_type).flags();
-        let e_flags = ctx.tp.checker.ty(e_type).flags();
-        let has_any_unknown_r = r_flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN);
-        let has_any_unknown_e = e_flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN);
-
-        if !has_any_unknown_r && !has_any_unknown_e {
-            continue;
-        }
-
-        // Build the channel descriptions
-        let mut channels: Vec<String> = Vec::new();
-        if has_any_unknown_r {
-            let mut type_name = "unknown";
-            if r_flags.intersects(TypeFlags::ANY) {
-                type_name = "any";
-            }
-            channels.push(format!("{type_name} in the requirements channel"));
-        }
-        if has_any_unknown_e {
-            let mut type_name = "unknown";
-            if e_flags.intersects(TypeFlags::ANY) {
-                type_name = "any";
-            }
-            channels.push(format!("{type_name} in the error channel"));
-        }
-
-        // Compose the diagnostic message
-        let mut suggestions: Vec<String> = Vec::new();
-        suggestions.push(format!(
-            "This has {} which is not recommended.",
-            channels.join(" and ")
-        ));
-        if has_any_unknown_r {
-            suggestions.push(
-                "Only service identifiers should appear in the requirements channel.".to_string(),
-            );
-        }
-        if has_any_unknown_e {
-            suggestions.push("Having an unknown or any error type is not useful. Consider instead using specific error types baked by Data.TaggedError for example.".to_string());
-        }
-        let message_text = suggestions.join("\n");
-
+        };
         let node_start = get_token_pos_of_node(node, ctx.source_file, false);
         let node_end = node.end();
 
         // Innermost-node deduplication: remove parent nodes that contain this node
-        let mut i = matches.len();
-        while i > 0 {
-            i -= 1;
-            if matches[i].start <= node_start && matches[i].end >= node_end {
-                matches.remove(i);
-            }
-        }
+        matches.retain(|m| !(m.start <= node_start && m.end >= node_end));
 
         matches.push(MatchEntry {
             node,
@@ -186,4 +74,114 @@ fn run_any_unknown_in_error_context(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagno
     }
 
     diags
+}
+
+/// Whether the walk skips `node` and its subtree: type nodes, type alias and
+/// interface declarations, `as any` expressions, and a parameter, property
+/// or variable declaration with an explicit Effect or Layer type annotation
+/// (the user typed it intentionally).
+fn skips_any_unknown_subtree(tp: &mut TypeParser<'_>, node: Node) -> bool {
+    if is_type_node(node) {
+        return true;
+    }
+    match node.kind() {
+        SyntaxKind::TypeAliasDeclaration | SyntaxKind::InterfaceDeclaration => true,
+        SyntaxKind::AsExpression => {
+            let type_node = node.type_();
+            type_node.is_some() && type_node.kind() == SyntaxKind::AnyKeyword
+        }
+        SyntaxKind::Parameter
+        | SyntaxKind::PropertyDeclaration
+        | SyntaxKind::VariableDeclaration => {
+            let type_node = node.type_();
+            if type_node.is_nil() {
+                return false;
+            }
+            let annotation_type = tp.get_type_at_location(type_node);
+            annotation_type.is_some()
+                && (tp.strict_effect_type(annotation_type).is_some()
+                    || tp.layer_type(annotation_type).is_some())
+        }
+        _ => false,
+    }
+}
+
+/// The error and requirements channels of the type of `node` (for a call
+/// expression, its resolved signature's return type) when it is a strict
+/// Effect type (tried first) or a Layer type.
+fn effect_or_layer_channels(tp: &mut TypeParser<'_>, node: Node) -> Option<(TypeId, TypeId)> {
+    // Get the type at this location
+    let mut t = tp.get_type_at_location(node);
+
+    // For call expressions, use the resolved signature's return type
+    if node.kind() == SyntaxKind::CallExpression {
+        let sig = tp.checker.get_resolved_signature_exported(node);
+        if sig.is_some() {
+            t = tp.checker.get_return_type_of_signature_exported(sig);
+        }
+    }
+
+    if t.is_nil() {
+        return None;
+    }
+
+    // Try strict Effect type first, then Layer type
+    let (e_type, r_type) = match tp.strict_effect_type(t) {
+        Some(eff) => (eff.e, eff.r),
+        None => {
+            let layer = tp.layer_type(t)?;
+            (layer.e, layer.r_in)
+        }
+    };
+    (e_type.is_some() && r_type.is_some()).then_some((e_type, r_type))
+}
+
+/// The diagnostic message for `node` when its Effect or Layer type has any
+/// or unknown in its requirements or error channel.
+fn any_unknown_channels_message(tp: &mut TypeParser<'_>, node: Node) -> Option<String> {
+    let (e_type, r_type) = effect_or_layer_channels(tp, node)?;
+    let r_flags = tp.checker.ty(r_type).flags();
+    let e_flags = tp.checker.ty(e_type).flags();
+    let has_any_unknown_r = r_flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN);
+    let has_any_unknown_e = e_flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN);
+
+    if !has_any_unknown_r && !has_any_unknown_e {
+        return None;
+    }
+
+    let any_or_unknown = |flags: TypeFlags| {
+        if flags.intersects(TypeFlags::ANY) {
+            "any"
+        } else {
+            "unknown"
+        }
+    };
+
+    // Build the channel descriptions
+    let mut channels: Vec<String> = Vec::new();
+    if has_any_unknown_r {
+        channels.push(format!(
+            "{} in the requirements channel",
+            any_or_unknown(r_flags)
+        ));
+    }
+    if has_any_unknown_e {
+        channels.push(format!("{} in the error channel", any_or_unknown(e_flags)));
+    }
+
+    // Compose the diagnostic message
+    let mut suggestions: Vec<String> = Vec::new();
+    suggestions.push(format!(
+        "This has {} which is not recommended.",
+        channels.join(" and ")
+    ));
+    if has_any_unknown_r {
+        suggestions.push(
+            "Only service identifiers should appear in the requirements channel.".to_string(),
+        );
+    }
+    if has_any_unknown_e {
+        suggestions.push("Having an unknown or any error type is not useful. Consider instead using specific error types baked by Data.TaggedError for example.".to_string());
+    }
+    Some(suggestions.join("\n"))
 }

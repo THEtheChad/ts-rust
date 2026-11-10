@@ -55,88 +55,82 @@ pub fn analyze_timeout_catch_tag_to_timeout_or_else(
     // pattern adds work and allocations to this frequently run analysis.
     let flows = tp.piping_flows(sf, true);
     for flow in flows.iter() {
-        let mut i = 0;
-        while i + 1 < flow.transformations.len() {
-            let timeout = &flow.transformations[i];
-            if timeout.args.len() != 1
-                || !tp.is_node_reference_to_effect_module_api(timeout.callee, member!("timeout"))
-            {
-                i += 1;
-                continue;
-            }
-            let mut end = i + 1;
-            let option = timeout_as_some(tp, &flow.transformations[end]);
-            if option {
-                end += 1;
-            }
-            if end >= flow.transformations.len() {
-                i += 1;
-                continue;
-            }
-            let catch = &flow.transformations[end];
-            if catch.args.len() != 2
-                || !tp.is_node_reference_to_effect_module_api(catch.callee, member!("catchTag"))
-            {
-                i += 1;
-                continue;
-            }
-            let tag = skip_parentheses(catch.args[0]);
-            if tag.kind() != SyntaxKind::StringLiteral || tag.text() != "TimeoutError" {
-                i += 1;
-                continue;
-            }
-            let handler = skip_parentheses(catch.args[1]);
-            if !timeout_ignores_error(tp, handler) {
-                i += 1;
-                continue;
-            }
-            if option && !timeout_returns_none(tp, handler) {
-                i += 1;
-                continue;
-            }
-            let input_type = flow.transformation_input_type(i as i32);
-            let input = tp.strict_effect_type(input_type);
-            let Some(input) = input else {
-                i += 1;
-                continue;
-            };
-            if !timeout_error_excluded(tp, input.e) {
-                i += 1;
-                continue;
-            }
-            let mut has_type_args = false;
-            for j in i..=end {
-                has_type_args = has_type_args
-                    || super::catch_die_to_or_die::catch_die_has_type_arguments(Some(
-                        &flow.transformations[j],
-                    ));
-            }
-            if has_type_args {
-                i += 1;
-                continue;
-            }
-            let mut name = "timeoutOrElse";
-            if option {
-                name = "timeoutOption";
-            }
-            let mut module = Node::NIL;
-            if catch.callee.kind() == SyntaxKind::PropertyAccessExpression {
-                module = catch.callee.expression();
-            }
-            matches.push(TimeoutCatchTagToTimeoutOrElseMatch {
-                flow: flow.clone(),
-                start: i as i32,
-                end: end as i32,
-                location: get_error_range_for_node(sf, catch.callee),
-                replacement_name: name.to_string(),
-                effect_module: module,
-                duration: timeout.args[0],
-                handler: catch.args[1],
-            });
-            i += 1;
+        for i in 0..flow.transformations.len().saturating_sub(1) {
+            matches.extend(match_timeout_catch_tag_at(tp, sf, flow, i));
         }
     }
     matches
+}
+
+/// The match of a `timeout(d)` step at `i` of `flow`, followed (after an
+/// optional `asSome`-like step) by `catchTag("TimeoutError", handler)` whose
+/// handler ignores the error (and returns none after the option step), when
+/// the input's error channel excludes `TimeoutError` and no step has type
+/// arguments.
+fn match_timeout_catch_tag_at(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    flow: &Rc<PipingFlow>,
+    i: usize,
+) -> Option<TimeoutCatchTagToTimeoutOrElseMatch> {
+    let timeout = &flow.transformations[i];
+    if timeout.args.len() != 1
+        || !tp.is_node_reference_to_effect_module_api(timeout.callee, member!("timeout"))
+    {
+        return None;
+    }
+    let mut end = i + 1;
+    let option = timeout_as_some(tp, &flow.transformations[end]);
+    if option {
+        end += 1;
+    }
+    if end >= flow.transformations.len() {
+        return None;
+    }
+    let catch = &flow.transformations[end];
+    if catch.args.len() != 2
+        || !tp.is_node_reference_to_effect_module_api(catch.callee, member!("catchTag"))
+    {
+        return None;
+    }
+    let tag = skip_parentheses(catch.args[0]);
+    if tag.kind() != SyntaxKind::StringLiteral || tag.text() != "TimeoutError" {
+        return None;
+    }
+    let handler = skip_parentheses(catch.args[1]);
+    if !timeout_ignores_error(tp, handler) || (option && !timeout_returns_none(tp, handler)) {
+        return None;
+    }
+    let input_type = flow.transformation_input_type(i as i32);
+    let input = tp.strict_effect_type(input_type)?;
+    if !timeout_error_excluded(tp, input.e) {
+        return None;
+    }
+    let has_type_args = (i..=end).any(|j| {
+        super::catch_die_to_or_die::catch_die_has_type_arguments(Some(&flow.transformations[j]))
+    });
+    if has_type_args {
+        return None;
+    }
+    let name = if option {
+        "timeoutOption"
+    } else {
+        "timeoutOrElse"
+    };
+    let mut module = Node::NIL;
+    if catch.callee.kind() == SyntaxKind::PropertyAccessExpression {
+        module = catch.callee.expression();
+    }
+    Some(TimeoutCatchTagToTimeoutOrElseMatch {
+        flow: flow.clone(),
+        start: i as i32,
+        end: end as i32,
+        location: get_error_range_for_node(sf, catch.callee),
+        replacement_name: name.to_string(),
+        effect_module: module,
+        duration: timeout.args[0],
+        handler: catch.args[1],
+    })
 }
 
 // Go: rules/timeout_catch_tag_to_timeout_or_else.go timeoutAsSome

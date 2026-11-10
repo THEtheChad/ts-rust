@@ -131,27 +131,18 @@ fn analyze_prefer_unsafe_constructor_node(
     }
 
     // Spread arguments make the argument list impossible to validate statically.
-    if inner_call.argument_list().is_some() {
-        for arg in inner_call.arguments().iter() {
-            if arg.kind() == SyntaxKind::SpreadElement {
-                return None;
-            }
-        }
+    if inner_call.argument_list().is_some()
+        && inner_call
+            .arguments()
+            .iter()
+            .any(|arg| arg.kind() == SyntaxKind::SpreadElement)
+    {
+        return None;
     }
 
     // The constructor call must produce an `Effect<A, never, never>`: a fallible or
     // service-requiring effect has no behavior-preserving synchronous replacement.
-    let inner_type = tp.get_type_at_location(inner);
-    let eff = tp.effect_type(inner_type)?;
-    if eff.a.is_nil() {
-        return None;
-    }
-    if eff.e.is_nil() || !tp.checker.ty(eff.e).flags.intersects(TypeFlags::NEVER) {
-        return None;
-    }
-    if eff.r.is_nil() || !tp.checker.ty(eff.r).flags.intersects(TypeFlags::NEVER) {
-        return None;
-    }
+    let success_type = infallible_effect_success_type(tp, inner)?;
 
     let sym = tp.reference_symbol_at_node(inner_callee);
     if sym.is_nil() {
@@ -167,41 +158,10 @@ fn analyze_prefer_unsafe_constructor_node(
     let unsafe_name = name.clone() + "Unsafe";
     let declarations = tp.checker.sym(sym).declarations.clone();
     for decl in declarations.iter().copied() {
-        if decl.is_nil() {
+        let Some(sibling) = effect_unsafe_sibling(tp, decl, &name, &unsafe_name, sym) else {
             continue;
-        }
-        let decl_sf = get_source_file_of_node(decl);
-        if decl_sf.is_nil()
-            || !source_file_info(decl_sf).is_declaration_file
-            || !tp.is_source_file_in_package(decl_sf, "effect")
-        {
-            continue;
-        }
-        let module_sym = tp.checker.get_symbol_of_declaration(decl_sf);
-        if module_sym.is_nil() {
-            continue;
-        }
-        // The callee must be the module-level export of that name, not a nested member
-        // (e.g. a method) that happens to be declared in an effect declaration file.
-        let export_member = tp
-            .checker
-            .try_get_member_in_module_exports_and_properties(&name, module_sym);
-        let export_sym = resolve_aliased_symbol(tp.checker, export_member);
-        if tp
-            .checker
-            .get_symbol_if_same_reference(export_sym, sym)
-            .is_nil()
-        {
-            continue;
-        }
-        let sibling_member = tp
-            .checker
-            .try_get_member_in_module_exports_and_properties(&unsafe_name, module_sym);
-        let sibling = resolve_aliased_symbol(tp.checker, sibling_member);
-        if sibling.is_nil() {
-            continue;
-        }
-        if !unsafe_sibling_matches_call(tp, inner_call, sibling, eff.a) {
+        };
+        if !unsafe_sibling_matches_call(tp, inner_call, sibling, success_type) {
             continue;
         }
 
@@ -233,6 +193,66 @@ fn analyze_prefer_unsafe_constructor_node(
     }
 
     None
+}
+
+/// The success type of the Effect that `inner` produces, when its error and
+/// requirements channels are both `never`.
+fn infallible_effect_success_type(tp: &mut TypeParser<'_>, inner: Node) -> Option<TypeId> {
+    let inner_type = tp.get_type_at_location(inner);
+    let eff = tp.effect_type(inner_type)?;
+    if eff.a.is_nil() {
+        return None;
+    }
+    if eff.e.is_nil() || !tp.checker.ty(eff.e).flags.intersects(TypeFlags::NEVER) {
+        return None;
+    }
+    if eff.r.is_nil() || !tp.checker.ty(eff.r).flags.intersects(TypeFlags::NEVER) {
+        return None;
+    }
+    Some(eff.a)
+}
+
+/// The `<name>Unsafe` export beside `sym` in the module of its declaration
+/// `decl`, when `decl` is in a declaration file of the `effect` package and
+/// `sym` is that module's export `name` (not a nested member, such as a
+/// method, that happens to be declared in an effect declaration file).
+fn effect_unsafe_sibling(
+    tp: &mut TypeParser<'_>,
+    decl: Node,
+    name: &str,
+    unsafe_name: &str,
+    sym: SymbolId,
+) -> Option<SymbolId> {
+    if decl.is_nil() {
+        return None;
+    }
+    let decl_sf = get_source_file_of_node(decl);
+    if decl_sf.is_nil()
+        || !source_file_info(decl_sf).is_declaration_file
+        || !tp.is_source_file_in_package(decl_sf, "effect")
+    {
+        return None;
+    }
+    let module_sym = tp.checker.get_symbol_of_declaration(decl_sf);
+    if module_sym.is_nil() {
+        return None;
+    }
+    let export_member = tp
+        .checker
+        .try_get_member_in_module_exports_and_properties(name, module_sym);
+    let export_sym = resolve_aliased_symbol(tp.checker, export_member);
+    if tp
+        .checker
+        .get_symbol_if_same_reference(export_sym, sym)
+        .is_nil()
+    {
+        return None;
+    }
+    let sibling_member = tp
+        .checker
+        .try_get_member_in_module_exports_and_properties(unsafe_name, module_sym);
+    let sibling = resolve_aliased_symbol(tp.checker, sibling_member);
+    sibling.is_some().then_some(sibling)
 }
 
 /// unsafeSiblingMatchesCall reports whether some call signature of the sibling symbol is

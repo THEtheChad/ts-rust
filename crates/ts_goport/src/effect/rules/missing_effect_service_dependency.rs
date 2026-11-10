@@ -70,45 +70,7 @@ fn check_service_dependencies(ctx: &mut RuleContext<'_, '_>, node: Node) -> Vec<
     let class_name = service_result.class_name;
     let options = service_result.options;
 
-    // Get the class symbol and type
-    let class_sym = ctx.tp.get_symbol_at_location(class_name);
-    if class_sym.is_nil() {
-        return Vec::new();
-    }
-    let class_type = ctx
-        .tp
-        .checker
-        .get_type_of_symbol_at_location(class_sym, node);
-    if class_type.is_nil() {
-        return Vec::new();
-    }
-
-    // Try DefaultWithoutDependencies first, then fall back to Default
-    let mut default_prop = ctx
-        .tp
-        .checker
-        .get_property_of_type_exported(class_type, "DefaultWithoutDependencies");
-    if default_prop.is_nil() {
-        default_prop = ctx
-            .tp
-            .checker
-            .get_property_of_type_exported(class_type, "Default");
-    }
-    if default_prop.is_nil() {
-        return Vec::new();
-    }
-
-    let default_type = ctx
-        .tp
-        .checker
-        .get_type_of_symbol_at_location(default_prop, node);
-    if default_type.is_nil() {
-        return Vec::new();
-    }
-
-    // Parse as Layer type to get RIn
-    let layer = ctx.tp.layer_type(default_type);
-    let Some(layer) = layer else {
+    let Some(layer) = service_default_layer(ctx.tp, class_name, node) else {
         return Vec::new();
     };
 
@@ -129,60 +91,28 @@ fn check_service_dependencies(ctx: &mut RuleContext<'_, '_>, node: Node) -> Vec<
 
     // Process dependencies to find provided services
     let mut provided_indexes: FxHashMap<String, bool> = FxHashMap::default();
-
-    if options.is_some() {
-        let options_type = ctx.tp.get_type_at_location(options);
-        if options_type.is_some() {
-            let dependencies_prop = ctx
-                .tp
-                .checker
-                .get_property_of_type_exported(options_type, "dependencies");
-            if dependencies_prop.is_some() {
-                let dependencies_type = ctx
-                    .tp
-                    .checker
-                    .get_type_of_symbol_at_location(dependencies_prop, options);
-                if dependencies_type.is_some() {
-                    // Get the number index type to extract individual dependency types
-                    let number_index_type = ctx.tp.checker.get_number_index_type(dependencies_type);
-                    if number_index_type.is_some() {
-                        let dep_types = ctx.tp.unroll_union_members(number_index_type);
-                        for dep_type in dep_types {
-                            // Parse each dependency as Layer type
-                            let dep_layer = ctx.tp.layer_type(dep_type);
-                            if let Some(dep_layer) = dep_layer {
-                                // Add the ROut of this dependency to provided services
-                                let provided_result = ctx.tp.append_to_unique_types_map(
-                                    &mut services_memory,
-                                    dep_layer.r_out,
-                                    Some(&mut exclude_never),
-                                );
-                                for idx in provided_result.all_indexes {
-                                    provided_indexes.insert(idx, true);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    for dep_type in dependency_types(ctx.tp, options) {
+        // Parse each dependency as Layer type
+        let Some(dep_layer) = ctx.tp.layer_type(dep_type) else {
+            continue;
+        };
+        // Add the ROut of this dependency to provided services
+        let provided_result = ctx.tp.append_to_unique_types_map(
+            &mut services_memory,
+            dep_layer.r_out,
+            Some(&mut exclude_never),
+        );
+        for idx in provided_result.all_indexes {
+            provided_indexes.insert(idx, true);
         }
     }
 
-    // Find missing indexes: required but not provided
-    let mut missing_indexes: Vec<String> = Vec::new();
-    for idx in &required_indexes {
-        if !provided_indexes.get(idx).copied().unwrap_or(false) {
-            missing_indexes.push(idx.clone());
-        }
-    }
-
-    if missing_indexes.is_empty() {
-        return Vec::new();
-    }
-
-    // Build the diagnostic
+    // Find missing indexes: required but not provided, and build the diagnostic
     let mut missing_type_names: Vec<String> = Vec::new();
-    for idx in &missing_indexes {
+    for idx in &required_indexes {
+        if provided_indexes.get(idx).copied().unwrap_or(false) {
+            continue;
+        }
         let t = services_memory.get(idx).copied().unwrap_or(TypeId::NIL);
         if t.is_some() {
             missing_type_names.push(ctx.tp.checker.type_to_string_exported(t));
@@ -192,31 +122,113 @@ fn check_service_dependencies(ctx: &mut RuleContext<'_, '_>, node: Node) -> Vec<
     if missing_type_names.is_empty() {
         return Vec::new();
     }
+    vec![missing_services_diagnostic(
+        ctx,
+        class_name,
+        &missing_type_names,
+    )]
+}
 
+/// The Layer of the `DefaultWithoutDependencies` (or else `Default`) static
+/// of the service class named `class_name`.
+fn service_default_layer(
+    tp: &mut TypeParser<'_>,
+    class_name: Node,
+    node: Node,
+) -> Option<Rc<Layer>> {
+    // Get the class symbol and type
+    let class_sym = tp.get_symbol_at_location(class_name);
+    if class_sym.is_nil() {
+        return None;
+    }
+    let class_type = tp.checker.get_type_of_symbol_at_location(class_sym, node);
+    if class_type.is_nil() {
+        return None;
+    }
+
+    // Try DefaultWithoutDependencies first, then fall back to Default
+    let mut default_prop = tp
+        .checker
+        .get_property_of_type_exported(class_type, "DefaultWithoutDependencies");
+    if default_prop.is_nil() {
+        default_prop = tp
+            .checker
+            .get_property_of_type_exported(class_type, "Default");
+    }
+    if default_prop.is_nil() {
+        return None;
+    }
+
+    let default_type = tp
+        .checker
+        .get_type_of_symbol_at_location(default_prop, node);
+    if default_type.is_nil() {
+        return None;
+    }
+
+    // Parse as Layer type to get RIn
+    tp.layer_type(default_type)
+}
+
+/// The union members of the element type of the `dependencies` option of
+/// the service options `options` (empty without one).
+fn dependency_types(tp: &mut TypeParser<'_>, options: Node) -> Vec<TypeId> {
+    if options.is_nil() {
+        return Vec::new();
+    }
+    let options_type = tp.get_type_at_location(options);
+    if options_type.is_nil() {
+        return Vec::new();
+    }
+    let dependencies_prop = tp
+        .checker
+        .get_property_of_type_exported(options_type, "dependencies");
+    if dependencies_prop.is_nil() {
+        return Vec::new();
+    }
+    let dependencies_type = tp
+        .checker
+        .get_type_of_symbol_at_location(dependencies_prop, options);
+    if dependencies_type.is_nil() {
+        return Vec::new();
+    }
+    // Get the number index type to extract individual dependency types
+    let number_index_type = tp.checker.get_number_index_type(dependencies_type);
+    if number_index_type.is_nil() {
+        return Vec::new();
+    }
+    tp.unroll_union_members(number_index_type)
+}
+
+/// The diagnostic on `class_name` for the services `missing_type_names`
+/// (one, or several as 'X', 'Y').
+fn missing_services_diagnostic(
+    ctx: &mut RuleContext<'_, '_>,
+    class_name: Node,
+    missing_type_names: &[String],
+) -> Diagnostic {
     if missing_type_names.len() == 1 {
         // Singular
-        let d = ctx.new_diagnostic(
+        return ctx.new_diagnostic(
             ctx.source_file,
             ctx.get_error_range(class_name),
             diag::Service_0_is_required_but_not_provided_by_dependencies_effect_missingEffectServiceDependency,
             Vec::new(),
             args![missing_type_names[0]],
         );
-        return vec![d];
     }
 
     // Plural: format as 'X', 'Y'
     let mut quoted_names: Vec<String> = Vec::new();
-    for name in &missing_type_names {
+    for name in missing_type_names {
         quoted_names.push(format!("'{name}'"));
     }
     let formatted = quoted_names.join(", ");
-    let d = ctx.new_diagnostic(
+    ctx.new_diagnostic(
         ctx.source_file,
         ctx.get_error_range(class_name),
         diag::Services_0_are_required_but_not_provided_by_dependencies_effect_missingEffectServiceDependency,
         Vec::new(),
         args![formatted],
-    );
-    vec![d]
+    )
 }

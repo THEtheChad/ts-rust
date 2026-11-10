@@ -77,71 +77,66 @@ pub fn analyze_missed_pipeable_opportunity(
             }
         }
 
-        // Search for valid pipeable segments
-        let mut search_start_index: usize = 0;
-
-        while search_start_index <= n {
-            // Find the first pipeable type starting from searchStartIndex
-            let mut first_pipeable_index: Option<usize> = None;
-
-            for i in search_start_index..=n {
-                if is_pipeable_at_index(tp, flow, i) {
-                    first_pipeable_index = Some(i);
-                    break;
-                }
-            }
-
-            let Some(first_pipeable_index) = first_pipeable_index else {
-                break;
-            };
-
-            // Collect transformations while their callees are safely pipeable
-            let mut pipeable_transformations: Vec<PipingFlowTransformation> = Vec::new();
-
-            for i in first_pipeable_index..n {
-                let t = &flow.transformations[i];
-                if !tp.is_safely_pipeable_callee(t.callee) {
-                    break;
-                }
-                pipeable_transformations.push(t.clone());
-            }
-
-            // Count "call" kind transformations
-            let mut call_kind_count: i64 = 0;
-            for t in &pipeable_transformations {
-                if t.kind == TransformationKind::Call {
-                    call_kind_count += 1;
-                }
-            }
-
-            if call_kind_count >= min_arg_count {
-                let pipeable_end_index = first_pipeable_index + pipeable_transformations.len();
-
-                // Get subject text for the diagnostic message
-                let subject_text = get_subject_text(sf, flow, first_pipeable_index);
-
-                let after_transformations = flow.transformations[pipeable_end_index..].to_vec();
-
-                matches.push(MissedPipeableOpportunityMatch {
-                    source_file: sf,
-                    location: get_error_range_for_node(sf, flow.node),
-                    pipeable_start_index: first_pipeable_index as i32,
-                    pipeable_transformations,
-                    flow: flow.clone(),
-                    subject_text,
-                    after_transformations,
-                });
-
-                // Found and reported a valid segment, move past it (no overlapping diagnostics)
-                break;
-            }
-
-            // Not enough transformations, try starting from the next position
-            search_start_index = first_pipeable_index + pipeable_transformations.len() + 1;
-        }
+        matches.extend(first_missed_pipeable_segment(tp, sf, flow, min_arg_count));
     }
 
     matches
+}
+
+/// The first segment of `flow` that starts at a pipeable type and whose
+/// safely pipeable transformations include at least `min_arg_count` calls
+/// (one diagnostic per flow: segments never overlap).
+fn first_missed_pipeable_segment(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    flow: &Rc<PipingFlow>,
+    min_arg_count: i64,
+) -> Option<MissedPipeableOpportunityMatch> {
+    let n = flow.transformations.len();
+    // Search for valid pipeable segments
+    let mut search_start_index: usize = 0;
+    while search_start_index <= n {
+        // Find the first pipeable type starting from searchStartIndex
+        let first_pipeable_index =
+            (search_start_index..=n).find(|&i| is_pipeable_at_index(tp, flow, i))?;
+
+        // Collect transformations while their callees are safely pipeable
+        let pipeable_transformations: Vec<PipingFlowTransformation> = flow.transformations
+            [first_pipeable_index..n]
+            .iter()
+            .take_while(|t| tp.is_safely_pipeable_callee(t.callee))
+            .cloned()
+            .collect();
+
+        // Count "call" kind transformations
+        let call_kind_count = pipeable_transformations
+            .iter()
+            .filter(|t| t.kind == TransformationKind::Call)
+            .count() as i64;
+
+        if call_kind_count >= min_arg_count {
+            let pipeable_end_index = first_pipeable_index + pipeable_transformations.len();
+
+            // Get subject text for the diagnostic message
+            let subject_text = get_subject_text(sf, flow, first_pipeable_index);
+
+            let after_transformations = flow.transformations[pipeable_end_index..].to_vec();
+
+            return Some(MissedPipeableOpportunityMatch {
+                source_file: sf,
+                location: get_error_range_for_node(sf, flow.node),
+                pipeable_start_index: first_pipeable_index as i32,
+                pipeable_transformations,
+                flow: flow.clone(),
+                subject_text,
+                after_transformations,
+            });
+        }
+
+        // Not enough transformations, try starting from the next position
+        search_start_index = first_pipeable_index + pipeable_transformations.len() + 1;
+    }
+    None
 }
 
 // isPipeableAtIndex checks if the type at a given index in a flow is pipeable.

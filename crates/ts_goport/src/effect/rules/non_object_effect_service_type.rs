@@ -83,95 +83,75 @@ fn check_service_property_types(ctx: &mut RuleContext<'_, '_>, node: Node) -> Ve
             continue;
         }
 
-        match property_name.as_str() {
-            "succeed" => {
-                let value_type = ctx.tp.get_type_at_location(initializer);
-                if value_type.is_some() && is_primitive_type(ctx.tp, value_type) {
-                    diags.push(ctx.new_diagnostic(
-                        ctx.source_file,
-                        ctx.get_error_range(pa.name()),
-                        diag::Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
-                        Vec::new(),
-                        Vec::new(),
-                    ));
-                }
-            }
-
-            "sync" => {
-                let value_type = ctx.tp.get_type_at_location(initializer);
-                if value_type.is_nil() {
-                    continue;
-                }
-                let signatures = ctx
-                    .tp
-                    .checker
-                    .get_signatures_of_type_exported(value_type, SignatureKind::CALL);
-                for sig in signatures {
-                    let return_type = ctx.tp.checker.get_return_type_of_signature_exported(sig);
-                    if return_type.is_some() && is_primitive_type(ctx.tp, return_type) {
-                        diags.push(ctx.new_diagnostic(
-                            ctx.source_file,
-                            ctx.get_error_range(pa.name()),
-                            diag::Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
-                            Vec::new(),
-                            Vec::new(),
-                        ));
-                        break;
-                    }
-                }
-            }
-
-            "effect" | "scoped" => {
-                let value_type = ctx.tp.get_type_at_location(initializer);
-                if value_type.is_nil() {
-                    continue;
-                }
-
-                // Try direct EffectType parse first
-                if let Some(effect_result) = ctx.tp.effect_type(value_type) {
-                    if is_primitive_type(ctx.tp, effect_result.a) {
-                        diags.push(ctx.new_diagnostic(
-                            ctx.source_file,
-                            ctx.get_error_range(pa.name()),
-                            diag::Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
-                            Vec::new(),
-                            Vec::new(),
-                        ));
-                    }
-                    continue;
-                }
-
-                // Fall back to call signatures
-                let signatures = ctx
-                    .tp
-                    .checker
-                    .get_signatures_of_type_exported(value_type, SignatureKind::CALL);
-                for sig in signatures {
-                    let return_type = ctx.tp.checker.get_return_type_of_signature_exported(sig);
-                    if return_type.is_nil() {
-                        continue;
-                    }
-                    let effect_return_result = ctx.tp.effect_type(return_type);
-                    if let Some(effect_return_result) = effect_return_result
-                        && is_primitive_type(ctx.tp, effect_return_result.a)
-                    {
-                        diags.push(ctx.new_diagnostic(
-                            ctx.source_file,
-                            ctx.get_error_range(pa.name()),
-                            diag::Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
-                            Vec::new(),
-                            Vec::new(),
-                        ));
-                        break;
-                    }
-                }
-            }
-
-            _ => {}
+        if service_option_has_primitive_service(ctx.tp, &property_name, initializer) {
+            diags.push(ctx.new_diagnostic(
+                ctx.source_file,
+                ctx.get_error_range(pa.name()),
+                diag::Effect_Service_is_declared_with_a_primitive_service_type_Effect_Service_models_object_shaped_services_primitive_values_use_Context_Tag_or_Effect_Tag_directly_effect_nonObjectEffectServiceType,
+                Vec::new(),
+                Vec::new(),
+            ));
         }
     }
 
     diags
+}
+
+/// Whether the service option `property_name` (`succeed`, `sync`, `effect`
+/// or `scoped`) with the value `initializer` declares a primitive service
+/// type: the value itself, the return of one of its call signatures, or the
+/// success type of its Effect (or of the Effect one of its call signatures
+/// returns).
+fn service_option_has_primitive_service(
+    tp: &mut TypeParser<'_>,
+    property_name: &str,
+    initializer: Node,
+) -> bool {
+    if !matches!(property_name, "succeed" | "sync" | "effect" | "scoped") {
+        return false;
+    }
+    let value_type = tp.get_type_at_location(initializer);
+    if value_type.is_nil() {
+        return false;
+    }
+    match property_name {
+        "succeed" => is_primitive_type(tp, value_type),
+        "sync" => any_call_return_type(tp, value_type, |tp, return_type| {
+            return_type.is_some() && is_primitive_type(tp, return_type)
+        }),
+        _ => {
+            // Try direct EffectType parse first
+            if let Some(effect_result) = tp.effect_type(value_type) {
+                return is_primitive_type(tp, effect_result.a);
+            }
+            // Fall back to call signatures
+            any_call_return_type(tp, value_type, |tp, return_type| {
+                if return_type.is_nil() {
+                    return false;
+                }
+                tp.effect_type(return_type)
+                    .is_some_and(|effect_return_result| {
+                        is_primitive_type(tp, effect_return_result.a)
+                    })
+            })
+        }
+    }
+}
+
+/// Whether `f` holds for the return type of one of the call signatures of
+/// `t`, read in order up to the first that does.
+fn any_call_return_type(
+    tp: &mut TypeParser<'_>,
+    t: TypeId,
+    mut f: impl FnMut(&mut TypeParser<'_>, TypeId) -> bool,
+) -> bool {
+    let signatures = tp
+        .checker
+        .get_signatures_of_type_exported(t, SignatureKind::CALL);
+    signatures.into_iter().any(|sig| {
+        let return_type = tp.checker.get_return_type_of_signature_exported(sig);
+        f(tp, return_type)
+    })
 }
 
 // Go: rules.isPrimitiveType
