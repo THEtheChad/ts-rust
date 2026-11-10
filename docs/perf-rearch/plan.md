@@ -1783,3 +1783,18 @@ once a **reconciliation step** is built and tested.
 
   It also refills the lsp Go and JS evidence. It runs beside B2 and touches
   harness code only.
+- **B2 finished** (`t3/fix-api-path-parity`, head `c1ecb516a`, rebased onto
+  Q7 and H7).
+  - **All 14 api differences fixed:** the api tier gives 49 MATCH and 0
+    DIFF. The three new pins needed no extra code; the D2 fix covers them.
+  - **Pins removed;** the 36 fuzz entries are byte-identical.
+  - **Checks:** parity full (`runs/b2-29e23ede3-full`) OK with 14
+    recovered; icount flat; GATING OK; clippy and fmt clean.
+  - **Astra review:** running.
+  - **Tooling gap:** `regen --only` refuses items that now MATCH, so the
+    lane removed them with a `--from` copy. Follow-up: give `regen` a way to
+    drop recovered pins explicitly.
+  - **Another flake that predates this work:**
+    `build_watch_parses::build_watch_keeps_the_first_json_parse_of_a_cycle`
+    fails 3/100 on the base under parallel load. It goes to the flake
+    backlog, next to the Q7-style fix.
