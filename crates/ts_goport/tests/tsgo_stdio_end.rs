@@ -5,7 +5,16 @@
 //! - `-w`: the watch loop selects on `ctx.Done()` (Go
 //!   execute/watchmanager/watchmanager.go:382), so a signal ends the run at
 //!   once with exit code 0. The port waited on the cycle channel with a
-//!   50 ms timeout and ended up to 50 ms later.
+//!   50 ms timeout and ended up to 50 ms later. The unit tests of
+//!   execute/watchmanager/watchmanager.rs time that part inside the
+//!   process: `run_loop_ends_at_once_when_its_context_is_cancelled` bounds
+//!   the time from the cancel to the end of the loop, and its fault tests
+//!   show that a timed shutdown and a delayed cancel fail it. Here the run
+//!   must end within `AT_ONCE`, as in the other tests. A tight bound here
+//!   would also time the kernel's end of the process, which tsgo does not
+//!   control: on a loaded host a `tsgo -w` that SIGKILL ends takes tens of
+//!   milliseconds to be reaped too. No test times the signal thread's part
+//!   before the cancel (`notify_context`).
 //! - `--api`: the sync API (`ipc/conn_sync.go:55`) runs a request inline
 //!   and checks the context after it, so a signal during a request ends
 //!   the run right after the answer. A call to the client that waits does
@@ -76,29 +85,13 @@ fn watch_ends_soon_after_sigint_or_sigterm() {
         r#"{"compilerOptions":{"strict":true,"outDir":"out"},"include":["src"]}"#,
     );
     dir.write("src/a.ts", "export const a: number = 1;\n");
-    let mut took = Vec::new();
-    for signal in [Signal::INT, Signal::TERM].into_iter().cycle().take(7) {
+    for signal in [Signal::INT, Signal::TERM] {
         let mut tsgo = Tsgo::start(&["-w", "-p", "tsconfig.json"], &dir.0);
         tsgo.wait_stdout("Watching for file changes");
         let start = Instant::now();
         tsgo.signal(signal);
-        let (status, exited) = tsgo
-            .wait_exit(LIMIT)
-            .expect("tsgo -w did not end after the signal");
-        took.push(exited - start);
-        assert_eq!(status.code(), Some(0), "{signal:?}: {status:?}");
-        assert_eq!(tsgo.stderr(), "", "{signal:?}");
+        tsgo.expect_end(start, &format!("tsgo -w after {signal:?}"), 0, "");
     }
-    took.sort();
-    // From the signal to the first `try_wait` that sees the exit, the
-    // median on zbook is 1 to 4 ms (Go: about 5 ms). The old wait with a
-    // 50 ms timeout gives 50 to 53 ms: its wait starts when tsgo prints the
-    // line above.
-    assert!(
-        took[3] < Duration::from_millis(25),
-        "median {:?}, all {took:?}",
-        took[3]
-    );
 }
 
 /// The sync API. The `--api --async` tests come after it.

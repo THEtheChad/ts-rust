@@ -29,24 +29,30 @@
 //! A panic in a file's declaration transforms or in its JS print
 //! (`set_emit_test_panic`) writes the same files and returns the same with
 //! the twins on as with the twins off, with a guard around each file (as the
-//! goport bin has) and without one.
+//! goport bin has) and without one. The panic is a test hook: that test runs
+//! only with the `test-hooks` feature (CI's diagnostics and test-hooks step,
+//! the parity gate's tests tier).
+//!
+//! A `diagnostics` build also checks where the jobs went: it counts the jobs
+//! of the emit pool and the twins (`program::emit_job_stats`). Without it
+//! the tests compare the outputs only.
 
 use std::collections::BTreeMap;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ts_goport::core::enter_program;
-use ts_goport::emitter::emitter::{EmitOnly, EmitTestPanic, set_emit_test_panic};
+use ts_goport::emitter::emitter::EmitOnly;
+#[cfg(feature = "test-hooks")]
+use ts_goport::emitter::emitter::test_hooks::{EmitTestPanic, set_emit_test_panic};
 use ts_goport::emitter::program_emit::{
     EmitOptions, EmitResult, WriteFile, WriteFileData, combine_emit_results, emit, emit_batch,
-    emit_with, js_twin_print_count,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
-use ts_goport::program::{
-    dts_twin_job_count, emit_pool_job_count, format_diagnostic, release_program, source_files,
-    try_load_version,
+#[cfg(feature = "diagnostics")]
+use ts_goport::program::emit_job_stats::{
+    dts_twin_job_count, emit_pool_job_count, js_twin_print_count,
 };
+use ts_goport::program::{format_diagnostic, release_program, source_files, try_load_version};
 
 /// The d.ts twin check mode (`set_dts_twin_check`): only in a
 /// `diagnostics` feature build; else the twins print without the check.
@@ -58,7 +64,7 @@ fn twin_check(check: Option<bool>) {
 }
 
 /// The tests of this file run one at a time: the d.ts twin mode and the
-/// twin job count are process-wide.
+/// twin counts are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());
 
 const CONFIG: &str = concat!(
@@ -87,6 +93,7 @@ struct Written {
 struct Run {
     emit: Written,
     batch: Written,
+    #[cfg(feature = "diagnostics")]
     pool_jobs: usize,
 }
 
@@ -96,6 +103,7 @@ fn pool_emits_like_the_checker_threads() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let pool = run(|_| {});
+    #[cfg(feature = "diagnostics")]
     assert!(pool.pool_jobs > 0, "the emit pool got no job");
     assert!(
         pool.emit
@@ -107,6 +115,7 @@ fn pool_emits_like_the_checker_threads() {
     );
 
     let single = run(single_threaded);
+    #[cfg(feature = "diagnostics")]
     assert_eq!(
         single.pool_jobs, 0,
         "--singleThreaded must not use the pool"
@@ -114,10 +123,12 @@ fn pool_emits_like_the_checker_threads() {
     assert_same(&pool, &single, "the pool against --singleThreaded");
 
     let one_checker = run(|options| options.checkers = Some(1));
+    #[cfg(feature = "diagnostics")]
     assert!(one_checker.pool_jobs > 0, "--checkers 1 must use the pool");
     assert_same(&pool, &one_checker, "4 checkers against --checkers 1");
 
     let whole = run(no_declarations);
+    #[cfg(feature = "diagnostics")]
     assert!(
         whole.pool_jobs > 0,
         "without declarations the pool must run"
@@ -143,8 +154,10 @@ fn dts_twins_print_like_the_checker_threads() {
         |options| options.checkers = Some(1),
     ] {
         twin_check(Some(true));
+        #[cfg(feature = "diagnostics")]
         let twin_jobs = dts_twin_job_count();
         let twins = run(edit);
+        #[cfg(feature = "diagnostics")]
         let twin_jobs = dts_twin_job_count() - twin_jobs;
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
@@ -153,6 +166,7 @@ fn dts_twins_print_like_the_checker_threads() {
             single_threaded(options);
         });
 
+        #[cfg(feature = "diagnostics")]
         assert!(twin_jobs > 0, "the d.ts twins got no job");
         assert!(
             twins
@@ -185,11 +199,14 @@ fn twins_print_js_like_the_checker_threads() {
         ),
     ] {
         twin_check(Some(true));
-        let js_prints = js_twin_print_count();
-        let twin_jobs = dts_twin_job_count();
+        #[cfg(feature = "diagnostics")]
+        let (js_prints, twin_jobs) = (js_twin_print_count(), dts_twin_job_count());
         let twins = run_config(JS_TWIN_CONFIG, edit);
-        let js_prints = js_twin_print_count() - js_prints;
-        let twin_jobs = dts_twin_job_count() - twin_jobs;
+        #[cfg(feature = "diagnostics")]
+        let (js_prints, twin_jobs) = (
+            js_twin_print_count() - js_prints,
+            dts_twin_job_count() - twin_jobs,
+        );
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
         let checkers = run_config(JS_TWIN_CONFIG, |options| {
@@ -197,13 +214,18 @@ fn twins_print_js_like_the_checker_threads() {
             single_threaded(options);
         });
 
-        assert!(twin_jobs > 0, "the twins got no job");
-        // `emit` and `emit_batch` each print the 3 files.
-        assert_eq!(
-            js_prints,
-            if prints_js { 6 } else { 0 },
-            "JS prints on the twins"
-        );
+        #[cfg(feature = "diagnostics")]
+        {
+            assert!(twin_jobs > 0, "the twins got no job");
+            // `emit` and `emit_batch` each print the 3 files.
+            assert_eq!(
+                js_prints,
+                if prints_js { 6 } else { 0 },
+                "JS prints on the twins"
+            );
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = prints_js;
         assert_eq!(
             twins.emit.files.len(),
             checkers.emit.files.len(),
@@ -222,20 +244,25 @@ fn twins_print_js_like_the_checker_threads() {
     }
 }
 
+#[cfg(feature = "test-hooks")]
 #[test]
 fn twin_panics_write_like_the_checker_threads() {
+    use panic_runs::run_panic;
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for step in [EmitTestPanic::DeclarationTransforms, EmitTestPanic::JsPrint] {
         set_emit_test_panic(Some((step, "/src/model.ts")));
         twin_check(Some(false));
+        #[cfg(feature = "diagnostics")]
         let js_prints = js_twin_print_count();
         let twins = run_panic(JS_TWIN_CONFIG);
+        #[cfg(feature = "diagnostics")]
         let js_prints = js_twin_print_count() - js_prints;
         twin_check(None);
         set_emit_test_panic(None);
 
+        #[cfg(feature = "diagnostics")]
         assert!(js_prints > 0, "{step:?}: the twins printed no JS file");
         assert_eq!(twins.guard_panics, 1, "{step:?}: guarded panics");
         assert!(
@@ -275,77 +302,89 @@ fn twin_panics_write_like_the_checker_threads() {
     }
 }
 
-/// What one load of a fixture wrote and returned with a test panic
-/// (`set_emit_test_panic`).
-#[derive(Debug, PartialEq)]
-struct PanicRun {
-    /// `emit_with` with a guard around each file.
-    guarded: Written,
-    /// The panics that the guard caught.
-    guard_panics: usize,
-    /// `emit` without a guard, which panics.
-    unguarded: Written,
-    /// The message of the panic of `emit`, if it panicked.
-    panic: Option<String>,
-}
+/// The emits of `twin_panics_write_like_the_checker_threads` (`test-hooks`).
+#[cfg(feature = "test-hooks")]
+mod panic_runs {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The panics that `guard` caught.
-static GUARD_PANICS: AtomicUsize = AtomicUsize::new(0);
+    use super::{Written, record_writes};
+    use ts_goport::core::enter_program;
+    use ts_goport::emitter::program_emit::{EmitOptions, EmitResult, emit, emit_with};
+    use ts_goport::program::{release_program, try_load_version};
 
-/// The guard around each file's emit, as the goport bin has: a panic gives
-/// the file an empty result.
-fn guard(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
-    catch_unwind(AssertUnwindSafe(emit_file)).unwrap_or_else(|_| {
-        GUARD_PANICS.fetch_add(1, Ordering::Relaxed);
-        EmitResult::default()
-    })
-}
+    /// What one load of a fixture wrote and returned with a test panic
+    /// (`set_emit_test_panic`).
+    #[derive(Debug, PartialEq)]
+    pub(super) struct PanicRun {
+        /// `emit_with` with a guard around each file.
+        pub(super) guarded: Written,
+        /// The panics that the guard caught.
+        pub(super) guard_panics: usize,
+        /// `emit` without a guard, which panics.
+        pub(super) unguarded: Written,
+        /// The message of the panic of `emit`, if it panicked.
+        pub(super) panic: Option<String>,
+    }
 
-/// Loads `config`, emits it with `emit_with` and `guard`, then with `emit`,
-/// and releases it.
-fn run_panic(config: &str) -> PanicRun {
-    let program = try_load_version(config, |_| {})
-        .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
-    let run = {
-        let _scope = enter_program(Some(program));
-        let guard_panics = GUARD_PANICS.load(Ordering::Relaxed);
-        let guarded = record_writes(|write_file| {
-            emit_with(
-                EmitOptions {
-                    write_file: Some(write_file),
-                    ..EmitOptions::default()
-                },
-                guard,
-            )
-        });
-        let guard_panics = GUARD_PANICS.load(Ordering::Relaxed) - guard_panics;
-        let mut panic = None;
-        let unguarded = record_writes(|write_file| {
-            catch_unwind(AssertUnwindSafe(|| {
-                emit(EmitOptions {
-                    write_file: Some(write_file),
-                    ..EmitOptions::default()
+    /// The panics that `guard` caught.
+    static GUARD_PANICS: AtomicUsize = AtomicUsize::new(0);
+
+    /// The guard around each file's emit, as the goport bin has: a panic gives
+    /// the file an empty result.
+    fn guard(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
+        catch_unwind(AssertUnwindSafe(emit_file)).unwrap_or_else(|_| {
+            GUARD_PANICS.fetch_add(1, Ordering::Relaxed);
+            EmitResult::default()
+        })
+    }
+
+    /// Loads `config`, emits it with `emit_with` and `guard`, then with `emit`,
+    /// and releases it.
+    pub(super) fn run_panic(config: &str) -> PanicRun {
+        let program = try_load_version(config, |_| {})
+            .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
+        let run = {
+            let _scope = enter_program(Some(program));
+            let guard_panics = GUARD_PANICS.load(Ordering::Relaxed);
+            let guarded = record_writes(|write_file| {
+                emit_with(
+                    EmitOptions {
+                        write_file: Some(write_file),
+                        ..EmitOptions::default()
+                    },
+                    guard,
+                )
+            });
+            let guard_panics = GUARD_PANICS.load(Ordering::Relaxed) - guard_panics;
+            let mut panic = None;
+            let unguarded = record_writes(|write_file| {
+                catch_unwind(AssertUnwindSafe(|| {
+                    emit(EmitOptions {
+                        write_file: Some(write_file),
+                        ..EmitOptions::default()
+                    })
+                }))
+                .unwrap_or_else(|payload| {
+                    panic = Some(
+                        payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                    EmitResult::default()
                 })
-            }))
-            .unwrap_or_else(|payload| {
-                panic = Some(
-                    payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-                EmitResult::default()
-            })
-        });
-        PanicRun {
-            guarded,
-            guard_panics,
-            unguarded,
-            panic,
-        }
-    };
-    release_program(program);
-    run
+            });
+            PanicRun {
+                guarded,
+                guard_panics,
+                unguarded,
+                panic,
+            }
+        };
+        release_program(program);
+        run
+    }
 }
 
 /// Asserts that two runs wrote and returned the same, for `emit` and for
@@ -397,6 +436,7 @@ fn run_config(config: &str, edit: impl FnOnce(&mut CompilerOptions)) -> Run {
         Run {
             emit: emitted,
             batch,
+            #[cfg(feature = "diagnostics")]
             pool_jobs: emit_pool_job_count(),
         }
     };

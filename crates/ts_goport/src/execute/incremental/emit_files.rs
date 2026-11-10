@@ -1409,14 +1409,12 @@ pub(crate) struct StartedEmit {
     write_file: Option<WriteFile>,
     /// The writes of the emit, with `buffer_early_emit_writes`.
     buffer: Option<WriteBuffer>,
-    /// `program::bind_thread_fingerprint` of this thread after the start.
-    /// The emit pool starts from a copy of this thread's state, so between
-    /// the start and the finish this thread must not change it, else the
-    /// pool would start from other state than without the early start.
+    /// The state of this thread after the start (`early_emit_verify`).
     /// `None` with `buffer_early_emit_writes`: `tsc -b` makes other
     /// programs on this thread meanwhile, and their state is not the
     /// state of this program.
-    fingerprint: Option<(usize, (u64, u64), u64, usize)>,
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
+    fingerprint: Option<crate::emitter::program_emit::early_emit_verify::Fingerprint>,
 }
 
 /// PORT: not in Go (perf). The first half of `emit_files(program, options,
@@ -1455,9 +1453,10 @@ pub(crate) fn start_emit_files(program: &Program, options: EmitOptions) -> Start
         queued,
         batch,
         write_file: options.write_file,
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
         fingerprint: buffer
             .is_none()
-            .then(crate::program::bind_thread_fingerprint),
+            .then(crate::emitter::program_emit::early_emit_verify::Fingerprint::now),
         buffer,
     }
 }
@@ -1492,12 +1491,9 @@ pub(crate) fn finish_emit_files(
             },
         "finish_emit_files: the emit options differ from the started ones"
     );
-    if let Some(fingerprint) = started.fingerprint {
-        debug_assert_eq!(
-            crate::program::bind_thread_fingerprint(),
-            fingerprint,
-            "the loading thread changed its synthetic nodes, ids or lazy JSDoc during the early emit"
-        );
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
+    if let Some(fingerprint) = &started.fingerprint {
+        fingerprint.check();
     }
     let mut handler = EmitFilesHandler {
         program,

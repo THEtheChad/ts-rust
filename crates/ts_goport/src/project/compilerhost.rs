@@ -163,7 +163,8 @@ pub fn new_compiler_host(
         )
     };
     let source_fs = new_source_fs(true, builder.fs.clone(), builder.to_path.clone());
-    UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() + 1));
+    #[cfg(feature = "diagnostics")]
+    host_stats::note_made();
     Rc::new(CompilerHost {
         config_file_path,
         current_directory: current_directory.to_string(),
@@ -184,27 +185,47 @@ pub fn new_compiler_host(
     })
 }
 
-thread_local! {
-    /// The hosts of this thread that are neither frozen nor dropped
-    /// (`unfrozen_compiler_hosts`).
-    static UNFROZEN_HOSTS: Cell<usize> = const { Cell::new(0) };
-}
+/// Diagnostics builds: the count of the hosts that are not frozen
+/// (`unfrozen_compiler_hosts`), which tests read. Shipped builds keep none.
+#[cfg(feature = "diagnostics")]
+pub mod host_stats {
+    use std::cell::Cell;
 
-/// Not in Go: the number of hosts that `new_compiler_host` made on this
-/// thread and that are neither frozen nor dropped. A host keeps its project
-/// and the builder until `freeze`. Go's GC frees them with the host; the
-/// port keeps the host of a released program (`release`), so every host
-/// that a snapshot clone made must be frozen when the clone ends. Tests
-/// check it.
-#[must_use]
-pub fn unfrozen_compiler_hosts() -> usize {
-    UNFROZEN_HOSTS.with(Cell::get)
-}
+    use super::CompilerHost;
 
-impl Drop for CompilerHost {
-    fn drop(&mut self) {
-        if self.builder.get_mut().is_some() {
-            UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+    thread_local! {
+        /// The hosts of this thread that are neither frozen nor dropped
+        /// (`unfrozen_compiler_hosts`).
+        static UNFROZEN_HOSTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// `new_compiler_host` made a host.
+    pub(super) fn note_made() {
+        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() + 1));
+    }
+
+    /// A host let go of its project and the builder (`freeze`).
+    pub(super) fn note_frozen() {
+        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+    }
+
+    /// Not in Go: the number of hosts that `new_compiler_host` made on this
+    /// thread and that are neither frozen nor dropped. A host keeps its
+    /// project and the builder until `freeze`. Go's GC frees them with the
+    /// host; the port keeps the host of a released program (`release`), so
+    /// every host that a snapshot clone made must be frozen when the clone
+    /// ends. Tests check it.
+    #[must_use]
+    pub fn unfrozen_compiler_hosts() -> usize {
+        UNFROZEN_HOSTS.with(Cell::get)
+    }
+
+    /// A host that drops without a `freeze` counts down here.
+    impl Drop for CompilerHost {
+        fn drop(&mut self) {
+            if self.builder.get_mut().is_some() {
+                note_frozen();
+            }
         }
     }
 }
@@ -229,7 +250,8 @@ impl CompilerHost {
         let builder = self.builder.borrow_mut().take();
         // The count goes down where the builder goes, so a panic before
         // this line leaves the host counted once (`Drop` counts it down).
-        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+        #[cfg(feature = "diagnostics")]
+        host_stats::note_frozen();
         let project = self.project.borrow_mut().take();
         let logger = self.logger.borrow_mut().take();
         drop(builder);
@@ -638,8 +660,10 @@ impl compiler::CompilerHost for CompilerHost {
                     .and_then(|read| read.as_ref().map(|(_, text)| text.clone()))
             }) as crate::frontend::module::AheadText
         };
-        #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
-        let scratch = resolve_ahead_verify::scratch(self.source_fs.to_path.clone(), files.clone());
+        compiler::resolve_ahead::verify_only! {
+            let scratch =
+                resolve_ahead_verify::scratch(self.source_fs.to_path.clone(), files.clone());
+        }
         let accept = {
             let source_fs = self.source_fs.clone();
             Rc::new(move |_answer: AheadAnswer<'_>, calls: &[AheadCall]| {
@@ -647,7 +671,8 @@ impl compiler::CompilerHost for CompilerHost {
             })
         };
         let keys = self.resolution_keys.clone();
-        Some(compiler::resolve_ahead::ResolveAheadHost {
+        Some(compiler::resolve_ahead::host! {
+            scratch: scratch,
             previous_keys: self.resolution_keys.borrow().clone(),
             view: compiler::resolve_ahead::WorkerView {
                 current_directory,
@@ -661,8 +686,6 @@ impl compiler::CompilerHost for CompilerHost {
             package_json_text,
             keep_keys: Box::new(move |new_keys| *keys.borrow_mut() = Some(new_keys)),
             share: self.kept_share.borrow().clone()?,
-            #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
-            scratch,
         })
     }
 }
@@ -885,42 +908,39 @@ fn shared_key(call: &Arc<AheadCall>) -> usize {
     Arc::as_ptr(call) as usize
 }
 
-/// Debug builds: the tracking view of the host's file system that resolve
-/// ahead checks each taken answer on (`ResolveAheadHost::scratch`,
-/// `resolve_ahead::resolve_ahead_verify`). Compiled in debug and
-/// `diagnostics` builds, made in debug builds only. Not under rustdoc's
-/// doctest collection, which compiles this crate with `debug_assertions`
-/// against a release `goport_core` that has no `resolve_ahead_verify`.
-#[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
-mod resolve_ahead_verify {
-    use super::*;
-    use crate::frontend::compiler::resolve_ahead::resolve_ahead_verify::ScratchFs;
+compiler::resolve_ahead::verify_only! {
+    /// Debug and `diagnostics` builds: the tracking view of the host's file
+    /// system that resolve ahead checks each taken answer on
+    /// (`ResolveAheadHost::scratch`, `resolve_ahead::resolve_ahead_verify`).
+    /// goport_core decides where it is compiled (`verify_only!`).
+    mod resolve_ahead_verify {
+        use super::*;
+        use crate::frontend::compiler::resolve_ahead::resolve_ahead_verify::ScratchFs;
 
-    pub(super) fn scratch(
-        to_path: Rc<dyn Fn(&str) -> tspath::Path>,
-        files: Rc<dyn FileSource>,
-    ) -> Option<Rc<dyn Fn() -> ScratchFs>> {
-        cfg!(debug_assertions).then(|| {
+        pub(super) fn scratch(
+            to_path: Rc<dyn Fn(&str) -> tspath::Path>,
+            files: Rc<dyn FileSource>,
+        ) -> Rc<dyn Fn() -> ScratchFs> {
             Rc::new(move || {
-                let fs = new_source_fs(true, files.clone(), to_path.clone());
-                let tracked = fs.clone();
-                ScratchFs {
-                    fs,
-                    tracked: Box::new(move || {
-                        let seen = tracked
-                            .seen_files
-                            .borrow()
-                            .as_ref()
-                            .map(|seen| seen.borrow().keys().cloned().collect());
-                        let missing = tracked
-                            .missing_directories
-                            .as_ref()
-                            .map(|missing| missing.borrow().clone());
-                        (seen.unwrap_or_default(), missing.unwrap_or_default())
-                    }),
-                    to_path: to_path.clone(),
-                }
-            }) as Rc<dyn Fn() -> ScratchFs>
-        })
+                    let fs = new_source_fs(true, files.clone(), to_path.clone());
+                    let tracked = fs.clone();
+                    ScratchFs {
+                        fs,
+                        tracked: Box::new(move || {
+                            let seen = tracked
+                                .seen_files
+                                .borrow()
+                                .as_ref()
+                                .map(|seen| seen.borrow().keys().cloned().collect());
+                            let missing = tracked
+                                .missing_directories
+                                .as_ref()
+                                .map(|missing| missing.borrow().clone());
+                            (seen.unwrap_or_default(), missing.unwrap_or_default())
+                        }),
+                        to_path: to_path.clone(),
+                    }
+            })
+        }
     }
 }

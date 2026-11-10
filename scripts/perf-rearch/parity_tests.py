@@ -6,9 +6,12 @@ usage: parity_tests.py --out DIR [--checkout DIR] [--tier quick|full] [--jobs N]
                        [--runner-jobs N] [--no-build]
 
 It builds (scripts/run-cargo-capped.sh, the edit-loop release build of the checkout), with the
-`diagnostics` feature, so the tests of the diagnostic and verify code run too (FEATURES):
-  cargo test --release --locked --workspace --features ts_goport/diagnostics --no-run
-  cargo test --release --locked -p ts_goport --features diagnostics --test go_baselines --no-run
+`diagnostics` and `test-hooks` features, so the tests of the diagnostic and verify code and of the
+test hooks run too, as in ci.yml's diagnostics and test-hooks step (FEATURES):
+  cargo test --release --locked --workspace --features ts_goport/diagnostics,ts_goport/test-hooks --no-run
+  cargo test --release --locked -p ts_goport --features ts_goport/diagnostics,ts_goport/test-hooks --test go_baselines --no-run
+(ci.yml builds go_baselines with diagnostics only; test-hooks does nothing until a test sets a hook,
+and one feature set keeps it to one build of the crates.)
 and runs the test binaries as ci.yml's test and test-local jobs do: in the crate dir, with
 RUST_TEST_THREADS=1, TS_GO_REPO at the pinned Go checkout (tsc/ of microsoft__TypeScript@3e9236361fa9)
 and its own TSCTEST_TMP and COMPILER_RUNNER_TMP per binary:
@@ -42,8 +45,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # python3 -I leaves the script dir out
 import parity_modes as modes  # noqa: E402
 # The test builds have the diagnostics feature (crates/ts_goport/Cargo.toml): tests/plain_early_emit.rs
-# needs it, and the reuse verify, call log and phase report tests run only with it.
-FEATURES = 'ts_goport/diagnostics'
+# needs it, and the reuse verify, call log and phase report tests run only with it. test-hooks: the
+# panic, stall and write tests of plain_early_emit, the emit panic test of tests/emit_pool.rs and the
+# shutdown fault tests of execute/watchmanager run only with it.
+FEATURES = 'ts_goport/diagnostics,ts_goport/test-hooks'
 GO_REPO = Path.home() / '.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc'
 
 

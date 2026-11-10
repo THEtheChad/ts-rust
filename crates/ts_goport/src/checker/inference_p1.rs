@@ -1215,36 +1215,40 @@ impl Checker {
     // PORT: perf. Go `isDeeplyNestedType(t, stack, maxDepth)` where `t` is
     // the entry just pushed on `stack`. When every entry has one id, the Go
     // scan only compares ids, so the answer comes from `InferenceStack`
-    // with no scan (debug builds also scan and compare). Else the scan
-    // compares the known ids and runs the Go code for the probe and the
-    // entries with unknown ids, so `get_recursion_identity_target` runs for
-    // the same types in Go order.
+    // with no scan (debug builds also scan and compare:
+    // `inference_nesting_verify`). Else `inference_stack_top_scan` answers.
     // Go: checker/relater.go:766 isDeeplyNestedType
     #[inline]
     fn is_deeply_nested_inference_top(&mut self, stack: &InferenceStack, max_depth: i32) -> bool {
-        let fast = stack.top_deeply_nested(max_depth);
-        if let Some(nested) = fast
-            && !cfg!(debug_assertions)
-        {
+        if let Some(nested) = stack.top_deeply_nested(max_depth) {
+            #[cfg(debug_assertions)]
+            inference_nesting_verify::check(self, stack, max_depth, nested);
             return nested;
         }
-        let nested = if (stack.types.len() as i32) < max_depth {
-            false
+        self.inference_stack_top_scan(stack, max_depth)
+    }
+
+    // PORT: perf. Go `isDeeplyNestedType(t, stack, maxDepth)` where `t` is
+    // the entry just pushed on `stack`, by a scan: it compares the known ids
+    // and runs the Go code for the probe and the entries with unknown ids,
+    // so `get_recursion_identity_target` runs for the same types in Go
+    // order.
+    // Go: checker/relater.go:766 isDeeplyNestedType
+    fn inference_stack_top_scan(&mut self, stack: &InferenceStack, max_depth: i32) -> bool {
+        if (stack.types.len() as i32) < max_depth {
+            return false;
+        }
+        let top = *stack.entries.last().unwrap();
+        if top.id != RecursionKey::NONE {
+            self.inference_stack_scan(stack, top.id, max_depth)
+        } else if top.steps != UNKNOWN_IDS {
+            // Go `isDeeplyNestedType` on each intersection member in turn,
+            // here on their ids.
+            (top.prev..top.prev + top.steps)
+                .any(|i| self.inference_stack_scan(stack, stack.set_ids[i as usize], max_depth))
         } else {
-            let top = *stack.entries.last().unwrap();
-            if top.id != RecursionKey::NONE {
-                self.inference_stack_scan(stack, top.id, max_depth)
-            } else if top.steps != UNKNOWN_IDS {
-                // Go `isDeeplyNestedType` on each intersection member in
-                // turn, here on their ids.
-                (top.prev..top.prev + top.steps)
-                    .any(|i| self.inference_stack_scan(stack, stack.set_ids[i as usize], max_depth))
-            } else {
-                self.is_deeply_nested_inference_type(*stack.types.last().unwrap(), stack, max_depth)
-            }
-        };
-        debug_assert!(fast.is_none_or(|fast| fast == nested));
-        nested
+            self.is_deeply_nested_inference_type(*stack.types.last().unwrap(), stack, max_depth)
+        }
     }
 
     // PORT: perf. Go `isDeeplyNestedType(t, stack, maxDepth)` on an
@@ -2655,6 +2659,23 @@ impl Checker {
 fn append_if_unique(list: &mut SmallVec<[TypeId; 8]>, t: TypeId) {
     if !list.contains(&t) {
         list.push(t);
+    }
+}
+
+/// Debug builds: checks each answer that `InferenceStack::top_deeply_nested`
+/// gives from the ids against the scan (`inference_stack_top_scan`). Release
+/// builds, `diagnostics` ones too, keep none of it: the scan on every
+/// answer would cost the time that the ids save.
+#[cfg(debug_assertions)]
+mod inference_nesting_verify {
+    use super::{Checker, InferenceStack};
+
+    pub(super) fn check(checker: &mut Checker, stack: &InferenceStack, max_depth: i32, fast: bool) {
+        assert_eq!(
+            checker.inference_stack_top_scan(stack, max_depth),
+            fast,
+            "isDeeplyNestedType on the inference stack: the answer from the ids differs from the scan"
+        );
     }
 }
 
