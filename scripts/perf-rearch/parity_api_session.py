@@ -82,6 +82,7 @@ SANDBOX_HOME = STATE / 'api-home'
 SCRATCH = STATE / 'scratch/api'
 VIRTUAL = '/parity-api'
 INIT = Path(sandbox_init.__file__).resolve()  # the sandbox's PID 1, shared with the lsp tier
+STORAGE = INIT.parent / 'parity_sandbox_storage.py'  # its storage: made, recorded and listed by the init
 # The wire protocol this harness speaks: JSON-RPC 2.0 over stdio (--async), Content-Length framing, the
 # request and answer shapes of the pin's internal/api/proto.go (protocol 5 in scripts/goport/api_oracle.py's
 # numbering). Keyed: a change to it is a change to every answer.
@@ -94,7 +95,6 @@ PER_PROJECT = ['getSourceFileNames', 'getConfigFileNames', 'getConfigFileParsing
                'getGlobalDiagnostics', 'getSyntacticDiagnostics', 'getSemanticDiagnostics', 'getSuggestionDiagnostics',
                'getDeclarationDiagnostics', 'emitToString', 'emit']
 SERVER_PATH = '/usr/bin:/bin'
-HOME_DIRS = ['.cache', '.config', '.local/share', '.local/state', 'tmp']
 FIXED_MTIME = 978307200  # 2001-01-01: every dir the sandbox makes, and every fixture file
 # A disk fixture's modes: a checkout's. The server is not root in its sandbox (parity_sandbox_init.py drop()),
 # so it can write only where a user may; the fixture's immutability comes from its content check before
@@ -409,97 +409,13 @@ class Rpc:
 
 
 # ---- the session's storage --------------------------------------------------------------------
+# The storage (the private home and the fixture's overlay upper dir) is the sandbox's own tmpfs: the init
+# makes it, records every write to it and lists it (parity_sandbox_storage.py, shared with the lsp tier).
+# A listing here is the api tier's view of it: {'disk': the upper dir ({} without a fixture), 'home',
+# 'skeleton'}.
 
-def _describe_root(st):
-    if stat.S_ISDIR(st.st_mode):
-        return f'dir {stat.S_IMODE(st.st_mode):o}'
-    return f'not a dir: {stat.filemode(st.st_mode)}'
-
-
-def _walk(top):
-    """({relative path: what it is}, {relative path: text}) of a host dir: every entry, none skipped, as
-    "<sha256> <mode>" (a file), "dir <mode>", "link <target>" or "deleted" (an overlay whiteout: a deleted
-    input). The root itself is entry "." (its type and mode, by lstat: a root the server made unreadable,
-    or replaced, shows), and every dir that cannot be listed is "unlistable <why>" (os.walk would skip it).
-    A root that does not exist gives no entries (a session that has no such storage). Texts (up to 256 KB)
-    are for the diff report only."""
-    out, texts = {}, {}
-    try:
-        root_st = os.lstat(top)
-    except FileNotFoundError:
-        return out, texts
-    out['.'] = _describe_root(root_st)
-    if not stat.S_ISDIR(root_st.st_mode):
-        return out, texts
-
-    def unlistable(e):
-        key = os.path.relpath(e.filename, top) if e.filename else '?'
-        out[key] = f'{out[key]}; unlistable {e.strerror}' if key in out else f'unlistable {e.strerror}'
-    for d, dirs, files in os.walk(top, onerror=unlistable):
-        for x in dirs + files:
-            p = os.path.join(d, x)
-            rel = os.path.relpath(p, top)
-            try:
-                st = os.lstat(p)
-            except OSError as e:  # a dir that can be listed but not searched
-                out[rel] = f'unstatable {e.strerror}'
-                continue
-            mode = f'{stat.S_IMODE(st.st_mode):o}'
-            if stat.S_ISCHR(st.st_mode):
-                out[rel] = 'deleted'
-            elif stat.S_ISLNK(st.st_mode):
-                out[rel] = 'link ' + os.readlink(p)
-            elif stat.S_ISDIR(st.st_mode):
-                out[rel] = f'dir {mode}'
-            elif not stat.S_ISREG(st.st_mode):
-                out[rel] = f'special {st.st_mode:o}'
-            else:
-                try:
-                    data = Path(p).read_bytes()
-                except OSError as e:
-                    out[rel] = f'unreadable {e.strerror}'
-                    continue
-                out[rel] = f'{hashlib.sha256(data).hexdigest()[:16]} {mode}'
-                if len(data) <= 1 << 18:
-                    texts[rel] = data.decode('utf-8', 'replace')
-    return dict(sorted(out.items())), dict(sorted(texts.items()))
-
-
-HOME_SKELETON = {'/'.join(d.split('/')[:k + 1]) for d in HOME_DIRS for k in range(len(d.split('/')))}
-SKELETON_MODE = 0o755
-
-
-def make_home(home):
-    """The private home's skeleton: HOME_DIRS, every dir of it a real dir of mode SKELETON_MODE."""
-    for d in sorted(HOME_SKELETON):
-        (home / d).mkdir(parents=True, exist_ok=True)
-        os.chmod(home / d, SKELETON_MODE)
-    os.chmod(home, SKELETON_MODE)
-
-
-def skeleton_errors(home):
-    """How the home's skeleton is not what make_home made: a skeleton path that is gone, not a real dir,
-    or of another mode, and the home itself. Its contents are in the storage listing, compared with Go's."""
-    out = []
-    for rel in ['.', *sorted(HOME_SKELETON)]:
-        try:
-            st = os.lstat(home / rel)
-        except OSError:
-            out.append(f'{rel}: gone')
-            continue
-        if not stat.S_ISDIR(st.st_mode):
-            out.append(f'{rel}: not a dir ({stat.filemode(st.st_mode)})')
-        elif stat.S_IMODE(st.st_mode) != SKELETON_MODE:
-            out.append(f'{rel}: mode {stat.S_IMODE(st.st_mode):o}, not {SKELETON_MODE:o}')
-    return out
-
-
-def storage(work):
-    """The state of a session's writable places: the fixture's upper dir and the private home, every entry
-    listed, and the home skeleton's deviations from its exact structure."""
-    disk, texts = _walk(work / 'upper')
-    home, _ = _walk(work / 'home')
-    return {'disk': disk, 'home': home, 'skeleton': skeleton_errors(work / 'home')}, texts
+def api_listing(listing):
+    return {'disk': listing['disk'][0] if listing['disk'] else {}, 'home': listing['home'], 'skeleton': listing['skeleton']}
 
 
 def _clear(d):
@@ -529,23 +445,33 @@ class Session:
         self.sc, self.work, self.root = sc, work, root_of(sc)
         self.steps, self.failure = [], None
         _clear(work)
-        make_home(work / 'home')
-        if fixture is not None:
-            (work / 'upper').mkdir()
-            (work / 'ovl').mkdir()
+        work.mkdir(parents=True)
         argv, files = command(binary)
-        self.report_r, report_w = os.pipe()
-        mounts = [{'bind': str(work / 'home'), 'at': str(SANDBOX_HOME), 'rw': True}]
-        if fixture is not None:
-            mounts.append({'overlay': str(fixture), 'base': str(work), 'at': self.root})
-        spec = {'report': report_w, 'mounts': mounts, 'expose': files, 'cwd': '/', 'mtime': FIXED_MTIME,
-                'cmd': [*argv, *server_args(sc)]}
+        self.report_path = work / 'report.json'
+        report_w = os.open(self.report_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The control pipe: "list" to the init, a listing back (after every request).
+        c_r, self.control_w = os.pipe()
+        self.listing_r, l_w = os.pipe()
+        mounts = [{'overlay': str(fixture), 'at': self.root}] if fixture is not None else []
+        spec = {'report': report_w, 'control': [c_r, l_w], 'home': str(SANDBOX_HOME), 'mounts': mounts, 'expose': files,
+                'cwd': '/', 'mtime': FIXED_MTIME, 'cmd': [*argv, *server_args(sc)]}
         self.start = time.monotonic()
         try:
             self.rpc = Rpc(['/usr/bin/python3', '-I', str(INIT), 'launch', json.dumps(spec)],
-                           server_env(str(SANDBOX_HOME)), [report_w])
+                           server_env(str(SANDBOX_HOME)), [report_w, c_r, l_w])
         finally:
-            os.close(report_w)
+            for fd in (report_w, c_r, l_w):
+                os.close(fd)
+        self.listings = os.fdopen(self.listing_r, 'r')
+
+    def list_storage(self):
+        """The storage now, from the init (None when it no longer answers: the session has ended)."""
+        try:
+            os.write(self.control_w, b'list\n')
+            line = self.listings.readline()
+            return api_listing(json.loads(line)) if line else None
+        except (OSError, ValueError):
+            return None
 
     def ask(self, method, params):
         if self.failure:
@@ -557,7 +483,8 @@ class Session:
         if fail:
             self.failure = fail
             step['failure'] = fail[1]
-        step['fs'] = storage(self.work)[0]
+        else:  # after a failure the session is ending: its storage is in the final listing only
+            step['fs'] = self.list_storage()
         self.steps.append(step)
         return raw if fail is None else None
 
@@ -607,8 +534,9 @@ class Session:
         if self.failure and self.failure[0] == 'timeout':
             self.rpc.kill()
         code, forced, trailing, eof = self.rpc.finish()
-        with os.fdopen(self.report_r, 'rb') as f:
-            rep_raw = f.read()
+        os.close(self.control_w)
+        self.listings.close()
+        rep_raw = self.report_path.read_bytes()
         try:
             rep = json.loads(rep_raw) if rep_raw else {}
         except ValueError:
@@ -624,6 +552,8 @@ class Session:
         if not failure:
             if trailing:
                 failure = ('malformed', trailing)
+            elif rep.get('overflow'):
+                failure = ('crash', 'the record of its writes lost events (fanotify queue overflow)')
             elif rep.get('survivors') or rep.get('reaped'):
                 failure = ('crash', f'processes survived the server: {rep.get("survivors", [])[:5]}, {rep.get("reaped")} killed after it')
             elif not eof:
@@ -634,13 +564,15 @@ class Session:
                 failure = ('crash', f'exit {code}')
             elif crash:
                 failure = ('crash', f'stderr: {crash}')
-        final, texts = storage(self.work)
+        st = rep.get('storage') or {}
+        final = api_listing(st) if st else {}
+        texts = st.get('texts', {})
         _clear(self.work)
         import parity_grandfather  # the site form a grandfather entry pins (never part of a cached Go answer's key)
         return {'steps': self.steps, 'exit': code, 'forced': forced, 'survivors': rep.get('survivors', []), 'reaped': rep.get('reaped'),
                 'stderr': {'sha': hashlib.sha256(err).hexdigest()[:16], 'site': parity_grandfather.stderr_site_hash(err),
                            'bytes': len(err), 'crash': crash, 'tail': err[-600:].decode('utf-8', 'replace')},
-                'fs': final, 'writtenText': texts, 'failure': failure[0] if failure else None,
+                'fs': final, 'writes': rep.get('writes', {}), 'writtenText': texts, 'failure': failure[0] if failure else None,
                 'why': failure[1] if failure else None, 'secs': round(time.monotonic() - self.start, 2)}
 
 

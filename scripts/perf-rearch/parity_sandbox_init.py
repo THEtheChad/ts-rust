@@ -6,12 +6,15 @@ script again as its command, so it is root of a new user, mount, network and PID
 script (--kill-child), and with PID 1 every process of the namespace.
 
 SPEC (JSON):
-  report  an fd: the only way out for this script's findings
+  report  an fd (a file the caller reads after the end): the only way out for this script's findings
+  control optional [r, w]: two pipe fds; each line "list" read from r is answered on w with one JSON line,
+          the storage's listing at that moment (the api tier lists it after every request)
+  home    where the server sees its private home (the storage's home/, with its skeleton), writable
   mounts  in order, each one of
             {"bind": src, "at": dst, "rw": bool}  src (a host file or dir) seen at dst
-            {"overlay": lower, "base": dir, "at": dst}  an overlay of the read-only lower at dst, its upper
-                    dir base/upper and its work dir base/ovl (one filesystem): the server sees the upper dir
-                    only through the overlay
+            {"overlay": lower, "at": dst}  an overlay of the read-only lower at dst, its upper and work dirs
+                    in the storage (ovl<k>/upper, ovl<k>/work for the k-th overlay): the server sees the
+                    upper dir only through the overlay
   expose  host files and dirs the server runs or reads that a hidden dir would cover (the server binary,
           node, a store): each bound read-only at its own path; one outside every hidden dir is visible
           already and left as it is
@@ -34,8 +37,10 @@ Order (any failure is a setup failure: reported, exit 125, never a server result
   3. the mounts in order: a bind from its fd; an overlay from its lower and base bound at the staging
      dir, which is detached again (the overlay holds its own clones of its layers), so the server cannot
      reach an upper or work dir but through the overlay; then the exposed paths, bound read-only;
-  4. the whole tree read-only (mount_setattr AT_RECURSIVE), then the `rw` binds and the overlays
-     writable again: the only writable places are the session's own storage; /proc is writable again
+  4. the whole tree read-only (mount_setattr AT_RECURSIVE), then the home, the `rw` binds and the overlays
+     writable again: the only writable places are the session's own storage (parity_sandbox_storage.py:
+     one tmpfs this script mounts, makes the home skeleton in, marks with fanotify for the write record and
+     detaches, keeping an fd on it) and the `rw` binds; /proc is writable again
      too, for step 5's id maps; without capabilities the server can change nothing there that is not its
      own;
   5. every fd but 0, 1, 2 and the report closed; an fd on /proc kept (close-on-exec) for step 6; the
@@ -51,13 +56,20 @@ Order (any failure is a setup failure: reported, exit 125, never a server result
      PID namespace may do and none of them can stop) and reaped and counted (`reaped`: whatever /proc
      showed, a process this script reaps after the server ended outlived it), and the exit is the
      server's (128 + signal for a signal).
-Report: {"setup": why} or {"status": the server's wait status, "survivors": [cmdline, ...], "reaped": n}.
+  7. after the survivors are killed (nothing writes any more): the write record drained, the storage listed.
+Report: {"setup": why} or {"status": the server's wait status, "survivors": [cmdline, ...], "reaped": n,
+"storage": its listing (with "texts": the upper dirs' files, for a diff report), "writes": {path: [ops]},
+"overflow": whether the record lost events (a failure of the session)}.
 """
 import ctypes
 import json
 import os
 import signal
 import sys
+import threading
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # python3 -I leaves the script dir out
+import parity_sandbox_storage as storage  # noqa: E402
 
 # The host dirs every sandbox covers with an empty tmpfs (parity_api.py and parity_lsp.py key only the
 # ancestor dirs outside them: the ones the server sees).
@@ -100,6 +112,7 @@ class Init:
     def __init__(self, spec):
         self.spec = spec
         self.report = os.fdopen(spec['report'], 'w')
+        self.overlays = sum(1 for m in spec.get('mounts', []) if 'overlay' in m)
         self.libc = ctypes.CDLL(None, use_errno=True)
         self.libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p]
         self.libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
@@ -129,12 +142,15 @@ class Init:
         self.mount(None, '/', None, MS_REC | MS_PRIVATE)
         fd = lambda p: os.open(p, os.O_PATH)  # noqa: E731
         for m in mounts:
-            if set(m) not in ({'bind', 'at', 'rw'}, {'overlay', 'base', 'at'}) or not hidden(m['at']):
+            if set(m) not in ({'bind', 'at', 'rw'}, {'overlay', 'at'}) or not hidden(m['at']):
                 # a mount point outside the hidden dirs would be made on the host's own filesystem
                 self.done({'setup': f'not a bind or an overlay at a path in a hidden dir: {m}'}, 125)
-        src = [fd(m['bind']) if 'bind' in m else (fd(m['overlay']), fd(m['base'])) for m in mounts]
+        if not hidden(spec['home']):
+            self.done({'setup': f'the home is not in a hidden dir: {spec["home"]}'}, 125)
+        src = [fd(m['bind'] if 'bind' in m else m['overlay']) for m in mounts]
         exposed = {p: fd(p) for p in expose}
-        links = dict(x for p in [spec.get('cwd') or '/', *spec.get('expose', []), *[m['at'] for m in mounts]] for x in links_along(p))
+        ats = [spec['home'], *[m['at'] for m in mounts]]
+        links = dict(x for p in [spec.get('cwd') or '/', *spec.get('expose', []), *ats] for x in links_along(p))
         for h in HIDDEN:
             if os.path.isdir(h) and not os.path.islink(h):
                 self.mount('tmpfs', h, 'tmpfs', MS_NOSUID | MS_NODEV, 'mode=755')
@@ -158,9 +174,10 @@ class Init:
                     open(path, 'w').close()
                     made.add(path)
         makedirs(f'{STAGE}/lower')
-        makedirs(f'{STAGE}/base')
+        makedirs(f'{STAGE}/storage')
+        makedirs(spec['home'])
         for m, s in zip(mounts, src):
-            point(m['at'], s if 'bind' in m else s[0])
+            point(m['at'], s)
         for p, f in exposed.items():
             point(p, f)
         for p, target in sorted(links.items()):
@@ -170,24 +187,38 @@ class Init:
                 made.add(p)
         for p in sorted(made, key=len, reverse=True) + [h for h in HIDDEN if os.path.isdir(h)]:
             os.utime(p, (spec['mtime'], spec['mtime']), follow_symlinks=False)
+        st = f'{STAGE}/storage'
+        self.mount('tmpfs', st, 'tmpfs', MS_NOSUID | MS_NODEV, 'mode=755')
+        storage.make_home(f'{st}/home', spec['mtime'])
+        for k in range(self.overlays):
+            for d in ('upper', 'work'):
+                os.makedirs(f'{st}/ovl{k}/{d}', 0o755)
+        self.mount(f'{st}/home', spec['home'], None, MS_BIND)
+        k = 0
         for m, s in zip(mounts, src):
             if 'bind' in m:
                 self.mount(f'/proc/self/fd/{s}', m['at'], None, MS_BIND)
                 continue
-            self.mount(f'/proc/self/fd/{s[0]}', f'{STAGE}/lower', None, MS_BIND)
-            self.mount(f'/proc/self/fd/{s[1]}', f'{STAGE}/base', None, MS_BIND)
+            self.mount(f'/proc/self/fd/{s}', f'{STAGE}/lower', None, MS_BIND)
             self.mount('overlay', m['at'], 'overlay', 0,
-                       f'lowerdir={STAGE}/lower,upperdir={STAGE}/base/upper,workdir={STAGE}/base/ovl')
-            for d in (f'{STAGE}/lower', f'{STAGE}/base'):
-                self.check(self.libc.umount2(d.encode(), MNT_DETACH) == 0, f'umount {d}')
+                       f'lowerdir={STAGE}/lower,upperdir={st}/ovl{k}/upper,workdir={st}/ovl{k}/work')
+            self.check(self.libc.umount2(f'{STAGE}/lower'.encode(), MNT_DETACH) == 0, f'umount {STAGE}/lower')
+            k += 1
         for p, f in exposed.items():
             self.mount(f'/proc/self/fd/{f}', p, None, MS_BIND)
+        # The storage: an fd for this script (listing), the write record from here on, then detached: the
+        # server reaches it only through the home and the overlays.
+        self.storage_fd = os.open(st, os.O_RDONLY | os.O_DIRECTORY)
+        self.root = f'/proc/self/fd/{self.storage_fd}'
+        self.recorder = storage.Recorder(self.root, self.overlays)
+        self.check(self.libc.umount2(st.encode(), MNT_DETACH) == 0, f'umount {st}')
         self.readonly('/', True)
         self.readonly('/proc', False, ro=False)  # the server's own uid_map, setgroups and user limit (drop(), step 5)
+        self.readonly(spec['home'], False, ro=False)
         for m in mounts:
             if m.get('rw', True):  # an rw bind, or an overlay
                 self.readonly(m['at'], False, ro=False)
-        for f in [*exposed.values(), *[x for s in src for x in (s if isinstance(s, tuple) else (s,))]]:
+        for f in [*exposed.values(), *src]:
             os.close(f)
 
     def drop(self):
@@ -264,14 +295,16 @@ class Init:
 
     def start(self):
         """Steps 5 and 6 up to the server's start: (its pid, the /proc fd)."""
-        keep = {0, 1, 2, self.report.fileno()}
+        control = self.spec.get('control') or []
+        keep = {0, 1, 2, self.report.fileno(), self.storage_fd, self.recorder.fd, *control}
         for fd in [int(x) for x in os.listdir('/proc/self/fd')]:
             if fd not in keep:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-        os.set_inheritable(self.report.fileno(), False)
+        for fd in [self.report.fileno(), *control]:
+            os.set_inheritable(fd, False)
         proc = os.open('/proc', os.O_RDONLY | os.O_DIRECTORY)  # close-on-exec: the survivor scan's own handle
         r, w = os.pipe()  # close-on-exec: a privilege-drop, cwd or exec failure comes back here
         cmd = self.spec['cmd']
@@ -301,9 +334,21 @@ class Init:
             self.done({'setup': failed}, 126)
         return pid, proc
 
+    def serve(self, r, w):
+        """The control pipe: each "list" line is answered with the storage's listing, one JSON line."""
+        with os.fdopen(r, 'r') as rf, os.fdopen(w, 'w') as wf:
+            for line in rf:
+                if line.strip() == 'list':
+                    wf.write(json.dumps(storage.listing(self.root, self.overlays)) + '\n')
+                    wf.flush()
+
     def run(self):
         self.setup()
         pid, proc = self.start()
+        # Threads only after the fork: the server's child never inherits one mid-call.
+        self.recorder.start()
+        if self.spec.get('control'):
+            threading.Thread(target=self.serve, args=tuple(self.spec['control']), daemon=True).start()
         while True:
             got, status = os.waitpid(-1, 0)
             if got == pid:
@@ -326,7 +371,11 @@ class Init:
                 reaped += 1
             except ChildProcessError:
                 break
-        self.report.write(json.dumps({'status': status, 'survivors': survivors, 'reaped': reaped}))
+        record = self.recorder.finish()
+        texts = {}
+        final = storage.listing(self.root, self.overlays, texts)
+        self.report.write(json.dumps({'status': status, 'survivors': survivors, 'reaped': reaped, 'storage': {**final, 'texts': texts},
+                                      'writes': record['writes'], 'overflow': record['overflow']}))
         self.report.flush()
         code = os.waitstatus_to_exitcode(status)
         os._exit(code if code >= 0 else 128 - code)

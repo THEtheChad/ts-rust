@@ -54,8 +54,12 @@ import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
-import { TYPED, startServer } from "./session.mjs";
-import { SERVER_PATH } from "./sandbox.mjs";
+import { TYPED, messagesEntry, startServer } from "./session.mjs";
+import { SANDBOXED, SERVER_PATH, serverHome } from "./sandbox.mjs";
+import { createHash } from "node:crypto";
+
+// The fixed place of the stand-in npm's config, node and log in a server's sandbox (ata-npm/).
+const ATA_DIR = "/run/lspdiff-ata";
 import { SETTINGS } from "./settings.mjs";
 
 const SETTLE_MS = SETTINGS.LSPDIFF_SETTLE_MS;
@@ -81,10 +85,7 @@ class Script {
 
   async ask(step, method, params) {
     const r = await this.client.request(method, params);
-    this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
-    // With ATA off nothing writes the home in the background: it is listed after every answer (with ATA
-    // on, at every wait: settle).
-    if (!this.ata) this.client.server.mark(`after ${this.log.length} answers`);
+    this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ...(r.rawNumbers ? { rawNumbers: true } : {}), ms: r.ms });
     return r;
   }
 
@@ -252,7 +253,6 @@ class Script {
       await this.client.settle(ms);
       if (!this.ata || !(await this.npmIdle(label, since))) break;
     }
-    this.client.server.mark(`${label} after ${this.log.length} answers`);
     return performance.now() - start;
   }
 
@@ -321,7 +321,9 @@ class Script {
     const after = this.activeKeys();
     const delta = { added: after.filter((k) => !before.has(k)), removed: [...before].filter((k) => !after.includes(k)).sort() };
     pushed.sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
-    const entry = (what, method, result, ms = 0) => this.log.push({ step: `${name} ${what}`, method, result, ms });
+    // An event that held a number kept as its text (client.mjs) marks every entry of the checkpoint.
+    const raw = fresh.some((e) => e.raw);
+    const entry = (what, method, result, ms = 0) => this.log.push({ step: `${name} ${what}`, method, result, ...(raw ? { rawNumbers: true } : {}), ms });
     entry("watch events", "watch/events", events, waited);
     entry("watch delta", "watch/delta", { added: delta.added.map(JSON.parse), removed: delta.removed.map(JSON.parse) });
     entry("watch active", "watch/active", after.map(JSON.parse));
@@ -625,7 +627,7 @@ function fixtureChanges(root, expected) {
 // session as `session`.
 // serverLog: a file that gets the server's window/logMessage stream (lspdiff --server-logs).
 // ataStore: the frozen typings store (lspdiff --ata-store), for the scenarios with `typings: "frozen"`.
-export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog, ataStore } = {}) {
+export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog, ataStore, ataManifest } = {}) {
   const scenario = SCENARIOS[name];
   if (!scenario) throw new Error(`unknown scenario ${name}`);
   if (scenario.fixture) writeFixture(scenario.fixture, root);
@@ -639,22 +641,23 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   // its log (the one writable place outside the server's home; it must hold the log and nothing else).
   const binds = scenario.fixture ? [{ src: root }] : [];
   if (scenario.ata ?? true) {
+    // ATA_DIR (lane H8 round 2): the stand-in npm's config, node and log dir at fixed paths, nothing in the
+    // environment (the server controls that); the store authenticated file by file (its sha256s).
+    if (!SANDBOXED) throw new Error(`scenario ${name} runs ATA: it needs the sandbox (LSPDIFF_SANDBOX)`);
     const typings = scenario.typings ?? "frozen";
-    if (typings === "frozen" && !ataStore) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store`);
+    if (typings === "frozen" && !(ataStore && ataManifest)) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store and --ata-manifest`);
     const dir = mkdtempSync(join(tmpdir(), "lspdiff-ata-"));
     if (typings === "fixture") writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
     mkdirSync(join(dir, "log"));
     ata = { dir, logDir: join(dir, "log"), log: join(dir, "log", "npm.log") };
     const store = typings === "fixture" ? join(dir, "store") : ataStore;
-    binds.push({ src: join(here, "ata-npm") }, { src: process.execPath }, { src: store }, { src: ata.logDir, rw: true });
-    env = {
-      ...env,
-      PATH: `${join(here, "ata-npm")}:${SERVER_PATH}`,
-      ATA_NODE: process.execPath,
-      ATA_STORE: store,
-      ATA_NPM_LOG: ata.log,
-      ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
-    };
+    const files = typings === "fixture"
+      ? Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [k, createHash("sha256").update(v).digest("hex")]))
+      : JSON.parse(readFileSync(ataManifest, "utf8")).files;
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ store, files, log: `${ATA_DIR}/log/npm.log`, delayMs: SETTINGS.ATA_NPM_DELAY_MS, cache: `${serverHome()}/.cache` }));
+    binds.push({ src: join(here, "ata-npm") }, { src: store }, { src: join(dir, "config.json"), at: `${ATA_DIR}/config.json` },
+      { src: process.execPath, at: `${ATA_DIR}/node` }, { src: ata.logDir, at: `${ATA_DIR}/log`, rw: true });
+    env = { ...env, PATH: `${join(here, "ata-npm")}:${SERVER_PATH}` };
   }
   if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
@@ -668,7 +671,6 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   const s = new Script(client, root);
   s.ata = ata;
   s.log.push(client.initialize);
-  client.server.mark(`after ${s.log.length} answers`);
   if (scenario.fixture) s.expected = new Map(Object.entries(FIXTURES[scenario.fixture]));
   let failure;
   try {
@@ -680,6 +682,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     failure = e;
   }
   const session = await client.shutdown();
+  s.log.push(messagesEntry(client, s.seen)); // what came after the last checkpoint, through EOF
   if (s.expected) {
     const changes = fixtureChanges(root, s.expected);
     if (changes.length) Object.assign(session, { clean: false, why: [...session.why, `it changed the fixture: ${changes.slice(0, 5).join(", ")}`] });

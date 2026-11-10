@@ -626,11 +626,14 @@ export class TsserverClient {
       case "textDocument/rename": {
         const r = await ask("rename", { ...at, findInStrings: false, findInComments: false });
         if (!r?.info?.canRename) return null;
-        const changes = {};
+        const changes = new Map(); // uri -> edits (a Map: no file name is ever taken for a property of {})
         for (const group of r.locs) {
-          for (const l of group.locs) (changes[this.uri(group.file)] ??= []).push({ range: range(l.start, l.end), newText: (l.prefixText ?? "") + p.newName + (l.suffixText ?? "") });
+          for (const l of group.locs) {
+            const u = this.uri(group.file);
+            changes.set(u, [...(changes.get(u) ?? []), { range: range(l.start, l.end), newText: (l.prefixText ?? "") + p.newName + (l.suffixText ?? "") }]);
+          }
         }
-        return { changes };
+        return { changes: Object.fromEntries(changes) };
       }
       case "textDocument/completion": {
         const trigger = p.context?.triggerCharacter;

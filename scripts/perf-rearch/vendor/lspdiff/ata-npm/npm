@@ -1,4 +1,5 @@
 #!/bin/sh
 # The stand-in npm of every watch scenario with ATA on (scenario.mjs): first on the language server's
-# PATH, so ATA's npm calls run fake-npm.mjs with the node that runs lspdiff (ATA_NODE).
-exec "$ATA_NODE" "$(dirname -- "$0")/fake-npm.mjs" "$@"
+# PATH, so ATA's npm calls run fake-npm.mjs with the node the sandbox binds at a fixed path (lane H8
+# round 2: nothing of the environment, which the server controls).
+exec /run/lspdiff-ata/node "$(dirname -- "$0")/fake-npm.mjs" "$@"

@@ -149,7 +149,7 @@ def scenarios(tier, path=SCENARIOS):
     return [s for s in every if s['name'] in names]
 
 
-SOURCES = (Path(session.__file__), session.INIT)  # what decides a Go answer: the session driver and the sandbox's init
+SOURCES = (Path(session.__file__), session.INIT, session.STORAGE)  # what decides a Go answer: the session driver, the sandbox's init and its storage
 
 
 def session_sha():
@@ -249,7 +249,7 @@ def answers(t):
 
 def storage(t):
     """What the session left in its writable places after each request, and at its end."""
-    return {'steps': [s.get('fs') for s in t['steps']], 'end': t['fs']}
+    return {'steps': [s.get('fs') for s in t['steps']], 'end': t['fs'], 'writes': t.get('writes', {})}
 
 
 def view(t):

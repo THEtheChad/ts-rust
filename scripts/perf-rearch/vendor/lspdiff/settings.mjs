@@ -23,7 +23,7 @@ const num = (k, d) => {
   return n;
 };
 
-export const PLUMBING = ["LSPDIFF_SANDBOX", "ATA_NODE", "ATA_STORE", "ATA_NPM_LOG", "ATA_NPM_DELAY_MS"];
+export const PLUMBING = ["LSPDIFF_SANDBOX"];
 
 export const SETTINGS = Object.freeze({
   LSPDIFF_SETTLE_MS: num("LSPDIFF_SETTLE_MS", 1000),

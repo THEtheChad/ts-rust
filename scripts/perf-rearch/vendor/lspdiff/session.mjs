@@ -1,6 +1,7 @@
 // The scripted differential session. Every request runs one at a time, so both servers
 // see exactly the same sequence and Go picks its checkers deterministically.
 import { LspClient, fileUri, initializeParams } from "./client.mjs";
+import { parseKeep } from "./json.mjs";
 import { endPosition, languageId, pickPositions, readText, rel } from "./project.mjs";
 import { TsserverClient } from "./tsserver.mjs";
 
@@ -22,10 +23,23 @@ export async function startServer(cmd, root, { stderr, watch = false, ata = true
   } catch (e) {
     throw Object.assign(e, { session: await client.shutdown() });
   }
-  client.initialize = { step: "initialize", method: "initialize", params, result: init.result, error: init.error, ...(init.failed ? { failed: init.failed } : {}), ms: init.ms };
+  client.initialize = { step: "initialize", method: "initialize", params, result: init.result, error: init.error, ...(init.failed ? { failed: init.failed } : {}), ...(init.rawNumbers ? { rawNumbers: true } : {}), ms: init.ms };
   if (init.error) throw Object.assign(new Error(`initialize failed: ${JSON.stringify(init.error)}`), { initialize: client.initialize, session: await client.shutdown() });
   client.notify("initialized", {});
   return client;
+}
+
+// Every server-to-client request and notification from event `from` through the end of the server's
+// output (call it after client.shutdown(), which waits for EOF), in order, with payloads; window/logMessage
+// (the server's log, with timings) is left out, and the watcher counter of registration ids is masked
+// (scenario.mjs maskId). The log's last entry, "session messages" (lane H8 round 2: a request or a
+// notification a server sends while it answers shutdown, or in a session without checkpoints, is
+// compared too).
+export function messagesEntry(client, from = 0) {
+  const events = client.events.slice(from).filter((e) => e.method !== "window/logMessage");
+  const raw = events.some((e) => e.raw);
+  const text = JSON.stringify(events.map((e) => ({ [e.kind]: e.method, params: e.params ?? null }))).replace(/ watcher \d+\./g, " watcher <n>.");
+  return { step: "session messages", method: "server/messages", params: null, result: raw ? parseKeep(text) : JSON.parse(text), ...(raw ? { rawNumbers: true } : {}), ms: 0 };
 }
 
 export function openFiles(client, files) {
@@ -80,12 +94,14 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
     throw Object.assign(e, { log: e.initialize ? [e.initialize] : log, session: e.session });
   }
   log.push(client.initialize);
-  // ATA is off: nothing writes the home in the background, so it is listed after every answer.
-  client.server.mark(`after ${log.length} answers`);
+  const finish = async () => {
+    const session = await client.shutdown();
+    log.push(messagesEntry(client));
+    return session;
+  };
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
-    log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
-    client.server.mark(`after ${log.length} answers`);
+    log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ...(r.rawNumbers ? { rawNumbers: true } : {}), ms: r.ms });
     return r;
   };
   try {
@@ -145,7 +161,7 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
     removeTail(client, d, TYPED.length);
     await ask(`${name} after undo diagnostic`, "textDocument/diagnostic", { textDocument: { uri: d.uri } });
   } catch (e) {
-    throw Object.assign(e, { log, session: await client.shutdown() });
+    throw Object.assign(e, { log, session: await finish() });
   }
-  return { log, session: await client.shutdown() };
+  return { log, session: await finish() };
 }

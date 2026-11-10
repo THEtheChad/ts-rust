@@ -120,8 +120,9 @@ export function canonUri(u) {
 function refValue(value, side) {
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((v) => refValue(v, side));
-  const out = {};
-  for (const [k, v] of Object.entries(value)) out[k] = refValue(v, side);
+  // Object.fromEntries defines every key as an own property: a key named "__proto__" from an answer
+  // stays a key (an assignment into a {} would set the prototype instead; lane H8 round 2).
+  const out = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, refValue(v, side)]));
   if (out.changes && typeof out.changes === "object" && !Array.isArray(out.changes)) {
     out.changes = Object.fromEntries(Object.entries(out.changes).map(([u, v]) => [canonUri(u), v]));
   }
@@ -378,8 +379,9 @@ export function normalize(method, answer, { root, side, libDir } = {}) {
   side ??= libDir === JS_LIBS ? "js" : "go";
   if (answer?.failed) return { failed: String(answer.failed), scalars: {}, sets: {}, rest: null };
   // parseKeep (json.mjs): a number keeps its text, so 1e999 is never null here either (lane H8).
-  let v = parseKeep(J(answer?.result));
-  if (root) v = parseKeep(J(v).replaceAll(root, "<root>"));
+  const parse = answer?.rawNumbers ? parseKeep : JSON.parse;
+  let v = parse(J(answer?.result));
+  if (root) v = parse(J(v).replaceAll(root, "<root>"));
   v = sortChanges(v);
   // Both views come from the same value in the same element order (refValue keeps it), so element i
   // of one is element i of the other.

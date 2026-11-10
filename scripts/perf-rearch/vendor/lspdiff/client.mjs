@@ -109,14 +109,15 @@ export class LspClient {
       const bytes = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length);
       this.buf = this.buf.subarray(headerEnd + 4 + length);
       let msg;
+      let exact;
       try {
-        msg = parseStrict(UTF8.decode(bytes));
+        ({ value: msg, exact } = parseStrict(UTF8.decode(bytes)));
       } catch (e) {
         return this.#broken(`a body that is not strict JSON (${e.message}): ${JSON.stringify(bytes.subarray(0, 80).toString("latin1"))}`);
       }
       const why = envelopeError(msg, this.pending);
       if (why) return this.#broken(`not a JSON-RPC 2.0 message: ${why}`);
-      this.#onMessage(msg);
+      this.#onMessage(msg, !exact);
     }
   }
 
@@ -132,26 +133,27 @@ export class LspClient {
     this.server.kill();
   }
 
-  #onMessage(msg) {
+  // raw: the message holds a number kept as its text (json.mjs); what keeps a part of it marks it.
+  #onMessage(msg, raw) {
     const at = performance.now();
     this.lastMessageAt = at;
-    if (msg.id !== undefined && msg.method !== undefined) return this.#onServerRequest(msg);
+    if (msg.id !== undefined && msg.method !== undefined) return this.#onServerRequest(msg, raw);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
-      p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start });
+      p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, ...(raw ? { rawNumbers: true } : {}) });
       return;
     }
     this.notifications.push({ method: msg.method, params: msg.params, at });
-    this.events.push({ kind: "notification", method: msg.method, params: msg.params, at });
+    this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
   }
 
-  #onServerRequest(msg) {
+  #onServerRequest(msg, raw) {
     // workspace/configuration is never asked: initialize does not advertise it.
     // registerCapability, unregisterCapability, workDoneProgress/create, refresh requests: accept with
     // null (the answer of a successful registration).
-    this.events.push({ kind: "request", method: msg.method, params: msg.params, at: performance.now() });
+    this.events.push({ kind: "request", method: msg.method, params: msg.params, at: performance.now(), ...(raw ? { raw } : {}) });
     this.#write({ jsonrpc: "2.0", id: msg.id, result: null });
   }
 
@@ -218,6 +220,8 @@ export class LspClient {
       clearTimeout(timer);
       if (r.failed) shutdown = r.failed;
       else if (r.error) shutdown = `shutdown answered an error: ${JSON.stringify(r.error).slice(0, 200)}`;
+      // LSP: the result of shutdown is null (lane H8 round 2: any other value is a broken shutdown).
+      else if (r.result !== null) shutdown = `shutdown answered ${JSON.stringify(r.result).slice(0, 200)}, not null`;
       if (!this.dead) this.notify("exit", null);
     }
     this.proc.stdin.end();

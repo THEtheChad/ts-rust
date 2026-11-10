@@ -72,7 +72,7 @@ def node(code):
 def unit():
     got = node('''
 const { parseStrict } = await import("./json.mjs");
-const t = (s) => { try { return JSON.stringify(parseStrict(s)); } catch (e) { return "error: " + e.message; } };
+const t = (s) => { try { return JSON.stringify(parseStrict(s).value); } catch (e) { return "error: " + e.message; } };
 console.log(JSON.stringify({
   overflow: t('{"r":1e999}'), minus: t('{"r":-0}'), float: t('{"r":1.0}'), exp: t('{"r":1e0}'), big: t('{"r":9007199254740993}'),
   plain: t('{"r":[1,2.5,-3,null,true,"x"]}'), dup: t('{"a":1,"a":1}'), deepDup: t('[{"b":{"c":1,"c":1}}]'),

@@ -1,41 +1,40 @@
 // One language server process (Go, tsc-rs or JS tsserver) with every outcome the parity gate judges
-// (lane H4): its exit code or signal, its stderr, what it did to its inputs and its private home, and its
-// shutdown. client.mjs and tsserver.mjs spawn their servers with it; `result()` is the mandatory session
-// result that lspdiff.mjs judges for every run.
+// (lane H4): its exit code or signal, its stderr, what it did to its storage (its inputs' overlays and its
+// private home), and its shutdown. client.mjs and tsserver.mjs spawn their servers with it; `result()` is
+// the mandatory session result that lspdiff.mjs judges for every run.
 //
 // Hermetic environment (lane H5): every server process gets SERVER_ENV and nothing of lspdiff's own
-// environment but what its caller passes (a scenario's ATA plumbing, a --rs-env setting). HOME is a
-// private home, new for every process with only its skeleton (HOME_DIRS, each dir mode 755): the XDG dirs
-// (so ATA's typings location, os.UserCacheDir()/typescript/<version>, is in it) and TMPDIR are under it.
-// PATH holds the system dirs only, so no npm of the user's is found (ATA's npm is the stand-in, ata-npm/,
-// which scenario.mjs puts first).
+// environment but what its caller passes (a --rs-env setting, the stand-in npm first on PATH). HOME is a
+// private home, new for every process with only its skeleton: the XDG dirs (so ATA's typings location,
+// os.UserCacheDir()/typescript/<version>, is in it) and TMPDIR are under it. PATH holds the system dirs
+// only, so no npm of the user's is found.
 //
-// The home is an output (lane H8): `mark(at)` lists it (listHome: every entry with its type, mode and
-// content hash) and keeps each listing that differs from the one before, with where in the session it was
-// taken; the session result's `home` is that history and the final listing, which lspdiff compares with
-// Go's like an answer (item "session home"). The scripts mark the home after every answer when ATA is off
-// and at every wait (quiet, checkpoint) with ATA on, where ATA is idle, so a file a server writes and
-// removes again between two answers is seen too (with ATA on: between two waits).
-//
-// LSPDIFF_SANDBOX (set by parity_lsp.py): JSON { scratch, home, mounts: [{ lower, target }] }. Each
-// server process then runs under the sandbox's init, which the api tier uses too
-// (scripts/perf-rearch/parity_sandbox_init.py; lane H8): PID 1 of its own user, mount, network and PID
-// namespace, the host's state dirs (/home, /tmp, /run, ...) covered by empty tmpfs dirs (so the user's
-// typings cache, npm's cache and config do not exist for it, not even for stat), the whole tree read-only
-// but its storage: a fresh overlay per mount (lower: the input's read-only snapshot, upper: a new dir under
-// scratch) at the input's own path, and its private home bound at `home`, the same path in every run
-// (ATA's typings location shows in answers, so it must not differ between runs or servers). What else it
-// needs is bound back read-only at its own path: the files its command names (the binary, node, a
-// script), and the caller's `binds` (a fixture dir, the stand-in npm and its store; a `rw` bind, the npm
-// log's dir, writable). The server itself has no privilege (a nested user namespace that owns nothing, no
-// capability, uid 1000, no_new_privs), no fd but 0, 1 and 2, and no network. When it ends, every process
-// left in its namespace is a survivor, a failure, and is killed. The init reports a setup or exec failure
-// (a mount, the namespace, a file that is not executable) on a pipe of its own: `infra` in the result,
-// the harness's failure and never a server's answer (lspdiff stops: the session is an ERROR and nothing is
-// cached). After the process ends, the upper dir of every mount must be empty: anything there is a file
-// the server wrote, created, deleted (an overlay whiteout) or changed in its inputs, even one it put back.
+// LSPDIFF_SANDBOX (set by parity_lsp.py): JSON { scratch, home, mounts: [{ lower, target }] }. Each server
+// process then runs under the sandbox's init, which the api tier uses too (scripts/perf-rearch/
+// parity_sandbox_init.py; lane H8): PID 1 of its own user, mount, network and PID namespace, the host's
+// state dirs (/home, /tmp, /run, ...) covered by empty tmpfs dirs (so the user's typings cache, npm's cache
+// and config do not exist for it, not even for stat), the whole tree read-only but its storage: one tmpfs
+// of the init's (parity_sandbox_storage.py) that holds its private home, seen at `home` (the same path in
+// every run: ATA's typings location shows in answers), and the upper and work dirs of an overlay per
+// mount (lower: the input's read-only snapshot) at the input's own path. What else it needs is bound back
+// read-only at its own path (the files its command names: the binary, node, a script) or at the caller's
+// `at` (`binds`: a fixture dir, the stand-in npm's config, its store; an `rw` bind: the npm log's dir). The
+// server itself has no privilege (a nested user namespace that owns nothing, no capability, uid 1000,
+// no_new_privs), no fd but 0, 1 and 2, and no network. When it ends, every process left in its namespace
+// is a survivor, a failure, and is killed. The init then reports (a file of this process's scratch dir):
+//   storage  the storage's listing after the end (the home, each overlay's upper dir as disk[k], the home
+//            skeleton's deviations): every entry, the roots included, none skipped (lane H8 round 2: the
+//            api tier's lister, in one place)
+//   writes   every write to the storage while the server ran, recorded (fanotify), not sampled: for each
+//            path ever touched, what happened to it (create, write, attrib, delete, moved-from, moved-to);
+//            a file written and removed inside one request is in it
+//   setup    a setup or exec failure (a mount, the namespace, a file that is not executable): `infra` in
+//            the result, the harness's failure and never a server's answer (lspdiff stops: the session is
+//            an ERROR and nothing is cached)
+// Its inputs changed when an upper dir holds anything (a file the server wrote, created, deleted: an
+// overlay whiteout, or changed, even one it put back) or its root is not as the init made it.
 // Without LSPDIFF_SANDBOX (lspdiff on its own) a server runs as it is, with its private home in a new
-// temporary dir (so its path differs from run to run).
+// temporary dir, and its storage is not observed.
 //
 // stderr: the whole stream is hashed, and every line is matched against CRASH_RE (Go's panic,
 // fatal error, goroutine trace and signal lines; Rust's panic and stack overflow; an abort). A
@@ -44,7 +43,7 @@
 // streams must reach EOF once the process ended (with the sandbox, the init's end closes them).
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,17 +51,21 @@ import { SETTINGS } from "./settings.mjs";
 
 const SANDBOX = process.env.LSPDIFF_SANDBOX ? JSON.parse(process.env.LSPDIFF_SANDBOX) : null;
 if (SANDBOX && !(typeof SANDBOX.home === "string" && SANDBOX.home.startsWith("/"))) throw new Error("LSPDIFF_SANDBOX: no absolute `home`");
-// The sandbox's PID 1 (shared with the api tier; parity_lsp.py keys its source with lspdiff's).
+export const SANDBOXED = !!SANDBOX;
+// Where a sandboxed server sees its private home (null without the sandbox: a new temporary dir each).
+export const serverHome = () => SANDBOX?.home ?? null;
+// The sandbox's PID 1 and its storage (shared with the api tier; parity_lsp.py keys their sources).
 export const SANDBOX_INIT = join(dirname(fileURLToPath(import.meta.url)), "../../parity_sandbox_init.py");
 const FIXED_MTIME = 978307200; // 2001-01-01: every dir the init makes
-// How long both output streams (and the init's report) may take to end after the process exited.
+// How long both output streams may take to end after the process exited.
 const EOF_MS = 10000;
+// An upper dir's root as the init makes it (parity_sandbox_storage.py walk).
+const UPPER_ROOT = "dir 755";
 let started = 0;
 
 // The system dirs a server's PATH holds (callers put their own dirs before them).
 export const SERVER_PATH = "/usr/bin:/bin";
 const HOME_DIRS = [".cache", ".config", ".local/share", ".local/state", "tmp"];
-const SKELETON = [...new Set(HOME_DIRS.flatMap((d) => d.split("/").map((_, k, a) => a.slice(0, k + 1).join("/"))))].sort();
 // The whole environment of a server process with its private home at `home` (callers add theirs).
 export function serverEnv(home) {
   return {
@@ -78,68 +81,6 @@ export function serverEnv(home) {
 }
 
 export const CRASH_RE = /^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at |.*has overflowed its stack|Aborted\b|.*core dumped)/;
-
-// Every entry under dir, as relative paths ("" when dir is empty or absent).
-function walk(dir, rel = "", out = []) {
-  let names;
-  try {
-    names = readdirSync(join(dir, rel)).sort();
-  } catch {
-    return out;
-  }
-  for (const n of names) {
-    const r = rel ? `${rel}/${n}` : n;
-    out.push(r);
-    if (lstatSync(join(dir, r)).isDirectory()) walk(dir, r, out);
-  }
-  return out;
-}
-
-const mode = (st) => (st.mode & 0o7777).toString(8);
-const sha16 = (data) => createHash("sha256").update(data).digest("hex").slice(0, 16);
-
-// A dir as { relative path: what it is }, as the api tier lists its storage (parity_api_session.py
-// _walk): "." is the dir itself ("dir <mode>", or what it is instead), then every entry, none skipped:
-// "<sha256 16> <mode>" a file, "dir <mode>", "link <target>", "special <mode>", and "unlistable <code>"
-// or "unreadable <code>" where a listing or a read failed. An absent dir is {}.
-export function listHome(top) {
-  const out = {};
-  let st;
-  try {
-    st = lstatSync(top);
-  } catch {
-    return out;
-  }
-  out["."] = st.isDirectory() ? `dir ${mode(st)}` : `not a dir: ${st.mode.toString(8)}`;
-  const visit = (rel) => {
-    let names;
-    try {
-      names = readdirSync(join(top, rel)).sort();
-    } catch (e) {
-      out[rel || "."] += `; unlistable ${e.code}`;
-      return;
-    }
-    for (const n of names) {
-      const r = rel ? `${rel}/${n}` : n;
-      const p = join(top, r);
-      const s = lstatSync(p);
-      if (s.isSymbolicLink()) out[r] = `link ${readlinkSync(p)}`;
-      else if (s.isDirectory()) {
-        out[r] = `dir ${mode(s)}`;
-        visit(r);
-      } else if (!s.isFile()) out[r] = `special ${s.mode.toString(8)}`;
-      else {
-        try {
-          out[r] = `${sha16(readFileSync(p))} ${mode(s)}`;
-        } catch (e) {
-          out[r] = `unreadable ${e.code}`;
-        }
-      }
-    }
-  };
-  if (st.isDirectory()) visit("");
-  return out;
-}
 
 // A wait status (waitpid) as { code, signal }.
 function waitStatus(status) {
@@ -165,52 +106,41 @@ const isFile = (p) => {
 
 export class ServerProcess {
   // cmd: [binary, ...args]; stderr: a stream that gets a copy of the server's stderr (--verbose);
-  // binds: [{ src, rw }] host paths the server needs besides its command's files, each seen at its own
-  // path in the sandbox (read-only unless rw).
+  // binds: [{ src, at, rw }] host paths the server needs besides its command's files, each seen at `at`
+  // (default: its own path) in the sandbox, read-only unless rw.
   constructor(cmd, { cwd, env, stderr, binds = [] } = {}) {
-    this.mounts = [];
     this.dir = SANDBOX ? join(SANDBOX.scratch, `${process.pid}-${++started}`) : mkdtempSync(join(tmpdir(), "lspdiff-server-"));
-    if (SANDBOX) rmSync(this.dir, { recursive: true, force: true });
-    this.home = join(this.dir, "home");
-    for (const d of ["", ...SKELETON]) {
-      mkdirSync(join(this.home, d), { recursive: true });
-      chmodSync(join(this.home, d), 0o755);
-    }
-    this.history = [];
     this.killed = false;
     this.spawnError = null;
-    this.report = "";
-    let home = this.home;
+    this.mounts = SANDBOX ? SANDBOX.mounts : [];
+    let home;
     let argv = cmd;
     let stdio = ["pipe", "pipe", "pipe"];
     if (SANDBOX) {
-      const mounts = [{ bind: this.home, at: SANDBOX.home, rw: true }];
-      SANDBOX.mounts.forEach((m, k) => {
-        const base = join(this.dir, String(k));
-        mkdirSync(join(base, "upper"), { recursive: true });
-        mkdirSync(join(base, "ovl"), { recursive: true });
-        this.mounts.push({ ...m, upper: join(base, "upper") });
-        mounts.push({ overlay: m.lower, base, at: m.target });
-      });
-      for (const b of binds.filter((b) => b.rw)) mounts.push({ bind: b.src, at: b.src, rw: true });
+      rmSync(this.dir, { recursive: true, force: true });
+      mkdirSync(this.dir, { recursive: true });
+      this.reportPath = join(this.dir, "report.json");
+      const report = openSync(this.reportPath, "w", 0o600);
+      const mounts = [
+        ...SANDBOX.mounts.map((m) => ({ overlay: m.lower, at: m.target })),
+        ...binds.filter((b) => b.rw || b.at).map((b) => ({ bind: b.src, at: b.at ?? b.src, rw: !!b.rw })),
+      ];
       // Every word of the command that names a file is exec'd or read by its realpath, bound back.
       const words = cmd.map((w, i) => (i === 0 ? resolve(w) : w)).map((w) => (isFile(w) ? realpathSync(w) : w));
-      const expose = [...words.filter(isFile), ...binds.filter((b) => !b.rw).map((b) => b.src)];
-      const spec = { report: 3, mounts, expose, cwd: cwd ?? "/", mtime: FIXED_MTIME, cmd: words };
+      const expose = [...words.filter(isFile), ...binds.filter((b) => !b.rw && !b.at).map((b) => b.src)];
+      const spec = { report: 3, home: SANDBOX.home, mounts, expose, cwd: cwd ?? "/", mtime: FIXED_MTIME, cmd: words };
       home = SANDBOX.home;
       argv = ["/usr/bin/python3", "-I", SANDBOX_INIT, "launch", JSON.stringify(spec)];
-      stdio = [...stdio, "pipe"];
+      stdio = [...stdio, report];
       cwd = "/";
+      this.proc = spawn(argv[0], argv.slice(1), { cwd, env: { ...serverEnv(home), ...env }, stdio });
+      closeSync(report);
+    } else {
+      home = join(this.dir, "home");
+      for (const d of HOME_DIRS) mkdirSync(join(home, d), { recursive: true });
+      this.proc = spawn(argv[0], argv.slice(1), { cwd, env: { ...serverEnv(home), ...env }, stdio });
     }
-    this.proc = spawn(argv[0], argv.slice(1), { cwd, env: { ...serverEnv(home), ...env }, stdio });
     this.proc.on("error", (e) => (this.spawnError ??= `${argv[0]}: ${e.message}`));
-    this.reportDone = SANDBOX
-      ? new Promise((resolve) => {
-          this.proc.stdio[3].on("data", (c) => (this.report += c));
-          this.proc.stdio[3].on("close", resolve);
-          this.proc.stdio[3].on("error", resolve);
-        })
-      : Promise.resolve();
     this.hash = createHash("sha256");
     this.bytes = 0;
     this.tail = "";
@@ -251,13 +181,6 @@ export class ServerProcess {
     this.proc.kill("SIGKILL");
   }
 
-  // Lists the home and keeps the listing when it differs from the last one kept; `at` says where in the
-  // session (the scripts' sync points, see the top comment).
-  mark(at) {
-    const state = sha16(JSON.stringify(listHome(this.home)));
-    if (this.history.at(-1)?.state !== state) this.history.push({ at, state });
-  }
-
   // The pids, in the server's PID namespace, of every process there that has not ended (the init's
   // descendants, read from the host's /proc: NSpid's last field). Without the sandbox, null.
   namespacePids() {
@@ -296,44 +219,44 @@ export class ServerProcess {
     }
   }
 
-  // What the process did to its inputs and its home (after it ended): { modified: [paths], homeWrites: n }
-  // (the entries it and its children made in its private home), and the home's record (see the top
-  // comment); the dirs go with this call.
-  inputs() {
-    const modified = [];
-    for (const m of this.mounts) modified.push(...walk(m.upper).map((p) => `${m.target}/${p}`));
-    const final = listHome(this.home);
-    this.mark("end");
-    const homeWrites = Object.keys(final).filter((p) => p !== "." && !SKELETON.includes(p)).length;
-    spawnSync("chmod", ["-R", "u+rwx", this.dir]); // overlayfs leaves ovl/work with mode 000
-    rmSync(this.dir, { recursive: true, force: true });
-    return { modified, homeWrites, home: { history: this.history, final } };
-  }
-
-  // The init's report: { status, survivors, reaped }, { setup }, or null (none).
+  // The init's report: { status, survivors, reaped, storage, writes, overflow }, { setup }, or null.
   #report() {
     if (!SANDBOX) return null;
+    let text;
     try {
-      return this.report ? JSON.parse(this.report) : null;
+      text = readFileSync(this.reportPath, "utf8");
     } catch {
-      return { setup: `an unreadable report from the sandbox's init: ${this.report.slice(0, 200)}` };
+      return null;
+    }
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { setup: `an unreadable report from the sandbox's init: ${text.slice(0, 200)}` };
     }
   }
 
   // The session result: every outcome of the process, and `clean` when none is a failure. shutdown:
   // "ok" or why the shutdown request failed; forced: the process did not exit by itself in time and
   // was killed; extra: more reasons from the caller. infra: the server could not be started (the
-  // harness's failure: lspdiff stops).
+  // harness's failure: lspdiff stops). storage and writes: the init's (null without the sandbox, or when
+  // lspdiff killed the run itself).
   async result({ shutdown, forced, exitMs = null, extra = [] }) {
     let { code, signal } = await this.exited;
     let timer;
-    const complete = await Promise.race([Promise.all([this.closed, this.reportDone]).then(() => true), new Promise((r) => (timer = setTimeout(() => r(false), EOF_MS)))]);
+    const complete = await Promise.race([this.closed.then(() => true), new Promise((r) => (timer = setTimeout(() => r(false), EOF_MS)))]);
     clearTimeout(timer);
     const report = this.#report();
     let infra = this.spawnError ?? report?.setup ?? null;
     if (SANDBOX && !report && !this.killed && !infra) infra = `no report from the sandbox's init (exit ${code ?? signal}): ${this.tail.slice(-300)}`;
     if (report?.status !== undefined) ({ code, signal } = waitStatus(report.status));
-    const { home, ...inputs } = this.inputs();
+    const storage = report?.storage ? { home: report.storage.home, disk: report.storage.disk, skeleton: report.storage.skeleton } : null;
+    const modified = [];
+    (storage?.disk ?? []).forEach((d, k) => {
+      for (const [p, what] of Object.entries(d)) if (p !== "." || what !== UPPER_ROOT) modified.push(`${this.mounts[k]?.target ?? `disk${k}`}/${p} (${what})`);
+    });
+    spawnSync("chmod", ["-R", "u+rwx", this.dir]);
+    rmSync(this.dir, { recursive: true, force: true });
     const why = [];
     if (infra) why.push(`the sandbox: ${infra}`);
     if (shutdown !== "ok") why.push(`shutdown: ${shutdown}`);
@@ -342,7 +265,8 @@ export class ServerProcess {
     if (this.crash) why.push(`stderr: ${this.crash}`);
     if (!complete) why.push(`its output was still held open ${EOF_MS} ms after it ended`);
     if (report?.survivors?.length || report?.reaped) why.push(`processes survived the server: ${JSON.stringify((report.survivors ?? []).slice(0, 5))}, ${report.reaped} killed after it`);
-    if (inputs.modified.length) why.push(`it changed its inputs: ${inputs.modified.slice(0, 5).join(", ")}${inputs.modified.length > 5 ? ", ..." : ""}`);
+    if (report?.overflow) why.push("the record of its writes lost events (fanotify queue overflow)");
+    if (modified.length) why.push(`it changed its inputs: ${modified.slice(0, 5).join(", ")}${modified.length > 5 ? ", ..." : ""}`);
     why.push(...extra);
     return {
       clean: why.length === 0,
@@ -355,8 +279,9 @@ export class ServerProcess {
       stderr: { bytes: this.bytes, sha: this.hash.digest("hex").slice(0, 16), crash: this.crash, complete },
       survivors: report?.survivors ?? [],
       reaped: report?.reaped ?? 0,
-      inputs,
-      home,
+      inputs: { modified },
+      storage,
+      writes: report?.writes ?? null,
     };
   }
 }

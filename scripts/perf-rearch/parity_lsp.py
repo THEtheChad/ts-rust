@@ -208,11 +208,12 @@ JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsse
 # referee code (lspdiff.mjs, referee.mjs) and the bench scripts do not change a cached answer.
 # The sandbox's init (shared with the api tier) is one of them.
 SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'json.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
-                   'ata-npm/npm', 'ata-npm/fake-npm.mjs', '../../parity_sandbox_init.py')
+                   'ata-npm/npm', 'ata-npm/fake-npm.mjs', '../../parity_sandbox_init.py', '../../parity_sandbox_storage.py')
 # Bump when the form of the cached logs changes (2: lane H4, session results, snapshots; 3: lane H5, the
 # hermetic servers: private home, frozen typings store, no network; 4: lane H8, the sealed sandbox, the
-# initialize answer in the log and the home in the session result).
-CACHE_VERSION = 4
+# initialize answer in the log and the home in the session result; 5: lane H8 round 2, the storage and its
+# write record from the init, the server messages through EOF, the stand-in npm's fixed config).
+CACHE_VERSION = 5
 
 
 def scenario_sources_sha(extra=()):
@@ -458,7 +459,7 @@ def main():
             cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]
             cmd += ['--js-all'] if args.js_all else []
         cmd += ['--scenario', scenario] if scenario else ['--positions', str(sess['positions'])]
-        cmd += ['--ata-store', str(store)] if frozen else []
+        cmd += ['--ata-store', str(store), '--ata-manifest', str(Path(args.ata_manifest).resolve())] if frozen else []
         start = time.monotonic()
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
         secs = round(time.monotonic() - start, 1)
