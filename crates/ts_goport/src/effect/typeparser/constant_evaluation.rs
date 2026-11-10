@@ -30,56 +30,10 @@ impl TypeParser<'_> {
                       entity: Node,
                       entity_location: Node|
                       -> EvaluatorResult {
-                    let mut receiver = Node::NIL;
-                    let mut property_name: &str = "";
-                    match entity.kind() {
-                        SyntaxKind::PropertyAccessExpression => {
-                            let access = entity;
-                            receiver = access.expression();
-                            property_name = access.name().text();
-                        }
-                        SyntaxKind::ElementAccessExpression => {
-                            let access = entity;
-                            if is_string_literal_like(access.argument_expression()) {
-                                receiver = access.expression();
-                                property_name = access.argument_expression().text();
-                            }
-                        }
-                        _ => {}
-                    }
-
-                    if number_symbol.is_some()
-                        && receiver.is_some()
-                        && TypeParser::new(program, &mut *checker).get_symbol_at_location(receiver)
-                            == number_symbol
+                    if let Some(result) =
+                        number_global_constant(checker, program, number_symbol, entity)
                     {
-                        match property_name {
-                            "POSITIVE_INFINITY" => {
-                                return new_result(
-                                    Some(LiteralValue::Number(crate::jsnum::infinity(1))),
-                                    false,
-                                    false,
-                                    false,
-                                );
-                            }
-                            "NEGATIVE_INFINITY" => {
-                                return new_result(
-                                    Some(LiteralValue::Number(crate::jsnum::infinity(-1))),
-                                    false,
-                                    false,
-                                    false,
-                                );
-                            }
-                            "NaN" => {
-                                return new_result(
-                                    Some(LiteralValue::Number(crate::jsnum::nan())),
-                                    false,
-                                    false,
-                                    false,
-                                );
-                            }
-                            _ => {}
-                        }
+                        return result;
                     }
 
                     let result = checker.evaluate_entity(entity, entity_location);
@@ -87,25 +41,11 @@ impl TypeParser<'_> {
                         return result;
                     }
 
-                    let symbol =
-                        TypeParser::new(program, &mut *checker).get_symbol_at_location(entity);
-                    if symbol.is_nil() || !checker.is_constant_variable(symbol) {
+                    let Some(declaration) =
+                        inlinable_constant_declaration(checker, program, entity, entity_location)
+                    else {
                         return result;
-                    }
-                    let declaration = checker.sym(symbol).value_declaration;
-                    if declaration.is_nil()
-                        || !is_variable_declaration(declaration)
-                        || declaration.type_().is_some()
-                        || declaration.initializer().is_nil()
-                        || entity_location.is_some()
-                            && (declaration == entity_location
-                                || !checker.is_block_scoped_name_declared_before_use(
-                                    declaration,
-                                    entity_location,
-                                ))
-                    {
-                        return result;
-                    }
+                    };
 
                     let evaluate = cell
                         .borrow()
@@ -144,4 +84,70 @@ impl TypeParser<'_> {
             _ => (0.0, false),
         }
     }
+}
+
+/// The value of `Number.POSITIVE_INFINITY`, `Number.NEGATIVE_INFINITY` or
+/// `Number.NaN` (a property access, or an element access with a string
+/// literal) when the receiver resolves to the global `Number`.
+fn number_global_constant(
+    checker: &mut Checker,
+    program: &'static GoProgram,
+    number_symbol: SymbolId,
+    entity: Node,
+) -> Option<EvaluatorResult> {
+    let (receiver, property_name) = match entity.kind() {
+        SyntaxKind::PropertyAccessExpression => (entity.expression(), entity.name().text()),
+        SyntaxKind::ElementAccessExpression
+            if is_string_literal_like(entity.argument_expression()) =>
+        {
+            (entity.expression(), entity.argument_expression().text())
+        }
+        _ => (Node::NIL, ""),
+    };
+    if number_symbol.is_nil()
+        || receiver.is_nil()
+        || TypeParser::new(program, &mut *checker).get_symbol_at_location(receiver) != number_symbol
+    {
+        return None;
+    }
+    let value = match property_name {
+        "POSITIVE_INFINITY" => crate::jsnum::infinity(1),
+        "NEGATIVE_INFINITY" => crate::jsnum::infinity(-1),
+        "NaN" => crate::jsnum::nan(),
+        _ => return None,
+    };
+    Some(new_result(
+        Some(LiteralValue::Number(value)),
+        false,
+        false,
+        false,
+    ))
+}
+
+/// The declaration of the constant variable that the identifier `entity`
+/// names, when its initializer can stand for it: a variable declaration
+/// without a type annotation, with an initializer, and (for a reference at
+/// `entity_location`) declared before that use and not at it.
+fn inlinable_constant_declaration(
+    checker: &mut Checker,
+    program: &'static GoProgram,
+    entity: Node,
+    entity_location: Node,
+) -> Option<Node> {
+    let symbol = TypeParser::new(program, &mut *checker).get_symbol_at_location(entity);
+    if symbol.is_nil() || !checker.is_constant_variable(symbol) {
+        return None;
+    }
+    let declaration = checker.sym(symbol).value_declaration;
+    if declaration.is_nil()
+        || !is_variable_declaration(declaration)
+        || declaration.type_().is_some()
+        || declaration.initializer().is_nil()
+        || entity_location.is_some()
+            && (declaration == entity_location
+                || !checker.is_block_scoped_name_declared_before_use(declaration, entity_location))
+    {
+        return None;
+    }
+    Some(declaration)
 }
