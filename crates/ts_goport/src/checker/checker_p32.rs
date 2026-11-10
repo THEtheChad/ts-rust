@@ -1374,20 +1374,15 @@ impl Checker {
                             contextual_return_type,
                             is_async_generator,
                         );
-                    let yield_type = if iteration_types.yield_type.is_some() {
-                        iteration_types.yield_type
-                    } else {
-                        self.silent_never_type
-                    };
-                    let mut return_type = self.get_contextual_type(node, context_flags);
-                    if return_type.is_nil() {
-                        return_type = self.silent_never_type;
-                    }
-                    let next_type = if iteration_types.next_type.is_some() {
-                        iteration_types.next_type
-                    } else {
-                        self.unknown_type
-                    };
+                    let yield_type = iteration_types
+                        .yield_type
+                        .get()
+                        .unwrap_or(self.silent_never_type);
+                    let return_type = self
+                        .get_contextual_type(node, context_flags)
+                        .get()
+                        .unwrap_or(self.silent_never_type);
+                    let next_type = iteration_types.next_type.get().unwrap_or(self.unknown_type);
                     let generator_type = self.create_generator_type(
                         yield_type,
                         return_type,
