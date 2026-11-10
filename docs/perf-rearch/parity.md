@@ -2229,7 +2229,7 @@ Fixing them changes `sandbox.mjs`, `client.mjs` and `session.mjs`, which are ses
 fill and variant record would start empty, and the Go-race sessions need refills (H5's "Go fills"). That
 is lane H8; `parity_api_init.py` and `parity_api_session.py`'s readers are the design to port.
 
-### Negative controls (`parity_h7_test.py`, 109 checks, `H7 SELFTEST OK`, about 30 s to 2.5 min)
+### Negative controls (`parity_h7_test.py`, 108 checks, `H7 SELFTEST OK`, about 30 s to 2.5 min)
 
 Besides the table above, the round 1 controls (fakes in front of the Go oracle, through the real tier
 and `parity_compare.py compare`): a transparent proxy MATCHes; a wrong output path is a DIFF and PARITY
