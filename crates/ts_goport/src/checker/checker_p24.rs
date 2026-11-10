@@ -756,13 +756,7 @@ impl Checker {
         let flags = self.ty(t).flags;
         let object_flags = self.ty(t).object_flags;
         if object_flags.intersects(ObjectFlags::MAPPED) {
-            // PERF: the cached apparent type of a mapped type returns here,
-            // without the call that would read it.
-            let cached = self.ty(t).as_mapped_type().resolved_apparent_type;
-            if cached.is_some() {
-                return cached;
-            }
-            return self.get_apparent_type_of_mapped_type(t);
+            return self.get_apparent_type_of_mapped_type_cached(t);
         } else if object_flags.intersects(ObjectFlags::REFERENCE) && t != original_type {
             return self.get_type_with_this_argument(
                 t,
@@ -791,6 +785,17 @@ impl Checker {
             return self.empty_object_type;
         }
         t
+    }
+
+    /// `getApparentTypeOfMappedType` for the hot callers: the cached apparent
+    /// type of a mapped type returns here, without the call that would read it.
+    #[inline(always)]
+    fn get_apparent_type_of_mapped_type_cached(&mut self, t: TypeId) -> TypeId {
+        let cached = self.ty(t).as_mapped_type().resolved_apparent_type;
+        if cached.is_some() {
+            return cached;
+        }
+        self.get_apparent_type_of_mapped_type(t)
     }
 
     // Go: checker/checker.go:22226 getApparentTypeOfMappedType
@@ -1090,6 +1095,24 @@ impl Checker {
 
     // Go: checker/checker.go:22357 getReducedApparentType
     pub fn get_reduced_apparent_type(&mut self, t: TypeId) -> TypeId {
+        if let Some(reduced) = self.get_reduced_apparent_type_cached(t) {
+            return reduced;
+        }
+        // Since getApparentType may return a non-reduced union or intersection type, we need to perform
+        // type reduction both before and after obtaining the apparent type. For example, given a type parameter
+        // 'T extends A | B', the type 'T & X' becomes 'A & X | B & X' after obtaining the apparent type, and
+        // that type may need further reduction to remove empty intersections.
+        let reduced = self.get_reduced_type(t);
+        let apparent = self.get_apparent_type(reduced);
+        self.get_reduced_type(apparent)
+    }
+
+    /// The reduced apparent type of `t` when it is known without the calls of
+    /// `getReducedApparentType`, which then return the same type and change no
+    /// state; `None` when the calls must run. Property lookups in the
+    /// constituents of large unions reach this for every constituent.
+    #[inline(always)]
+    fn get_reduced_apparent_type_cached(&mut self, t: TypeId) -> Option<TypeId> {
         // PERF: an object type is its own reduced type. Its apparent type is
         // itself, or for a mapped type the cached apparent type, read with no
         // effect (`get_apparent_type`). So these return without the calls
@@ -1097,11 +1120,11 @@ impl Checker {
         let ty = self.ty(t);
         if ty.flags.intersects(TypeFlags::OBJECT) {
             if !ty.object_flags.intersects(ObjectFlags::MAPPED) {
-                return t;
+                return Some(t);
             }
             let cached = ty.as_mapped_type().resolved_apparent_type;
             if cached.is_some() {
-                return self.get_reduced_type(cached);
+                return Some(self.get_reduced_type(cached));
             }
         }
         // PERF (sentdisc1): an intersection whose never test is done and
@@ -1119,19 +1142,13 @@ impl Checker {
         {
             let cached = ty.as_intersection_type().resolved_apparent_type;
             if cached == t {
-                return t;
+                return Some(t);
             }
             if cached.is_some() {
-                return self.get_reduced_type(cached);
+                return Some(self.get_reduced_type(cached));
             }
         }
-        // Since getApparentType may return a non-reduced union or intersection type, we need to perform
-        // type reduction both before and after obtaining the apparent type. For example, given a type parameter
-        // 'T extends A | B', the type 'T & X' becomes 'A & X | B & X' after obtaining the apparent type, and
-        // that type may need further reduction to remove empty intersections.
-        let reduced = self.get_reduced_type(t);
-        let apparent = self.get_apparent_type(reduced);
-        self.get_reduced_type(apparent)
+        None
     }
 
     // Go: checker/checker.go:22365 elaborateNeverIntersection
