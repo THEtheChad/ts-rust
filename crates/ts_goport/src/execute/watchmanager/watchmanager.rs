@@ -1066,8 +1066,10 @@ mod tests {
     /// The longest median time from the cancel to the end of `run_loop`.
     /// Only our code runs in it (the waker, the wake, the end of the wait,
     /// `close_all_watches`); it takes well under 1 ms on an idle host, and
-    /// the rest is room for a loaded one. A 50 ms fault exceeds it.
-    const AT_ONCE: Duration = Duration::from_millis(10);
+    /// the rest is room for a loaded one: under 96 CPU burners the median
+    /// reached 7.2 ms (Q7), so 25 ms keeps the test off the edge while the
+    /// injected 50 ms faults (medians about 54 ms) still exceed it.
+    const AT_ONCE: Duration = Duration::from_millis(25);
 
     /// The runs of `cancel_to_end_runs`.
     const RUNS: usize = 20;
