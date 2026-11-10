@@ -1,16 +1,58 @@
 // A minimal LSP client over stdio (JSON-RPC with Content-Length framing). No dependencies.
+//
+// The wire is read strictly (lanes H4 and H8), as the api tier reads its server
+// (scripts/perf-rearch/parity_api_session.py Rpc): a header is only Content-Length (and Content-Type)
+// lines, each at most MAX_HEADER_LINE bytes, at most MAX_HEADERS of them, with a Content-Length of at
+// most 10 digits and MAX_FRAME bytes; a body is UTF-8 (no BOM) and one JSON text with no duplicate key,
+// whose numbers keep their text (json.mjs parseStrict: `1e999` is not null); and every message is exactly
+// a JSON-RPC 2.0 envelope (envelopeError): an answer to a request this client sent and that is still
+// pending ({jsonrpc, id, result} or {jsonrpc, id, error: {code, message, data?}}), a server request
+// ({jsonrpc, id, method, params?}) or a notification ({jsonrpc, method, params?}). Anything else breaks
+// the protocol: the run ends there, a crash of the server (never an answer), and the session is not clean.
 import { pathToFileURL } from "node:url";
+import { parseStrict } from "./json.mjs";
 import { ServerProcess } from "./sandbox.mjs";
 import { SETTINGS } from "./settings.mjs";
 
 // A request the server does not answer in this time ends the run: the server is killed and the
 // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
 const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
+const MAX_HEADER_LINE = 256;
+const MAX_HEADERS = 4;
+const MAX_FRAME = 256 << 20;
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v) && !("rawJSON" in v && Object.getPrototypeOf(v) === null);
+const sameKeys = (o, want) => Object.keys(o).sort().join(",") === [...want].sort().join(",");
+
+// Why msg is not a JSON-RPC 2.0 message this client may get, else null. pending: the ids of the
+// requests that wait for an answer.
+export function envelopeError(msg, pending) {
+  if (!isObject(msg)) return "a message that is not an object";
+  if (msg.jsonrpc !== "2.0") return `jsonrpc ${JSON.stringify(msg.jsonrpc)}`;
+  if ("params" in msg && !(isObject(msg.params) || Array.isArray(msg.params))) return `params ${JSON.stringify(msg.params).slice(0, 80)}`;
+  if ("method" in msg) {
+    if (typeof msg.method !== "string") return `method ${JSON.stringify(msg.method)}`;
+    if ("id" in msg) {
+      if (!(Number.isInteger(msg.id) || typeof msg.id === "string")) return `a server request's id ${JSON.stringify(msg.id)}`;
+      if (!sameKeys(msg, ["jsonrpc", "id", "method", ...("params" in msg ? ["params"] : [])])) return `a server request with keys ${Object.keys(msg)}`;
+    } else if (!sameKeys(msg, ["jsonrpc", "method", ...("params" in msg ? ["params"] : [])])) return `a notification with keys ${Object.keys(msg)}`;
+    return null;
+  }
+  if (!(sameKeys(msg, ["jsonrpc", "id", "result"]) || sameKeys(msg, ["jsonrpc", "id", "error"]))) return `an answer with keys ${Object.keys(msg)}`;
+  if (!Number.isInteger(msg.id) || !pending.has(msg.id)) return `an answer to no pending request (id ${JSON.stringify(msg.id)})`;
+  if ("error" in msg) {
+    const e = msg.error;
+    if (!isObject(e) || !Number.isInteger(e.code) || typeof e.message !== "string" || !sameKeys(e, ["code", "message", ...("data" in e ? ["data"] : [])])) return `an error object ${JSON.stringify(e).slice(0, 120)}`;
+  }
+  return null;
+}
 
 export class LspClient {
-  // cmd: [binary, ...args]. Server-to-client requests get a fixed answer, see onServerRequest.
-  constructor(cmd, { cwd, env, stderr } = {}) {
-    this.server = new ServerProcess(cmd, { cwd, env, stderr });
+  // cmd: [binary, ...args]. Server-to-client requests get a fixed answer, see onServerRequest. binds:
+  // more host paths the server sees (sandbox.mjs).
+  constructor(cmd, { cwd, env, stderr, binds } = {}) {
+    this.server = new ServerProcess(cmd, { cwd, env, stderr, binds });
     this.proc = this.server.proc;
     this.nextId = 1;
     this.pending = new Map(); // id -> { resolve, reject, method, start }
@@ -22,41 +64,58 @@ export class LspClient {
     this.buf = Buffer.alloc(0);
     this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
-    this.malformed = null; // a message that broke the framing or the JSON
+    this.malformed = null; // a message that broke the framing, the JSON or the envelope
     this.proc.stdout.on("data", (chunk) => this.#onData(chunk));
     // At EOF every byte must have been part of a whole message: a partial header or body, or any
     // stray output, fails the session (lane H4 round 3).
     this.stdoutEnded = new Promise((resolve) => this.proc.stdout.on("end", resolve));
     this.proc.stdin.on("error", () => {}); // writes after a crash: the exit handler reports it
-    this.proc.on("exit", (code, signal) => {
+    this.server.exited.then(({ code, signal }) => {
       this.dead ??= `server exited (${code ?? signal})`;
       const panic = /^panic: .*$/m.exec(this.server.tail)?.[0];
-      for (const p of this.pending.values()) p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
+      }
       this.pending.clear();
     });
   }
 
   #onData(chunk) {
+    if (this.malformed) return;
     this.buf = Buffer.concat([this.buf, chunk]);
     for (;;) {
       const headerEnd = this.buf.indexOf("\r\n\r\n");
-      if (headerEnd < 0) return;
+      if (headerEnd < 0) {
+        if (this.buf.length > MAX_HEADERS * (MAX_HEADER_LINE + 2)) return this.#broken(`a header longer than ${MAX_HEADERS} lines of ${MAX_HEADER_LINE} bytes: ${JSON.stringify(this.buf.subarray(0, 80).toString("latin1"))}`);
+        return;
+      }
       const header = this.buf.subarray(0, headerEnd).toString("latin1");
-      // Every header line is a "Name: value" field (LSP base protocol), so stray output in front of a
-      // header is a protocol error, not part of it.
       const lines = header.split("\r\n");
-      if (!lines.every((l) => /^[A-Za-z][A-Za-z0-9-]*: ?[^\r\n]*$/.test(l))) return this.#broken(`a header with stray bytes: ${JSON.stringify(header.slice(0, 80))}`);
-      const length = Number(/^Content-Length: *(\d+)$/im.exec(header)?.[1]);
-      if (!Number.isInteger(length)) return this.#broken(`a message without a Content-Length: ${header.slice(0, 80)}`);
+      if (lines.length > MAX_HEADERS) return this.#broken(`more than ${MAX_HEADERS} header lines`);
+      const fields = new Map();
+      for (const l of lines) {
+        // Every header line is a "Name: value" field (LSP base protocol), so stray output in front of a
+        // header is a protocol error, not part of it.
+        const m = /^(Content-Length|Content-Type): ?([^\r\n]*)$/i.exec(l);
+        if (!m || l.length > MAX_HEADER_LINE || fields.has(m[1].toLowerCase())) return this.#broken(`a header with stray bytes: ${JSON.stringify(header.slice(0, 80))}`);
+        fields.set(m[1].toLowerCase(), m[2]);
+      }
+      const len = fields.get("content-length");
+      if (!/^[0-9]{1,10}$/.test(len ?? "")) return this.#broken(`a message without a Content-Length of at most 10 digits: ${JSON.stringify(header.slice(0, 80))}`);
+      const length = Number(len);
+      if (length > MAX_FRAME) return this.#broken(`a Content-Length of ${length} bytes, more than ${MAX_FRAME}`);
       if (this.buf.length < headerEnd + 4 + length) return;
-      const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
+      const bytes = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length);
       this.buf = this.buf.subarray(headerEnd + 4 + length);
       let msg;
       try {
-        msg = JSON.parse(body);
-      } catch {
-        return this.#broken(`malformed JSON: ${body.slice(0, 80)}`);
+        msg = parseStrict(UTF8.decode(bytes));
+      } catch (e) {
+        return this.#broken(`a body that is not strict JSON (${e.message}): ${JSON.stringify(bytes.subarray(0, 80).toString("latin1"))}`);
       }
+      const why = envelopeError(msg, this.pending);
+      if (why) return this.#broken(`not a JSON-RPC 2.0 message: ${why}`);
       this.#onMessage(msg);
     }
   }
@@ -70,16 +129,15 @@ export class LspClient {
       p.reject(new Error(`${this.dead} during ${p.method}`));
     }
     this.pending.clear();
-    this.proc.kill("SIGKILL");
+    this.server.kill();
   }
 
   #onMessage(msg) {
     const at = performance.now();
     this.lastMessageAt = at;
-    if (msg.id !== undefined && msg.method) return this.#onServerRequest(msg);
+    if (msg.id !== undefined && msg.method !== undefined) return this.#onServerRequest(msg);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
-      if (!p) return;
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start });
@@ -125,7 +183,7 @@ export class LspClient {
         this.pending.delete(id);
         this.dead = `server timed out (no answer to ${method} in ${REQUEST_TIMEOUT_MS} ms)`;
         reject(Object.assign(new Error(this.dead), { timeout: true }));
-        this.proc.kill("SIGKILL");
+        this.server.kill();
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, method, start, timer });
     });
@@ -167,7 +225,7 @@ export class LspClient {
     const asked = performance.now();
     const timer = setTimeout(() => {
       killed = this.proc.exitCode === null && this.proc.signalCode === null;
-      if (killed) this.proc.kill("SIGKILL");
+      if (killed) this.server.kill();
     }, ms);
     const { signal } = await this.server.exited;
     clearTimeout(timer);

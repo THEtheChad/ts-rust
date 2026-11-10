@@ -426,8 +426,7 @@ class Tier:
 def ancestor_dirs(roots):
     """The dirs above the roots that the sandbox shows from the host (the hidden dirs are empty tmpfs dirs
     there, made by the sandbox): module resolution and the config search look up ANCESTOR_NAMES in them."""
-    hidden = lambda d: any(d == h or d.startswith(h + '/') for h in session.HIDDEN)  # noqa: E731
-    return sorted({d for d in parity_lsp.ancestor_dirs(*roots) if not hidden(d)} | {'/'})
+    return parity_lsp.ancestor_dirs(*roots)
 
 
 def main_tier(argv):

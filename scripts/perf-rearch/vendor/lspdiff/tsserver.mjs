@@ -273,7 +273,7 @@ function docMarkdown(documentation, tags) {
 
 export class TsserverClient {
   // path: tsserver.js. Same options as LspClient where they apply (cwd, env, stderr).
-  constructor(path = DEFAULT_TSSERVER, { cwd, env, stderr } = {}) {
+  constructor(path = DEFAULT_TSSERVER, { cwd, env, stderr, binds = [] } = {}) {
     this.libDir = dirname(realpathSync(path));
     const args = [
       "--max-old-space-size=8192",
@@ -285,7 +285,8 @@ export class TsserverClient {
       "--locale",
       "en",
     ];
-    this.server = new ServerProcess([process.execPath, ...args], { cwd, env, stderr });
+    // In the sandbox, tsserver.js reads the rest of its package (lib/, package.json): bound read-only.
+    this.server = new ServerProcess([process.execPath, ...args], { cwd, env, stderr, binds: [...binds, { src: dirname(this.libDir) }] });
     this.proc = this.server.proc;
     this.seq = 0;
     this.pending = new Map(); // seq -> { resolve, reject, command }
@@ -320,7 +321,7 @@ export class TsserverClient {
       if (this.buf.length < headerEnd + 4 + length) return;
       if (!Number.isInteger(length)) {
         this.#die("tsserver sent a message without a Content-Length");
-        this.proc.kill("SIGKILL");
+        this.server.kill();
         return;
       }
       const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
@@ -330,7 +331,7 @@ export class TsserverClient {
         msg = JSON.parse(body);
       } catch {
         this.#die(`tsserver sent malformed JSON: ${body.slice(0, 120)}`);
-        this.proc.kill("SIGKILL");
+        this.server.kill();
         return;
       }
       this.#onMessage(msg);
@@ -363,7 +364,7 @@ export class TsserverClient {
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#die(`tsserver timed out (no response to ${command} in ${REQUEST_TIMEOUT_MS} ms)`);
-        this.proc.kill("SIGKILL");
+        this.server.kill();
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(seq, { resolve, reject, command, timer });
     });
@@ -695,7 +696,7 @@ export class TsserverClient {
     const asked = performance.now();
     const timer = setTimeout(() => {
       killed = this.proc.exitCode === null && this.proc.signalCode === null;
-      if (killed) this.proc.kill("SIGKILL");
+      if (killed) this.server.kill();
     }, SETTINGS.LSPDIFF_SHUTDOWN_MS);
     const { signal } = await this.server.exited;
     clearTimeout(timer);

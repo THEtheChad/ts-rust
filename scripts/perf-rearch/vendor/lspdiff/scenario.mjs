@@ -82,6 +82,9 @@ class Script {
   async ask(step, method, params) {
     const r = await this.client.request(method, params);
     this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
+    // With ATA off nothing writes the home in the background: it is listed after every answer (with ATA
+    // on, at every wait: settle).
+    if (!this.ata) this.client.server.mark(`after ${this.log.length} answers`);
     return r;
   }
 
@@ -213,14 +216,8 @@ class Script {
   // (false: npm was idle at once). A wait that reaches ATA_DEADLINE_MS fails the run (a timeout of
   // that server: for tsc-rs a DIFF, for Go GO-BROKEN), never a success.
   async npmIdle(label, since) {
-    const alive = (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (e) {
-        return e.code === "EPERM";
-      }
-    };
+    // The pid in the log is npm's own, in the server's PID namespace (sandbox.mjs alive).
+    const alive = (pid) => this.client.server.alive(pid);
     const start = performance.now();
     for (let polls = 0; ; polls++) {
       const log = this.npmCalls();
@@ -253,8 +250,10 @@ class Script {
     const start = performance.now();
     for (let since = start; ; since = -Infinity) {
       await this.client.settle(ms);
-      if (!this.ata || !(await this.npmIdle(label, since))) return performance.now() - start;
+      if (!this.ata || !(await this.npmIdle(label, since))) break;
     }
+    this.client.server.mark(`${label} after ${this.log.length} answers`);
+    return performance.now() - start;
   }
 
   // ata-overlay: waits until ATA is idle (settle, the barrier of lane H4: the stand-in npm's own log)
@@ -620,7 +619,7 @@ function fixtureChanges(root, expected) {
 }
 
 // Runs a scenario on one server and returns { log: [{ step, method, params, result, error }],
-// session } (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
+// session } (the log's first entry: the initialize answer) (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
 // fixture dir is not what the script made it). A fixture scenario first writes its fixture into
 // `root`. When the server crashes or times out, the error carries the answers so far as `log` and the
 // session as `session`.
@@ -635,17 +634,24 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   // private home (sandbox.mjs), new for every server run.
   let ata;
   const here = dirname(fileURLToPath(import.meta.url));
+  // What the server sees besides its project (sandbox.mjs binds): a fixture dir (read-only: the script
+  // writes it, the server only reads it), and with ATA on the stand-in npm, node, its store and the dir of
+  // its log (the one writable place outside the server's home; it must hold the log and nothing else).
+  const binds = scenario.fixture ? [{ src: root }] : [];
   if (scenario.ata ?? true) {
     const typings = scenario.typings ?? "frozen";
     if (typings === "frozen" && !ataStore) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store`);
     const dir = mkdtempSync(join(tmpdir(), "lspdiff-ata-"));
     if (typings === "fixture") writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
-    ata = { dir, log: join(dir, "npm.log") };
+    mkdirSync(join(dir, "log"));
+    ata = { dir, logDir: join(dir, "log"), log: join(dir, "log", "npm.log") };
+    const store = typings === "fixture" ? join(dir, "store") : ataStore;
+    binds.push({ src: join(here, "ata-npm") }, { src: process.execPath }, { src: store }, { src: ata.logDir, rw: true });
     env = {
       ...env,
       PATH: `${join(here, "ata-npm")}:${SERVER_PATH}`,
       ATA_NODE: process.execPath,
-      ATA_STORE: typings === "fixture" ? join(dir, "store") : ataStore,
+      ATA_STORE: store,
       ATA_NPM_LOG: ata.log,
       ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
     };
@@ -653,14 +659,16 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
   try {
-    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
+    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true, binds });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
     if (ata) rmSync(ata.dir, { recursive: true, force: true });
-    throw Object.assign(e, { log: [], session: e.session });
+    throw Object.assign(e, { log: e.initialize ? [e.initialize] : [], session: e.session });
   }
   const s = new Script(client, root);
   s.ata = ata;
+  s.log.push(client.initialize);
+  client.server.mark(`after ${s.log.length} answers`);
   if (scenario.fixture) s.expected = new Map(Object.entries(FIXTURES[scenario.fixture]));
   let failure;
   try {
@@ -676,6 +684,8 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     const changes = fixtureChanges(root, s.expected);
     if (changes.length) Object.assign(session, { clean: false, why: [...session.why, `it changed the fixture: ${changes.slice(0, 5).join(", ")}`] });
   }
+  const plumbing = ata ? readdirSync(ata.logDir).filter((n) => n !== "npm.log") : [];
+  if (plumbing.length) Object.assign(session, { clean: false, why: [...session.why, `it wrote into the stand-in npm's log dir: ${plumbing.slice(0, 5).join(", ")}`] });
   if (serverLog) {
     const lines = client.events.filter((e) => e.method === "window/logMessage").map((e) => `[${(e.at / 1000).toFixed(3)}] ${e.params?.message}`);
     writeFileSync(serverLog, lines.join("\n") + "\n");

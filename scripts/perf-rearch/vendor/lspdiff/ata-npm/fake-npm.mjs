@@ -69,7 +69,12 @@ for (const [name, version, paths] of wanted) {
   const field = dev && paths !== null ? "devDependencies" : "dependencies";
   pkg[field] = { ...pkg[field], [name]: `^${version}` };
 }
+// Every map sorted, as npm writes them: the files then do not depend on the order of ATA's calls (Go
+// builds an install's list from a map), and the server's home, which lspdiff compares, neither (lane H8).
+const sorted = (o) => o && Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+for (const field of ["dependencies", "devDependencies"]) if (pkg[field]) pkg[field] = sorted(pkg[field]);
 lock.packages[""] = { ...(pkg.dependencies && { dependencies: pkg.dependencies }), ...(pkg.devDependencies && { devDependencies: pkg.devDependencies }) };
+lock.packages = sorted(lock.packages);
 writeFileSync("package.json", JSON.stringify(pkg));
 writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
 done(0);

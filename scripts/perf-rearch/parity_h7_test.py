@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py, parity_api_init.py).
+"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py, parity_sandbox_init.py).
 
 usage: parity_h7_test.py [--unit]                 prints H7 SELFTEST OK, or each FAIL; exit 1 on a failure
        parity_h7_test.py --e2e-only --harness DIR  the end-to-end controls against another harness's
@@ -127,7 +127,7 @@ def unit():
     api.session_sha = lambda: 'another-source'
     check('key: the session driver\'s and init\'s source (harness sources)', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     api.session_sha = saved[0]
-    check('key: both sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_api_init.py'])
+    check('key: both sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_sandbox_init.py'])
     session.PROTOCOL = 'another protocol'
     check('key: the API protocol', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     session.PROTOCOL = saved[1]

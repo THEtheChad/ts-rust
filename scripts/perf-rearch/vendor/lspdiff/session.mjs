@@ -9,16 +9,21 @@ import { TsserverClient } from "./tsserver.mjs";
 export const TYPED = "\nconsole.log(Math.max(1, 2).toFixed(1));\n";
 
 // cmd: an LSP server's [binary, ...args], or { tsserver: <tsserver.js> } for JS tsserver driven over
-// its own protocol (tsserver.mjs, the referee; its ATA is always off).
-export async function startServer(cmd, root, { stderr, watch = false, ata = true, env } = {}) {
-  const client = cmd.tsserver ? new TsserverClient(cmd.tsserver, { cwd: root, stderr, env }) : new LspClient(cmd, { cwd: root, stderr, env });
+// its own protocol (tsserver.mjs, the referee; its ATA is always off). binds: more host paths the server
+// sees in the sandbox (sandbox.mjs). The initialize answer is the session's first log entry (lane H8:
+// compared like every other answer), `client.initialize`; a run whose initialize fails (an error answer,
+// or no answer) ends there, with that entry when there was an answer.
+export async function startServer(cmd, root, { stderr, watch = false, ata = true, env, binds } = {}) {
+  const client = cmd.tsserver ? new TsserverClient(cmd.tsserver, { cwd: root, stderr, env, binds }) : new LspClient(cmd, { cwd: root, stderr, env, binds });
+  const params = initializeParams(root, { watch, ata });
   let init;
   try {
-    init = await client.request("initialize", initializeParams(root, { watch, ata }));
+    init = await client.request("initialize", params);
   } catch (e) {
     throw Object.assign(e, { session: await client.shutdown() });
   }
-  if (init.error) throw Object.assign(new Error(`initialize failed: ${JSON.stringify(init.error)}`), { session: await client.shutdown() });
+  client.initialize = { step: "initialize", method: "initialize", params, result: init.result, error: init.error, ...(init.failed ? { failed: init.failed } : {}), ms: init.ms };
+  if (init.error) throw Object.assign(new Error(`initialize failed: ${JSON.stringify(init.error)}`), { initialize: client.initialize, session: await client.shutdown() });
   client.notify("initialized", {});
   return client;
 }
@@ -57,6 +62,7 @@ export function removeTail(client, doc, length) {
 }
 
 // Runs the session and returns { log: [{ step, method, params, result, error, failed }], session }
+// (the first entry: the initialize answer)
 // (failed: JS tsserver gave no usable answer, tsserver.mjs; session: the server's result, every
 // outcome of its process and its shutdown, sandbox.mjs). ATA is off: its typings would join an
 // inferred project whenever its npm call returns (see initializeParams). When the server crashes or
@@ -71,11 +77,15 @@ export async function runSession(cmd, root, files, { positions = 4, stderr, env 
   try {
     client = await startServer(cmd, root, { stderr, env, ata: false });
   } catch (e) {
-    throw Object.assign(e, { log, session: e.session });
+    throw Object.assign(e, { log: e.initialize ? [e.initialize] : log, session: e.session });
   }
+  log.push(client.initialize);
+  // ATA is off: nothing writes the home in the background, so it is listed after every answer.
+  client.server.mark(`after ${log.length} answers`);
   const ask = async (step, method, params) => {
     const r = await client.request(method, params);
     log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
+    client.server.mark(`after ${log.length} answers`);
     return r;
   };
   try {

@@ -1,7 +1,7 @@
 """One API session of the parity gate's api tier (lane H7): a `tsgo --api --async` process (JSON-RPC
 with Content-Length framing, Go cmd/tsc/api.go), scripted by a scenario, in a sealed sandbox.
 
-Everything here and in parity_api_init.py decides what a server is asked and what it can see, so the
+Everything here and in parity_sandbox_init.py decides what a server is asked and what it can see, so the
 sha of both files is in the key of every cached Go session (parity_api.py SOURCES). The diff, the
 referees and the reporting live in parity_api.py and do not change a cached answer.
 
@@ -52,14 +52,14 @@ clean:
              the item ERROR and caches nothing.
 A transcript of a failed session keeps the answers it got.
 
-Sandbox (parity_api_init.py, PID 1 of a new user, mount, network and PID namespace): the user's files
+Sandbox (parity_sandbox_init.py, the lsp tier's too; PID 1 of a new user, mount, network and PID namespace): the user's files
 (/home), /tmp, /var/tmp, /run, /mnt, /media, /srv, /opt and /dev/shm are covered by empty tmpfs dirs with a
 fixed mtime, so nothing there (the real ~/.cache/typescript, ~/.npm, ~/.config, other lanes' trees) exists
 for the server, not even for stat; the whole tree is read-only; the only writable places are the private
 home (new and empty for every process, at SANDBOX_HOME) and the fixture's overlay, both read by the caller
 after every request. The command's files under a hidden dir are bound back read-only at their real paths.
 The server gets the environment of sandbox.mjs (PATH=/usr/bin:/bin, HOME, XDG dirs and TMPDIR in its home,
-LANG=C.UTF-8, nothing else), cwd /, no fd but 0, 1 and 2, no network, and no privileges (parity_api_init.py
+LANG=C.UTF-8, nothing else), cwd /, no fd but 0, 1 and 2, no network, and no privileges (parity_sandbox_init.py
 drop(): a nested user namespace that owns nothing, no capability, uid and gid 1000, no_new_privs). When it
 ends, every process left in the namespace is a survivor (a failure) and is killed before anything is
 collected. The home's skeleton (HOME_DIRS) is listed like everything else and checked exactly.
@@ -75,11 +75,13 @@ import threading
 import time
 from pathlib import Path
 
+import parity_sandbox_init as sandbox_init
+
 STATE = Path.home() / '.cache/perf-rearch/parity'
 SANDBOX_HOME = STATE / 'api-home'
 SCRATCH = STATE / 'scratch/api'
 VIRTUAL = '/parity-api'
-INIT = Path(__file__).resolve().parent / 'parity_api_init.py'
+INIT = Path(sandbox_init.__file__).resolve()  # the sandbox's PID 1, shared with the lsp tier
 # The wire protocol this harness speaks: JSON-RPC 2.0 over stdio (--async), Content-Length framing, the
 # request and answer shapes of the pin's internal/api/proto.go (protocol 5 in scripts/goport/api_oracle.py's
 # numbering). Keyed: a change to it is a change to every answer.
@@ -93,13 +95,11 @@ PER_PROJECT = ['getSourceFileNames', 'getConfigFileNames', 'getConfigFileParsing
                'getDeclarationDiagnostics', 'emitToString', 'emit']
 SERVER_PATH = '/usr/bin:/bin'
 HOME_DIRS = ['.cache', '.config', '.local/share', '.local/state', 'tmp']
-HIDDEN = ['/home', '/tmp', '/var/tmp', '/run', '/mnt', '/media', '/srv', '/opt', '/dev/shm']
 FIXED_MTIME = 978307200  # 2001-01-01: every dir the sandbox makes, and every fixture file
-# A disk fixture's modes: a checkout's. The server is not root in its sandbox (parity_api_init.py drop()),
+# A disk fixture's modes: a checkout's. The server is not root in its sandbox (parity_sandbox_init.py drop()),
 # so it can write only where a user may; the fixture's immutability comes from its content check before
 # and after the tier and the inotify watch while it runs, not from its modes.
 FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o755, 0o644
-UNSHARE = ['unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '--kill-child', '--mount-proc', '--']
 # Crash lines on stderr (vendor/lspdiff/sandbox.mjs CRASH_RE): Go's panic, fatal error, goroutine trace
 # and signal lines; Rust's panic and stack overflow; an abort.
 CRASH_RE = re.compile(r"^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at "
@@ -206,14 +206,13 @@ def server_args(sc):
 
 
 def command(cmd):
-    """(argv, files): the server command with every word that names a file replaced by its realpath,
-    and those files that a hidden dir would cover (bound back read-only in the sandbox)."""
+    """(argv, files): the server command with every word that names a file replaced by its realpath, and
+    those files (the sandbox's init binds back the ones a hidden dir would cover, read-only)."""
     argv, files = [], []
     for word in str(cmd).split(' '):
         if os.path.isfile(word):
             word = os.path.realpath(word)
-            if any(word.startswith(h + '/') for h in HIDDEN):
-                files.append(word)
+            files.append(word)
         argv.append(word)
     return argv, files
 
@@ -536,12 +535,14 @@ class Session:
             (work / 'ovl').mkdir()
         argv, files = command(binary)
         self.report_r, report_w = os.pipe()
-        spec = {'report': report_w, 'hide': HIDDEN, 'work': str(work), 'home': str(SANDBOX_HOME),
-                'lower': str(fixture) if fixture is not None else None, 'target': self.root, 'files': files,
-                'mtime': FIXED_MTIME, 'cmd': [*argv, *server_args(sc)]}
+        mounts = [{'bind': str(work / 'home'), 'at': str(SANDBOX_HOME), 'rw': True}]
+        if fixture is not None:
+            mounts.append({'overlay': str(fixture), 'base': str(work), 'at': self.root})
+        spec = {'report': report_w, 'mounts': mounts, 'expose': files, 'cwd': '/', 'mtime': FIXED_MTIME,
+                'cmd': [*argv, *server_args(sc)]}
         self.start = time.monotonic()
         try:
-            self.rpc = Rpc([*UNSHARE, '/usr/bin/python3', '-I', str(INIT), json.dumps(spec)],
+            self.rpc = Rpc(['/usr/bin/python3', '-I', str(INIT), 'launch', json.dumps(spec)],
                            server_env(str(SANDBOX_HOME)), [report_w])
         finally:
             os.close(report_w)

@@ -83,6 +83,7 @@ import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
 import { SCENARIOS, runScenario, scenarioInfo } from "./scenario.mjs";
+import { parseKeep } from "./json.mjs";
 import { applyJsReferee } from "./referee.mjs";
 import { runSession } from "./session.mjs";
 import { SETTINGS } from "./settings.mjs";
@@ -153,7 +154,7 @@ console.log(`project ${root}\nfiles: ${files.map((f) => rel(root, f)).join(", ")
 // does not keep stable from run to run: completion items with equal sort keys and the files
 // of a WorkspaceEdit come out in map order. Editors sort completions by sortText anyway.
 function normalize(value, method) {
-  const v = JSON.parse(JSON.stringify(value ?? null).replaceAll(root, "<root>"));
+  const v = parseKeep(JSON.stringify(value ?? null).replaceAll(root, "<root>"));
   const byJson = (list) => list.map((i) => [JSON.stringify(i), i]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, i]) => i);
   if (method === "textDocument/completion" && Array.isArray(v?.result?.items)) v.result.items = byJson(v.result.items);
   if (v?.result?.changes) v.result.changes = Object.fromEntries(Object.entries(v.result.changes).sort(([a], [b]) => (a < b ? -1 : 1)));
@@ -199,7 +200,7 @@ function checkRecord(rec, where) {
 // A value as canonical JSON: object keys sorted, the project root masked.
 function canon(v) {
   const sort = (x) => (Array.isArray(x) ? x.map(sort) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])])) : x);
-  return JSON.stringify(sort(JSON.parse(JSON.stringify(v ?? null).replaceAll(root, "<root>"))));
+  return JSON.stringify(sort(parseKeep(JSON.stringify(v ?? null).replaceAll(root, "<root>"))));
 }
 
 // The identity of each request of a log (lane H4): its step name, method and canonical params, and how
@@ -304,6 +305,13 @@ if (mode === "diff") {
       session = e.session ?? { clean: false, why: [`no session result (${String(e.message).slice(0, 200)})`] };
       fail = { kind: e.timeout ? "timeout" : "crash", reason: String(e.message).slice(0, 300), at: e.log.length };
     }
+    if (session.infra) {
+      // The server could not be started (sandbox.mjs: a mount, the namespace, a file that is not
+      // executable): the harness's failure, never a server's answer. The session fails (parity_lsp.py:
+      // ERROR), and nothing of this run is kept (lane H8; before, a Go that could not run was GO-BROKEN).
+      console.error(`lspdiff: harness error in ${name}: the server could not be started: ${session.infra}`);
+      process.exit(3);
+    }
     console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s${fail ? ` (${fail.kind}: ${fail.reason})` : ""}${session.clean ? "" : `; session: ${session.why.join("; ")}`}`);
     return { log, broken: fail, session };
   };
@@ -314,7 +322,7 @@ if (mode === "diff") {
   };
   const readLog = (f) => {
     const text = readFileSync(f, "utf8").trim();
-    return text ? text.split("\n").map((l) => JSON.parse(l)) : [];
+    return text ? text.split("\n").map((l) => parseKeep(l)) : [];
   };
   const readBroken = (dir, name) => (existsSync(join(dir, `${name}.broken.json`)) ? JSON.parse(readFileSync(join(dir, `${name}.broken.json`), "utf8")) : undefined);
   const readSession = (dir, name) => JSON.parse(readFileSync(join(dir, `${name}.session.json`), "utf8"));
@@ -368,14 +376,27 @@ if (mode === "diff") {
   const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method));
   const goNames = Object.keys(logs).filter((k) => /^go\d*$/.test(k));
   const rsNames = Object.keys(logs).filter((k) => !goNames.includes(k));
-  const order = mergeOrder([...goNames, ...rsNames].map((k) => logs[k]));
-  const aligned = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, alignTo(order, log)]));
+  // Lane H8: two answers of every run are no request of the script and come after the merged order of
+  // its requests, so that the item index of every request stays what it was: the initialize answer (the
+  // log's first entry; session.mjs startServer) and the server's private home (its session result's
+  // `home`, sandbox.mjs: the final listing and its history), as the entry "session home". Both are
+  // compared like every answer (determinism, GO-BROKEN, accumulated Go evidence, MATCH or DIFF).
+  const isInit = (e, i) => i === 0 && e.step === "initialize" && e.method === "initialize";
+  const scriptOf = (log) => log.filter((e, i) => !isInit(e, i));
+  const homeEntry = (session) => (session?.home ? { step: "session home", method: "server/home", params: null, result: session.home } : null);
+  const entriesOf = (log, session) => [...log, ...[homeEntry(session)].filter(Boolean)];
+  const order = mergeOrder([...goNames, ...rsNames].map((k) => scriptOf(logs[k])));
+  const n = order.length;
+  const withInit = Object.values(logs).find((l) => l.length && isInit(l[0], 0));
+  if (withInit) order.push(requestKeys([withInit[0]])[0]);
+  if (Object.values(sessions).some(homeEntry)) order.push(requestKeys([homeEntry({ home: {} })])[0]);
+  const aligned = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, alignTo(order, entriesOf(log, sessions[k]))]));
   // Every run asks the requests it shares with the others in the same relative order.
-  const orderBroken = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, orderBreak(order, log)]).filter(([, v]) => v));
-  // Where a run that crashed or timed out ended: after the merged position of its last answer.
-  const endOf = (k, log = aligned[k]) => log.reduce((last, e, p) => (e ? p : last), -1);
+  const orderBroken = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, orderBreak(order, scriptOf(log))]).filter(([, v]) => v));
+  // Where a run that crashed or timed out ended: after the merged position of its last answer to the script.
+  const endOf = (k, log = aligned[k]) => log.slice(0, n).reduce((last, e, p) => (e ? p : last), -1);
   const ends = Object.fromEntries(Object.keys(logs).map((k) => [k, endOf(k)]));
-  const ended = (k, p, b = broken[k], end = ends[k]) => !!b && p > end;
+  const ended = (k, p, b = broken[k], end = ends[k], log = aligned[k]) => !!b && !log[p] && p > end;
   const why = (k, b = broken[k]) => (b ? `${k} ${b.kind === "timeout" ? "timed out" : "crashed"} after ${b.at} answers (${b.reason})` : `${k} has no answer here`);
   const failureOf = (b) => (b ? (b.kind === "timeout" ? "timeout" : "crash") : undefined);
   // One run's answer at merged position p: its normalized answer, NOT_ASKED, or null when it ended.
@@ -393,7 +414,7 @@ if (mode === "diff") {
     const list = byHash.get(h) ?? byHash.set(h, []).get(h);
     if (!list.some((x) => x.fill === prov.fill && x.run === prov.run && x.log === prov.log)) list.push(prov);
   };
-  const addLog = (log, prov) => requestKeys(log).forEach((k, i) => addVariant(k, hash(answer(log[i], log[i].method)), prov));
+  const addLog = (entries, prov) => requestKeys(entries).forEach((k, i) => addVariant(k, hash(answer(entries[i], entries[i].method)), prov));
   const cleanSession = (s) => !!s && s.clean === true && Array.isArray(s.why) && s.why.length === 0 && !(s.inputs?.modified?.length);
   const changedInputs = goNames.filter((k) => sessions[k]?.inputs?.modified?.length);
   if (changedInputs.length) throw new Error(`Go changed its inputs in ${changedInputs.map((k) => `${k} (${sessions[k].inputs.modified.slice(0, 3).join(", ")})`).join("; ")}: no Go evidence`);
@@ -417,7 +438,7 @@ if (mode === "diff") {
       console.log(`go variants: prior ${f} not used: ${s ? `its session is not clean (${(s.why ?? []).join("; ") || "no why"})` : "no session result"}`);
       continue;
     }
-    addLog(readLog(f), { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f });
+    addLog(entriesOf(readLog(f), s), { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f });
     priorsUsed++;
   }
   if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${priorsUsed} of ${(opt["go-prior"] ?? []).length} prior logs used`);
@@ -429,8 +450,10 @@ if (mode === "diff") {
   const mismatches = [];
   const unstable = [];
   const items = [];
-  const n = order.length;
-  for (let p = 0; p < n; p++) {
+  // The items of a whole run (its end, its request order, its session): after every answer, at index n.
+  const runLevel = new WeakSet();
+  const runItem = (it) => (runLevel.add(it), items.push(it), it);
+  for (let p = 0; p < order.length; p++) {
     const first = Object.values(aligned).map((l) => l[p]).find(Boolean);
     const { step, method } = first;
     const diff = (detail, extra = {}, more = {}) => {
@@ -481,7 +504,7 @@ if (mode === "diff") {
   }
   // The record after this fill: monotone (a variant once seen stays).
   if (opt["go-variants-out"]) {
-    for (const k of goNames.filter((k) => cleanSession(sessions[k]))) addLog(logs[k], { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) });
+    for (const k of goNames.filter((k) => cleanSession(sessions[k]))) addLog(entriesOf(logs[k], sessions[k]), { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) });
     const out = opt["go-variants-out"];
     mkdirSync(join(out, ".."), { recursive: true });
     const rec = checkRecord({
@@ -496,12 +519,12 @@ if (mode === "diff") {
   // A tsc-rs run that ended early also gets an item of its own, so the crash is listed even where
   // Go ended at the same answer.
   for (const k of rsNames.filter((k) => broken[k])) {
-    items.push({ i: n, step: `${k} server`, method: "server/exit", status: "DIFF", detail: `tsc-rs ${why(k)}`, rsFailure: failureOf(broken[k]) });
+    runItem({ i: n, step: `${k} server`, method: "server/exit", status: "DIFF", detail: `tsc-rs ${why(k)}`, rsFailure: failureOf(broken[k]) });
   }
   // Request order and session results (lane H4): one item each, after every answer.
   const orderItem = (names, status) => {
     const bad = names.filter((k) => orderBroken[k]);
-    if (bad.length) items.push({ i: n, step: `${bad.join(",")} request order`, method: "server/order", status, detail: bad.map((k) => `${k}: ${orderBroken[k]}`).join("; ") });
+    if (bad.length) runItem({ i: n, step: `${bad.join(",")} request order`, method: "server/order", status, detail: bad.map((k) => `${k}: ${orderBroken[k]}`).join("; ") });
   };
   orderItem(rsNames, "DIFF");
   orderItem(goNames, "GO-BROKEN");
@@ -511,7 +534,7 @@ if (mode === "diff") {
     const rsBad = bad(Object.keys(all).filter((k) => !/^go\d*$/.test(k)));
     const goBad = bad(goNames);
     const why = (ks) => ks.map((k) => `${k}: ${all[k].why.join(", ")}`).join("; ");
-    const it = items.find((x) => x.step === "session end") ?? items[items.push({ i: n, step: "session end", method: "server/session" }) - 1];
+    const it = items.find((x) => x.step === "session end") ?? runItem({ i: n, step: "session end", method: "server/session" });
     delete it.rsFailure;
     if (rsBad.length) Object.assign(it, { status: "DIFF", detail: `tsc-rs ${why(rsBad)}${goBad.length ? `; Go ${why(goBad)}` : ""}`, rsFailure: rsBad.some((k) => all[k].inputs?.modified?.length) ? "input" : "crash" });
     else if (goBad.length) Object.assign(it, { status: "GO-BROKEN", detail: `Go ${why(goBad)}` });
@@ -547,9 +570,9 @@ if (mode === "diff") {
         if (opt["js-stage"] && jsBroken?.kind !== "timeout") saveRun(opt["js-stage"], "js", res);
       }
       // A JS run that broke the request order or whose session is not clean is no evidence at all.
-      const unusable = orderBreak(order, log) ?? (jsSession.clean ? null : `its session: ${jsSession.why.join(", ")}`);
+      const unusable = orderBreak(order, scriptOf(log)) ?? (jsSession.clean ? null : `its session: ${jsSession.why.join(", ")}`);
       if (unusable) return { answers: order.map(() => undefined), broken: `the JS run is no evidence: ${unusable}` };
-      const answers = alignTo(order, log);
+      const answers = alignTo(order, entriesOf(log, jsSession));
       const jsEnd = endOf("js", answers);
       // Past the point where the JS run ended there is no JS answer (never an empty one).
       return { answers: answers.map((e, p) => (jsBroken && p > jsEnd ? undefined : e)), broken: jsBroken ? why("js", jsBroken) : undefined };
@@ -568,15 +591,16 @@ if (mode === "diff") {
     writeFileSync(join(outDir, "rs-confirm.jsonl"), confirm.log.map((e) => JSON.stringify(e)).join("\n") + "\n");
     writeFileSync(join(outDir, "rs-confirm.session.json"), JSON.stringify(confirm.session));
     sessionItem({ "rs-confirm": confirm.session });
-    const confirmOrder = orderBreak(order, confirm.log);
-    if (confirmOrder) items.push({ i: n, step: "rs-confirm request order", method: "server/order", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run ${confirmOrder}` });
-    const c = alignTo(order, confirm.log);
+    const confirmOrder = orderBreak(order, scriptOf(confirm.log));
+    if (confirmOrder) runItem({ i: n, step: "rs-confirm request order", method: "server/order", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run ${confirmOrder}` });
+    const cEntries = entriesOf(confirm.log, confirm.session);
+    const c = alignTo(order, cEntries);
     const cEnd = endOf("rs-confirm", c);
-    const extra = confirm.log.length - c.filter(Boolean).length;
+    const extra = cEntries.length - c.filter(Boolean).length;
     for (const it of items) {
-      if (it.i >= n) continue; // the run-level items (server, order, session)
-      const p = it.i;
-      const cAns = c[p] ? answer(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd) ? null : NOT_ASKED;
+      if (runLevel.has(it)) continue; // the run-level items (server, order, session)
+      const p = it.i; // an answer's merged position (the initialize answer and the home: n and after)
+      const cAns = c[p] ? answer(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd, c) ? null : NOT_ASKED;
       if (cAns === at("rs", p, it.method)) continue;
       const what = cAns === null ? why("rs-confirm", confirm.broken) : cAns === NOT_ASKED ? "it was not asked this request" : "its answer differs from run 1";
       it.detail = `rs-nondet: the confirming tsc-rs run (made for the ${pending.length} GO-BROKEN or JS-AGREES items): ${what}${it.status === "MATCH" ? "" : ` (was ${it.status}${it.detail ? `: ${it.detail}` : ""})`}`;
@@ -584,8 +608,8 @@ if (mode === "diff") {
       if (cAns === null) it.rsFailure = failureOf(confirm.broken);
       agreeing.delete(it);
     }
-    if (extra > 0) items.push({ i: n, step: "rs-confirm extra answers", method: "server/answers", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run asked ${extra} requests that run 1 did not` });
-    if (confirm.broken) items.push({ i: n, step: "rs-confirm server", method: "server/exit", status: "DIFF", detail: `tsc-rs ${why("rs-confirm", confirm.broken)}`, rsFailure: failureOf(confirm.broken) });
+    if (extra > 0) runItem({ i: n, step: "rs-confirm extra answers", method: "server/answers", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run asked ${extra} requests that run 1 did not` });
+    if (confirm.broken) runItem({ i: n, step: "rs-confirm server", method: "server/exit", status: "DIFF", detail: `tsc-rs ${why("rs-confirm", confirm.broken)}`, rsFailure: failureOf(confirm.broken) });
   }
   for (const it of agreeing) {
     const k = it.js.points.length + (it.js.morePoints ?? 0);
