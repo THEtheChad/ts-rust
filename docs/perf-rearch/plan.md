@@ -1527,3 +1527,16 @@ once a **reconciliation step** is built and tested.
     - The CI clippy fix: `Duration::from_mins(2)` in the shared test client.
   - **Checks:** `effect_cases` 1,127/1,127, GATING OK, parity quick OK.
   - **Effect:** no own code is over 25 any more (85 → 0 across both lanes).
+- **W2-FE review: ACCEPT WITH FIXES** (`reviews/2026-11-10-astra-w2fe.md`).
+  - **Round 2 (narrow):** rebase, then rerun tests, GATING OK, CI clippy and
+    parity quick on the final source.
+  - **A real pre-existing difference from Go,** found by the review:
+    `common_directory_of_files` folds case for encoded dynamic paths on
+    case-insensitive API filesystems, where Go forces a case-sensitive
+    comparison. Go emits `outDir/A/x.*` and `outDir/a/y.*`; Rust emits
+    `outDir/x.*` and leaves `y.*` in place.
+    - **Lane B2,** after W2-FE merges: port Go's version at the pin and add
+      the regression case as a parity or API test.
+    - **Audit lane B3:** Q0 found 2,099 `// Go:` markers that name nothing
+      at the pin. Some may be functions still in their pre-pin shape, like
+      this one. B3 is a read-only audit that ranks them by risk.
