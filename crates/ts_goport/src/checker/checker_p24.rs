@@ -1382,10 +1382,11 @@ impl Checker {
                         type_arguments = vec![self.get_type_from_type_node(node.element_type())];
                     }
                     SyntaxKind::TupleType => {
-                        for e in node.elements() {
-                            let et = self.get_type_from_type_node(e);
-                            type_arguments.push(et);
-                        }
+                        type_arguments = node
+                            .elements()
+                            .into_iter()
+                            .map(|e| self.get_type_from_type_node(e))
+                            .collect();
                     }
                     _ => panic!("Unhandled case in getTypeArguments"),
                 }
@@ -1399,13 +1400,7 @@ impl Checker {
                 {
                     let mapper = self.ty(t).as_type_reference().object.mapper;
                     let resolved = self.instantiate_types(&type_arguments, mapper);
-                    // constvar1: the instantiation can write the list first.
-                    let old = &self.ty(t).as_type_reference().resolved_type_arguments;
-                    let changed = !old.is_nil() && old[..] != resolved[..];
-                    self.const_type_variable_memo.overwrite(changed);
-                    self.ty_mut(t)
-                        .as_type_reference_mut()
-                        .resolved_type_arguments = SharedList::non_nil(&resolved);
+                    self.store_resolved_type_arguments(t, &resolved);
                 }
             } else {
                 if self
@@ -1443,6 +1438,20 @@ impl Checker {
             }
         }
         None
+    }
+
+    /// Go's `d.resolvedTypeArguments = c.instantiateTypes(...)`, with the
+    /// constvar1 record: the instantiation can write the list first, and an
+    /// overwrite with a different list is reported to the const type variable
+    /// memo.
+    #[inline]
+    fn store_resolved_type_arguments(&mut self, t: TypeId, resolved: &[TypeId]) {
+        let old = &self.ty(t).as_type_reference().resolved_type_arguments;
+        let changed = !old.is_nil() && old[..] != resolved[..];
+        self.const_type_variable_memo.overwrite(changed);
+        self.ty_mut(t)
+            .as_type_reference_mut()
+            .resolved_type_arguments = SharedList::non_nil(resolved);
     }
 
     // Go: checker/checker.go:22430 getEffectiveTypeArguments
