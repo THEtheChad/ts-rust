@@ -1352,3 +1352,10 @@ once a **reconciliation step** is built and tested.
     to add the helper; the rule above covers both lanes. Recorded in
     `w2-brief.md` ("Go helper idioms") and sent to W2-CC. Astra checks each
     use against Go.
+- **W2-CB merged** (`t3/checker-code-quality-1` at `b4f6b74f1`, merge
+  `e9b346998`).
+  - Round 2 fixed Astra's 2 contract findings: one `if_else` where Go uses a
+    plain `if`, and one tagless switch turned into a table. Both are back in
+    Go's form, and the residue is recorded as accepted.
+  - Parity quick OK.
+  - Root's full gate on the merged head (CA + CB): `runs/head-e9b346998-full`.
