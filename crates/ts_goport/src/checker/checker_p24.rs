@@ -1167,14 +1167,11 @@ impl Checker {
             let props = self
                 .get_properties_of_union_or_intersection_type(t)
                 .to_vec();
-            let mut never_prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_discriminant_with_never_type(p) {
-                    never_prop = p;
-                    break;
-                }
-            }
-            if never_prop.is_some() {
+            if let Some(never_prop) = props
+                .iter()
+                .copied()
+                .find(|&p| self.is_discriminant_with_never_type(p))
+            {
                 let type_string =
                     self.type_to_string_ex(t, Node::NIL, TypeFormatFlags::NO_TYPE_REDUCTION, None);
                 let prop_string = self.symbol_to_string(never_prop);
@@ -1188,14 +1185,11 @@ impl Checker {
             let props = self
                 .get_properties_of_union_or_intersection_type(t)
                 .to_vec();
-            let mut private_prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_conflicting_private_property(p) {
-                    private_prop = p;
-                    break;
-                }
-            }
-            if private_prop.is_some() {
+            if let Some(private_prop) = props
+                .iter()
+                .copied()
+                .find(|&p| self.is_conflicting_private_property(p))
+            {
                 let type_string =
                     self.type_to_string_ex(t, Node::NIL, TypeFormatFlags::NO_TYPE_REDUCTION, None);
                 let prop_string = self.symbol_to_string(private_prop);
