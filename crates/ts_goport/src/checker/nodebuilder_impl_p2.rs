@@ -1864,20 +1864,21 @@ impl Checker {
             // Go keys the map by `ast.GetSymbolId(symbol)`, which gives the
             // symbol its global id (`get_symbol_id`).
             get_symbol_id(&self.symbols, symbol);
+            // A missing entry reads as nil, as Go's `!ok` case does.
             let cached = b
                 .borrow()
                 .ctx
                 .borrow()
                 .enclosing_symbol_types
                 .get(&symbol)
-                .copied();
-            match cached {
-                Some(t) if t.is_some() => return_type = t,
-                _ => {
-                    let signature_return_type = self.get_return_type_of_signature(signature);
-                    let mapper = nb_mapper(b);
-                    return_type = self.instantiate_type(signature_return_type, mapper);
-                }
+                .copied()
+                .unwrap_or(TypeId::NIL);
+            if cached.is_some() {
+                return_type = cached;
+            } else {
+                let signature_return_type = self.get_return_type_of_signature(signature);
+                let mapper = nb_mapper(b);
+                return_type = self.instantiate_type(signature_return_type, mapper);
             }
         } else {
             return_type = self.get_return_type_of_signature(signature);
@@ -1892,37 +1893,25 @@ impl Checker {
                 let declaration_symbol = self.get_symbol_of_declaration(declaration);
                 let restore = self.add_symbol_type_to_context(b, declaration_symbol, return_type);
                 let pc = b.borrow().pc;
-                let mut pt = Some(pc.get_return_type_of_signature(&self.symbols, declaration));
+                let pt = pc.get_return_type_of_signature(&self.symbols, declaration);
                 let report_fallback = !b.borrow().ctx.borrow().suppress_report_inference_fallback;
-                let equivalent = match &pt {
-                    Some(p) => self.pseudo_type_equivalent_to_type(
-                        b,
-                        p,
-                        return_type,
-                        false,
-                        report_fallback,
-                    ),
-                    None => false,
-                };
-                if equivalent {
+                if self.pseudo_type_equivalent_to_type(b, &pt, return_type, false, report_fallback)
+                {
                     // Also verify the pseudo type captures any inferred type predicate, not just the boolean return type.
                     // The pseudochecker is unaware of inferred type predicates, so it produces boolean where
                     // the checker infers e.g. `x is string`.
                     let type_predicate = self.get_type_predicate_of_signature(signature);
-                    if type_predicate.is_some() {
-                        let matches = match &pt {
-                            Some(p) => {
-                                self.pseudo_return_type_matches_predicate(b, p, type_predicate)
-                            }
-                            None => false,
-                        };
-                        if !matches {
-                            if !b.borrow().ctx.borrow().suppress_report_inference_fallback {
-                                nb_tracker(b).report_inference_fallback(self, declaration);
-                            }
-                            pt = None;
+                    // Go sets `pt = nil` here.
+                    let pt = if type_predicate.is_some()
+                        && !self.pseudo_return_type_matches_predicate(b, &pt, type_predicate)
+                    {
+                        if !b.borrow().ctx.borrow().suppress_report_inference_fallback {
+                            nb_tracker(b).report_inference_fallback(self, declaration);
                         }
-                    }
+                        None
+                    } else {
+                        Some(pt)
+                    };
                     if let Some(p) = &pt {
                         // !!! TODO: If annotated type node is a reference with insufficient type arguments, we should still fall back to type serialization
                         // see: canReuseTypeNodeAnnotation in strada for context
