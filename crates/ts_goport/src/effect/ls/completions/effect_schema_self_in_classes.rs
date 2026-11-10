@@ -5,7 +5,8 @@ use crate::effect::ls::completion::{
     Completion, CompletionContext, parse_data_for_extends_class_completion,
 };
 use crate::effect::typeparser::{
-    EffectMajorVersion, find_module_identifier, find_module_identifier_for_package, member,
+    EffectMajorVersion, ExportMember, find_module_identifier, find_module_identifier_for_package,
+    member,
 };
 use crate::ls::prelude::*;
 
@@ -41,112 +42,30 @@ fn run_effect_schema_self_in_classes(
     let sort_text = "11";
     let mut items = Vec::new();
 
-    // Schema.Class (both v3 and v4)
-    if is_fully_qualified
-        || ctx
-            .tp
-            .is_node_reference_to_effect_schema_module_api(data.accessed_object, member!("Class"))
-    {
-        let insert_text = if is_fully_qualified {
-            format!(r#"{schema_identifier}.Class<{class_name}>("{class_name}")({{${{0}}}}){{}}"#)
-        } else {
-            format!(r#"Class<{class_name}>("{class_name}")({{${{0}}}}){{}}"#)
-        };
+    for entry in &SCHEMA_CLASS_ENTRIES {
+        if entry.version.is_some_and(|only| only != version) {
+            continue;
+        }
+        if !is_fully_qualified
+            && !ctx
+                .tp
+                .is_node_reference_to_effect_schema_module_api(data.accessed_object, entry.member)
+        {
+            continue;
+        }
+        let name = entry.member.name;
+        let insert_text = format!(
+            "{}{name}<{class_name}>{}",
+            if is_fully_qualified {
+                format!("{schema_identifier}.")
+            } else {
+                String::new()
+            },
+            entry.call_template.replace("{class_name}", &class_name),
+        );
         items.push(make_extends_completion_item(
             &accessed_text,
-            format!("Class<{class_name}>"),
-            insert_text,
-            sort_text,
-            replacement_range,
-        ));
-    }
-
-    // Schema.TaggedError (both v3 and v4)
-    if is_fully_qualified
-        || ctx.tp.is_node_reference_to_effect_schema_module_api(
-            data.accessed_object,
-            member!("TaggedError"),
-        )
-    {
-        let insert_text = if is_fully_qualified {
-            format!(
-                r#"{schema_identifier}.TaggedError<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#
-            )
-        } else {
-            format!(r#"TaggedError<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#)
-        };
-        items.push(make_extends_completion_item(
-            &accessed_text,
-            format!("TaggedError<{class_name}>"),
-            insert_text,
-            sort_text,
-            replacement_range,
-        ));
-    }
-
-    // Schema.TaggedClass (both v3 and v4)
-    if is_fully_qualified
-        || ctx.tp.is_node_reference_to_effect_schema_module_api(
-            data.accessed_object,
-            member!("TaggedClass"),
-        )
-    {
-        let insert_text = if is_fully_qualified {
-            format!(
-                r#"{schema_identifier}.TaggedClass<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#
-            )
-        } else {
-            format!(r#"TaggedClass<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#)
-        };
-        items.push(make_extends_completion_item(
-            &accessed_text,
-            format!("TaggedClass<{class_name}>"),
-            insert_text,
-            sort_text,
-            replacement_range,
-        ));
-    }
-
-    // Schema.TaggedRequest (v3 only)
-    if version == EffectMajorVersion::V3
-        && (is_fully_qualified
-            || ctx.tp.is_node_reference_to_effect_schema_module_api(
-                data.accessed_object,
-                member!("TaggedRequest"),
-            ))
-    {
-        let insert_text = if is_fully_qualified {
-            format!(
-                r#"{schema_identifier}.TaggedRequest<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#
-            )
-        } else {
-            format!(r#"TaggedRequest<{class_name}>()("{class_name}", {{${{0}}}}){{}}"#)
-        };
-        items.push(make_extends_completion_item(
-            &accessed_text,
-            format!("TaggedRequest<{class_name}>"),
-            insert_text,
-            sort_text,
-            replacement_range,
-        ));
-    }
-
-    // Schema.Error (v4 only)
-    if version == EffectMajorVersion::V4
-        && (is_fully_qualified
-            || ctx.tp.is_node_reference_to_effect_schema_module_api(
-                data.accessed_object,
-                member!("Error"),
-            ))
-    {
-        let insert_text = if is_fully_qualified {
-            format!(r#"{schema_identifier}.Error<{class_name}>("{class_name}")({{${{0}}}}){{}}"#)
-        } else {
-            format!(r#"Error<{class_name}>("{class_name}")({{${{0}}}}){{}}"#)
-        };
-        items.push(make_extends_completion_item(
-            &accessed_text,
-            format!("Error<{class_name}>"),
+            format!("{name}<{class_name}>"),
             insert_text,
             sort_text,
             replacement_range,
@@ -183,6 +102,44 @@ fn run_effect_schema_self_in_classes(
 
     items
 }
+
+/// A Schema class constructor that `effectSchemaSelfInClasses` completes:
+/// the Schema member, the Effect version it exists in (`None`: both) and the
+/// call text after `<Name>` (`{class_name}` stands for the class name).
+struct SchemaClassEntry {
+    member: &'static ExportMember,
+    version: Option<EffectMajorVersion>,
+    call_template: &'static str,
+}
+
+/// The Schema class constructors in the order of their completion items.
+static SCHEMA_CLASS_ENTRIES: [SchemaClassEntry; 5] = [
+    SchemaClassEntry {
+        member: member!("Class"),
+        version: None,
+        call_template: r#"("{class_name}")({${0}}){}"#,
+    },
+    SchemaClassEntry {
+        member: member!("TaggedError"),
+        version: None,
+        call_template: r#"()("{class_name}", {${0}}){}"#,
+    },
+    SchemaClassEntry {
+        member: member!("TaggedClass"),
+        version: None,
+        call_template: r#"()("{class_name}", {${0}}){}"#,
+    },
+    SchemaClassEntry {
+        member: member!("TaggedRequest"),
+        version: Some(EffectMajorVersion::V3),
+        call_template: r#"()("{class_name}", {${0}}){}"#,
+    },
+    SchemaClassEntry {
+        member: member!("Error"),
+        version: Some(EffectMajorVersion::V4),
+        call_template: r#"("{class_name}")({${0}}){}"#,
+    },
+];
 
 // Go: completions/effect_schema_self_in_classes.go:140 makeCompletionItem
 /// makeCompletionItem creates a CompletionItem with snippet format and a text edit.
