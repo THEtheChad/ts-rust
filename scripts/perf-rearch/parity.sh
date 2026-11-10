@@ -24,10 +24,13 @@
 #   lsp     parity_lsp.py: lspdiff sessions (umami, ts-pattern; full adds hono) and watch scenarios
 #           (registrations, pushed diagnostics, refreshes, file-system events, first loads; full adds
 #           umami, hono and query, and runs tsc-rs 3 times: twice, and with GOPORT_PARSE_THREADS=1)
+#   api     parity_api.py: scripted `tsgo --api --async` sessions (parity-api-scenarios.json): request
+#           filesystems, the server case flag, dynamic ^/~ts-uri~/ names, emit, diagnostics and the build
+#           orchestrator on disk fixtures; every answer and written file compared (full: tsc-rs twice)
 #   fuzz    parity_fuzz.py: difffuzz cases 0..N-1 of seed 1 (quick 1,500, full 30,000)
 #   corpus  parity_fuzz.py --corpus: every pin test case (about 12,700) through the CLI (full only)
 # quick: the items of the quick manifest (parity-quick-manifest.json: 24 cli items, tsc-rs once; the
-# go_baselines tests and TestLocal; 8 lsp sessions; fuzz cases 0..1499).
+# go_baselines tests and TestLocal; 8 lsp sessions; 17 api scenarios; fuzz cases 0..1499).
 # full: all tiers, tsc-rs twice on cli and fuzz (a difference between its own runs is a DIFF).
 # Inputs (lane H4): every tier runs on read-only snapshots of the projects, watched with inotify, and
 # every Go and JS cache entry it makes is staged until the tier verified its inputs clean.
@@ -130,6 +133,7 @@ for t in $tiers; do
   cli) tier cli python3 -I "$here/parity_cli.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/cli" --tier "$mode" \
     --rs-runs "$rs_runs" ;;
   lsp) tier lsp python3 -I "$here/parity_lsp.py" --rs "$bin" --go "$GO_LSP" --out "$out/lsp" --tier "$mode" ;;
+  api) tier api python3 -I "$here/parity_api.py" --rs "$bin" --go "$GO" --out "$out/api" --tier "$mode" ;;
   fuzz) tier fuzz python3 -I "$here/parity_fuzz.py" --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/fuzz" --seed 1 \
     --count "$fuzz_count" --jobs 12 --rs-runs "$rs_runs" ;;
   corpus) tier corpus python3 -I "$here/parity_fuzz.py" --corpus --rs "$bin" --go "$GO" --js "$JS_TSC" --out "$out/corpus" \

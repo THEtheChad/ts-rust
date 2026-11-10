@@ -24,8 +24,11 @@ An entry excuses its item (parity_compare.py) only while the item fails exactly 
   reason, evidence    why it is known and which run recorded the evidence.
 Any difference fails the gate: another status, input, Go result, outcome, output or attempt list, an
 attempt that differs from the others (nondeterminism is never excused), and an item that is good
-now (the entry is stale and must be removed). Entries exist for the fuzz and corpus tiers only, the
-tiers whose rows carry per-attempt evidence.
+now (the entry is stale and must be removed). Entries exist for the fuzz, corpus and api tiers only,
+the tiers whose rows carry per-attempt evidence. On the api tier (lane H7, parity_api.py) `input` is
+the scenario's key (its expanded definition, fixture, session driver, protocol and environment), `go`
+fingerprints Go's first session (stdout: every request and answer and how it ended; written: the files
+it wrote and its home writes), and each attempt is a tsc-rs session fingerprinted the same way.
 
 The site form of stderr (version 3, lane H6; domain-tagged in version 4): where Go prints its goroutine trace after a panic that
 nothing recovers (or a fatal runtime error), tsc-rs prints one port-site line, `<TAB><file>:<line>`
@@ -42,15 +45,15 @@ that field, so pins and runs use the same function. Version 2 pinned the raw std
 `stderr`: a version 2 file is invalid, and a row without `stderrSite` is never pinned or matched.
 
 The file is validated strictly: the top level is exactly {about, version: 4, items}, every entry has
-exactly the keys above with the right types, and an item id must name a fuzz or corpus item. A key
+exactly the keys above with the right types, and an item id must name a fuzz, corpus or api item. A key
 anywhere else (an entry beside `items`, a typo, a field the matcher does not know) is an error, and
 compare fails on an invalid file. parity_compare.py reads the file at the accepted ref
 (parity_modes.accepted_file), never the candidate's copy.
 
 evidence runs the fuzz tier (parity_fuzz.py, as parity.sh runs it in that mode: the mode's tsc-rs
-runs, 12 jobs) on exactly the fuzz cases a grandfather file lists, with BIN as tsc-rs, into a run dir
-with meta.json and results.json (no compare). That is the evidence regen reads: give it the base's
-binary, once per mode.
+runs, 12 jobs) on exactly the fuzz cases a grandfather file lists, and the api tier (parity_api.py, in
+that mode) on exactly its api scenarios, with BIN as tsc-rs, into a run dir with meta.json and
+results.json (no compare). That is the evidence regen reads: give it the base's binary, once per mode.
 
 regen rebuilds the entries of the items a grandfather file lists (--from, default this checkout's;
 an older format is read for its item ids and reasons only) from the rows a full run (and, for items
@@ -78,7 +81,7 @@ VERSION = 4  # 4: stderrSite domain-tagged (site/raw); 3: attempt.stderrSite unt
 SITE_LINE = b'<line>'
 # The Go panic block at the end of tsc-rs's stderr (see the top comment). Only group `line` is replaced.
 SITE = re.compile(rb'^(?:panic: |fatal error: )[^\n]*\n(?:[^\n]+\n)*\n\t[A-Za-z0-9_./-]+\.rs:(?P<line>[0-9]+)\n\Z', re.M)
-ITEM = re.compile(r'^(fuzz/\d+:\d+|corpus/[^\s]+)$')
+ITEM = re.compile(r'^(fuzz/\d+:\d+|corpus/[^\s]+|api/[a-z0-9][a-z0-9.-]*)$')
 HEX16 = re.compile(r'^[0-9a-f]{16}$')
 ENTRY = {'status': str, 'rsFailure': (str, type(None)), 'reason': str, 'input': str, 'go': dict, 'attempt': dict, 'attempts': dict,
          'evidence': str}
@@ -107,7 +110,7 @@ def validate(data, origin):
     for item, e in data['items'].items():
         where = f'{origin}: {item}'
         if not ITEM.match(item):
-            raise ArtifactError(f'{where}: not a fuzz or corpus item (only they carry per-attempt evidence)')
+            raise ArtifactError(f'{where}: not a fuzz, corpus or api item (only they carry per-attempt evidence)')
         _typed(where, e, ENTRY)
         _typed(f'{where}.go', e['go'], GO)
         _typed(f'{where}.attempt', e['attempt'], ATTEMPT)
@@ -254,31 +257,40 @@ def regen(args):
 
 
 def evidence(args):
-    """A fuzz run of exactly the listed cases (see the top comment)."""
+    """A fuzz run of exactly the listed fuzz cases and an api run of exactly the listed api scenarios
+    (see the top comment)."""
     import parity_compare
     from parity_modes import MODES
     listed = [*json.loads(Path(args.src).read_text()).get('items', {}), *(args.add or [])]
     cases = sorted(int(k.split(':')[1]) for k in listed if re.match(r'^fuzz/1:\d+$', k))
-    if len(cases) != len(listed):
-        raise ArtifactError('evidence runs only fuzz cases of seed 1; the file lists others')
+    scenarios = sorted(k.split('/', 1)[1] for k in listed if re.match(r'^api/[a-z0-9][a-z0-9.-]*$', k))
+    if len(cases) + len(scenarios) != len(listed):
+        raise ArtifactError('evidence runs only fuzz cases of seed 1 and api scenarios; the file lists others')
     out = Path(args.out)
     if (out / 'results.json').exists():
         raise ArtifactError(f'{out} has results.json (results are never replaced)')
     out.mkdir(parents=True, exist_ok=True)
     bin_ = os.path.realpath(args.bin)
     go = str(Path.home() / '.local/bin/tsgo-oracle-3e9236361fa9')
+    tiers = (['fuzz'] if cases else []) + (['api'] if scenarios else [])
     meta = {'mode': args.mode, 'rs': bin_, 'rsSha': hashlib.sha256(Path(bin_).read_bytes()).hexdigest(), 'go': go,
-            'tiers': ['fuzz'], 'evidence': f'parity_grandfather.py evidence: the {len(cases)} cases of {args.src}',
+            'tiers': tiers, 'evidence': f'parity_grandfather.py evidence: the {len(cases)} fuzz cases and {len(scenarios)} '
+                                         f'api scenarios of {args.src}',
             'harnessHead': subprocess.run(['git', '-C', str(HERE), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip(),
             'start': time.strftime('%FT%TZ', time.gmtime())}
     (out / 'meta.json').write_text(json.dumps(meta, indent=1))
-    r = subprocess.run([sys.executable, '-I', str(HERE / 'parity_fuzz.py'), '--rs', bin_, '--go', go, '--out', str(out / 'fuzz'),
-                        '--seed', '1', '--cases', ','.join(map(str, cases)), '--jobs', '12',
-                        '--rs-runs', str(MODES[args.mode]['rs_runs'])])
+    rc = 0
+    if cases:
+        rc |= subprocess.run([sys.executable, '-I', str(HERE / 'parity_fuzz.py'), '--rs', bin_, '--go', go, '--out', str(out / 'fuzz'),
+                              '--seed', '1', '--cases', ','.join(map(str, cases)), '--jobs', '12',
+                              '--rs-runs', str(MODES[args.mode]['rs_runs'])]).returncode
+    if scenarios:
+        rc |= subprocess.run([sys.executable, '-I', str(HERE / 'parity_api.py'), '--rs', bin_, '--go', go, '--out', str(out / 'api'),
+                              '--tier', args.mode, '--only', '^(' + '|'.join(map(re.escape, scenarios)) + ')$']).returncode
     meta['end'] = time.strftime('%FT%TZ', time.gmtime())
     (out / 'meta.json').write_text(json.dumps(meta, indent=1))
     parity_compare.merge(out)
-    return r.returncode
+    return rc
 
 
 ABOUT = ('Known parity items that are not good, each pinned to its exact failure (lane H4; parity_grandfather.py has the '

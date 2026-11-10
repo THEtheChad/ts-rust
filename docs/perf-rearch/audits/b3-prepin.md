@@ -43,10 +43,13 @@ typescript-go. Q0 reported that 2,099 `// Go:` markers name nothing at the pin
     `rust_dyn`. The check finds `compute_common_source_directory_of_filenames`
     with no prior knowledge of it.
 - `scripts/perf-rearch/b3_api_probe.py <tsgo> <case.json> [--insensitive]`
-  - Runs one synthetic-program API probe:
+  (removed by lane H7: `parity_api.py probe <tsgo> <scenario>` replaces it,
+  and the cases below are scenarios of the gate's api tier, `parity.md`
+  "api: API sessions")
+  - Ran one synthetic-program API probe:
     `tsgo --api --async [--useCaseSensitiveFileNames=false]`, then
     `initialize`, `createSnapshot` and `emitToString`.
-  - It prints the output file names and the diagnostics, so the Go and Rust
+  - It printed the output file names and the diagnostics, so the Go and Rust
     outputs diff directly.
 
 ## 1. The 2,097 non-resolving markers, by class
@@ -127,6 +130,14 @@ P=scripts/perf-rearch/b3_api_probe.py; S=~/.cache/perf-rearch/scratch/b3
 python3 $P ~/.local/bin/tsgo-oracle-3e9236361fa9           $S/cases/c2-flag-disk.json --insensitive > go.json
 python3 $P ~/.cache/perf-rearch/w2-fe/tsgo-head-2a932c528-goport $S/cases/c2-flag-disk.json --insensitive > rs.json
 diff go.json rs.json
+```
+
+Since lane H7 the same case is the api scenario `case-mixed-dirs-insensitive`:
+
+```sh
+P=scripts/perf-rearch/parity_api.py
+diff <(python3 $P probe ~/.local/bin/tsgo-oracle-3e9236361fa9 case-mixed-dirs-insensitive) \
+     <(python3 $P probe <tsgo> case-mixed-dirs-insensitive)
 ```
 
 **`c2-flag-disk`:**

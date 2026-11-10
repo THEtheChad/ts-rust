@@ -7,8 +7,9 @@ usage: parity_compare.py merge DIR            DIR/<tier>/results.json -> DIR/res
        parity_compare.py known DIR            every item that is not good (the known diffs of a base),
                                               and every item with a referee status; IGNORED and SKIP counted
 
-Good: MATCH (CLI, LSP, fuzz, corpus), the referee statuses (parity_referees.py on CLI, fuzz and
-corpus: GO-BROKEN, GO-PARTITION, JS-AGREES; parity_lsp.py on LSP: GO-BROKEN, JS-AGREES), PASS and
+Good: MATCH (CLI, LSP, API, fuzz, corpus), the referee statuses (parity_referees.py on CLI, fuzz and
+corpus: GO-BROKEN, GO-PARTITION, JS-AGREES; parity_lsp.py on LSP: GO-BROKEN, JS-AGREES; parity_api.py
+on API: GO-BROKEN), PASS and
 FLAKY (tests; FLAKY: passed when run again alone). IGNORED tests are declared skips: neither good nor
 a failure. Every item that is not good in BASE is a known-bad item.
 
@@ -53,7 +54,7 @@ QUIET = {'IGNORED'}
 
 REFEREED = ('GO-BROKEN', 'GO-PARTITION', 'JS-AGREES')  # parity_referees.REFEREED
 GOOD = {'MATCH', *REFEREED, 'PASS', 'FLAKY'}
-TIERS = ('cli', 'tests', 'lsp', 'fuzz', 'corpus', 'js')
+TIERS = ('cli', 'tests', 'lsp', 'api', 'fuzz', 'corpus', 'js')
 
 
 def load(d):
