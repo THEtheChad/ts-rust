@@ -1394,3 +1394,11 @@ once a **reconciliation step** is built and tested.
 - **W2-LS merged** (merge below) after Astra's ACCEPT WITH FIXES. Its one
   finding (the duplicate `or_else_node`, to be shared in `core.rs`) goes to
   the idiom follow-up lane.
+- (The W2-LS merge is `372112cf3`. The first attempt used a wrong branch
+  name, so the docs commit `2d10ac378` landed before it.)
+- **W2-FE started:** `frontend/`, execute/emit/printer/transformers/
+  declarations/sourcemap, and binder/ast/api/project/lsp. It skips the Q6
+  files and leaves `gostd`/`locale` for last.
+- **Idiom follow-up lane:** once CC merges. Shared `if_else`/`or_else_*` go
+  in `core.rs`; LS's and CB's copies go away; it applies them to the
+  `core.IfElse` residue in CA and LS.
