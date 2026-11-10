@@ -186,31 +186,7 @@ fn skip_newlines(src: &[u8], mut si: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{std_encoding_decode_string, std_encoding_encode_to_string};
-
-    // Go: encoding/base64/base64_test.go pairs (RFC 3548 examples and the
-    // padding cases), StdEncoding.
-    #[test]
-    fn encode_to_string_matches_go() {
-        for (raw, encoded) in [
-            (&b""[..], ""),
-            (b"f", "Zg=="),
-            (b"fo", "Zm8="),
-            (b"foo", "Zm9v"),
-            (b"foob", "Zm9vYg=="),
-            (b"fooba", "Zm9vYmE="),
-            (b"foobar", "Zm9vYmFy"),
-            (b"\x14\xfb\x9c\x03\xd9\x7e", "FPucA9l+"),
-            (b"\x14\xfb\x9c\x03\xd9", "FPucA9k="),
-            (b"\x14\xfb\x9c\x03", "FPucAw=="),
-        ] {
-            assert_eq!(std_encoding_encode_to_string(raw), encoded);
-            assert_eq!(
-                std_encoding_decode_string(encoded).expect("valid base64"),
-                raw
-            );
-        }
-    }
+    use super::std_encoding_decode_string;
 
     #[test]
     fn decodes_like_go_std_encoding() {

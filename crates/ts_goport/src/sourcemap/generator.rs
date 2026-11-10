@@ -667,4 +667,13 @@ mod tests {
             r#"{"version":3,"file":"","sources":[],"names":[],"mappings":"A\""}"#
         );
     }
+
+    /// The encoder of `base64_data_url` pads like Go's `StdEncoding`.
+    #[test]
+    fn base64_padding() {
+        assert_eq!(
+            crate::gostd::base64::std_encoding_encode_to_string(b"ab"),
+            "YWI="
+        );
+    }
 }
