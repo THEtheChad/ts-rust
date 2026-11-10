@@ -3161,12 +3161,9 @@ impl Session {
         let mut parse_cache_size = 0;
         let mut extended_config_count = 0;
         if self.logger.is_verbose() {
-            for _ in self.parse_cache.entries.borrow().iter() {
-                parse_cache_size += 1;
-            }
-            for _ in self.extended_config_cache.entries.borrow().iter() {
-                extended_config_count += 1;
-            }
+            // PORT: Go counts the entries with `Range`.
+            parse_cache_size = self.parse_cache.entries.borrow().len();
+            extended_config_count = self.extended_config_cache.entries.borrow().len();
         }
         self.logger.log("\n======== Cache Statistics ========");
         self.logger.logf(&format!(
@@ -3235,11 +3232,11 @@ impl Session {
                         if bucket.state.dirty() { " (dirty)" } else { "" }
                     ));
                     // PORT: Go map order is random (log text only).
-                    if let Some(dirty_packages) = bucket.state.dirty_packages_exported() {
-                        for package_name in dirty_packages {
-                            self.logger
-                                .logf(&format!("\t\t\tNeeds granular update: {}", package_name));
-                        }
+                    // Go ranges over a nil map as over an empty one.
+                    for package_name in bucket.state.dirty_packages_exported().into_iter().flatten()
+                    {
+                        self.logger
+                            .logf(&format!("\t\t\tNeeds granular update: {}", package_name));
                     }
                     if let Some(dependency_names) = &bucket.dependency_names {
                         self.logger.logf(&format!(
