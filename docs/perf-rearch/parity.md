@@ -2396,6 +2396,106 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   the self-tests' entries.
 - **Self-tests:** `parity_h7_test.py` takes about 2.5 minutes (89 checks; the tripwire race about 10 s,
   the end-to-end controls the rest); `--unit` about 14 s.
+## LSP sandbox and wire (lane H8, 2026-11-10)
+
+The api tier runs each session sealed and unprivileged (lane H7, three review rounds). The lsp tier had
+the same gaps or worse (Astra's H7 round 2 recheck, question 4; "The lsp tier: the same gaps" above):
+each let a misbehaving server be reported as MATCH or GO-BROKEN. This lane ports the api tier's design
+to the lsp tier, sharing its code, and fixes each gap at the level of the design.
+
+### The design
+
+- **One init for both tiers.** `parity_api_init.py` became `parity_sandbox_init.py`, the PID 1 of every
+  api and lsp server. Its spec is general: `mounts` in order (binds, read-only unless `rw`, and overlays
+  of a read-only lower with an upper and work dir the server cannot reach), `expose` (host files and
+  dirs the server needs, bound back read-only at their own paths when a hidden dir covers them), the
+  server's `cwd`, the fixed `mtime` and the `cmd`. The policy is the init's own, the same for both tiers:
+  `HIDDEN` (the user's files, `/tmp`, `/var/tmp`, `/run`, `/mnt`, `/media`, `/srv`, `/opt`, `/dev/shm`)
+  are empty tmpfs dirs; the whole tree is read-only but the `rw` binds and the overlays; a mount point
+  outside the hidden dirs is refused (it would be made on the host's filesystem); every symlink in a
+  hidden dir on the way to the cwd, an exposed path or a mount point is made again, read-only (umami's
+  project path is a symlink to its snapshot's path). The server drops every privilege before exec (a
+  nested user namespace that owns nothing and may make no other, no capability, uid and gid 1000,
+  `no_new_privs`, checked), keeps no fd but 0, 1 and 2, and has no network. When it ends, every process
+  left in its PID namespace is a survivor (listed through a `/proc` fd opened before the server
+  started), killed and reported. A setup, privilege-drop, cwd or exec failure comes back on the init's
+  report pipe, never as a server result. Callers run `python3 -I parity_sandbox_init.py launch SPEC`; the
+  init execs `unshare` with itself as PID 1 (`UNSHARE` is in the init too), so both tiers start servers
+  the same way. The api tier's spec is its old one in the new form (the home bound `rw`, the fixture's
+  overlay, the command's files exposed): its 49 scenarios, its pins (before B2 removed them: Go's result
+  and every attempt fingerprint of the 14 entries unchanged, only their keys) and `parity_h7_test.py`'s
+  108 checks are the same on it.
+- **lspdiff's servers** (`sandbox.mjs` `ServerProcess`; Go, tsc-rs and JS tsserver) run under it when
+  `LSPDIFF_SANDBOX` is set (parity_lsp.py always sets it): the private home bound `rw` at the fixed home
+  path, an overlay per project snapshot at its own path, and as read-only binds the files the command
+  names (each word that names a file, by its realpath: `--go` and `--rs` are commands, split at
+  spaces, as the api tier's), a fixture scenario's dir (the script writes it from outside; the server
+  can only read it), tsserver's package, and with ATA on the stand-in npm, node and its store; the npm
+  log's dir is the one `rw` bind outside the home, and must hold the log and nothing else after the run.
+  The stand-in npm runs in the server's PID namespace, so the ATA barrier's liveness check reads the
+  init's descendants from the host's `/proc` (NSpid). The stand-in now writes `package.json` and the
+  lock with their maps sorted, as npm does, so the home does not depend on the order of ATA's calls.
+- **The wire** (`client.mjs`, `json.mjs`), as the api tier reads its server: a header is only
+  `Content-Length` (and `Content-Type`), at most 4 lines of 256 bytes, a length of at most 10 digits and
+  256 MB; a body is UTF-8 without a BOM and one JSON text with no duplicate key; every message is exactly
+  a JSON-RPC 2.0 envelope: an answer to a pending request (`{jsonrpc, id, result}` or `{jsonrpc, id,
+  error: {code, message, data?}}`), a server request or a notification. Anything else breaks the
+  protocol: the run ends there, a crash (rsFailure crash for tsc-rs, GO-BROKEN for Go). Answers are
+  compared as canonical JSON (the server's key order, strings re-escaped, no insignificant whitespace);
+  `json.mjs` `parseKeep` keeps every number whose text JSON.stringify would not give back (`1e999`,
+  `-0`, `1.0`, `1e0`, integers past 2^53) as that text (`JSON.rawJSON`), so the comparison never maps two
+  texts of a number to one value. The referee's normalizer reads answers the same way.
+- **Two new items per session, after the last answer** (so every earlier item keeps its index):
+  `<n> initialize`, the initialize answer, and `<n+1> session home`, the server's private home: its final
+  listing (every entry with type, mode and content hash, the home itself as `.`, the skeleton included;
+  `sandbox.mjs` `listHome`, as the api tier's `_walk`) and its history (each listing that differs from the
+  one before, with where it was taken: after every answer when ATA is off; at every wait, where ATA is
+  idle, when it is on). Both are answers like any other: tsc-rs's determinism, GO-BROKEN when Go's runs
+  differ, accumulated Go evidence, then MATCH or DIFF.
+- **Session result:** a survivor, an output stream held open 10 s after the end (both streams; stderr's
+  EOF used to be waited on for 2 s and not enforced), the exit, stderr crash lines, changed inputs and
+  the shutdown, as before. `infra` (the init's setup report, a spawn failure, or no report from an init
+  lspdiff did not kill) stops lspdiff with exit 3: the session is ERROR, and that run is neither staged
+  nor added to the variant record.
+- **Gone:** the tripwires (`GUARDED`, the bait dirs and their inotify watch): the dirs they guarded do not
+  exist for a server, not even for `stat`. The ancestor dirs keyed are the ones a server sees (none in a
+  hidden dir; on MS-A2 only `/`).
+- **Keys:** the init and `json.mjs` are session sources, and `CACHE_VERSION` is 4, so every lsp Go and JS
+  key changed and every variant record started empty.
+
+### The gaps, their fixes and their controls
+
+`parity_h8_test.py` (`--unit`: 13 checks, seconds; end to end: 23 checks through `parity_lsp.py --tier
+quick --no-js` on ts-pattern-f12-p6, about 10 minutes, under the gate lock) with `parity_h8_fake.py`, an
+LSP proxy in front of the Go oracle: Astra's lsp probes (`scratch/review-h7r2-astra/lsp/`: init.py,
+overflow.py, home.py, the non-executable Go) and the api tier's round 2 and 3 probes as modes. The
+"before" column is the same test run against the harness before this lane (`--e2e-only --harness
+<git archive c788830c4>`).
+
+| gap | fix | control | before (`c788830c4`) | now |
+|---|---|---|---|---|
+| no PID namespace: a child outlives the server; stderr's EOF not enforced | the init is PID 1; survivors fail; both streams must reach EOF | `detached`, `hide-proc-survivor` (tmpfs over `/proc` first), `child-stderr` | MATCH ×3 | session end DIFF; DIFF; session end DIFF |
+| everything outside the overlays and the home writable; the server root in its namespace | the sealed read-only tree; every privilege dropped | `outside-write` (the review dir, `/etc`, `/var/tmp`, `/tmp`); `shm-remount`; `privs` (no capability; mount, umount, mount_setattr, unshare of a mount or user namespace all fail) | 3 host files written; MATCH; the probe fails (it could) | none written; DIFF; good |
+| the tripwires do not see `stat` or `O_PATH` | the guarded dirs do not exist; no fd but 0, 1, 2 | `stat-bait`; `fds` | MATCH; good | DIFF; good |
+| high: the initialize answer not compared (`session.mjs:21`) | item `initialize` | `init-null` (Astra's init.py) | MATCH | initialize DIFF |
+| high: lossy number parsing (`client.mjs:56`) | `parseKeep`: a number keeps its text | `overflow` (Astra's overflow.py, 1e999 for null), `minus-zero`, `float` (1.0), `exp` (1e0) | MATCH ×4 | DIFF ×4 |
+| medium: unexpected home writes change no verdict (`sandbox.mjs:162`) | item `session home` | `home-write` (Astra's home.py), `home-transient` (written and removed between two answers), `home-skeleton`, `home-root-hide`, `home-root-mode` (her storage-root chmod probes, on the home) | MATCH ×5 | session home DIFF ×5 |
+| high: an exec or setup failure is GO-BROKEN (`lspdiff.mjs:305`) | the init's report: ERROR, nothing kept | `unexec-go` (Astra's) | GO-BROKEN, cached | ERROR, nothing cached |
+| JSON-RPC envelopes not validated | strict framing and envelope | `dup-key`, `bad-rpc` (`"9.9"`), `extra-key`, `stray-answer` (an answer to no request) | MATCH ×4 | DIFF rsFailure crash ×4 |
+| controls | | `pass`, `fds`, `privs` | good, good, DIFF | good ×3 |
+
+The other self-tests on this harness: `parity_h7_test.py` (108 checks, the api tier on the shared init:
+`H7 SELFTEST OK`; its finding 9 check no longer asks for the pin B2 removed), `parity_h4_test.py`,
+`parity_h5_test.py` (unit; its tripwire checks are gone with the tripwires, its ancestors checks follow
+the visible-only key, its e2e checks now ask that the real typings cache does not exist for tsc-rs and
+that a leaked `XDG_CACHE_HOME` cannot write it), `parity_h6_test.py`, `selftest/h4-selftest.mjs` (the ATA
+barrier's probe gets the server's liveness check) and `selftest/referee-selftest.mjs`: all OK. The
+referee self-test had failed since lane H5 (its proxy, `#!/usr/bin/env node`, found no node on a
+server's PATH, and its settings came through an environment the servers no longer get: 15 checks
+failed on `c788830c4`); its proxy now takes a settings file and runs as a command.
+
+@@GOEVIDENCE@@
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).

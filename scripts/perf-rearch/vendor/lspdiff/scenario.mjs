@@ -223,8 +223,8 @@ class Script {
       const log = this.npmCalls();
       // A call the store cannot answer (a package it lacks) or made outside the private typings
       // location: the input is not the frozen one, so the run is a harness error, never an answer.
-      const bad = log.find((e) => e.missing || e.refused);
-      if (bad) throw Object.assign(new Error(`ATA's npm at ${label}: ${bad.missing ? `the typings store lacks ${bad.missing.join(", ")}` : `refused: ${bad.refused}`}`), { harness: true });
+      const bad = log.find((e) => e.missing || e.refused || e.error);
+      if (bad) throw Object.assign(new Error(`ATA's npm at ${label}: ${bad.missing ? `the typings store lacks ${bad.missing.join(", ")}` : bad.refused ? `refused: ${bad.refused}` : `failed: ${bad.error}`}`), { harness: true });
       if (log.length !== this.ata.seen) [this.ata.seen, this.ata.changedAt] = [log.length, performance.now()];
       const done = new Set(log.filter((e) => e.done).map((e) => e.pid));
       const busy = log.some((e) => e.start && (!done.has(e.pid) || alive(e.pid)));

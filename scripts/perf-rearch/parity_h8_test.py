@@ -112,6 +112,33 @@ console.log(JSON.stringify({
           home.get('.') == 'dir 750' and home.get('tmp') == 'dir 775' and home.get('l') == 'link nowhere'
           and home.get('tmp/f', '').endswith(' 664') and len(home['tmp/f'].split()[0]) == 16, home)
     shutil.rmtree(d)
+    # The stand-in npm, as a user without privileges, from a read-only store (dirs 555, as the frozen store's
+    # snapshot is): it installs with npm's modes, and a failure is logged as `error` (a harness error).
+    t = Path(tempfile.mkdtemp(prefix='npm-', dir=SCRATCH))
+    store = t / 'store'
+    (store / 'registry').mkdir(parents=True)
+    (store / 'registry/package.json').write_text('{"version":"1.0.0"}')
+    (store / 'node_modules/@types/x').mkdir(parents=True)
+    (store / 'node_modules/@types/x/index.d.ts').write_text('export {};\n')
+    (store / 'closure.json').write_text('{"@types/x":["node_modules/@types/x"]}')
+    (store / 'package-lock.json').write_text('{"packages":{"node_modules/@types/x":{"version":"2.0.0"}}}')
+    subprocess.run(['chmod', '-R', 'a-w', str(store)], check=True)
+    loc = t / 'cache/typescript/7.1'
+    loc.mkdir(parents=True)
+    npm_env = {'PATH': '/usr/bin:/bin', 'XDG_CACHE_HOME': str(t / 'cache'), 'ATA_STORE': str(store), 'ATA_NPM_LOG': str(t / 'npm.log'),
+               'ATA_NPM_DELAY_MS': '0', 'ATA_NODE': shutil.which('node')}
+    rcs = [subprocess.run([str(LSPDIFF / 'ata-npm/npm'), 'install', a, '--save-dev'], cwd=loc, env=npm_env).returncode
+           for a in ('types-registry@latest', '@types/x@latest')]
+    modes = {p: oct(os.stat(loc / p).st_mode & 0o777) for p in ('node_modules/@types/x', 'node_modules/@types/x/index.d.ts')}
+    check('stand-in npm: installs from a read-only store with npm\'s modes (dirs 755, files 644)',
+          rcs == [0, 0] and modes == {'node_modules/@types/x': '0o755', 'node_modules/@types/x/index.d.ts': '0o644'}, (rcs, modes))
+    (store / 'node_modules/@types/x').chmod(0)  # a store it cannot read: a logged failure
+    subprocess.run([str(LSPDIFF / 'ata-npm/npm'), 'install', '@types/x@latest', '--save-dev'], cwd=loc, env=npm_env)
+    last = json.loads((t / 'npm.log').read_text().splitlines()[-1])
+    check('stand-in npm: a failure of its own is a done line with `error` (scenario.mjs: a harness error, not a hang)',
+          last.get('done') and last.get('code') == 1 and 'error' in last, last)
+    subprocess.run(['chmod', '-R', 'u+rwx', str(t)])
+    shutil.rmtree(t)
     import parity_sandbox_init as init
     r = subprocess.run(['/usr/bin/python3', '-I', str(HERE / 'parity_sandbox_init.py'), 'launch',
                         json.dumps({'report': 1, 'mounts': [{'bind': '/etc', 'at': '/etc/x', 'rw': True}], 'expose': [], 'mtime': 0,

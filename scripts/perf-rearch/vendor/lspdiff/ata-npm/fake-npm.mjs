@@ -19,7 +19,7 @@
 // input would not be the frozen one. Each call appends two JSON lines to $ATA_NPM_LOG: { start, pid,
 // args } and, when its work is done, { done, pid, args, code } (the scenario's barrier pairs them by
 // pid and waits for the process to exit).
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -29,6 +29,9 @@ const done = (code, more = {}) => {
   process.exit(code);
 };
 log({ start: true, pid: process.pid, args });
+// A failure of the stand-in itself (a store it cannot read, a file it cannot write) is logged as `error`:
+// scenario.mjs makes it a harness error, never a wait that runs into its deadline (lane H8).
+process.on("uncaughtException", (e) => done(1, { error: String(e?.message ?? e).slice(0, 300) }));
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.ATA_NPM_DELAY_MS)); // set by scenario.mjs from settings.mjs
 const store = process.env.ATA_STORE;
 const cache = process.env.XDG_CACHE_HOME;
@@ -53,16 +56,33 @@ for (const a of names) {
 }
 if (missing.length) done(1, { missing });
 
+// Copies a package from the store as npm lays one out: dirs 755, files 644 (755 where the store's file is
+// executable), symlinks as they are. The store is a read-only snapshot (dirs 555, files 444): its modes
+// are not npm's, and a server without privileges cannot write into a dir of mode 555 (lane H8).
+function install(src, dst) {
+  const st = lstatSync(src);
+  if (st.isSymbolicLink()) return symlinkSync(readlinkSync(src), dst);
+  if (st.isDirectory()) {
+    mkdirSync(dst, { recursive: true });
+    chmodSync(dst, 0o755);
+    for (const n of readdirSync(src)) install(join(src, n), join(dst, n));
+    return;
+  }
+  copyFileSync(src, dst);
+  chmodSync(dst, st.mode & 0o111 ? 0o755 : 0o644);
+}
+
 const pkg = readJson("package.json", {});
 const lock = readJson("package-lock.json", { lockfileVersion: 3, requires: true, packages: {} });
 for (const [name, version, paths] of wanted) {
   if (paths === null) {
-    cpSync(join(store, "registry"), "node_modules/types-registry", { recursive: true });
+    mkdirSync("node_modules", { recursive: true });
+    install(join(store, "registry"), "node_modules/types-registry");
     lock.packages["node_modules/types-registry"] = { version };
   } else {
     for (const p of paths) {
       mkdirSync(join(p, ".."), { recursive: true });
-      cpSync(join(store, p), p, { recursive: true });
+      install(join(store, p), p);
       lock.packages[p] = storeLock.packages[p];
     }
   }
