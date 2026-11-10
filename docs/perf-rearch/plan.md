@@ -1336,3 +1336,5 @@ once a **reconciliation step** is built and tested.
     - `dts_twin_check`'s branches in its callers;
     - 2 items that are dead in the default build (`synthetic_live_slot_count`,
       `registered_programs`).
+- **W2-CA merged** after Astra's ACCEPT, with no findings
+  (`reviews/2026-11-09-astra-w2ca.md`).
