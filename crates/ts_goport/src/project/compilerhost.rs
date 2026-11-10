@@ -163,7 +163,8 @@ pub fn new_compiler_host(
         )
     };
     let source_fs = new_source_fs(true, builder.fs.clone(), builder.to_path.clone());
-    UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() + 1));
+    #[cfg(feature = "diagnostics")]
+    host_stats::note_made();
     Rc::new(CompilerHost {
         config_file_path,
         current_directory: current_directory.to_string(),
@@ -184,27 +185,47 @@ pub fn new_compiler_host(
     })
 }
 
-thread_local! {
-    /// The hosts of this thread that are neither frozen nor dropped
-    /// (`unfrozen_compiler_hosts`).
-    static UNFROZEN_HOSTS: Cell<usize> = const { Cell::new(0) };
-}
+/// Diagnostics builds: the count of the hosts that are not frozen
+/// (`unfrozen_compiler_hosts`), which tests read. Shipped builds keep none.
+#[cfg(feature = "diagnostics")]
+pub mod host_stats {
+    use std::cell::Cell;
 
-/// Not in Go: the number of hosts that `new_compiler_host` made on this
-/// thread and that are neither frozen nor dropped. A host keeps its project
-/// and the builder until `freeze`. Go's GC frees them with the host; the
-/// port keeps the host of a released program (`release`), so every host
-/// that a snapshot clone made must be frozen when the clone ends. Tests
-/// check it.
-#[must_use]
-pub fn unfrozen_compiler_hosts() -> usize {
-    UNFROZEN_HOSTS.with(Cell::get)
-}
+    use super::CompilerHost;
 
-impl Drop for CompilerHost {
-    fn drop(&mut self) {
-        if self.builder.get_mut().is_some() {
-            UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+    thread_local! {
+        /// The hosts of this thread that are neither frozen nor dropped
+        /// (`unfrozen_compiler_hosts`).
+        static UNFROZEN_HOSTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// `new_compiler_host` made a host.
+    pub(super) fn note_made() {
+        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() + 1));
+    }
+
+    /// A host let go of its project and the builder (`freeze`).
+    pub(super) fn note_frozen() {
+        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+    }
+
+    /// Not in Go: the number of hosts that `new_compiler_host` made on this
+    /// thread and that are neither frozen nor dropped. A host keeps its
+    /// project and the builder until `freeze`. Go's GC frees them with the
+    /// host; the port keeps the host of a released program (`release`), so
+    /// every host that a snapshot clone made must be frozen when the clone
+    /// ends. Tests check it.
+    #[must_use]
+    pub fn unfrozen_compiler_hosts() -> usize {
+        UNFROZEN_HOSTS.with(Cell::get)
+    }
+
+    /// A host that drops without a `freeze` counts down here.
+    impl Drop for CompilerHost {
+        fn drop(&mut self) {
+            if self.builder.get_mut().is_some() {
+                note_frozen();
+            }
         }
     }
 }
@@ -229,7 +250,8 @@ impl CompilerHost {
         let builder = self.builder.borrow_mut().take();
         // The count goes down where the builder goes, so a panic before
         // this line leaves the host counted once (`Drop` counts it down).
-        UNFROZEN_HOSTS.with(|unfrozen| unfrozen.set(unfrozen.get() - 1));
+        #[cfg(feature = "diagnostics")]
+        host_stats::note_frozen();
         let project = self.project.borrow_mut().take();
         let logger = self.logger.borrow_mut().take();
         drop(builder);

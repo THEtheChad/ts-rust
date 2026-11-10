@@ -712,8 +712,9 @@ child_test! {
         );
         // The clone froze the spec project's host too, so the host holds
         // neither the project nor the builder.
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
-            ts_goport::project::unfrozen_compiler_hosts(),
+            ts_goport::project::host_stats::unfrozen_compiler_hosts(),
             0,
             "every host that the clone made should be frozen"
         );
@@ -783,8 +784,9 @@ child_test! {
             1,
             "only the inferred project's last program should stay registered"
         );
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
-            ts_goport::project::unfrozen_compiler_hosts(),
+            ts_goport::project::host_stats::unfrozen_compiler_hosts(),
             0,
             "no host of the clone should keep its project and the builder"
         );
