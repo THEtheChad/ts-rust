@@ -11,6 +11,7 @@ scripts/perf-rearch/quality.sh report HEAD --base perf/first-principles   # lane
 scripts/perf-rearch/quality.sh report <rev> [--base <rev>] [--hatches] [--no-clippy]
 scripts/perf-rearch/quality.sh history      # main and every first-parent merge of the branch since main
 scripts/perf-rearch/quality.sh ranking <rev> [--top 60] [--out FILE]   # Go-relative planning page (section 7)
+scripts/perf-rearch/quality.sh gating <rev> [--wasm] [--out DIR]        # diagnostics code in the shipped build (section 9)
 scripts/perf-rearch/quality.sh help
 ```
 
@@ -21,9 +22,14 @@ Measured 2026-11-04: `main` = `91f3d021c`, branch head = `502c808aa`.
 
 ## 1. Escape hatches (the one-off-patch signal)
 
-An escape hatch is a `GOPORT_*` or `TSC_RS_*` environment variable named
-by a string literal (or a `const` holding one) in production code. Test files
-and `#[cfg(test)]` items are excluded. Each read site is classified:
+An escape hatch is a `GOPORT_*`, `TSC_RS_*` or `TSGO_*` environment
+variable named by a string literal (or a `const` holding one) in the code a
+build compiles. Which code that is, rustc says: since lane Q5 the inventory
+reads rustc's cfg-expanded source of the default build (section 8, "How the
+inventory knows what ships"). Test code, `#[cfg(test)]` items and code under
+a non-default feature are absent from it, and the tool reads no cfg
+attribute. `env!`/`option_env!` names come from rustc's dep-info. Each read
+site is classified:
 
 - **switch:** the value is read into a bool gate, or branched on where it is
   read.
@@ -36,19 +42,26 @@ and `#[cfg(test)]` items are excluded. Each read site is classified:
     uses").
 - **knob:** a parsed value such as `GOPORT_PARSE_THREADS`, or a build-time
   `option_env!`.
-- Reads only under a non-default cargo feature (`test-hooks`) are counted
-  apart from shipped reads.
+- **mention:** an argument of `format_args!`, as `format!("{NAME} is not
+  set")` expands. It prints the name and is not a read.
+- A name read in the expanded `diagnostics,test-hooks` build and not in the
+  default one is **only under a feature**, counted apart from shipped reads;
+  its figures (reads, gates) are the features build's.
 
 Each name then gets a class. This is a name heuristic, listed in
 `quality.py` `hatch_class`:
 
-| Class | Rule |
+| Class | Rule (first match) |
 |---|---|
-| test-hook | `_TEST_`, `_CHILD`, or feature-only. |
+| test-hook | `_TEST_` or `_CHILD`. |
 | diagnostic | Ends in `STATS`, `_LOG`, `DUMP`, `TIMES`, `TRACE` or `DEBUG`. |
 | verification | `VERIFY` or `_CHECK`. |
+| test-hook | Feature-only, and no rule above places it (`GOPORT_FLOWSKIP`, `GOPORT_RESOLVE_AHEAD`). |
 | tuning | Not a switch. |
 | behavior | A switch that is none of the above: a second code path for the product's own work. These are the ones that matter. |
+
+Until Q5 a feature-only name was a test-hook before the name rules ran, so
+`GOPORT_LOAD_TIMES` showed as a test-hook; now it is a diagnostic.
 
 ### Main and head
 
@@ -249,14 +262,20 @@ The duplication hot spots are upstream too:
 - **Cyclomatic complexity:** the number of linearly independent paths, so
   roughly the decision points plus 1. Every `match` arm and `?` counts,
   which makes Rust numbers higher than Go's for the same logic.
-- **Escape hatches:** a lexical scan.
+- **Escape hatches:** whether a read ships is rustc's answer (the expanded
+  default build, section 8). The rest is a lexical scan of that expanded
+  source.
   - It misses env names built at run time and env vars read without a
-    `GOPORT_`/`TSC_RS_` prefix. It lists the latter only through gates:
-    `GOMAXPROCS`, `GODEBUG` and `PATH` are Go behavior, not hatches.
+    `GOPORT_`/`TSC_RS_`/`TSGO_` prefix. It lists the latter only through
+    gates: `GOMAXPROCS`, `GODEBUG` and `PATH` are Go behavior, not hatches.
   - The switch and class rules are heuristics: read `--hatches` before you
     quote a single name.
   - Gate use counting for a common fn name (`enabled`) counts only uses in
     its own file or as `module::name`.
+  - Each site's line is mapped back to its source file for the report. It
+    is exact when the file holds the token as often as its piece of the
+    expansion; otherwise it is paired within the source fn of the same name
+    and printed with `~` (`?` when nothing pairs). No decision reads a line.
 - **Duplication:** token-window hashing over production tokens, with
   comments removed and identifiers kept exact. A block needs ≥60 tokens and
   ≥8 lines (`DUP_MIN_TOKENS`, `DUP_MIN_LINES`).
@@ -283,7 +302,23 @@ The duplication hot spots are upstream too:
   - `-- --force-warn clippy::all`, which overrides the crate-root allows.
     Pedantic is not forced: it is mostly noise.
 
-  Clippy runs in `report` only, not `history`, and is cached per git tree.
+  Clippy runs in `report` only, not `history`, and is cached per git tree
+  and toolchain pair.
+  - **Toolchains (lane Q5).** The repo-config pass runs on CI's toolchain:
+    the top-level `RUSTUP_TOOLCHAIN` of `.github/workflows/ci.yml` at the
+    revision (1.95.0 now, also the shipped bins' toolchain). Its count is
+    the lint set CI's clippy sees. The forced pass is an audit on `stable`
+    (1.99.1 on 2026-11-09; `PERF_QUALITY_FORCED_TOOLCHAIN` overrides it),
+    which knows the newest lints. The report labels each pass with its
+    rustc version.
+  - Why: until Q5 both passes ran on stable while CI ran 1.95.0, and the
+    two report different lint sets (Q4: `collapsible_match` 148 on one and
+    47 on the other, `nonminimal_bool` only on 1.95,
+    `chunks_exact_to_as_chunks` only on 1.99). A count from one toolchain
+    is compared only with a count from the same toolchain.
+  - The scope still differs from CI's: CI lints `-p ts_goport -p goport_core
+    -p goport_util -p goport_lsproto --all-targets -- -D warnings`, this
+    pass `--workspace` lib and bins.
 - **Maintainability Index:** dropped at Chad's request. It correlates mostly
   with size, and its thresholds are folklore.
 
@@ -305,20 +340,36 @@ The duplication hot spots are upstream too:
 
 ### Run time
 
-Measured on MS-A2 under a load of about 12 to 38 from other agents.
+Measured on MS-A2 under a load of about 12 to 38 from other agents (lane
+Q5's figures at 18 to 41).
 
 - **One new `crates/` tree** (git archive, rca, lexing, duplication): about
   20 s idle, up to 30 s loaded.
+- **Expansions of a new tree (lane Q5):** two `cargo check` runs (the
+  default and the features build), each 51 s to 1 min 26 s of cargo, plus
+  any wait for the cargo slot (7 minutes behind another agent's build on
+  2026-11-09). Cutting and scanning the pieces adds about 40 s. The wasm
+  build (`gating --wasm` only) is 2 min 14 s of cargo the first time.
 - **Clippy:** about 30 s per pass warm, and 1.5 minutes or more cold or
-  after a large change.
-- **`report` with a base:** about 1 minute for a lane, plus any wait for a
-  free cargo slot. `run-cargo-capped.sh` allows one Cargo run at a time
-  here, so clippy queues behind another lane's build (20 minutes behind a
-  fat-LTO build on 2026-11-04). `--no-clippy` skips it: about 30 s.
-- **`history`** over 11 points (6 distinct trees): 3 min 7 s cold.
+  after a large change. Lane Q5 measured 2 to 3 minutes a pass at load 18
+  to 41, with the 1.95.0 pass cold in `clippy-wt`.
+- **`report HEAD --base perf/first-principles`, cold** (a new tree for both
+  sides' snapshots, 4 clippy passes): 21 min 38 s at load 41 to 18. Of that,
+  7 min was the cargo slot wait, 2 min 17 s the two expansions, 10 min
+  clippy and about 1 min analysis. **Warm** (all cached): 1.2 s. A lane's
+  usual run (its head tree new, the base cached) is the expansions, one
+  snapshot and two clippy passes: about 6 to 8 minutes plus any slot wait;
+  `--no-clippy` about 3 minutes.
+- **`gating`:** the same two expansions as `report` (shared cache), then
+  5 to 7 s.
+- **`history`** over 11 points (6 distinct trees): 3 min 7 s cold before
+  Q5. Each new tree now adds its two expansions (about 2.5 minutes).
 - **Cached reruns:** under 1 s. Snapshots are cached by the `crates/` tree
-  hash in `~/.cache/perf-rearch/quality/snap`, and clippy by the commit tree.
-- Peak RSS is under 2 GB.
+  hash in `~/.cache/perf-rearch/quality/snap`, expansions by the tree, the
+  root Cargo files, the toolchain and the build in
+  `~/.cache/perf-rearch/quality/expand`, and clippy by the commit tree and
+  its two toolchains.
+- Peak RSS is under 2 GB (the expanded source is about 60 MB a build).
 
 ## 6. Candidate gates (later; not active)
 
@@ -653,21 +704,110 @@ logs (`GOPORT_VERIFY_REUSE*`, `GOPORT_REUSE_STATS`, `GOPORT_FLOWSKIP=verify`,
 `GOPORT_THP_GUARD_DEBUG`, the loader's `GOPORT_LOAD_*` and
 `GOPORT_RESOLVE_AHEAD*`, `GOPORT_EMIT_PHASE_TIMES`, ...); `--features
 test-hooks` the `GOPORT_TEST_*` hooks. `quality.sh report --hatches` lists
-them as feature-only, with one known exception below.
+them as feature-only.
 
-**Over-reported as shipped.** `quality.py` sees a `#[cfg(feature = ...)]`
-on an item, not on the `mod` declaration that brings in a whole file. So
+### How the inventory knows what ships (lane Q5, 2026-11-09)
+
+Until Q5, `quality.py` decided which reads ship with its own `#[cfg]` parser.
+It was patched four times (C2's struct field, the C2 follow-up's item end,
+Q3's `mod` gating, and Q3 review finding 3, after which Q3's change was
+reverted). Each fix closed one case and the next review found another, and
+the failure hid shipped reads. The parser is gone. Now rustc says what each
+build compiles (`scripts/perf-rearch/qexpand.py`):
+
+- **The builds.** In a detached worktree (`~/.cache/perf-rearch/quality/expand-wt`,
+  its own target dir), `scripts/run-cargo-capped.sh check --locked` runs on
+  CI's toolchain (ci.yml `RUSTUP_TOOLCHAIN`, 1.95.0, the shipped bins'):
+  - `default`: `--release -p ts_goport --lib --bins`, the default features;
+  - `features`: the same with `--features diagnostics,test-hooks`;
+  - `wasm` (`gating --wasm` only): `--profile wasm -p ts_wasm --target
+    wasm32-wasip1 --no-default-features`, as `scripts/wasm/build.sh`.
+
+  `cargo check --release` gives the release profile's cfg (no
+  `debug_assertions`) without codegen. The shipped `--profile goport` only
+  adds LTO and one codegen unit, which change no cfg. release.yml adds the
+  `noembed` feature, which gates only where the bundled libs come from, not
+  diagnostics; the `default` build leaves it off, as the lanes' builds do.
+- **The expansion.** `qexpand_wrapper.py` is cargo's
+  `RUSTC_WORKSPACE_WRAPPER`, so it sees each workspace crate's exact rustc
+  command (crate name, `--cfg feature=...`, edition, target, externs). It
+  runs that command unchanged (cargo's own check), then again with
+  `-Zunpretty=expanded` (`RUSTC_BOOTSTRAP=1`: the same stable compiler, no
+  nightly), and keeps rustc's dep-info. The expanded source has every
+  cfg-false item removed, macros expanded, and out-of-line modules inlined
+  with their `#[path]` attributes. That is the text the compiler goes on to
+  compile: ts_goport's lib and 9 bins, goport_core, goport_util,
+  goport_lsproto and goport_cell (665k lines at `f59c229c5`).
+- **Attribution to files.** `pieces` walks the module tree of the expanded
+  source and resolves each module's file with rustc's rules
+  (rustc_expand `module.rs`): a `#[path]` is relative to the declaring
+  module's directory and its file owns its directory like a `mod.rs`; a
+  `name.rs` child owns `<dir>/name/`; inline modules push their name.
+  Whether a module was out of line or inline is read from the declaring
+  file's tokens at the same nesting. Every resolved file must be in rustc's
+  dep-info, or the run stops. When one name has both forms under different
+  cfgs (`core.rs` `lib_names`: a file on native, inline on wasm), the
+  candidate file decides if rustc did not read it, and otherwise the
+  expanded body must match one of the two sources clearly. So attribution is
+  exact or an error, never a guess. 917 pieces at `f59c229c5`; `util_prelude.rs`
+  is two of them (two `#[path]` modules).
+- **Pieces.** Each piece is one module file's expanded text, its out-of-line
+  child modules cut out. The inventory (section 1) scans the pieces of the
+  default build for shipped reads, and those of the features build for
+  feature-only reads. `env!`/`option_env!` names (`GOPORT_BUILD_VERSION`)
+  come from the dep-info's `# env-dep:` lines.
+- **Cache.** By the `crates/` tree, the root `Cargo.toml` and `Cargo.lock`,
+  the toolchain and the build, under `~/.cache/perf-rearch/quality/expand/`
+  (gzip JSON, about 12 MB a build).
+- **Self-test.** `python3 -I scripts/perf-rearch/quality_test.py` runs the
+  same path on the fixture crate `scripts/perf-rearch/quality_fixture`: the
+  old parser's eleven cases, Astra's shared-`#[path]` probe, `#[path]`
+  before `#[cfg]`, a `#[path]` file's child, a gated module directory, the
+  inline/out-of-line twin, an inline module's file child, consts and
+  `option_env!`, and the planted findings of section 9.
+
+**Inventory at `f59c229c5`, parser against rustc.** The default build reads
+11 names: the 8 tuning knobs, `TSC_RS_EFFECT`, `TSGO_EFFECT_API` and
+`GOPORT_BUILD_VERSION` (build time). The table at the top of this section
+is exactly that set. The parser reported 13 (the old exception):
 `GOPORT_REUSE_STATS`, `GOPORT_VERIFY_REUSE_CHILD_ARGS` and
-`GOPORT_VERIFY_REUSE_CHILD_OUT` show up in the inventory as shipped reads.
-They are not: they are read only in `project/reuse_verify.rs`, which
-`project/mod.rs` declares as `#[cfg(feature = "diagnostics")] pub mod
-reuse_verify;`. The binaries show it (lane Q3, 2026-11-09, plain
-`--profile goport` builds of `e658d4d29` and `11a8642a0`): `strings` finds
-none of the three names, no `GOPORT_VERIFY_REUSE*` name and no `goport
-verify-reuse` message, and `nm -C` no `reuse_verify` symbol. A
-`--features diagnostics` release build of `11a8642a0` has them (the control:
-each name once, 3 `goport verify-reuse` messages, 73 `project::reuse_verify`
-symbols). The report
-errs on the safe side here: a read in a gated module shows as shipped, never
-as hidden. The tooling lane that moves `quality.py` to rustc's
-cfg-expanded source removes the exception.
+`GOPORT_VERIFY_REUSE_CHILD_OUT` are read only in `project/reuse_verify.rs`,
+which `project/mod.rs` declares under `#[cfg(feature = "diagnostics")]`;
+rustc's default build has no such module, as the binaries showed (lane Q3:
+`strings` and `nm -C` on plain `--profile goport` builds found none of them).
+`TSGO_EFFECT_API` was missing because the scan did not look for `TSGO_`.
+
+## 9. Gating check (lane Q5, 2026-11-09)
+
+"Diagnostics code not gated whole" came up in five reviews (L1 r1, C1 r2,
+C2, Q3, and the C2 follow-up's motivation), each time new code that only
+review caught. `quality.sh gating <rev>` (`scripts/perf-rearch/qgating.py`)
+finds it in rustc's expanded default build (section 8), before review.
+
+The convention it checks is in `brief.md` ("Verification code is gated
+whole"): diagnostic, verification and test-hook code lives in a module whose
+name says so, the `mod` line carries the gate, and its items are named after
+their env name. The rules:
+
+| Rule | Finding |
+|---|---|
+| env | A name of class diagnostic, verification or test-hook (section 1) is read in the default build. |
+| module | A module of the default build is named `diag` or `test_hooks`, or ends in `_diag`, `_verify`, `_dump`, `_stats` or `_times`. |
+| topic | An item (fn, static, const, struct, enum, trait, type) of the default build is named after a gated env name: its name holds the env name less `GOPORT_`, lower case, two words or more (`checker_call_log_event` for `GOPORT_CHECKER_CALL_LOG`). Only names classed by their own words count, not names classed test-hook only for being feature-only (`GOPORT_RESOLVE_AHEAD` names a product mechanism). |
+| dead | An item of the default build that no code of the default build names, while the features build does: support code of gated code that still ships. Words are counted outside strings and comments, over all crates and bins. |
+| name | A fn of the default build named `assert_same*`. |
+
+- `--wasm` also checks the wasm build with env, module, topic and name.
+- **Allow list:** `scripts/perf-rearch/gating-allow.txt`, one reviewed
+  exception a line, `<rule> <subject>  # <reason>`, the reason required.
+  An entry that matches nothing is listed as stale.
+- **Exit:** 1 on any finding the list does not allow (`GATING FAIL`), 0
+  otherwise (`GATING OK`). The report and JSON go to
+  `~/.cache/perf-rearch/quality/reports/gating-<rev>/`.
+- **Weaknesses:** the module and topic rules depend on names, so code under
+  a neutral name with no env read of its own (a counter in a product struct)
+  passes. `dead` counts names, not resolved paths: a gated helper whose name
+  is common (`new`, `run`) has default-build uses and is missed, and a name
+  that a gated item shares can be reported (the allow list's `NAME`).
+  `cfg!(debug_assertions)` inside shipped code expands to `false` and is not
+  seen (6 sites at head; Q3 finding 2's class).

@@ -106,10 +106,13 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
   checkout's source, so run it from your own worktree.
 - **Quality report (report only, no gate):** before reporting, run
   `scripts/perf-rearch/quality.sh report HEAD --base perf/first-principles`
-  from your worktree (about 1 minute, more while another Cargo run holds the
-  slot; `--no-clippy` skips clippy) and paste its summary into your final
+  from your worktree (about 6 to 8 minutes for a new tree, more while another
+  Cargo run holds the slot; cached reruns under 2 s; `--no-clippy` skips
+  clippy) and paste its summary into your final
   answer. It covers escape hatches, complexity, duplication, churn and
-  hygiene; `docs/perf-rearch/quality.md` explains each one.
+  hygiene; `docs/perf-rearch/quality.md` explains each one. Its escape-hatch
+  inventory comes from rustc's cfg-expanded source of the default build, not
+  a cfg parser (section 8).
 
 ## Rules
 
@@ -210,6 +213,26 @@ is a rewrite, so it does not keep old code behind switches:
   not only the common CLI case.
 - **Verification code is gated whole:** state, functions, counters and test
   setters, not only the env read. The shipped binary must not contain it.
+  The convention (proposed by lane Q5; `quality.md` section 9) that makes
+  this checkable:
+  - Diagnostic, verification and test-hook code lives in a module named
+    `diag`, `test_hooks`, or `<topic>_diag`, `_verify`, `_dump`, `_stats` or
+    `_times`, and that module's declaration carries the gate
+    (`#[cfg(feature = "diagnostics")]`, `"test-hooks"`, or
+    `any(debug_assertions, feature = "diagnostics")`). Gate the `mod`
+    line, not the items one by one, and not with `cfg!()` or
+    `debug_assert!` inside shipped code.
+  - Its items are named after their env name's topic
+    (`GOPORT_CHECKER_CALL_LOG`: `checker_call_log_*`), so a leftover shows.
+  - A shipped no-op stub of a gated module (zero-sized timers) is a child
+    module named `off`; each such stub needs a reviewed entry in
+    `scripts/perf-rearch/gating-allow.txt`.
+  - Before reporting, run `scripts/perf-rearch/quality.sh gating HEAD`
+    (about 2 minutes for a new tree, seconds cached). It reads rustc's
+    expanded default build, prints `GATING OK` or `GATING FAIL` with each
+    finding, and exits 1 on a finding that the allow list does not hold.
+    Paste its result into your final answer. Never add an allow entry for
+    your own code without saying so; the reviewer judges each one.
 - **Spikes** (prototypes that only measure) may add a switch on their own
   branch. It never merges: the implementation that follows replaces the path.
 - **Product options stay:** user-facing behavior Chad chose (Effect rules off
