@@ -814,32 +814,18 @@ impl LanguageService {
                     //    */
                     let line_start =
                         crate::format::get_line_start_position_for_position(position, file);
-                    let mut no_comment_prefix = true;
-                    // PORT: Go ranges over the runes of `file.Text()[lineStart:position]`
-                    // (byte offsets). A rune cut by `position` decodes as RuneError
-                    // with width 1, as in Go.
                     let text = source_file_text(file);
-                    let end = position as usize;
-                    let mut pos = line_start as usize;
-                    while pos < end {
-                        let (mut r, mut size) = utf8_decode_rune_in_string(&text, pos);
-                        if pos + size as usize > end {
-                            r = RUNE_ERROR;
-                            size = 1;
-                        }
-                        let r = rune_to_char(r);
-                        if !(is_white_space_single_line(r)
-                            || r == '*'
-                            || r == '/'
-                            || r == '('
-                            || r == ')'
-                            || r == '|')
-                        {
-                            no_comment_prefix = false;
-                            break;
-                        }
-                        pos += size as usize;
-                    }
+                    let no_comment_prefix =
+                        go_runes_of_byte_range(&text, line_start as usize, position as usize).all(
+                            |r| {
+                                is_white_space_single_line(r)
+                                    || r == '*'
+                                    || r == '/'
+                                    || r == '('
+                                    || r == ')'
+                                    || r == '|'
+                            },
+                        );
                     if no_comment_prefix {
                         return Ok(Some(CompletionData::JSDocTag(CompletionDataJSDocTag)));
                     }
@@ -1184,12 +1170,10 @@ impl LanguageService {
         } else if s.is_right_of_open_tag {
             s.symbols = s.type_checker.get_jsx_intrinsic_tag_names_at(s.location);
             // Go: core.CheckEachDefined
-            for &symbol in &s.symbols {
-                if symbol.is_nil() {
-                    crate::core::go_panic(
-                        "GetJsxIntrinsicTagNamesAt() should all be defined".to_string(),
-                    );
-                }
+            if s.symbols.iter().any(|symbol| symbol.is_nil()) {
+                crate::core::go_panic(
+                    "GetJsxIntrinsicTagNamesAt() should all be defined".to_string(),
+                );
             }
             s.try_get_global_symbols()?;
             s.completion_kind = CompletionKind::GLOBAL;
@@ -1397,14 +1381,14 @@ impl GetCompletionDataState<'_> {
         // we'll add a completion for the *name* `Symbol` instead of for the property.
         // If this is e.g. [Symbol.iterator], add a completion for `Symbol`.
         // Go: core.FirstNonNil
-        let mut computed_property_name = Node::NIL;
-        for decl in self.type_checker.sym(symbol).declarations.iter().copied() {
-            let name = get_name_of_declaration(decl);
-            if name.is_some() && name.kind() == SyntaxKind::ComputedPropertyName {
-                computed_property_name = name;
-                break;
-            }
-        }
+        let computed_property_name = self
+            .type_checker
+            .sym(symbol)
+            .declarations
+            .iter()
+            .map(|&decl| get_name_of_declaration(decl))
+            .find(|name| name.is_some() && name.kind() == SyntaxKind::ComputedPropertyName)
+            .unwrap_or(Node::NIL);
 
         if computed_property_name.is_some() {
             let left_most_name = get_left_most_name(computed_property_name.expression()); // The completion is for `Symbol`, not `iterator`.
@@ -1436,18 +1420,16 @@ impl GetCompletionDataState<'_> {
                     SORT_TEXT_GLOBALS_OR_KEYWORDS.to_string(),
                 );
                 let module_symbol = self.type_checker.sym(first_accessible_symbol).parent;
-                // PORT: the Go `||` chain, split so the last test runs only
-                // when the first two are false.
-                let mut not_module_export = module_symbol.is_nil()
-                    || !self.type_checker.is_external_module_symbol(module_symbol);
-                if !not_module_export {
-                    let name = self.type_checker.sym(first_accessible_symbol).name.as_str();
-                    not_module_export = self
+                if module_symbol.is_nil()
+                    || !self.type_checker.is_external_module_symbol(module_symbol)
+                    || self
                         .type_checker
-                        .try_get_member_in_module_exports_and_properties(name, module_symbol)
-                        != first_accessible_symbol;
-                }
-                if not_module_export {
+                        .try_get_member_in_module_exports_and_properties(
+                            self.type_checker.sym(first_accessible_symbol).name.as_str(),
+                            module_symbol,
+                        )
+                        != first_accessible_symbol
+                {
                     self.symbol_to_origin_info_map.insert(
                         (self.symbols.len() - 1) as i32,
                         SymbolOriginInfo {
@@ -1753,11 +1735,9 @@ impl GetCompletionDataState<'_> {
         }
 
         // Go: core.Filter
-        for member in members {
-            if !existing_member_names.contains(self.type_checker.sym(member).name.as_str()) {
-                self.symbols.push(member);
-            }
-        }
+        self.symbols.extend(members.into_iter().filter(|&member| {
+            !existing_member_names.contains(self.type_checker.sym(member).name.as_str())
+        }));
 
         self.completion_kind = CompletionKind::OBJECT_PROPERTY_DECLARATION;
         self.is_new_identifier_location = true;
@@ -1878,30 +1858,28 @@ impl GetCompletionDataState<'_> {
                 let properties = self
                     .type_checker
                     .get_properties_of_type_exported(type_for_object);
-                type_members = Vec::new();
-                for property_symbol in properties {
-                    if self.type_checker.is_property_accessible_exported(
-                        object_like_container,
-                        false, /*isSuper*/
-                        false, /*isWrite*/
-                        type_for_object,
-                        property_symbol,
-                    ) {
-                        type_members.push(property_symbol);
-                    }
-                }
+                type_members = properties
+                    .into_iter()
+                    .filter(|&property_symbol| {
+                        self.type_checker.is_property_accessible_exported(
+                            object_like_container,
+                            false, /*isSuper*/
+                            false, /*isWrite*/
+                            type_for_object,
+                            property_symbol,
+                        )
+                    })
+                    .collect();
                 existing_members = object_like_container.elements().to_vec();
             }
         }
 
         if !type_members.is_empty() {
             // Go: core.CheckEachDefined
-            for member in &existing_members {
-                if member.is_nil() {
-                    crate::core::go_panic(
-                        "object like properties or elements should all be defined".to_string(),
-                    );
-                }
+            if existing_members.iter().any(|member| member.is_nil()) {
+                crate::core::go_panic(
+                    "object like properties or elements should all be defined".to_string(),
+                );
             }
             // Add filtered items to the completion list.
             let (filtered_members, spread_member_names) = filter_object_members_list(
@@ -1949,11 +1927,12 @@ impl GetCompletionDataState<'_> {
                     );
                     if !display_name.is_empty() {
                         // Go: core.OrElse(symbolToSortTextMap[symbolId], SortTextLocationPriority)
-                        let original_sort_text = match self.symbol_to_sort_text_map.get(&symbol_id)
-                        {
-                            Some(sort_text) if !sort_text.is_empty() => sort_text.clone(),
-                            _ => SORT_TEXT_LOCATION_PRIORITY.to_string(),
-                        };
+                        let original_sort_text = self
+                            .symbol_to_sort_text_map
+                            .get(&symbol_id)
+                            .filter(|sort_text| !sort_text.is_empty())
+                            .map_or(SORT_TEXT_LOCATION_PRIORITY, String::as_str)
+                            .to_string();
                         self.symbol_to_sort_text_map.insert(
                             symbol_id,
                             object_literal_property_sort_text(&original_sort_text, &display_name),
@@ -2151,13 +2130,13 @@ impl GetCompletionDataState<'_> {
             existing.insert(element.property_name_or_name().text());
         }
         // Go: core.Filter
-        let mut uniques: Vec<SymbolId> = Vec::new();
-        for symbol in exports {
-            let name = symbol_name(&self.type_checker.symbols, symbol);
-            if name != INTERNAL_SYMBOL_NAME_DEFAULT && !existing.contains(name.as_str()) {
-                uniques.push(symbol);
-            }
-        }
+        let uniques: Vec<SymbolId> = exports
+            .into_iter()
+            .filter(|&symbol| {
+                let name = symbol_name(&self.type_checker.symbols, symbol);
+                name != INTERNAL_SYMBOL_NAME_DEFAULT && !existing.contains(name.as_str())
+            })
+            .collect();
 
         let uniques_empty = uniques.is_empty();
         self.symbols.extend(uniques);
@@ -2199,13 +2178,11 @@ impl GetCompletionDataState<'_> {
             elements.iter().map(|el| el.name().text()).collect();
         let attributes_type = self.type_checker.get_type_at_location(import_attributes);
         // Go: core.Filter
-        let mut uniques: Vec<SymbolId> = Vec::new();
-        for symbol in self.type_checker.get_apparent_properties(attributes_type) {
-            if !existing.contains(symbol_name(&self.type_checker.symbols, symbol).as_str()) {
-                uniques.push(symbol);
-            }
-        }
-        self.symbols.extend(uniques);
+        let properties = self.type_checker.get_apparent_properties(attributes_type);
+        self.symbols
+            .extend(properties.into_iter().filter(|&symbol| {
+                !existing.contains(symbol_name(&self.type_checker.symbols, symbol).as_str())
+            }));
         Ok(GlobalsSearch::SUCCESS)
     }
 
@@ -2341,12 +2318,9 @@ impl GetCompletionDataState<'_> {
                 && class_element_modifier_flags.intersects(ModifierFlags::OVERRIDE)
             {
                 // Go: core.SingleElementSlice (nil gives an empty list)
-                let extends_element = get_class_extends_heritage_element(decl);
-                if extends_element.is_nil() {
-                    Vec::new()
-                } else {
-                    vec![extends_element]
-                }
+                std::iter::once(get_class_extends_heritage_element(decl))
+                    .filter(|extends_element| extends_element.is_some())
+                    .collect()
             } else {
                 get_all_super_type_nodes(decl)
             };
@@ -2542,10 +2516,8 @@ impl GetCompletionDataState<'_> {
             .get_symbols_in_scope_exported(scope_node, symbol_meanings);
         self.symbols.extend(symbols_in_scope);
         // Go: core.CheckEachDefined
-        for &symbol in &self.symbols {
-            if symbol.is_nil() {
-                crate::core::go_panic("getSymbolsInScope() should all be defined".to_string());
-            }
+        if self.symbols.iter().any(|symbol| symbol.is_nil()) {
+            crate::core::go_panic("getSymbolsInScope() should all be defined".to_string());
         }
         // PORT: Go `range` reads the slice once; iterate a copy.
         for (index, symbol) in self.symbols.clone().into_iter().enumerate() {
@@ -2667,4 +2639,23 @@ fn strings_to_lower(s: &str) -> String {
     s.chars()
         .map(|c| c.to_lowercase().next().unwrap_or(c))
         .collect()
+}
+
+/// Go `for _, r := range text[start:end]` on byte offsets: the runes of the
+/// byte range. A rune cut by `end` decodes as RuneError with width 1, as in
+/// Go; the port's text can't be sliced where a byte range splits a character.
+fn go_runes_of_byte_range(text: &str, start: usize, end: usize) -> impl Iterator<Item = char> {
+    let mut pos = start;
+    std::iter::from_fn(move || {
+        if pos >= end {
+            return None;
+        }
+        let (mut r, mut size) = utf8_decode_rune_in_string(text, pos);
+        if pos + size as usize > end {
+            r = RUNE_ERROR;
+            size = 1;
+        }
+        pos += size as usize;
+        Some(rune_to_char(r))
+    })
 }
