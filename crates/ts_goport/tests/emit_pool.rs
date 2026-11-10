@@ -29,22 +29,23 @@
 //! A panic in a file's declaration transforms or in its JS print
 //! (`set_emit_test_panic`) writes the same files and returns the same with
 //! the twins on as with the twins off, with a guard around each file (as the
-//! goport bin has) and without one.
+//! goport bin has) and without one. The panic is a test hook: that test runs
+//! only with the `test-hooks` feature (CI's diagnostics and test-hooks step,
+//! the parity gate's tests tier).
 //!
 //! A `diagnostics` build also checks where the jobs went: it counts the jobs
 //! of the emit pool and the twins (`program::emit_job_stats`). Without it
 //! the tests compare the outputs only.
 
 use std::collections::BTreeMap;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ts_goport::core::enter_program;
-use ts_goport::emitter::emitter::{EmitOnly, EmitTestPanic, set_emit_test_panic};
+use ts_goport::emitter::emitter::EmitOnly;
+#[cfg(feature = "test-hooks")]
+use ts_goport::emitter::emitter::test_hooks::{EmitTestPanic, set_emit_test_panic};
 use ts_goport::emitter::program_emit::{
     EmitOptions, EmitResult, WriteFile, WriteFileData, combine_emit_results, emit, emit_batch,
-    emit_with,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
 #[cfg(feature = "diagnostics")]
@@ -243,8 +244,10 @@ fn twins_print_js_like_the_checker_threads() {
     }
 }
 
+#[cfg(feature = "test-hooks")]
 #[test]
 fn twin_panics_write_like_the_checker_threads() {
+    use panic_runs::run_panic;
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -299,77 +302,89 @@ fn twin_panics_write_like_the_checker_threads() {
     }
 }
 
-/// What one load of a fixture wrote and returned with a test panic
-/// (`set_emit_test_panic`).
-#[derive(Debug, PartialEq)]
-struct PanicRun {
-    /// `emit_with` with a guard around each file.
-    guarded: Written,
-    /// The panics that the guard caught.
-    guard_panics: usize,
-    /// `emit` without a guard, which panics.
-    unguarded: Written,
-    /// The message of the panic of `emit`, if it panicked.
-    panic: Option<String>,
-}
+/// The emits of `twin_panics_write_like_the_checker_threads` (`test-hooks`).
+#[cfg(feature = "test-hooks")]
+mod panic_runs {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The panics that `guard` caught.
-static GUARD_PANICS: AtomicUsize = AtomicUsize::new(0);
+    use super::{Written, record_writes};
+    use ts_goport::core::enter_program;
+    use ts_goport::emitter::program_emit::{EmitOptions, EmitResult, emit, emit_with};
+    use ts_goport::program::{release_program, try_load_version};
 
-/// The guard around each file's emit, as the goport bin has: a panic gives
-/// the file an empty result.
-fn guard(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
-    catch_unwind(AssertUnwindSafe(emit_file)).unwrap_or_else(|_| {
-        GUARD_PANICS.fetch_add(1, Ordering::Relaxed);
-        EmitResult::default()
-    })
-}
+    /// What one load of a fixture wrote and returned with a test panic
+    /// (`set_emit_test_panic`).
+    #[derive(Debug, PartialEq)]
+    pub(super) struct PanicRun {
+        /// `emit_with` with a guard around each file.
+        pub(super) guarded: Written,
+        /// The panics that the guard caught.
+        pub(super) guard_panics: usize,
+        /// `emit` without a guard, which panics.
+        pub(super) unguarded: Written,
+        /// The message of the panic of `emit`, if it panicked.
+        pub(super) panic: Option<String>,
+    }
 
-/// Loads `config`, emits it with `emit_with` and `guard`, then with `emit`,
-/// and releases it.
-fn run_panic(config: &str) -> PanicRun {
-    let program = try_load_version(config, |_| {})
-        .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
-    let run = {
-        let _scope = enter_program(Some(program));
-        let guard_panics = GUARD_PANICS.load(Ordering::Relaxed);
-        let guarded = record_writes(|write_file| {
-            emit_with(
-                EmitOptions {
-                    write_file: Some(write_file),
-                    ..EmitOptions::default()
-                },
-                guard,
-            )
-        });
-        let guard_panics = GUARD_PANICS.load(Ordering::Relaxed) - guard_panics;
-        let mut panic = None;
-        let unguarded = record_writes(|write_file| {
-            catch_unwind(AssertUnwindSafe(|| {
-                emit(EmitOptions {
-                    write_file: Some(write_file),
-                    ..EmitOptions::default()
+    /// The panics that `guard` caught.
+    static GUARD_PANICS: AtomicUsize = AtomicUsize::new(0);
+
+    /// The guard around each file's emit, as the goport bin has: a panic gives
+    /// the file an empty result.
+    fn guard(emit_file: &dyn Fn() -> EmitResult) -> EmitResult {
+        catch_unwind(AssertUnwindSafe(emit_file)).unwrap_or_else(|_| {
+            GUARD_PANICS.fetch_add(1, Ordering::Relaxed);
+            EmitResult::default()
+        })
+    }
+
+    /// Loads `config`, emits it with `emit_with` and `guard`, then with `emit`,
+    /// and releases it.
+    pub(super) fn run_panic(config: &str) -> PanicRun {
+        let program = try_load_version(config, |_| {})
+            .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
+        let run = {
+            let _scope = enter_program(Some(program));
+            let guard_panics = GUARD_PANICS.load(Ordering::Relaxed);
+            let guarded = record_writes(|write_file| {
+                emit_with(
+                    EmitOptions {
+                        write_file: Some(write_file),
+                        ..EmitOptions::default()
+                    },
+                    guard,
+                )
+            });
+            let guard_panics = GUARD_PANICS.load(Ordering::Relaxed) - guard_panics;
+            let mut panic = None;
+            let unguarded = record_writes(|write_file| {
+                catch_unwind(AssertUnwindSafe(|| {
+                    emit(EmitOptions {
+                        write_file: Some(write_file),
+                        ..EmitOptions::default()
+                    })
+                }))
+                .unwrap_or_else(|payload| {
+                    panic = Some(
+                        payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                    EmitResult::default()
                 })
-            }))
-            .unwrap_or_else(|payload| {
-                panic = Some(
-                    payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-                EmitResult::default()
-            })
-        });
-        PanicRun {
-            guarded,
-            guard_panics,
-            unguarded,
-            panic,
-        }
-    };
-    release_program(program);
-    run
+            });
+            PanicRun {
+                guarded,
+                guard_panics,
+                unguarded,
+                panic,
+            }
+        };
+        release_program(program);
+        run
+    }
 }
 
 /// Asserts that two runs wrote and returned the same, for `emit` and for
