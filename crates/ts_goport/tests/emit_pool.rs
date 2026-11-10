@@ -47,6 +47,10 @@ use ts_goport::emitter::program_emit::{
     emit_with,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
+#[cfg(feature = "diagnostics")]
+use ts_goport::program::emit_job_stats::{
+    dts_twin_job_count, emit_pool_job_count, js_twin_print_count,
+};
 use ts_goport::program::{format_diagnostic, release_program, source_files, try_load_version};
 
 /// The d.ts twin check mode (`set_dts_twin_check`): only in a
@@ -56,57 +60,6 @@ fn twin_check(check: Option<bool>) {
     ts_goport::emitter::program_emit::set_dts_twin_check(check);
     #[cfg(not(feature = "diagnostics"))]
     let _ = check;
-}
-
-/// The jobs that the twins got during `f`, and the JS files that they
-/// printed (`twin_totals`).
-fn twin_counts<R>(f: impl FnOnce() -> R) -> (R, Option<TwinCounts>) {
-    let before = twin_totals();
-    let result = f();
-    let counts =
-        before
-            .zip(twin_totals())
-            .map(
-                |((jobs, js_prints), (jobs_after, js_prints_after))| TwinCounts {
-                    jobs: jobs_after - jobs,
-                    js_prints: js_prints_after - js_prints,
-                },
-            );
-    (result, counts)
-}
-
-/// What `twin_counts` counted.
-struct TwinCounts {
-    /// The jobs sent to the d.ts twins.
-    jobs: usize,
-    /// The JS files that the twins printed.
-    js_prints: usize,
-}
-
-/// The jobs sent to the d.ts twins and the JS files that the twins printed
-/// in this process so far: only a `diagnostics` build counts them
-/// (`program::emit_job_stats`).
-#[cfg(feature = "diagnostics")]
-fn twin_totals() -> Option<(usize, usize)> {
-    use ts_goport::program::emit_job_stats::{dts_twin_job_count, js_twin_print_count};
-    Some((dts_twin_job_count(), js_twin_print_count()))
-}
-
-#[cfg(not(feature = "diagnostics"))]
-fn twin_totals() -> Option<(usize, usize)> {
-    None
-}
-
-/// The jobs that the emit pool of the current program got: only a
-/// `diagnostics` build counts them (`program::emit_job_stats`).
-#[cfg(feature = "diagnostics")]
-fn pool_jobs() -> Option<usize> {
-    Some(ts_goport::program::emit_job_stats::emit_pool_job_count())
-}
-
-#[cfg(not(feature = "diagnostics"))]
-fn pool_jobs() -> Option<usize> {
-    None
 }
 
 /// The tests of this file run one at a time: the d.ts twin mode and the
@@ -135,11 +88,12 @@ struct Written {
 }
 
 /// The `emit` and `emit_batch` of one load of the fixture, and the number of
-/// jobs its emit pool got (`pool_jobs`).
+/// jobs its emit pool got.
 struct Run {
     emit: Written,
     batch: Written,
-    pool_jobs: Option<usize>,
+    #[cfg(feature = "diagnostics")]
+    pool_jobs: usize,
 }
 
 #[test]
@@ -148,9 +102,8 @@ fn pool_emits_like_the_checker_threads() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let pool = run(|_| {});
-    if let Some(jobs) = pool.pool_jobs {
-        assert!(jobs > 0, "the emit pool got no job");
-    }
+    #[cfg(feature = "diagnostics")]
+    assert!(pool.pool_jobs > 0, "the emit pool got no job");
     assert!(
         pool.emit
             .files
@@ -161,21 +114,24 @@ fn pool_emits_like_the_checker_threads() {
     );
 
     let single = run(single_threaded);
-    if let Some(jobs) = single.pool_jobs {
-        assert_eq!(jobs, 0, "--singleThreaded must not use the pool");
-    }
+    #[cfg(feature = "diagnostics")]
+    assert_eq!(
+        single.pool_jobs, 0,
+        "--singleThreaded must not use the pool"
+    );
     assert_same(&pool, &single, "the pool against --singleThreaded");
 
     let one_checker = run(|options| options.checkers = Some(1));
-    if let Some(jobs) = one_checker.pool_jobs {
-        assert!(jobs > 0, "--checkers 1 must use the pool");
-    }
+    #[cfg(feature = "diagnostics")]
+    assert!(one_checker.pool_jobs > 0, "--checkers 1 must use the pool");
     assert_same(&pool, &one_checker, "4 checkers against --checkers 1");
 
     let whole = run(no_declarations);
-    if let Some(jobs) = whole.pool_jobs {
-        assert!(jobs > 0, "without declarations the pool must run");
-    }
+    #[cfg(feature = "diagnostics")]
+    assert!(
+        whole.pool_jobs > 0,
+        "without declarations the pool must run"
+    );
     let whole_single = run(|options| {
         no_declarations(options);
         single_threaded(options);
@@ -197,7 +153,11 @@ fn dts_twins_print_like_the_checker_threads() {
         |options| options.checkers = Some(1),
     ] {
         twin_check(Some(true));
-        let (twins, counts) = twin_counts(|| run(edit));
+        #[cfg(feature = "diagnostics")]
+        let twin_jobs = dts_twin_job_count();
+        let twins = run(edit);
+        #[cfg(feature = "diagnostics")]
+        let twin_jobs = dts_twin_job_count() - twin_jobs;
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
         let checkers = run(|options| {
@@ -205,9 +165,8 @@ fn dts_twins_print_like_the_checker_threads() {
             single_threaded(options);
         });
 
-        if let Some(counts) = counts {
-            assert!(counts.jobs > 0, "the d.ts twins got no job");
-        }
+        #[cfg(feature = "diagnostics")]
+        assert!(twin_jobs > 0, "the d.ts twins got no job");
         assert!(
             twins
                 .emit
@@ -239,7 +198,14 @@ fn twins_print_js_like_the_checker_threads() {
         ),
     ] {
         twin_check(Some(true));
-        let (twins, counts) = twin_counts(|| run_config(JS_TWIN_CONFIG, edit));
+        #[cfg(feature = "diagnostics")]
+        let (js_prints, twin_jobs) = (js_twin_print_count(), dts_twin_job_count());
+        let twins = run_config(JS_TWIN_CONFIG, edit);
+        #[cfg(feature = "diagnostics")]
+        let (js_prints, twin_jobs) = (
+            js_twin_print_count() - js_prints,
+            dts_twin_job_count() - twin_jobs,
+        );
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
         let checkers = run_config(JS_TWIN_CONFIG, |options| {
@@ -247,15 +213,18 @@ fn twins_print_js_like_the_checker_threads() {
             single_threaded(options);
         });
 
-        if let Some(counts) = counts {
-            assert!(counts.jobs > 0, "the twins got no job");
+        #[cfg(feature = "diagnostics")]
+        {
+            assert!(twin_jobs > 0, "the twins got no job");
             // `emit` and `emit_batch` each print the 3 files.
             assert_eq!(
-                counts.js_prints,
+                js_prints,
                 if prints_js { 6 } else { 0 },
                 "JS prints on the twins"
             );
         }
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = prints_js;
         assert_eq!(
             twins.emit.files.len(),
             checkers.emit.files.len(),
@@ -282,16 +251,16 @@ fn twin_panics_write_like_the_checker_threads() {
     for step in [EmitTestPanic::DeclarationTransforms, EmitTestPanic::JsPrint] {
         set_emit_test_panic(Some((step, "/src/model.ts")));
         twin_check(Some(false));
-        let (twins, counts) = twin_counts(|| run_panic(JS_TWIN_CONFIG));
+        #[cfg(feature = "diagnostics")]
+        let js_prints = js_twin_print_count();
+        let twins = run_panic(JS_TWIN_CONFIG);
+        #[cfg(feature = "diagnostics")]
+        let js_prints = js_twin_print_count() - js_prints;
         twin_check(None);
         set_emit_test_panic(None);
 
-        if let Some(counts) = counts {
-            assert!(
-                counts.js_prints > 0,
-                "{step:?}: the twins printed no JS file"
-            );
-        }
+        #[cfg(feature = "diagnostics")]
+        assert!(js_prints > 0, "{step:?}: the twins printed no JS file");
         assert_eq!(twins.guard_panics, 1, "{step:?}: guarded panics");
         assert!(
             twins.panic.as_deref().is_some_and(
@@ -452,7 +421,8 @@ fn run_config(config: &str, edit: impl FnOnce(&mut CompilerOptions)) -> Run {
         Run {
             emit: emitted,
             batch,
-            pool_jobs: pool_jobs(),
+            #[cfg(feature = "diagnostics")]
+            pool_jobs: emit_pool_job_count(),
         }
     };
     release_program(program);

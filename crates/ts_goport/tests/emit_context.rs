@@ -47,6 +47,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ts_goport::core::enter_program;
 use ts_goport::emitter::program_emit::{EmitOptions, WriteFile, WriteFileData, emit};
 use ts_goport::options::{CompilerOptions, Tristate};
+#[cfg(feature = "diagnostics")]
+use ts_goport::program::emit_job_stats::{emit_pool_job_count, js_twin_print_count};
 use ts_goport::program::{format_diagnostic, release_program, try_load_version};
 
 /// The d.ts twin check mode (`set_dts_twin_check`): only in a
@@ -56,30 +58,6 @@ fn twin_check(check: Option<bool>) {
     ts_goport::emitter::program_emit::set_dts_twin_check(check);
     #[cfg(not(feature = "diagnostics"))]
     let _ = check;
-}
-
-/// The JS files that the twins printed in this process so far: only a
-/// `diagnostics` build counts them (`program::emit_job_stats`).
-#[cfg(feature = "diagnostics")]
-fn js_twin_prints() -> Option<usize> {
-    Some(ts_goport::program::emit_job_stats::js_twin_print_count())
-}
-
-#[cfg(not(feature = "diagnostics"))]
-fn js_twin_prints() -> Option<usize> {
-    None
-}
-
-/// The jobs that the emit pool of the current program got: only a
-/// `diagnostics` build counts them (`program::emit_job_stats`).
-#[cfg(feature = "diagnostics")]
-fn pool_jobs() -> Option<usize> {
-    Some(ts_goport::program::emit_job_stats::emit_pool_job_count())
-}
-
-#[cfg(not(feature = "diagnostics"))]
-fn pool_jobs() -> Option<usize> {
-    None
 }
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/emit_context");
@@ -197,27 +175,26 @@ fn emit_matches_go_in_every_mode() {
                 continue;
             }
             twin_check(Some(mode.twin_check));
-            let js_prints = js_twin_prints();
+            #[cfg(feature = "diagnostics")]
+            let js_prints = js_twin_print_count();
             let run = emit_project(project.name, mode.edit);
-            let js_prints = js_prints
-                .zip(js_twin_prints())
-                .map(|(before, after)| after - before);
+            #[cfg(feature = "diagnostics")]
+            let js_prints = js_twin_print_count() - js_prints;
             twin_check(None);
 
             assert_eq!(run.diagnostics, Vec::<String>::new(), "{what}: diagnostics");
             assert_files(&run.files, &expected(project.name, mode.kind), &what);
-            if mode.pool
-                && project.split
-                && let Some(jobs) = run.pool_jobs
+            #[cfg(feature = "diagnostics")]
             {
-                assert!(jobs > 0, "{what}: the emit pool got no job");
+                if mode.pool && project.split {
+                    assert!(run.pool_jobs > 0, "{what}: the emit pool got no job");
+                }
+                if mode.pool && project.twin {
+                    assert!(js_prints > 0, "{what}: the twins printed no JS part");
+                }
             }
-            if mode.pool
-                && project.twin
-                && let Some(js_prints) = js_prints
-            {
-                assert!(js_prints > 0, "{what}: the twins printed no JS part");
-            }
+            #[cfg(not(feature = "diagnostics"))]
+            let _ = (mode.pool, project.split, project.twin);
         }
     }
 }
@@ -359,8 +336,8 @@ struct Run {
     /// The written text by path relative to the project's `out` dir.
     files: BTreeMap<String, String>,
     diagnostics: Vec<String>,
-    /// The jobs that the emit pool got (`pool_jobs`).
-    pool_jobs: Option<usize>,
+    #[cfg(feature = "diagnostics")]
+    pool_jobs: usize,
 }
 
 /// Loads the project `name` with `edit` applied to its options, emits it
@@ -392,7 +369,8 @@ fn emit_project(name: &str, edit: fn(&mut CompilerOptions)) -> Run {
         Run {
             files: std::mem::take(&mut *writes.lock().expect("writes lock")),
             diagnostics: result.diagnostics.iter().map(format_diagnostic).collect(),
-            pool_jobs: pool_jobs(),
+            #[cfg(feature = "diagnostics")]
+            pool_jobs: emit_pool_job_count(),
         }
     };
     release_program(program);
