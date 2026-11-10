@@ -1,7 +1,9 @@
 //! Port of Effect-TS/tsgo `internal/fixables/prefer_succeed_some_or_none.go`.
 
 use crate::effect::ls::fixable::{Fixable, FixableContext};
-use crate::effect::rules::prefer_succeed_some_or_none::analyze_prefer_succeed_some_or_none;
+use crate::effect::rules::prefer_succeed_some_or_none::{
+    PreferSucceedSomeOrNoneMatch, analyze_prefer_succeed_some_or_none,
+};
 use crate::effect::typeparser::find_effect_module_identifier;
 use crate::ls::CodeAction;
 use crate::prelude::*;
@@ -34,38 +36,7 @@ fn run_prefer_succeed_some_or_none_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<
         let description = format!("Replace with Effect.{}", m.replacement_name);
         let sf = ctx.source_file;
         if let Some(action) = ctx.new_fix_action(description, |tracker| {
-            let f = tracker.node_factory();
-            let module_node = if m.effect_module_node.is_nil() {
-                f.new_identifier(find_effect_module_identifier(sf))
-            } else {
-                f.deep_clone_node(m.effect_module_node)
-            };
-            let callee = f.new_property_access_expression(
-                module_node,
-                Node::NIL,
-                f.new_identifier(m.replacement_name.as_str()),
-                NodeFlags::NONE,
-            );
-            let mut replacement = callee;
-            if m.value_node.is_some() {
-                let mut type_arguments = NodeList::NIL;
-                if m.value_type_arguments.is_some() && !m.value_type_arguments.nodes().is_empty() {
-                    let arguments: Vec<Node> = m
-                        .value_type_arguments
-                        .nodes()
-                        .iter()
-                        .map(|argument| f.deep_clone_node(argument))
-                        .collect();
-                    type_arguments = f.new_node_list(&arguments);
-                }
-                replacement = f.new_call_expression(
-                    callee,
-                    Node::NIL,
-                    type_arguments,
-                    f.new_node_list(&[f.deep_clone_node(m.value_node)]),
-                    NodeFlags::NONE,
-                );
-            }
+            let replacement = succeed_some_or_none_replacement(tracker.node_factory(), sf, &m);
             tracker.replace_piping_flow_prefix(sf, flow, m.transformation_count, replacement);
         }) {
             return vec![action];
@@ -73,4 +44,45 @@ fn run_prefer_succeed_some_or_none_fix(ctx: &mut FixableContext<'_, '_>) -> Vec<
     }
 
     Vec::new()
+}
+
+/// `Effect.succeedSome(value)` (with the value's type arguments) or
+/// `Effect.succeedNone`, through the match's Effect module node or the
+/// file's Effect module identifier.
+fn succeed_some_or_none_replacement(
+    f: &NodeFactory,
+    sf: Node,
+    m: &PreferSucceedSomeOrNoneMatch,
+) -> Node {
+    let module_node = if m.effect_module_node.is_nil() {
+        f.new_identifier(find_effect_module_identifier(sf))
+    } else {
+        f.deep_clone_node(m.effect_module_node)
+    };
+    let callee = f.new_property_access_expression(
+        module_node,
+        Node::NIL,
+        f.new_identifier(m.replacement_name.as_str()),
+        NodeFlags::NONE,
+    );
+    if m.value_node.is_nil() {
+        return callee;
+    }
+    let mut type_arguments = NodeList::NIL;
+    if m.value_type_arguments.is_some() && !m.value_type_arguments.nodes().is_empty() {
+        let arguments: Vec<Node> = m
+            .value_type_arguments
+            .nodes()
+            .iter()
+            .map(|argument| f.deep_clone_node(argument))
+            .collect();
+        type_arguments = f.new_node_list(&arguments);
+    }
+    f.new_call_expression(
+        callee,
+        Node::NIL,
+        type_arguments,
+        f.new_node_list(&[f.deep_clone_node(m.value_node)]),
+        NodeFlags::NONE,
+    )
 }
