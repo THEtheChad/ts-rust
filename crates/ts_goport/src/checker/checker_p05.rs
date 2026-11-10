@@ -1316,11 +1316,11 @@ impl Checker {
                     let overridden_instance_accessor = base_property_flags == SymbolFlags::PROPERTY
                         && derived_property_flags != SymbolFlags::PROPERTY;
                     if overridden_instance_property || overridden_instance_accessor {
-                        let error_message = if overridden_instance_property {
-                            diag::X_0_is_defined_as_an_accessor_in_class_1_but_is_overridden_here_in_2_as_an_instance_property
-                        } else {
-                            diag::X_0_is_defined_as_a_property_in_class_1_but_is_overridden_here_in_2_as_an_accessor
-                        };
+                        let error_message = if_else(
+                            overridden_instance_property,
+                            diag::X_0_is_defined_as_an_accessor_in_class_1_but_is_overridden_here_in_2_as_an_instance_property,
+                            diag::X_0_is_defined_as_a_property_in_class_1_but_is_overridden_here_in_2_as_an_accessor,
+                        );
                         let error_node = or_else(
                             get_name_of_declaration(derived_value_declaration),
                             derived_value_declaration,
