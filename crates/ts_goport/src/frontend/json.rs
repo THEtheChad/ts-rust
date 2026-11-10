@@ -907,6 +907,27 @@ fn consume_literal_error(b: &[u8], p: usize, lit: &[u8]) -> (usize, SyntaxErr) {
     (b.len(), SyntaxErr::UnexpectedEof)
 }
 
+/// The JSON literal that starts with `c` (`n`, `t` or `f`).
+#[inline]
+fn literal_text(c: u8) -> &'static [u8] {
+    match c {
+        b'n' => b"null",
+        b't' => b"true",
+        _ => b"false",
+    }
+}
+
+// Go `consumeLiteral` of the literal `lit` at `p`: the end offset, or the
+// offset and error.
+#[inline]
+fn consume_literal_raw(b: &[u8], p: usize, lit: &[u8]) -> Result<usize, (usize, SyntaxErr)> {
+    if b[p..].starts_with(lit) {
+        Ok(p + lit.len())
+    } else {
+        Err(consume_literal_error(b, p, lit))
+    }
+}
+
 // Go `jsonwire.ConsumeNumberResumable` through `consumeNumber`: the end
 // offset, or the offset and error. A number that the input cuts short is
 // `io.ErrUnexpectedEOF` at the start of the number.
@@ -1219,170 +1240,213 @@ impl JsonDecoder<'_> {
     // consumeArray, for the value at `start`, whose `depth` is Go's (the
     // stack depth plus one). Gives the end of the value, or Go's error, its
     // offset and pointer suffix.
-    // PORT: Go recurses; this keeps its own stack of open containers.
+    // PORT: Go recurses; this keeps its own stack of open containers (up to
+    // `MAX_NESTING_DEPTH` deep), and each step is a function: the value
+    // (`consume_value_step`), the start of a container (`consume_open`), an
+    // object name (`consume_object_name`) and what follows a value
+    // (`consume_after_value`).
     fn go_consume_value(&self, start: usize, depth: usize) -> Result<usize, ConsumeError> {
-        struct Open {
-            is_object: bool,
-            // The pointer token of the member being read (name or index).
-            member: String,
-            index: usize,
-            names: Option<FxHashSet<String>>,
-        }
-        // An error at `pos`: each open container but the innermost adds its
-        // member; the innermost adds it when `wrap`.
-        fn fail(open: &[Open], pos: usize, err: SyntaxErr, wrap: bool) -> ConsumeError {
-            let n = open.len() - usize::from(!wrap && !open.is_empty());
-            let suffix = open[..n].iter().map(|o| o.member.clone()).collect();
-            (pos, err, suffix)
-        }
-        enum Step {
-            Value,
-            AfterValue,
-            BeforeName,
-        }
-        let b = self.buf;
-        let mut open: Vec<Open> = Vec::new();
+        let mut open: Vec<ConsumeOpen> = Vec::new();
         let mut p = start;
-        let mut step = Step::Value;
+        let mut step = ConsumeStep::Value;
         loop {
-            match step {
-                Step::Value => {
-                    let c = b[p];
-                    match normalize_kind(c) {
-                        b'n' | b't' | b'f' => {
-                            let lit: &[u8] = match c {
-                                b'n' => b"null",
-                                b't' => b"true",
-                                _ => b"false",
-                            };
-                            if !b[p..].starts_with(lit) {
-                                let (pos, err) = consume_literal_error(b, p, lit);
-                                return Err(fail(&open, pos, err, true));
-                            }
-                            p += lit.len();
-                        }
-                        b'"' => match self.consume_string_raw(p) {
-                            Ok((end, _)) => p = end,
-                            Err((pos, err)) => return Err(fail(&open, pos, err, true)),
-                        },
-                        b'0' => match consume_number_raw(b, p) {
-                            Ok(end) => p = end,
-                            Err((pos, err)) => return Err(fail(&open, pos, err, true)),
-                        },
-                        b'{' | b'[' => {
-                            if depth + open.len() == MAX_NESTING_DEPTH + 1 {
-                                return Err(fail(&open, p, SyntaxErr::MaxDepth, true));
-                            }
-                            let is_object = c == b'{';
-                            open.push(Open {
-                                is_object,
-                                member: "0".to_string(),
-                                index: 0,
-                                names: (is_object && !self.options.allow_duplicate_names)
-                                    .then(FxHashSet::default),
-                            });
-                            p = self.skip_ws(p + 1);
-                            if p >= b.len() {
-                                return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                            }
-                            if b[p] == if is_object { b'}' } else { b']' } {
-                                open.pop();
-                                p += 1;
-                            } else {
-                                step = if is_object {
-                                    Step::BeforeName
-                                } else {
-                                    Step::Value
-                                };
-                                continue;
-                            }
-                        }
-                        next => {
-                            let last_is_object = self.last_is_object();
-                            let err = if (last_is_object && next == b']')
-                                || (!last_is_object && next == b'}')
-                            {
-                                SyntaxErr::MismatchDelim
-                            } else {
-                                invalid_character(b, p, "at start of value")
-                            };
-                            return Err(fail(&open, p, err, true));
-                        }
-                    }
-                    step = Step::AfterValue;
+            (p, step) = match step {
+                ConsumeStep::Value => self.consume_value_step(&mut open, p, depth)?,
+                ConsumeStep::BeforeName => {
+                    (self.consume_object_name(&mut open, p)?, ConsumeStep::Value)
                 }
-                Step::BeforeName => {
-                    p = self.skip_ws(p);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                    }
-                    let name_start = p;
-                    let (end, name) = self
-                        .consume_string_raw(p)
-                        .map_err(|(pos, err)| fail(&open, pos, err, false))?;
-                    let top = open.last_mut().expect("open object");
-                    top.member = escape_pointer_token(&name);
-                    if let Some(names) = &mut top.names
-                        && !names.insert(name)
-                    {
-                        return Err(fail(&open, name_start, SyntaxErr::DuplicateName, true));
-                    }
-                    p = self.skip_ws(end);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, true));
-                    }
-                    if b[p] != b':' {
-                        let err = invalid_character(b, p, "after object name (expecting ':')");
-                        return Err(fail(&open, p, err, true));
-                    }
-                    p = self.skip_ws(p + 1);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, true));
-                    }
-                    step = Step::Value;
+                ConsumeStep::AfterValue => match self.consume_after_value(&mut open, p)? {
+                    Some(next) => next,
+                    None => return Ok(p),
+                },
+            };
+        }
+    }
+
+    /// Part of Go `consumeValue`: the value at `p`. A literal, string or
+    /// number is read whole; an object or array is opened (`consume_open`).
+    fn consume_value_step(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+        depth: usize,
+    ) -> Result<(usize, ConsumeStep), ConsumeError> {
+        let b = self.buf;
+        let c = b[p];
+        let end = match normalize_kind(c) {
+            b'n' | b't' | b'f' => consume_literal_raw(b, p, literal_text(c)),
+            b'"' => self.consume_string_raw(p).map(|(end, _)| end),
+            b'0' => consume_number_raw(b, p),
+            b'{' | b'[' => return self.consume_open(open, p, depth),
+            next => {
+                let last_is_object = self.last_is_object();
+                let err = if (last_is_object && next == b']') || (!last_is_object && next == b'}') {
+                    SyntaxErr::MismatchDelim
+                } else {
+                    invalid_character(b, p, "at start of value")
+                };
+                Err((p, err))
+            }
+        };
+        end.map(|end| (end, ConsumeStep::AfterValue))
+            .map_err(|(pos, err)| consume_fail(open, pos, err, true))
+    }
+
+    /// Part of Go `consumeObject` / `consumeArray` ("handle before start" and
+    /// "after start"): opens the container at `p` and goes to its first
+    /// member, or past it when it is empty.
+    fn consume_open(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+        depth: usize,
+    ) -> Result<(usize, ConsumeStep), ConsumeError> {
+        if depth + open.len() == MAX_NESTING_DEPTH + 1 {
+            return Err(consume_fail(open, p, SyntaxErr::MaxDepth, true));
+        }
+        let is_object = self.buf[p] == b'{';
+        open.push(ConsumeOpen {
+            is_object,
+            member: "0".to_string(),
+            index: 0,
+            names: (is_object && !self.options.allow_duplicate_names).then(FxHashSet::default),
+        });
+        let p = self.skip_ws(p + 1);
+        if p >= self.buf.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        if self.buf[p] == close_delim(is_object) {
+            open.pop();
+            return Ok((p + 1, ConsumeStep::AfterValue));
+        }
+        let next = if is_object {
+            ConsumeStep::BeforeName
+        } else {
+            ConsumeStep::Value
+        };
+        Ok((p, next))
+    }
+
+    /// Part of Go `consumeObject` ("handle before name", "after name" and
+    /// "before value"): the name at `p` of the innermost open object, its
+    /// duplicate check and the ':'. Gives the start of the value.
+    fn consume_object_name(
+        &self,
+        open: &mut [ConsumeOpen],
+        p: usize,
+    ) -> Result<usize, ConsumeError> {
+        let b = self.buf;
+        let p = self.skip_ws(p);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        let name_start = p;
+        let (end, name) = self
+            .consume_string_raw(p)
+            .map_err(|(pos, err)| consume_fail(open, pos, err, false))?;
+        let top = open.last_mut().expect("open object");
+        top.member = escape_pointer_token(&name);
+        if let Some(names) = &mut top.names
+            && !names.insert(name)
+        {
+            return Err(consume_fail(
+                open,
+                name_start,
+                SyntaxErr::DuplicateName,
+                true,
+            ));
+        }
+        let p = self.skip_ws(end);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, true));
+        }
+        if b[p] != b':' {
+            let err = invalid_character(b, p, "after object name (expecting ':')");
+            return Err(consume_fail(open, p, err, true));
+        }
+        let p = self.skip_ws(p + 1);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, true));
+        }
+        Ok(p)
+    }
+
+    /// Part of Go `consumeObject` / `consumeArray` ("handle after value"):
+    /// the ',' or closing delimiter at `p` after a member of the innermost
+    /// open container. `None` when no container is open (the value is done).
+    fn consume_after_value(
+        &self,
+        open: &mut Vec<ConsumeOpen>,
+        p: usize,
+    ) -> Result<Option<(usize, ConsumeStep)>, ConsumeError> {
+        let b = self.buf;
+        let Some(top) = open.last_mut() else {
+            return Ok(None);
+        };
+        let p = self.skip_ws(p);
+        if p >= b.len() {
+            return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
+        }
+        let is_object = top.is_object;
+        match b[p] {
+            b',' if is_object => Ok(Some((p + 1, ConsumeStep::BeforeName))),
+            b',' => {
+                top.index += 1;
+                top.member = top.index.to_string();
+                let p = self.skip_ws(p + 1);
+                if p >= b.len() {
+                    return Err(consume_fail(open, p, SyntaxErr::UnexpectedEof, false));
                 }
-                Step::AfterValue => {
-                    let Some(top) = open.last_mut() else {
-                        return Ok(p);
-                    };
-                    p = self.skip_ws(p);
-                    if p >= b.len() {
-                        return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                    }
-                    let is_object = top.is_object;
-                    match b[p] {
-                        b',' => {
-                            p += 1;
-                            if is_object {
-                                step = Step::BeforeName;
-                            } else {
-                                top.index += 1;
-                                top.member = top.index.to_string();
-                                p = self.skip_ws(p);
-                                if p >= b.len() {
-                                    return Err(fail(&open, p, SyntaxErr::UnexpectedEof, false));
-                                }
-                                step = Step::Value;
-                            }
-                        }
-                        c if c == if is_object { b'}' } else { b']' } => {
-                            open.pop();
-                            p += 1;
-                        }
-                        _ => {
-                            let place = if is_object {
-                                "after object value (expecting ',' or '}')"
-                            } else {
-                                "after array element (expecting ',' or ']')"
-                            };
-                            let err = invalid_character(b, p, place);
-                            return Err(fail(&open, p, err, false));
-                        }
-                    }
-                }
+                Ok(Some((p, ConsumeStep::Value)))
+            }
+            c if c == close_delim(is_object) => {
+                open.pop();
+                Ok(Some((p + 1, ConsumeStep::AfterValue)))
+            }
+            _ => {
+                let place = if is_object {
+                    "after object value (expecting ',' or '}')"
+                } else {
+                    "after array element (expecting ',' or ']')"
+                };
+                let err = invalid_character(b, p, place);
+                Err(consume_fail(open, p, err, false))
             }
         }
     }
+}
+
+/// One open container of `go_consume_value`: a frame of Go's recursive
+/// `consumeObject` / `consumeArray`.
+struct ConsumeOpen {
+    is_object: bool,
+    // The pointer token of the member being read (name or index).
+    member: String,
+    index: usize,
+    names: Option<FxHashSet<String>>,
+}
+
+/// Where `go_consume_value` goes on: a value (Go `consumeValue`), what
+/// follows a value, or an object name.
+enum ConsumeStep {
+    Value,
+    AfterValue,
+    BeforeName,
+}
+
+/// The `ConsumeError` of `go_consume_value` at `pos`: each open container
+/// but the innermost adds its member to the pointer suffix (Go's
+/// `wrapWithObjectName` / `wrapWithArrayIndex` on the way out); the
+/// innermost adds it when `wrap`.
+fn consume_fail(open: &[ConsumeOpen], pos: usize, err: SyntaxErr, wrap: bool) -> ConsumeError {
+    let n = open.len() - usize::from(!wrap && !open.is_empty());
+    let suffix = open[..n].iter().map(|o| o.member.clone()).collect();
+    (pos, err, suffix)
+}
+
+/// The closing delimiter of an object or array.
+fn close_delim(is_object: bool) -> u8 {
+    if is_object { b'}' } else { b']' }
 }
 
 /// Go `json.UnmarshalerFrom` and the JSON v2 default unmarshalers.
