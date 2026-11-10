@@ -1617,3 +1617,35 @@ once a **reconciliation step** is built and tested.
     gaps. Add the directory-collision scenario as a 12th known-bad for B2.
   - B2 continues with its own Rust tests. Its api-tier verification waits
     for H7.
+- **2026-11-10: the VM restarted** in the middle of H7's round 2 and Q7.
+  Both lanes were resumed from their committed state:
+  - H7 at `190df0530`, plus an uncommitted `parity.md` edit;
+  - Q7 at `e0f1a4187`, with 8 commits.
+- **B2 finished** (`t3/fix-api-path-parity`, last code commit `193b7fe26`,
+  head `afa69a727`).
+  - **The 11 api DIFFs:** H7's tier (from `6e97777e6`) gives 38 MATCH and
+    0 DIFF on the head, against 11 DIFF on the base.
+    - D2: the emit host now takes the program filesystem's case setting.
+    - D1: Go's `CaseSensitivity.CommonDirectoryOfFiles` is ported into
+      `tspath`.
+    - Fixed by those two, without further changes: the source-map
+      `sources` and tsbuildinfo `root` differences.
+    - A newly found TS5056 duplicate-output key.
+    - The call sites: risks 3–5, 10 and 12–13 are fixed and observable.
+      Risks 8, 9, 11 and 14 are fixed but can't be observed on Linux.
+  - **Cleanup:**
+    - `modulespecifiers/deps.rs`'s copy of the output-path code was folded
+      into `outputpaths`.
+    - The dead path helpers were deleted.
+    - `tests/api_case_sensitivity.rs` holds 8 tests with Go-generated
+      expectations.
+  - **Checks:** parity full without the api tier (`runs/b2-324eb0b93-full`)
+    is OK; icount within ±0.02%; GATING OK.
+  - **Decision:** `193b7fe26` edits Q7's `program.rs`. It removes a
+    duplicate of the JSON emit check, and the D2 fix needs it. Root accepts
+    it. Merge order: Q7 first, then B2 rebases onto Q7 and the merged H7,
+    regenerates the api pins with `--only`, and runs parity full with the
+    api tier. Astra reviews B2 after that.
+  - **Unconfirmed suspect:** `WORKER_FS` (`go_frontend.rs:168`) reads the
+    OS disk on checker threads. A probe matched Go, so it goes to the
+    backlog.
