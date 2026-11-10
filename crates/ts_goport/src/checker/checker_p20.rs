@@ -1063,34 +1063,25 @@ impl Checker {
                 result = self.get_widened_type_of_object_literal(t, context.clone());
             } else if flags.intersects(TypeFlags::UNION) {
                 let types = self.ty(t).types_list();
-                let union_context = match &context {
-                    Some(ctx) => ctx.clone(),
-                    None => Rc::new(RefCell::new(WideningContext {
+                let union_context = context.clone().unwrap_or_else(|| {
+                    Rc::new(RefCell::new(WideningContext {
                         siblings: types.to_vec(),
                         ..Default::default()
-                    })),
-                };
-                let mut widened_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for &member in &types {
-                    if self.ty(member).flags.intersects(TypeFlags::NULLABLE) {
-                        widened_types.push(member);
-                    } else {
-                        widened_types.push(
-                            self.get_widened_type_with_context(member, Some(union_context.clone())),
-                        );
-                    }
-                }
+                    }))
+                });
+                let widened_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&member| {
+                        if self.ty(member).flags.intersects(TypeFlags::NULLABLE) {
+                            return member;
+                        }
+                        self.get_widened_type_with_context(member, Some(union_context.clone()))
+                    })
+                    .collect();
                 // Widening an empty object literal transitions from a highly restrictive type to
                 // a highly inclusive one. For that reason we perform subtype reduction here if the
                 // union includes empty object types (e.g. reducing {} | string to just {}).
-                let mut some_empty = false;
-                for &w in &widened_types {
-                    if self.is_empty_object_type(w) {
-                        some_empty = true;
-                        break;
-                    }
-                }
-                let reduction = if some_empty {
+                let reduction = if widened_types.iter().any(|&w| self.is_empty_object_type(w)) {
                     UnionReduction::SUBTYPE
                 } else {
                     UnionReduction::LITERAL
@@ -1098,24 +1089,24 @@ impl Checker {
                 result = self.get_union_type_ex(&widened_types, reduction, None, TypeId::NIL);
             } else if flags.intersects(TypeFlags::INTERSECTION) {
                 let types = self.ty(t).types_list();
-                let mut widened_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for member in types {
-                    widened_types.push(self.get_widened_type(member));
-                }
+                let widened_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&member| self.get_widened_type(member))
+                    .collect();
                 result = self.get_intersection_type(&widened_types);
             } else if self.is_array_or_tuple_type(t) {
                 let target = self.ty(t).target();
                 let type_arguments = self.get_type_arguments(t);
-                let mut widened_arguments: Vec<TypeId> = Vec::with_capacity(type_arguments.len());
-                for arg in type_arguments {
-                    widened_arguments.push(self.get_widened_type(arg));
-                }
+                let widened_arguments: Vec<TypeId> = type_arguments
+                    .iter()
+                    .map(|&arg| self.get_widened_type(arg))
+                    .collect();
                 result = self.create_type_reference(target, &widened_arguments);
             }
             if result.is_some() && context.is_none() {
                 self.cached_types.insert(key, result);
             }
-            return if result.is_some() { result } else { t };
+            return result.get().unwrap_or(t);
         }
         t
     }
