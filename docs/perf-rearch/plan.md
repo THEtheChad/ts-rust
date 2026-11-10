@@ -1338,3 +1338,17 @@ once a **reconciliation step** is built and tested.
       `registered_programs`).
 - **W2-CA merged** after Astra's ACCEPT, with no findings
   (`reviews/2026-11-09-astra-w2ca.md`).
+- **W2-CB finished** (`t3/checker-code-quality-1`, head `b74ac373a`).
+  - **Targets:** all 39 port targets and both own targets are gone. Σ Δ of
+    targets went 615 → 0; Σ positive Δ 1,225 → 679.
+  - **Parity full** (`20261109-190643-full-3d2c1c7cba`): PARITY OK. An
+    earlier full run had an ERROR because a session opened `~/.config` (the
+    H5 tripwire). That session passed when run alone, and the full rerun
+    was clean.
+  - **icount:** single-threaded cells within ±0.012%.
+  - **Root's decision:** CB added `if_else`/`or_else_*` helpers mirroring
+    Go's `core.IfElse`/`OrElse` (61 uses). They are allowed only where Go
+    calls those at that spot (Go evaluates both arguments too). CA declined
+    to add the helper; the rule above covers both lanes. Recorded in
+    `w2-brief.md` ("Go helper idioms") and sent to W2-CC. Astra checks each
+    use against Go.

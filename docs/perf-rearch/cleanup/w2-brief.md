@@ -43,6 +43,22 @@ Then read this page. Your lane prompt gives you your files and your targets.
    - The remaining clippy exceptions in `[workspace.lints.clippy]` are out
      of scope, unless a function you're already splitting trips one.
 
+## Go helper idioms (root's decision, 2026-11-09)
+
+- **`if_else(cond, a, b)`** (`checker_p01.rs`, from W2-CB) is allowed only
+  where Go's code at that spot calls `core.IfElse`. It evaluates both
+  arguments, as Go does.
+  - Where Go writes `if`/`else`, keep Rust's `if`/`else`. Using the helper
+    there would be gaming the metric.
+  - Don't use it if an argument panics or is costly in a way that Go's
+    isn't.
+- **`or_else_*`** is allowed where Go calls `core.OrElse`.
+- **Rust iterator forms** (`any`, `all`, `find`, `filter`, `map`) for Go's
+  `core.Some`, `Every`, `Find`, `Filter` and `Map` are always preferred to
+  flag-and-`break` loops.
+- **A Go tagless `switch` written as an else-if chain** stays as it is. Its
+  residue in the score is accepted.
+
 ## Rules
 
 - **One owner per file.** Edit only the files your prompt lists. If you need
