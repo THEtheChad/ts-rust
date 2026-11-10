@@ -759,6 +759,52 @@ fn fmt_uris(uris: &[lsproto::DocumentUri]) -> String {
     fmt_list(&parts)
 }
 
+/// Frees the programs that a clone made (`made_programs`) but that no
+/// project of `new_snapshot` holds.
+///
+/// PORT: not in Go. A program that this clone made for a project that it
+/// then deleted or updated again is in no snapshot, so `dispose` never frees
+/// it, and its host still holds the builder (the `Project -> host -> builder`
+/// cycle). Go's GC frees it. The port freezes its host and frees its checker
+/// pool and program version, as `dispose` does for a program that no
+/// snapshot holds. Its parse cache counts stay, as in Go (no snapshot derefs
+/// them). The host of a project that the clone deleted gives its
+/// resolve-ahead keys to the stash, for a later clone that makes the project
+/// again (`ResolveAheadStash`).
+fn release_programs_in_no_snapshot(
+    store: &SnapshotHost,
+    new_snapshot: &Snapshot,
+    made_programs: Vec<MadeProgram>,
+    snapshot_fs: &Rc<SnapshotFS>,
+) {
+    let projects = new_snapshot.project_collection.projects();
+    let kept: FxHashSet<*const compiler::NewProgram> = projects
+        .iter()
+        .filter_map(|project| project.borrow().program.as_ref().map(Rc::as_ptr))
+        .collect();
+    let kept_configs: FxHashSet<tspath::Path> = projects
+        .iter()
+        .map(|project| project.borrow().config_file_path.clone())
+        .collect();
+    for made in made_programs {
+        if kept.contains(&Rc::as_ptr(&made.program)) {
+            continue;
+        }
+        if made.host.builder.borrow().is_some() {
+            made.host.freeze(
+                snapshot_fs.clone(),
+                new_snapshot.config_file_registry.clone(),
+            );
+        }
+        if !kept_configs.contains(&made.host.config_file_path) {
+            store.resolve_ahead_stash.put(&made.host);
+        }
+        made.checker_pool.discard();
+        crate::ls::release_search_thread(&made.program);
+        crate::program::ls_program::release_program(&made.program);
+    }
+}
+
 impl Snapshot {
     // Go: project/snapshot.go:429 Clone
     // PORT: Go `Clone` is `clone_` (Rust `Clone::clone` copies a value).
@@ -848,54 +894,65 @@ impl Snapshot {
                 }
                 details
             };
-            // PORT: Go `switch change.reason`; an `if` chain needs only `PartialEq`.
-            let reason = &change.reason;
-            if *reason == UpdateReason::DID_OPEN_FILE {
-                logger.logf(&format!(
-                    "Reason: DidOpenFile - {}",
-                    change.file_changes.opened.0
-                ));
-            } else if *reason == UpdateReason::DID_CLOSE_FILE {
-                logger.logf(&format!(
-                    "Reason: DidCloseFile - {:?}",
-                    change.file_changes.closed
-                ));
-            } else if *reason == UpdateReason::DID_CHANGE_COMPILER_OPTIONS_FOR_INFERRED_PROJECTS {
-                logger.logf("Reason: DidChangeCompilerOptionsForInferredProjects");
-            } else if *reason == UpdateReason::REQUESTED_LANGUAGE_SERVICE_PENDING_CHANGES {
-                logger.logf(&format!(
-                    "Reason: RequestedLanguageService (pending file changes) - {}",
-                    get_details()
-                ));
-            } else if *reason == UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED {
-                logger.logf(&format!(
-                    "Reason: RequestedLanguageService (project not loaded) - {}",
-                    get_details()
-                ));
-            } else if *reason == UpdateReason::REQUESTED_LANGUAGE_SERVICE_FOR_FILE_NOT_OPEN {
-                logger.logf(&format!(
-                    "Reason: RequestedLanguageService (file not open) - {}",
-                    get_details()
-                ));
-            } else if *reason == UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY {
-                logger.logf(&format!(
-                    "Reason: RequestedLanguageService (project dirty) - {}",
-                    get_details()
-                ));
-            } else if *reason == UpdateReason::REQUESTED_LOAD_PROJECT_TREE {
-                logger.logf(&format!(
-                    "Reason: RequestedLoadProjectTree - {}",
-                    get_details()
-                ));
-            } else if *reason == UpdateReason::IDLE_CLEAN_DISK_CACHE {
-                logger.logf("Reason: IdleCleanDiskCache");
-            } else if *reason == UpdateReason::DID_CHANGE_CONFIG_FILE {
-                logger.logf(&format!("Reason: DidChangeConfigFile - {}", get_details()));
-            } else if *reason == UpdateReason::DID_CHANGE_CONTENT_MAPPER_CONTRIBUTIONS {
-                logger.logf(&format!(
-                    "Reason: DidChangeContentMapperContributions - {}",
-                    get_details()
-                ));
+            match change.reason {
+                UpdateReason::DID_OPEN_FILE => {
+                    logger.logf(&format!(
+                        "Reason: DidOpenFile - {}",
+                        change.file_changes.opened.0
+                    ));
+                }
+                UpdateReason::DID_CLOSE_FILE => {
+                    logger.logf(&format!(
+                        "Reason: DidCloseFile - {:?}",
+                        change.file_changes.closed
+                    ));
+                }
+                UpdateReason::DID_CHANGE_COMPILER_OPTIONS_FOR_INFERRED_PROJECTS => {
+                    logger.logf("Reason: DidChangeCompilerOptionsForInferredProjects");
+                }
+                UpdateReason::REQUESTED_LANGUAGE_SERVICE_PENDING_CHANGES => {
+                    logger.logf(&format!(
+                        "Reason: RequestedLanguageService (pending file changes) - {}",
+                        get_details()
+                    ));
+                }
+                UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED => {
+                    logger.logf(&format!(
+                        "Reason: RequestedLanguageService (project not loaded) - {}",
+                        get_details()
+                    ));
+                }
+                UpdateReason::REQUESTED_LANGUAGE_SERVICE_FOR_FILE_NOT_OPEN => {
+                    logger.logf(&format!(
+                        "Reason: RequestedLanguageService (file not open) - {}",
+                        get_details()
+                    ));
+                }
+                UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY => {
+                    logger.logf(&format!(
+                        "Reason: RequestedLanguageService (project dirty) - {}",
+                        get_details()
+                    ));
+                }
+                UpdateReason::REQUESTED_LOAD_PROJECT_TREE => {
+                    logger.logf(&format!(
+                        "Reason: RequestedLoadProjectTree - {}",
+                        get_details()
+                    ));
+                }
+                UpdateReason::IDLE_CLEAN_DISK_CACHE => {
+                    logger.logf("Reason: IdleCleanDiskCache");
+                }
+                UpdateReason::DID_CHANGE_CONFIG_FILE => {
+                    logger.logf(&format!("Reason: DidChangeConfigFile - {}", get_details()));
+                }
+                UpdateReason::DID_CHANGE_CONTENT_MAPPER_CONTRIBUTIONS => {
+                    logger.logf(&format!(
+                        "Reason: DidChangeContentMapperContributions - {}",
+                        get_details()
+                    ));
+                }
+                _ => {}
             }
         }
         let logger = logger_out.clone();
@@ -1244,42 +1301,12 @@ impl Snapshot {
                 }
             }
         }
-        // PORT: not in Go. A program that this clone made for a project that
-        // it then deleted or updated again is in no snapshot, so `dispose`
-        // never frees it, and its host still holds the builder (the
-        // `Project -> host -> builder` cycle). Go's GC frees it. The port
-        // freezes its host and frees its checker pool and program version,
-        // as `dispose` does for a program that no snapshot holds. Its parse
-        // cache counts stay, as in Go (no snapshot derefs them). The host of
-        // a project that the clone deleted gives its resolve-ahead keys to
-        // the stash, for a later clone that makes the project again
-        // (`ResolveAheadStash`).
-        let projects = new_snapshot.project_collection.projects();
-        let kept: FxHashSet<*const compiler::NewProgram> = projects
-            .iter()
-            .filter_map(|project| project.borrow().program.as_ref().map(Rc::as_ptr))
-            .collect();
-        let kept_configs: FxHashSet<tspath::Path> = projects
-            .iter()
-            .map(|project| project.borrow().config_file_path.clone())
-            .collect();
-        for made in project_collection_builder.made_programs.take() {
-            if kept.contains(&Rc::as_ptr(&made.program)) {
-                continue;
-            }
-            if made.host.builder.borrow().is_some() {
-                made.host.freeze(
-                    snapshot_fs.clone(),
-                    new_snapshot.config_file_registry.clone(),
-                );
-            }
-            if !kept_configs.contains(&made.host.config_file_path) {
-                store.resolve_ahead_stash.put(&made.host);
-            }
-            made.checker_pool.discard();
-            crate::ls::release_search_thread(&made.program);
-            crate::program::ls_program::release_program(&made.program);
-        }
+        release_programs_in_no_snapshot(
+            store,
+            &new_snapshot,
+            project_collection_builder.made_programs.take(),
+            &snapshot_fs,
+        );
         // PORT: Go map order is random; the registry map's order here (the
         // owner adds do not depend on the order).
         for config in new_snapshot.config_file_registry.configs.values() {
