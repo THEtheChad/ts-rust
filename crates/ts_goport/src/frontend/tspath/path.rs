@@ -5,6 +5,9 @@ use crate::frontend::prelude::*;
 use super::dynamic::{
     DYNAMIC_URI_FILE_NAME_PREFIX, canonical_dynamic_uri_path, is_encoded_dynamic_file_name,
 };
+use crate::frontend::stringutil_ls::{
+    equate_string_case_insensitive, equate_string_case_sensitive, get_string_equality_comparer,
+};
 use crate::gostd::unicode;
 use std::borrow::Cow;
 
@@ -52,82 +55,9 @@ const URL_SCHEME_SEPARATOR: &str = "://";
 
 // ---------------------------------------------------------------------------
 // stringutil/compare.go helpers used by tspath.
-// PORT: stringutil is not a unit of this wave. These are private copies of
-// the Go functions that tspath calls, so no other unit's names are claimed.
+// PORT: the equality comparers are `stringutil_ls`'s. The comparers below
+// are private copies that return Go's `int` rather than `Comparison`.
 // ---------------------------------------------------------------------------
-
-// PORT: simple uppercase. A multi-rune full uppercase (for example U+00DF)
-// has no simple mapping in UnicodeData, so the rune stays the same.
-fn simple_to_upper(c: char) -> char {
-    let mut u = c.to_uppercase();
-    match (u.next(), u.next()) {
-        (Some(single), None) => single,
-        _ => c,
-    }
-}
-
-// PORT: simple case fold key. Two runes are in the same Go `unicode.SimpleFold`
-// orbit when their keys are equal. The key is lower(upper(c)) with simple
-// mappings. U+0131 (dotless i) has only a Turkic fold entry, so its orbit is
-// itself, like Go. U+0130 stays itself because it has no simple lowercase
-// other than through the full mapping. Rust and Go can use different Unicode
-// versions; this matters only for runes added between those versions.
-fn simple_fold_key(c: char) -> char {
-    if c == '\u{0131}' {
-        return c;
-    }
-    let u = simple_to_upper(c);
-    let mut l = u.to_lowercase();
-    match (l.next(), l.next()) {
-        (Some(single), None) => single,
-        _ => u,
-    }
-}
-
-// Go: stringutil/compare.go:9 EquateStringCaseInsensitive
-// PORT: Go `strings.EqualFold`. Each rune pair must be equal, ASCII case
-// equal, or in the same simple fold orbit (see `simple_fold_key`).
-fn equate_string_case_insensitive(a: &str, b: &str) -> bool {
-    let mut ai = a.chars();
-    let mut bi = b.chars();
-    loop {
-        match (ai.next(), bi.next()) {
-            (None, None) => return true,
-            (Some(sr), Some(tr)) => {
-                if sr == tr {
-                    continue;
-                }
-                let (sr, tr) = if tr < sr { (tr, sr) } else { (sr, tr) };
-                if (tr as u32) < 0x80 {
-                    // ASCII only, sr/tr must be upper/lower case
-                    if sr.is_ascii_uppercase() && tr as u32 == sr as u32 + ('a' as u32 - 'A' as u32)
-                    {
-                        continue;
-                    }
-                    return false;
-                }
-                if simple_fold_key(sr) == simple_fold_key(tr) {
-                    continue;
-                }
-                return false;
-            }
-            _ => return false,
-        }
-    }
-}
-
-// Go: stringutil/compare.go:15 EquateStringCaseSensitive
-fn equate_string_case_sensitive(a: &str, b: &str) -> bool {
-    a == b
-}
-
-// Go: stringutil/compare.go:19 GetStringEqualityComparer
-fn get_string_equality_comparer(ignore_case: bool) -> fn(&str, &str) -> bool {
-    if ignore_case {
-        return equate_string_case_insensitive;
-    }
-    equate_string_case_sensitive
-}
 
 // Go: stringutil/compare.go:34 CompareStringsCaseInsensitive
 fn compare_strings_case_insensitive(a: &str, b: &str) -> i32 {

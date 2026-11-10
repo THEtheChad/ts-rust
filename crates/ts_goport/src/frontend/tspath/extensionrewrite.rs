@@ -7,7 +7,7 @@
 
 use super::extension::{has_ts_file_extension, is_declaration_file_name};
 use super::path::path_is_relative;
-use crate::frontend::vfs::vfsmatch::equal_fold;
+use crate::frontend::stringutil_ls::equal_fold;
 
 // Go: tspath/extensionrewrite.go:3 ExtensionRewrite
 /// One content mapper output extension: a file or specifier that ends with
