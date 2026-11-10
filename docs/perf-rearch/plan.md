@@ -1433,3 +1433,15 @@ once a **reconciliation step** is built and tested.
   - `checker/inference_p1.rs:1234`, a debug verifier;
   - centralize the `debug_assertions` cfg boundary between `compilerhost`
     and `goport_core`.
+- **W2-EF merged** (`t3/effect-code-quality` at `77e903a5e`, merge
+  `09661c926`).
+  - Round 2 states the lossy-unquote fix as an intended change (a crash
+    becomes answers). `tests/effect_lsp_module_specifier.rs` fails 5 of 6
+    cases on the old code.
+  - Parity full on the final code: `runs/20261109-224650-full-69d23c78d7`,
+    PARITY OK, with `checkoutHead` matching.
+  - Root ran GATING OK on the merged head.
+  - Lane reports name branches by the T3 thread id (`t3/<id>`) while the
+    real branch has a descriptive name. Root resolves the branch from the
+    head commit before merging.
+- **W2-EF2 started:** the 24 Effect rows still over 25.
