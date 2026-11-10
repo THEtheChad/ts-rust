@@ -1359,3 +1359,15 @@ once a **reconciliation step** is built and tested.
     Go's form, and the residue is recorded as accepted.
   - Parity quick OK.
   - Root's full gate on the merged head (CA + CB): `runs/head-e9b346998-full`.
+- **W2-LS finished** (`t3/8d4bbff2`, head `d1db1a52c`).
+  - **Targets:** ls port targets went 13 → 6 (Σ Δ 239 → 76), own targets
+    2 → 0. `get_completion_data` is now +3 over Go.
+  - **Parity full OK:** the lsp tier is the same as the base.
+  - **Duplication:** 3.51% → 3.49%.
+  - **Astra review:** running.
+  - **Root's follow-up, after CC merges:** a small idiom lane.
+    - Move one shared `if_else`/`or_else_*` into `core.rs`, which ports Go's
+      `internal/core`.
+    - Remove the duplicate `or_else_node` (LS's copy and CB's copy).
+    - Apply `if_else` where Go calls `core.IfElse` in CA's and LS's
+      residue.
