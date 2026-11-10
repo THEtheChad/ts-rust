@@ -1578,10 +1578,8 @@ impl Checker {
         let mut filtered_types = self.ty(contextual_type).types().to_vec();
         if is_object_literal_expression(node.parent()) || is_jsx_attributes(node.parent()) {
             // core.Filter
-            filtered_types = filtered_types
-                .into_iter()
-                .filter(|&t| !self.is_type_invalid_due_to_union_discriminant(t, node.parent()))
-                .collect();
+            filtered_types
+                .retain(|&t| !self.is_type_invalid_due_to_union_discriminant(t, node.parent()));
         }
         // core.MapNonNil
         let discriminated_property_symbols: Vec<SymbolId> = filtered_types
