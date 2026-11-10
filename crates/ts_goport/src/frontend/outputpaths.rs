@@ -574,3 +574,107 @@ pub fn get_common_source_directory(
 
     common_source_directory
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A case-insensitive host whose common source directory is
+    /// `common_source_directory`.
+    struct InsensitiveHost {
+        common_source_directory: &'static str,
+    }
+
+    impl OutputPathsHost for InsensitiveHost {
+        fn common_source_directory(&self) -> String {
+            self.common_source_directory.to_string()
+        }
+        fn content_mapper_extensions(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn content_mapper_extension_rewrites(&self) -> Vec<ExtensionRewrite> {
+            Vec::new()
+        }
+        fn get_current_directory(&self) -> String {
+            "/".to_string()
+        }
+        fn use_case_sensitive_file_names(&self) -> bool {
+            false
+        }
+    }
+
+    const ROOT: &str = "^/~ts-uri~/mem/auth";
+
+    // Go `getOutputFileNameWithoutChangingExtension` takes the path below the
+    // common directory with `CaseSensitivity.RelativePathFromDirectory`,
+    // which keeps the case of an encoded dynamic name. Go's answer (lane B2,
+    // API probe `c_rootcase` with the oracle at the pin): rootDir
+    // `<root>/a`, outDir `<root>/out`, file `<root>/A/x.ts` emits
+    // `<root>/A/x.js`, not `<root>/out/x.js`.
+    #[test]
+    fn output_name_of_dynamic_name_keeps_case_below_common_directory() {
+        let host = InsensitiveHost {
+            common_source_directory: "^/~ts-uri~/mem/auth/a/",
+        };
+        let options = CompilerOptions {
+            out_dir: format!("{ROOT}/out"),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name_worker(&format!("{ROOT}/A/x.ts"), &options, &host),
+            format!("{ROOT}/A/x.js")
+        );
+        // A disk name folds case.
+        let host = InsensitiveHost {
+            common_source_directory: "/p/a/",
+        };
+        let options = CompilerOptions {
+            out_dir: "/p/out".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name_worker("/p/A/x.ts", &options, &host),
+            "/p/out/x.js"
+        );
+    }
+
+    // Go `GetOutputPathsFor` and `GetOutputJSFileName` compare the JSON
+    // output with its input by `CaseSensitivity.CompareFilePaths`: a dynamic
+    // name keeps its case, so outDir `<root>/SRC` is not the input directory
+    // `<root>/src`. Go's answer (API case `json_dynamic_out_dir_case`):
+    // `<root>/SRC/data.json` is emitted.
+    #[test]
+    fn json_output_of_dynamic_name_compares_with_case() {
+        let host = InsensitiveHost {
+            common_source_directory: "^/~ts-uri~/mem/auth/src/",
+        };
+        let options = CompilerOptions {
+            out_dir: format!("{ROOT}/SRC"),
+            ..Default::default()
+        };
+        let input = format!("{ROOT}/src/data.json");
+        let output = format!("{ROOT}/SRC/data.json");
+        assert_eq!(get_output_js_file_name(&input, &options, &host), output);
+        let paths = get_output_paths_for_file(
+            &input,
+            ScriptKind::JSON,
+            "",
+            &options,
+            &host,
+            ForceEmitPaths::default(),
+        );
+        assert_eq!(paths.js_file_path(), output);
+        // A disk name folds case: the output would be its own input.
+        let host = InsensitiveHost {
+            common_source_directory: "/p/src/",
+        };
+        let options = CompilerOptions {
+            out_dir: "/p/SRC".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name("/p/src/data.json", &options, &host),
+            ""
+        );
+    }
+}

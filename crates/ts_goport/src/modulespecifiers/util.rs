@@ -577,4 +577,31 @@ mod tests {
             assert_eq!(get_node_module_path_parts(path), None, "{path}");
         }
     }
+
+    // Go `comparePathsByRedirect` and `packageJsonPathsAreEqual` compare with
+    // `CaseSensitivity.CompareFilePaths` / `ComparePaths` (ts#64159): on a
+    // case-insensitive file system an encoded dynamic name keeps its case
+    // (Go typed_paths_test.go:82), a disk name does not.
+    #[test]
+    fn dynamic_names_compare_with_case() {
+        let module_path = |file_name: &str| ModulePath {
+            file_name: file_name.to_string(),
+            is_in_node_modules: false,
+            is_redirect: false,
+        };
+        let upper = module_path("^/~ts-uri~/mem/auth/Foo.ts");
+        let lower = module_path("^/~ts-uri~/mem/auth/foo.ts");
+        assert_ne!(compare_paths_by_redirect(&upper, &lower, false), 0);
+        assert_eq!(
+            compare_paths_by_redirect(&module_path("/p/Foo.ts"), &module_path("/p/foo.ts"), false),
+            0
+        );
+        assert!(!package_json_paths_are_equal(
+            "^/~ts-uri~/mem/auth/A",
+            "^/~ts-uri~/mem/auth/a",
+            false
+        ));
+        assert!(package_json_paths_are_equal("/p/A", "/p/a", false));
+        assert!(!package_json_paths_are_equal("/p/A", "/p/a", true));
+    }
 }

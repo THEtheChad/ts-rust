@@ -1,0 +1,75 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "^/~ts-uri~/mem/auth/A/x.ts",
+      "^/~ts-uri~/mem/auth/a/y.ts",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "declaration": true,
+      "noLib": true,
+      "outDir": "/b2/virtualout",
+      "sourceMap": true
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "/b2/virtualout/A/x.d.ts",
+    "sourceFileName": "^/~ts-uri~/mem/auth/A/x.ts",
+    "text": "export declare const x0 = 0;\n"
+   },
+   {
+    "fileName": "/b2/virtualout/A/x.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/A/x.ts",
+    "text": "export const x0 = 0;\n//# sourceMappingURL=x.js.map"
+   },
+   {
+    "fileName": "/b2/virtualout/A/x.js.map",
+    "sourceFileName": "^/~ts-uri~/mem/auth/A/x.ts",
+    "text": "{\"version\":3,\"file\":\"x.js\",\"sources\":[\"file:///^/~ts-uri~/mem/auth/A/x.ts\"],\"names\":[],\"mappings\":\"AAAA,MAAM,CAAC,MAAM,EAAE,GAAG,CAAC,CAAC\"}"
+   },
+   {
+    "fileName": "/b2/virtualout/a/y.d.ts",
+    "sourceFileName": "^/~ts-uri~/mem/auth/a/y.ts",
+    "text": "export declare const x1 = 1;\n"
+   },
+   {
+    "fileName": "/b2/virtualout/a/y.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/a/y.ts",
+    "text": "export const x1 = 1;\n//# sourceMappingURL=y.js.map"
+   },
+   {
+    "fileName": "/b2/virtualout/a/y.js.map",
+    "sourceFileName": "^/~ts-uri~/mem/auth/a/y.ts",
+    "text": "{\"version\":3,\"file\":\"y.js\",\"sources\":[\"file:///^/~ts-uri~/mem/auth/a/y.ts\"],\"names\":[],\"mappings\":\"AAAA,MAAM,CAAC,MAAM,EAAE,GAAG,CAAC,CAAC\"}"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "^/~ts-uri~/mem/auth/A/x.ts",
+  "^/~ts-uri~/mem/auth/a/y.ts",
+  "/b2/g.d.ts"
+ ]
+}

@@ -1598,3 +1598,64 @@ fn test_path_contains_path_is_path_key() {
         );
     }
 }
+
+// Go: typed_paths_test.go:508 TestCommonDirectoryOfFiles (ts#64159).
+// `true` is Go `CaseSensitive`.
+#[test]
+fn test_common_directory_of_files() {
+    let file_names = [
+        "/Project/src/a.ts".to_string(),
+        "/project/src/nested/b.ts".to_string(),
+        "/project/test/c.ts".to_string(),
+    ];
+    assert_eq!(
+        tspath::common_directory_of_files(&file_names, false),
+        "/Project"
+    );
+    assert_eq!(tspath::common_directory_of_files(&file_names, true), "/");
+    assert_eq!(
+        tspath::common_directory_of_files(
+            &[
+                "/repo/\u{130}project/a.ts".to_string(),
+                "/repo/iproject/b.ts".to_string(),
+            ],
+            false
+        ),
+        "/repo"
+    );
+}
+
+// Go: typed_paths_test.go:72 TestEncodedDynamicPathsPreserveOpaqueIdentity
+// applied to CommonDirectoryOfFiles (rooted_path.go:627): an encoded
+// dynamic name compares with case, without its root's separator. Go's
+// answers (lane B2, the oracle at the pin): the API emit of `A/x.ts` and
+// `a/y.ts` under `^/~ts-uri~/mem/auth` keeps `A/` and `a/` below outDir on
+// a case-insensitive file system.
+#[test]
+fn test_common_directory_of_dynamic_files() {
+    let root = "^/~ts-uri~/mem/auth";
+    let names = |a: &str, b: &str| [format!("{root}/{a}"), format!("{root}/{b}")];
+    assert_eq!(
+        tspath::common_directory_of_files(&names("A/x.ts", "a/y.ts"), false),
+        format!("{root}/")
+    );
+    assert_eq!(
+        tspath::common_directory_of_files(&names("A/x.ts", "A/y.ts"), false),
+        format!("{root}/A")
+    );
+    assert_eq!(
+        tspath::common_directory_of_files(
+            &[
+                "^/~ts-uri~/mem/Auth/x.ts".to_string(),
+                format!("{root}/y.ts")
+            ],
+            false
+        ),
+        ""
+    );
+    // A dynamic name after a disk name: the roots differ.
+    assert_eq!(
+        tspath::common_directory_of_files(&["/b2/x.ts".to_string(), format!("{root}/y.ts")], false),
+        ""
+    );
+}

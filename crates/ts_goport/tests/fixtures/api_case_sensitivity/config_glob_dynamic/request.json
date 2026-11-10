@@ -1,0 +1,18 @@
+{
+ "fileSystem": {
+  "kind": "full",
+  "files": {
+   "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\"]}",
+   "^/~ts-uri~/mem/auth/src/A/x.ts": "export const x = 0;",
+   "^/~ts-uri~/mem/auth/src/a/y.ts": "export const y = 1;",
+   "^/~ts-uri~/mem/auth/src/P.ts": "export const p = 2;",
+   "^/~ts-uri~/mem/auth/src/p.ts": "export const q = 3;",
+   "^/~ts-uri~/mem/auth/src/Y.ts": "export const r = 4;",
+   "^/~ts-uri~/mem/auth/src/y.js": "export const s = 5;",
+   "^/~ts-uri~/mem/auth/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}"
+  }
+ },
+ "openProjects": [
+  "^/~ts-uri~/mem/auth/tsconfig.json"
+ ]
+}

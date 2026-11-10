@@ -1,0 +1,54 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "/b2/A/x.ts",
+      "/b2/a/y.ts",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "noLib": true,
+      "outDir": "/b2/out",
+      "rootDir": "/b2/A"
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "/b2/out/x.js",
+    "sourceFileName": "/b2/A/x.ts",
+    "text": "export const x0 = 0;\n"
+   },
+   {
+    "fileName": "/b2/out/y.js",
+    "sourceFileName": "/b2/a/y.ts",
+    "text": "export const x1 = 1;\n"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "/b2/A/x.ts",
+  "/b2/a/y.ts",
+  "/b2/g.d.ts"
+ ]
+}

@@ -1,0 +1,25 @@
+{
+ "fileSystem": {
+  "kind": "full",
+  "files": {
+   "^/~ts-uri~/mem/auth/A/x.ts": "export const x0 = 0;",
+   "^/~ts-uri~/mem/auth/a/y.ts": "export const x1 = 1;",
+   "/b2/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}"
+  }
+ },
+ "createPrograms": [
+  {
+   "rootFiles": [
+    "^/~ts-uri~/mem/auth/A/x.ts",
+    "^/~ts-uri~/mem/auth/a/y.ts",
+    "/b2/g.d.ts"
+   ],
+   "compilerOptions": {
+    "noLib": true,
+    "outDir": "/b2/virtualout",
+    "declaration": true,
+    "sourceMap": true
+   }
+  }
+ ]
+}
