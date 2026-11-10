@@ -1495,3 +1495,26 @@ once a **reconciliation step** is built and tested.
       differs from Go's at the pin. This is a possible parity gap that no
       tier covers.
   - **Astra review:** running.
+- **Q8 finished** (`t3/core-helper-consolidation`, head `b704bb9f5`).
+  - **What changed:** `core::if_else` and a generic `core::or_else` now live
+    in `core.rs` (Go's `internal/core`). The duplicate copies are removed,
+    and 10 residue rows plus 6 missed sites were converted under the rule.
+  - **Effect:** checker rows with Δ ≥ 10 went 14 → 9; ls rows 6 → 2.
+  - **Checks:** parity full OK at `544fceb0a`; icount within ±0.005%; GATING
+    OK.
+  - **Astra review:** running. The main question is whether `Default`
+    equals Go's zero value for every type used with `or_else`.
+  - **Found along the way:**
+    - CI's clippy fails on `perf/first-principles`, at
+      `tests/effect_lsp_module_specifier.rs:152`
+      (`duration_suboptimal_units`, from W2-EF). W2-EF2 is fixing it in
+      its round 2, since it owns that test code.
+    - The W2-LS review file was never written: the heredoc came after a
+      failed merge in an `&&` chain. Restored in `9ca3fd987`.
+  - **After W2-FE merges:**
+    - point its four `crate::checker::if_else` imports at `crate::core` and
+      drop the re-export;
+    - run `lib-blobs.sh write`;
+    - fold the `runtime_syntax.rs` `coalesce` copy and the
+      `frontend/core_ls_ext.rs` core helpers into `core.rs`;
+    - move the `ElementOrNil` copies to a `NodeSlice` method.
