@@ -138,8 +138,20 @@ context budget, not for a risk.
   `diagnostics,test-hooks` 2,143 passed, 0 failed; `effect_cases`
   1,060/1,060 (also at the final commit).
 - Clippy 1.95.0 `-D warnings` (CI command), plain and with the features: ok.
-- Parity full: PARITY OK, 0 lost
-  (`~/.cache/perf-rearch/parity/runs/20261109-191432-full-c8b54ec71b`).
+- Parity full on the round-2 head `0734d97df` (rebased onto
+  `perf/first-principles` `af9b8c7e2`; `meta.json` `checkoutHead`
+  `0734d97df`): PARITY OK, 0 lost, 0 new items not good, 0 newly good by a
+  referee (`~/.cache/perf-rearch/parity/runs/20261109-224650-full-69d23c78d7`).
+  Tests tier 139,914 PASS and 2 FLAKY (failed, then passed alone; neither
+  touches Effect): `multi_program/build_watch_keeps_the_first_dts_parse_of_a_cycle`,
+  `tsgo_stdio_end/watch_ends_soon_after_sigint_or_sigterm`. Round 1's run
+  (`20261109-191432-full-c8b54ec71b`) had recorded checkout `0839f5147`,
+  which lacked `rules/module_references.rs` in git and preceded the last
+  code commit.
+- `quality.sh gating 0734d97df`: GATING FAIL with 11 findings, all outside
+  `effect/` (pre-existing, Q6: `ast/synthetic.rs`, `program/ls_program.rs`,
+  `program/reuse_verify.rs`, `emitter/program_emit.rs`, 7 in `program.rs`);
+  none in `effect/`.
 - icount `--profile goport`, base `f59c229c5`: all 9 cells within ±0.07%.
   Effect on (`TSC_RS_EFFECT=1`, projects/effect `packages/effect`,
   `--singleThreaded --noEmit`): 26.601 G → 26.601 G (−0.002%), same stdout.
