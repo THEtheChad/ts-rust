@@ -5,16 +5,16 @@
 //! - `-w`: the watch loop selects on `ctx.Done()` (Go
 //!   execute/watchmanager/watchmanager.go:382), so a signal ends the run at
 //!   once with exit code 0. The port waited on the cycle channel with a
-//!   50 ms timeout and ended up to 50 ms later. Its loop now waits with no
-//!   timeout, and only the signal's wake ends the wait: the unit test
-//!   `run_loop_ends_at_once_when_its_context_is_cancelled`
-//!   (execute/watchmanager/watchmanager.rs) checks that. Here the run must
-//!   end within `AT_ONCE`, as in the other tests. The time from a signal to
-//!   the exit that a test sees is mostly the kernel's end of the process
-//!   (its threads to stop, its memory to unmap, the fanotify group's close,
-//!   which waits for its marks to go), for Go's tsgo too. On a loaded host
-//!   it takes tens of milliseconds, also after a SIGKILL, so it bounds
-//!   nothing about tsgo.
+//!   50 ms timeout and ended up to 50 ms later. The unit tests of
+//!   execute/watchmanager/watchmanager.rs time that part inside the
+//!   process: `run_loop_ends_at_once_when_its_context_is_cancelled` bounds
+//!   the time from the cancel to the end of the loop, and its fault tests
+//!   show that a timed shutdown and a delayed cancel fail it. Here the run
+//!   must end within `AT_ONCE`, as in the other tests. A tight bound here
+//!   would also time the kernel's end of the process, which tsgo does not
+//!   control: on a loaded host a `tsgo -w` that SIGKILL ends takes tens of
+//!   milliseconds to be reaped too. No test times the signal thread's part
+//!   before the cancel (`notify_context`).
 //! - `--api`: the sync API (`ipc/conn_sync.go:55`) runs a request inline
 //!   and checks the context after it, so a signal during a request ends
 //!   the run right after the answer. A call to the client that waits does
