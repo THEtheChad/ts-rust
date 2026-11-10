@@ -856,16 +856,11 @@ impl Checker {
         is_private: bool,
         is_static: bool,
     ) -> TypeId {
-        let kind = if is_private {
-            if is_static {
-                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC
-            } else {
-                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE
-            }
-        } else if is_static {
-            CachedTypeKind::DECORATOR_CONTEXT_STATIC
-        } else {
-            CachedTypeKind::DECORATOR_CONTEXT
+        let kind = match (is_private, is_static) {
+            (true, true) => CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC,
+            (true, false) => CachedTypeKind::DECORATOR_CONTEXT_PRIVATE,
+            (false, true) => CachedTypeKind::DECORATOR_CONTEXT_STATIC,
+            (false, false) => CachedTypeKind::DECORATOR_CONTEXT,
         };
         let key = CachedTypeKey {
             kind,
