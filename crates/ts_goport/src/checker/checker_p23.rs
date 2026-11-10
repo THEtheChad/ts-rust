@@ -1360,16 +1360,18 @@ impl Checker {
                                 .find(|p| p.is_some())
                                 .unwrap_or(SymbolId::NIL);
                             if first_this_parameter_of_union_signatures.is_some() {
-                                let mut this_types: Vec<TypeId> = Vec::new();
-                                for &sig in &union_signatures {
-                                    let sig_this_parameter = self.sig(sig).this_parameter;
-                                    if sig_this_parameter.is_some() {
-                                        let this_type = self.get_type_of_symbol(sig_this_parameter);
-                                        if this_type.is_some() {
-                                            this_types.push(this_type);
+                                let this_types: Vec<TypeId> = union_signatures
+                                    .iter()
+                                    .filter_map(|&sig| {
+                                        let sig_this_parameter = self.sig(sig).this_parameter;
+                                        if sig_this_parameter.is_some() {
+                                            return self
+                                                .get_type_of_symbol(sig_this_parameter)
+                                                .get();
                                         }
-                                    }
-                                }
+                                        None
+                                    })
+                                    .collect();
                                 let this_type = self.get_intersection_type(&this_types);
                                 this_parameter = self.create_symbol_with_type(
                                     first_this_parameter_of_union_signatures,
