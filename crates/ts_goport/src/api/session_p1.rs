@@ -2381,7 +2381,7 @@ impl Session {
                 response.result = None;
             } else {
                 response.result = to_any(SourceFileResponse {
-                    data: base64_std_encoding_encode_to_string(&data.0),
+                    data: crate::gostd::base64::std_encoding_encode_to_string(&data.0),
                 });
             }
         }
@@ -3616,7 +3616,7 @@ impl Session {
             return Ok(to_any(RawBinary(data)));
         }
         Ok(to_any(SourceFileResponse {
-            data: base64_std_encoding_encode_to_string(&data),
+            data: crate::gostd::base64::std_encoding_encode_to_string(&data),
         }))
     }
 
@@ -4092,7 +4092,7 @@ impl Session {
             return to_any(RawBinary(data));
         }
         to_any(SourceFileResponse {
-            data: base64_std_encoding_encode_to_string(&data),
+            data: crate::gostd::base64::std_encoding_encode_to_string(&data),
         })
     }
 
