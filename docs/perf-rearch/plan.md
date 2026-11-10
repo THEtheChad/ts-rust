@@ -1738,3 +1738,19 @@ once a **reconciliation step** is built and tested.
   1, with controls, and documents finding 2 as a limit. Root verifies it
   with Astra's reproductions, then merges without another review round. The
   tier only adds coverage, and Astra found no weakening of the other tiers.
+- **Q7 merged** (`c38920d93`) after round 2. It fixed every point of
+  Astra's review:
+  - the watch test cancels whatever the check finds, and all its waits
+    are bounded;
+  - portable in-process timing from cancel to the end, with two
+    injected-fault tests behind `test-hooks`;
+  - the attribution is corrected, and the claim about Go is withdrawn;
+  - the emit panic hook is gated whole;
+  - `cargo fmt` is fixed.
+
+  Parity full is OK (`runs/q7r2-0f51902b1-full`). The tests tier now builds
+  with `diagnostics,test-hooks`.
+- **Root follow-up:** the in-process bound goes from 10 to 25 ms. The
+  loaded median reached 7.2 ms, and the faults land near 54 ms. All three
+  tests pass. No third review round: a change to a constant, verified by
+  the fault tests.
