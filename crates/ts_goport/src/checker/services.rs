@@ -997,7 +997,7 @@ pub fn get_possible_symbol_reference_nodes(
 pub fn get_possible_symbol_reference_positions(
     source_file: Node,
     symbol_name: &str,
-    container: Node,
+    mut container: Node,
 ) -> Vec<i32> {
     let mut positions: Vec<i32> = Vec::new();
 
@@ -1011,55 +1011,24 @@ pub fn get_possible_symbol_reference_positions(
 
     let text_text = source_file_text(source_file);
 
-    let container = if container.is_nil() {
-        source_file
-    } else {
-        container
-    };
+    if container.is_nil() {
+        container = source_file;
+    }
 
-    let go_search = contains_go_string_marker(symbol_name)
-        || symbol_name.as_bytes().contains(&0xF4)
-        || (container.pos() > 0 && contains_go_string_marker(&text_text));
-    let (text, symbol_name, container_pos, end_pos) = if go_search {
-        (
-            go_string_bytes(&text_text),
-            go_string_bytes(symbol_name),
-            go_byte_offset(&text_text, container.pos()),
-            go_byte_offset(&text_text, container.end()),
-        )
-    } else {
-        (
-            Cow::Borrowed(text_text.as_bytes()),
-            Cow::Borrowed(symbol_name.as_bytes()),
-            container.pos(),
-            container.end(),
-        )
-    };
+    let ReferenceSearchText {
+        go_search,
+        text,
+        symbol_name,
+        container_pos,
+        end_pos,
+    } = ReferenceSearchText::new(&text_text, symbol_name, container);
     // Go `text[position-1]` and `text[endPosition]`. The port search reads
     // a unit next to a match only when the container starts the text. With
     // another container the first position, relative to the container, can
     // fall inside a char, and the text has no marker.
     let units = !go_search && container.pos() == 0;
-    let go_byte_before = |position: usize| -> u8 {
-        let b = text[position - 1];
-        if !units || b < 0x80 {
-            return b;
-        }
-        let mut buf = [0u8; 4];
-        let (unit, _) = go_unit_before(&text_text, position);
-        *go_unit_bytes(unit, &mut buf)
-            .last()
-            .expect("a unit has Go bytes")
-    };
-    let go_byte_at = |position: usize| -> u8 {
-        let b = text[position];
-        if !units || b != 0xEF {
-            return b;
-        }
-        let mut buf = [0u8; 4];
-        let (unit, _) = go_unit_at(&text_text, position);
-        go_unit_bytes(unit, &mut buf)[0]
-    };
+    let go_byte_before = |position: usize| go_byte_before(&text, &text_text, units, position);
+    let go_byte_at = |position: usize| go_byte_at(&text, &text_text, units, position);
     let source_length = text.len() as i32;
     let symbol_name_length = symbol_name.len() as i32;
     // Go `strings.Index(s, symbolName)` is `finder.find(s)`; -1 is `None`.
@@ -1099,12 +1068,85 @@ pub fn get_possible_symbol_reference_positions(
     }
 
     if go_search {
-        let offsets = GoOffsets::new(&text_text);
-        for position in &mut positions {
-            *position = offsets.port_offset(*position);
-        }
+        go_offsets_to_port_offsets(&text_text, &mut positions);
     }
     positions
+}
+
+/// The bytes `get_possible_symbol_reference_positions` searches, with the
+/// container's bounds in them. Go searches its own string bytes. The port
+/// text is the same bytes unless the name or the text holds a
+/// `scanner_util` Go-string marker (or the name a 0xF4 lead byte): then the
+/// search runs on the Go bytes (`go_search`), and the positions found are Go
+/// byte offsets.
+struct ReferenceSearchText<'a> {
+    go_search: bool,
+    text: Cow<'a, [u8]>,
+    symbol_name: Cow<'a, [u8]>,
+    container_pos: i32,
+    end_pos: i32,
+}
+
+impl<'a> ReferenceSearchText<'a> {
+    #[inline]
+    fn new(text_text: &'a str, symbol_name: &'a str, container: Node) -> Self {
+        let go_search = contains_go_string_marker(symbol_name)
+            || symbol_name.as_bytes().contains(&0xF4)
+            || (container.pos() > 0 && contains_go_string_marker(text_text));
+        if go_search {
+            return ReferenceSearchText {
+                go_search,
+                text: go_string_bytes(text_text),
+                symbol_name: go_string_bytes(symbol_name),
+                container_pos: go_byte_offset(text_text, container.pos()),
+                end_pos: go_byte_offset(text_text, container.end()),
+            };
+        }
+        ReferenceSearchText {
+            go_search,
+            text: Cow::Borrowed(text_text.as_bytes()),
+            symbol_name: Cow::Borrowed(symbol_name.as_bytes()),
+            container_pos: container.pos(),
+            end_pos: container.end(),
+        }
+    }
+}
+
+/// Go `text[position-1]` in `get_possible_symbol_reference_positions`: with
+/// `units`, a non-ASCII byte before a match is the last Go byte of the unit
+/// before it.
+#[inline]
+fn go_byte_before(text: &[u8], text_text: &str, units: bool, position: usize) -> u8 {
+    let b = text[position - 1];
+    if !units || b < 0x80 {
+        return b;
+    }
+    let mut buf = [0u8; 4];
+    let (unit, _) = go_unit_before(text_text, position);
+    *go_unit_bytes(unit, &mut buf)
+        .last()
+        .expect("a unit has Go bytes")
+}
+
+/// Go `text[endPosition]` in `get_possible_symbol_reference_positions`: with
+/// `units`, a marker lead byte after a match is the first Go byte of its unit.
+#[inline]
+fn go_byte_at(text: &[u8], text_text: &str, units: bool, position: usize) -> u8 {
+    let b = text[position];
+    if !units || b != 0xEF {
+        return b;
+    }
+    let mut buf = [0u8; 4];
+    let (unit, _) = go_unit_at(text_text, position);
+    go_unit_bytes(unit, &mut buf)[0]
+}
+
+/// Maps the Go byte offsets a `go_search` found back to port offsets.
+fn go_offsets_to_port_offsets(text_text: &str, positions: &mut [i32]) {
+    let offsets = GoOffsets::new(text_text);
+    for position in positions {
+        *position = offsets.port_offset(*position);
+    }
 }
 
 impl Checker {
