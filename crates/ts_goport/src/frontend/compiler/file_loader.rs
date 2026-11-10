@@ -2080,32 +2080,14 @@ impl FileLoader {
         }
 
         if !module_names.is_empty() {
-            // PERF (loadpar1): the answers that the parse worker of this
-            // file resolved, when it resolved for this loader. Else every
-            // name resolves here, as in Go.
-            let mut prep = prep
-                .filter(|_| self.shared_resolution.is_some() && crate::tracing::get().is_none())
-                .and_then(TakenParse::take_prep)
-                .and_then(|prep| {
-                    let usable = prep.fits(
-                        &meta,
-                        redirect_ref.map_or("", |r| r.config_name()),
-                        &file_name,
-                        &synthetic,
-                        file.imports.len(),
-                    );
-                    #[cfg(test)]
-                    PREP_FITS.with(|fits| {
-                        fits.borrow_mut()
-                            .push((file.file_name().to_string(), usable));
-                    });
-                    if usable {
-                        return Some(prep);
-                    }
-                    count_prep!(|c| c.preps_unfit += 1);
-                    free_prep_off_loader(prep);
-                    None
-                });
+            let mut prep = self.take_fitting_prep(
+                prep,
+                &file,
+                &meta,
+                redirect_ref.map_or("", |r| r.config_name()),
+                &file_name,
+                &synthetic,
+            );
             // The module names that the loader took from the prep (the debug
             // counts, diagnostics) and that it resolved itself.
             #[cfg(feature = "diagnostics")]
@@ -2129,33 +2111,16 @@ impl FileLoader {
                 .filter(|kept| kept.len() == module_names.len() - imports_start as usize);
             // The load reads the worker's names (`preps_named`).
             let named = !self.keeps_import_names && kept.is_some();
-            let mut file_emit_mode = None;
-            let name_at = move |index: usize, entry: Node| match (
+            let mut names = ModuleNameReader {
                 kept,
-                index.checked_sub(imports_start as usize),
-            ) {
-                (Some(kept), Some(kept_index)) => kept.get(kept_index),
-                _ => (entry.text(), import_usage(entry), None, None),
+                imports_start: imports_start as usize,
+                file: &file,
+                meta: &meta,
+                options: &options_for_file,
+                file_emit_mode: None,
             };
 
-            // loadpar3b: the worker's commit of the synthetic imports and
-            // imports (`PrepCommit`), when the loader takes its names: the
-            // worker's modes are the loader's (the same usages, metadata
-            // and options; `FilePrep::fits`). Not when the file's options
-            // trace resolutions (a project reference's own
-            // `traceResolution`): the loader writes the ambient module
-            // traces (fileloader.go:888).
-            let commit = prep
-                .as_mut()
-                .filter(|_| named && !options_for_file.trace_resolution.is_true())
-                .and_then(|prep| prep.commit.take());
-            if named {
-                let taken = commit.is_some();
-                count_prep!(|c| {
-                    c.commits_taken += usize::from(taken);
-                    c.commits_missing += usize::from(!taken);
-                });
-            }
+            let commit = take_prep_commit(&mut prep, named, &options_for_file);
             #[cfg(test)]
             if commit.is_some() {
                 PREPS_COMMITTED.with(|files| files.borrow_mut().push(file_name.to_string()));
@@ -2163,113 +2128,18 @@ impl FileLoader {
             // The first name that the loop below resolves.
             let mut first_name = 0;
             let mut resolutions_in_file: ModeAwareCache<Arc<ResolvedModule>> = match commit {
-                Some(mut commit) => {
+                Some(commit) => {
                     let taken_prep = prep.as_mut().expect("a commit comes with its prep");
-                    let prep = &**taken_prep;
                     first_name = imports_start as usize + file.imports.len();
                     // Debug builds check the commit against the loader's
                     // own decisions (the loop below).
                     #[cfg(debug_assertions)]
+                    check_prep_commit(&mut names, taken_prep, &commit, &module_names[..first_name]);
+                    #[cfg(feature = "diagnostics")]
                     {
-                        let mut adds = Vec::new();
-                        for (index, entry) in module_names[..first_name].iter().copied().enumerate()
-                        {
-                            let (module_name, usage, add, source_phase) = name_at(index, entry);
-                            if module_name.is_empty()
-                                || source_phase
-                                    .unwrap_or_else(|| is_source_phase_import(entry.parent()))
-                            {
-                                continue;
-                            }
-                            let mode = mode_for_import_usage(
-                                usage,
-                                file.file_name(),
-                                &meta,
-                                Some(&options_for_file),
-                                &mut file_emit_mode,
-                            );
-                            assert_eq!(
-                                prep.mode(index),
-                                Some(mode),
-                                "worker mode of {module_name} in {}",
-                                file.file_name()
-                            );
-                            let Some(answer) = prep.answer(index, mode) else {
-                                continue;
-                            };
-                            let resolved = &answer.value;
-                            // No JS file: the commit asks no mapper.
-                            assert!(
-                                !resolved.is_resolved()
-                                    || file_extension_is_one_of(
-                                        &resolved.resolved_file_name,
-                                        SUPPORTED_TS_EXTENSIONS_WITH_JSON_FLAT,
-                                    ),
-                                "commit of {}",
-                                file.file_name()
-                            );
-                            let key = ModeAwareCacheKey {
-                                name: module_name.to_string(),
-                                mode,
-                            };
-                            assert!(
-                                commit
-                                    .resolutions
-                                    .get(&key)
-                                    .is_some_and(|value| Arc::ptr_eq(value, resolved)),
-                                "commit answer of {module_name} in {}",
-                                file.file_name()
-                            );
-                            if resolved.is_resolved()
-                                && get_resolution_diagnostic(&options_for_file, resolved, &file)
-                                    .is_none()
-                                && (index < imports_start as usize || add != Some(false))
-                            {
-                                adds.push(index);
-                            }
-                        }
-                        let committed: Vec<usize> =
-                            commit.adds.iter().map(|add| add.index).collect();
-                        assert_eq!(adds, committed, "commit of {}", file.file_name());
+                        names_taken += taken_prep.answers().iter().flatten().count();
                     }
-                    for answer in prep.answers().iter().flatten() {
-                        self.note_worker_logs(&answer.package_jsons, &answer.lookups);
-                        #[cfg(feature = "diagnostics")]
-                        {
-                            names_taken += 1;
-                        }
-                    }
-                    for add in commit.adds.drain(..) {
-                        let import_index = add.index as i32 - imports_start;
-                        t.add_normalized_sub_task(
-                            ResolvedRef {
-                                file_name: add.file_name,
-                                path: add.path,
-                                increase_depth: add.increase_depth,
-                                elide_on_depth: false,
-                                include_reason: Some(new_file_include_reason(
-                                    FileIncludeKind::IMPORT,
-                                    FileIncludeData::ReferencedFile(ReferencedFileData {
-                                        file: t.path.clone(),
-                                        index: import_index,
-                                        synthetic: if import_index < 0 {
-                                            module_names[add.index]
-                                        } else {
-                                            Node::NIL
-                                        },
-                                    }),
-                                )),
-                                package_id: add.package_id,
-                            },
-                            None,
-                            add.path_hash,
-                        );
-                    }
-                    let resolutions = std::mem::take(&mut commit.resolutions);
-                    // The commit box and its `adds` buffer go back to the
-                    // prep, which frees off the loader.
-                    taken_prep.commit = Some(commit);
-                    resolutions
+                    self.apply_prep_commit(t, taken_prep, commit, &module_names, imports_start)
                 }
                 None => {
                     let mut resolutions = ModeAwareCache::default();
@@ -2278,79 +2148,22 @@ impl FileLoader {
                 }
             };
 
-            // PERF (loadcost): with no prep, the file's parse worker may
-            // still resolve these names, first to last. Going the same way,
-            // the loader waited at each lookup for the worker's load of the
-            // same path, so the whole resolution sat on the loader (with
-            // ts#64491 the 114 names of @types/node `process.d.ts` are
-            // cold: no other file resolves them first). The loader resolves
-            // them last to first here, so the two threads meet halfway; the
-            // pass below takes the answers in name order. The order changes
-            // no answer: the loader has worker answers (`shared_resolution`)
-            // only with the default resolver and no resolution trace.
-            // PORT: not in Go, where each parse task resolves on its own
-            // goroutine.
-            #[allow(clippy::type_complexity)]
-            let mut resolved_ahead: Vec<
-                Option<(
-                    Option<Arc<ResolvedModule>>,
-                    Vec<DiagAndArgs>,
-                    Option<GoError>,
-                )>,
-            > = Vec::new();
-            if prep.is_none()
+            let mut resolved_ahead = if prep.is_none()
                 && self.shared_resolution.is_some()
                 && crate::tracing::get().is_none()
                 && !options_for_file.trace_resolution.is_true()
             {
-                resolved_ahead.resize_with(module_names.len(), || None);
-                for (index, entry) in module_names.iter().copied().enumerate().rev() {
-                    let (module_name, usage, _, source_phase) = name_at(index, entry);
-                    if module_name.is_empty()
-                        || source_phase.unwrap_or_else(|| is_source_phase_import(entry.parent()))
-                    {
-                        continue;
-                    }
-                    let mode = mode_for_import_usage(
-                        usage,
-                        file.file_name(),
-                        &meta,
-                        Some(&options_for_file),
-                        &mut file_emit_mode,
-                    );
-                    if file
-                        .ambient_module_names
-                        .iter()
-                        .any(|name| name == module_name)
-                    {
-                        continue;
-                    }
-                    resolved_ahead[index] = Some(self.resolver().resolve_module_name(
-                        module_name,
-                        &file_name,
-                        mode,
-                        redirect_ref,
-                    ));
-                }
-            }
+                self.resolve_module_names_ahead(&mut names, &module_names, &file_name, redirect_ref)
+            } else {
+                Vec::new()
+            };
 
             for (index, entry) in module_names.iter().copied().enumerate().skip(first_name) {
-                let (module_name, usage, adds, source_phase) = name_at(index, entry);
                 // ts#63915: a source phase import is not resolved
                 // (fileloader.go:880).
-                if module_name.is_empty()
-                    || source_phase.unwrap_or_else(|| is_source_phase_import(entry.parent()))
-                {
+                let Some((module_name, mode, adds)) = names.resolvable(index, entry) else {
                     continue;
-                }
-
-                let mode = mode_for_import_usage(
-                    usage,
-                    file.file_name(),
-                    &meta,
-                    Some(&options_for_file),
-                    &mut file_emit_mode,
-                );
+                };
                 // Go: fileloader.go:887 (ts#64491) We know moduleName resolves to an ambient
                 // module provided that moduleName:
                 // - is in the list of ambient modules locally declared in the current source file.
@@ -2375,19 +2188,7 @@ impl FileLoader {
                     );
                     continue;
                 }
-                // The worker resolved name `index` with the mode of the
-                // usage it read (`FilePrep::names`), or with the mode of a
-                // plain import (`guess_import_mode`) for a synthetic import
-                // or without the names. `answer` gives it only when that
-                // mode is `mode`.
-                let taken = prep
-                    .as_ref()
-                    .and_then(|prep| prep.answer(index, mode))
-                    .map(|answer| {
-                        self.note_worker_logs(&answer.package_jsons, &answer.lookups);
-                        answer.value.clone()
-                    });
-                let resolved_module = match taken {
+                let resolved_module = match self.take_worker_answer(prep.as_deref(), index, mode) {
                     Some(resolved_module) => {
                         #[cfg(feature = "diagnostics")]
                         {
@@ -2397,22 +2198,14 @@ impl FileLoader {
                     }
                     None => {
                         names_own += 1;
-                        let (resolved_module, trace, err) = resolved_ahead
-                            .get_mut(index)
-                            .and_then(Option::take)
-                            .unwrap_or_else(|| {
-                                self.resolver().resolve_module_name(
-                                    module_name,
-                                    &file_name,
-                                    mode,
-                                    redirect_ref,
-                                )
-                            });
-                        if let Some(err) = err {
-                            self.note_module_resolution_error(err);
-                        }
-                        resolutions_trace.extend(trace);
-                        resolved_module.unwrap_or_else(|| Arc::new(ResolvedModule::default()))
+                        self.resolve_module_name_for_file(
+                            resolved_ahead.get_mut(index).and_then(Option::take),
+                            module_name,
+                            &file_name,
+                            mode,
+                            redirect_ref,
+                            &mut resolutions_trace,
+                        )
                     }
                 };
                 resolutions_in_file.insert(
@@ -2514,6 +2307,170 @@ impl FileLoader {
                 free_prep_off_loader(prep);
             }
         }
+    }
+
+    /// The parse worker's prep of the file that this load resolves now
+    /// (loadpar1), when it resolved for this loader with this load's
+    /// inputs (`FilePrep::fits`). An unfit prep frees off the loader.
+    // PORT: not in Go, where each parse task resolves its own names.
+    fn take_fitting_prep(
+        &self,
+        prep: Option<TakenParse>,
+        file: &ParsedSourceFile,
+        meta: &SourceFileMetaData,
+        redirect: &str,
+        file_name: &str,
+        synthetic: &SyntheticImports,
+    ) -> Option<Box<FilePrep>> {
+        let prep = prep
+            .filter(|_| self.shared_resolution.is_some() && crate::tracing::get().is_none())
+            .and_then(TakenParse::take_prep)?;
+        let usable = prep.fits(meta, redirect, file_name, synthetic, file.imports.len());
+        #[cfg(test)]
+        PREP_FITS.with(|fits| {
+            fits.borrow_mut()
+                .push((file.file_name().to_string(), usable));
+        });
+        if usable {
+            return Some(prep);
+        }
+        count_prep!(|c| c.preps_unfit += 1);
+        free_prep_off_loader(prep);
+        None
+    }
+
+    /// Takes the worker's commit of the synthetic imports and imports
+    /// (`PrepCommit`, loadpar3b) into the load: the resolution map, the
+    /// answer logs and the subtasks in module name order. Gives the map;
+    /// the commit box goes back to the prep, which frees off the loader.
+    // PORT: not in Go, where the parse task makes all of it.
+    fn apply_prep_commit(
+        &self,
+        t: &mut ParseTask,
+        taken_prep: &mut FilePrep,
+        mut commit: Box<PrepCommit>,
+        module_names: &[Node],
+        imports_start: i32,
+    ) -> ModeAwareCache<Arc<ResolvedModule>> {
+        for answer in taken_prep.answers().iter().flatten() {
+            self.note_worker_logs(&answer.package_jsons, &answer.lookups);
+        }
+        for add in commit.adds.drain(..) {
+            let import_index = add.index as i32 - imports_start;
+            t.add_normalized_sub_task(
+                ResolvedRef {
+                    file_name: add.file_name,
+                    path: add.path,
+                    increase_depth: add.increase_depth,
+                    elide_on_depth: false,
+                    include_reason: Some(new_file_include_reason(
+                        FileIncludeKind::IMPORT,
+                        FileIncludeData::ReferencedFile(ReferencedFileData {
+                            file: t.path.clone(),
+                            index: import_index,
+                            synthetic: if import_index < 0 {
+                                module_names[add.index]
+                            } else {
+                                Node::NIL
+                            },
+                        }),
+                    )),
+                    package_id: add.package_id,
+                },
+                None,
+                add.path_hash,
+            );
+        }
+        let resolutions = std::mem::take(&mut commit.resolutions);
+        taken_prep.commit = Some(commit);
+        resolutions
+    }
+
+    /// Resolves the file's module names last to first, before the name
+    /// loop of `resolve_imports_and_module_augmentations` takes the answers
+    /// in name order (`resolve_module_name_for_file`).
+    // PERF (loadcost): with no prep, the file's parse worker may still
+    // resolve these names, first to last. Going the same way, the loader
+    // waited at each lookup for the worker's load of the same path, so the
+    // whole resolution sat on the loader (with ts#64491 the 114 names of
+    // @types/node `process.d.ts` are cold: no other file resolves them
+    // first). Going the other way, the two threads meet halfway. The order
+    // changes no answer: the loader has worker answers
+    // (`shared_resolution`) only with the default resolver and no
+    // resolution trace.
+    // PORT: not in Go, where each parse task resolves on its own goroutine.
+    fn resolve_module_names_ahead(
+        &self,
+        names: &mut ModuleNameReader<'_>,
+        module_names: &[Node],
+        file_name: &str,
+        redirect: Option<&dyn ModuleResolvedProjectReference>,
+    ) -> Vec<Option<ModuleNameAnswer>> {
+        let mut resolved_ahead = Vec::new();
+        resolved_ahead.resize_with(module_names.len(), || None);
+        for (index, entry) in module_names.iter().copied().enumerate().rev() {
+            let Some((module_name, mode, _)) = names.resolvable(index, entry) else {
+                continue;
+            };
+            if names
+                .file
+                .ambient_module_names
+                .iter()
+                .any(|name| name == module_name)
+            {
+                continue;
+            }
+            resolved_ahead[index] =
+                Some(
+                    self.resolver()
+                        .resolve_module_name(module_name, file_name, mode, redirect),
+                );
+        }
+        resolved_ahead
+    }
+
+    /// The worker's answer of module name `index` (loadpar1), with its
+    /// lookup logs noted. The worker resolved it with the mode of the
+    /// usage it read (`FilePrep::names`), or with the mode of a plain
+    /// import (`guess_import_mode`) for a synthetic import or without the
+    /// names; `FilePrep::answer` gives it only when that mode is `mode`.
+    // PORT: not in Go, where each parse task resolves its own names.
+    #[inline]
+    fn take_worker_answer(
+        &self,
+        prep: Option<&FilePrep>,
+        index: usize,
+        mode: ResolutionMode,
+    ) -> Option<Arc<ResolvedModule>> {
+        let answer = prep?.answer(index, mode)?;
+        self.note_worker_logs(&answer.package_jsons, &answer.lookups);
+        Some(answer.value.clone())
+    }
+
+    /// Go's resolution of one module name in
+    /// `resolveImportsAndModuleAugmentations` (fileloader.go:900 to :910):
+    /// the answer, its error noted once and its trace kept, or an empty
+    /// module. `ahead` is the answer of `resolve_module_names_ahead`, if
+    /// that resolved the name.
+    #[inline]
+    fn resolve_module_name_for_file(
+        &self,
+        ahead: Option<ModuleNameAnswer>,
+        module_name: &str,
+        file_name: &str,
+        mode: ResolutionMode,
+        redirect: Option<&dyn ModuleResolvedProjectReference>,
+        resolutions_trace: &mut Vec<DiagAndArgs>,
+    ) -> Arc<ResolvedModule> {
+        let (resolved_module, trace, err) = ahead.unwrap_or_else(|| {
+            self.resolver()
+                .resolve_module_name(module_name, file_name, mode, redirect)
+        });
+        if let Some(err) = err {
+            self.note_module_resolution_error(err);
+        }
+        resolutions_trace.extend(trace);
+        resolved_module.unwrap_or_else(|| Arc::new(ResolvedModule::default()))
     }
 
     /// Notes the lookup logs of a worker answer that the load took from a
@@ -3040,6 +2997,155 @@ fn import_names(file: &Rc<ParsedSourceFile>) -> Rc<ImportNames> {
             .insert(key, (Rc::downgrade(file), names.clone()));
         names
     })
+}
+
+/// Go `ResolveModuleName`'s results: the module, its trace and its error.
+type ModuleNameAnswer = (
+    Option<Arc<ResolvedModule>>,
+    Vec<DiagAndArgs>,
+    Option<GoError>,
+);
+
+/// How `resolve_imports_and_module_augmentations` reads each module name
+/// (the synthetic imports, the imports, the module augmentations) and its
+/// mode: from the kept or the worker's `ImportNames` when the load has
+/// them, else from the node, with the file's emit format read once.
+// PORT: not in Go (parload1, lspedit1), which reads `entry.Text()` and
+// `getModeForUsageLocation` of each node.
+struct ModuleNameReader<'a> {
+    kept: Option<&'a ImportNames>,
+    imports_start: usize,
+    file: &'a ParsedSourceFile,
+    meta: &'a SourceFileMetaData,
+    options: &'a CompilerOptions,
+    file_emit_mode: Option<ModuleKind>,
+}
+
+impl<'a> ModuleNameReader<'a> {
+    /// Module name `index` (`entry`): its text, its usage, whether it adds
+    /// its file and whether it is a source phase import. The last two are
+    /// `None` when the caller reads them from the node.
+    #[inline]
+    fn name_at(
+        &self,
+        index: usize,
+        entry: Node,
+    ) -> (&'a str, ImportUsage, Option<bool>, Option<bool>) {
+        match (self.kept, index.checked_sub(self.imports_start)) {
+            (Some(kept), Some(kept_index)) => kept.get(kept_index),
+            _ => (entry.text(), import_usage(entry), None, None),
+        }
+    }
+
+    /// The text, mode and add flag of module name `index`, or `None` when
+    /// Go skips it: an empty name or a source phase import (ts#63915,
+    /// fileloader.go:880).
+    #[inline]
+    fn resolvable(
+        &mut self,
+        index: usize,
+        entry: Node,
+    ) -> Option<(&'a str, ResolutionMode, Option<bool>)> {
+        let (module_name, usage, adds, source_phase) = self.name_at(index, entry);
+        if module_name.is_empty()
+            || source_phase.unwrap_or_else(|| is_source_phase_import(entry.parent()))
+        {
+            return None;
+        }
+        let mode = mode_for_import_usage(
+            usage,
+            self.file.file_name(),
+            self.meta,
+            Some(self.options),
+            &mut self.file_emit_mode,
+        );
+        Some((module_name, mode, adds))
+    }
+}
+
+/// The worker's commit of the file's synthetic imports and imports
+/// (`FilePrep::commit`, loadpar3b), when the loader takes the worker's
+/// names: then the worker's modes are the loader's (the same usages,
+/// metadata and options; `FilePrep::fits`). Not when the file's options
+/// trace resolutions (a project reference's own `traceResolution`): the
+/// loader writes the ambient module traces (fileloader.go:888).
+// PORT: not in Go, where the parse task makes all of it.
+fn take_prep_commit(
+    prep: &mut Option<Box<FilePrep>>,
+    named: bool,
+    options: &CompilerOptions,
+) -> Option<Box<PrepCommit>> {
+    let commit = prep
+        .as_mut()
+        .filter(|_| named && !options.trace_resolution.is_true())
+        .and_then(|prep| prep.commit.take());
+    if named {
+        let taken = commit.is_some();
+        count_prep!(|c| {
+            c.commits_taken += usize::from(taken);
+            c.commits_missing += usize::from(!taken);
+        });
+    }
+    commit
+}
+
+/// Checks the worker's commit against the loader's own decisions for the
+/// same names (the name loop of `resolve_imports_and_module_augmentations`):
+/// the modes, the answers in the map and the files that it adds.
+#[cfg(debug_assertions)]
+fn check_prep_commit(
+    names: &mut ModuleNameReader<'_>,
+    prep: &FilePrep,
+    commit: &PrepCommit,
+    module_names: &[Node],
+) {
+    let file = names.file;
+    let mut adds = Vec::new();
+    for (index, entry) in module_names.iter().copied().enumerate() {
+        let Some((module_name, mode, add)) = names.resolvable(index, entry) else {
+            continue;
+        };
+        assert_eq!(
+            prep.mode(index),
+            Some(mode),
+            "worker mode of {module_name} in {}",
+            file.file_name()
+        );
+        let Some(answer) = prep.answer(index, mode) else {
+            continue;
+        };
+        let resolved = &answer.value;
+        // No JS file: the commit asks no mapper.
+        assert!(
+            !resolved.is_resolved()
+                || file_extension_is_one_of(
+                    &resolved.resolved_file_name,
+                    SUPPORTED_TS_EXTENSIONS_WITH_JSON_FLAT,
+                ),
+            "commit of {}",
+            file.file_name()
+        );
+        let key = ModeAwareCacheKey {
+            name: module_name.to_string(),
+            mode,
+        };
+        assert!(
+            commit
+                .resolutions
+                .get(&key)
+                .is_some_and(|value| Arc::ptr_eq(value, resolved)),
+            "commit answer of {module_name} in {}",
+            file.file_name()
+        );
+        if resolved.is_resolved()
+            && get_resolution_diagnostic(names.options, resolved, file).is_none()
+            && (index < names.imports_start || add != Some(false))
+        {
+            adds.push(index);
+        }
+    }
+    let committed: Vec<usize> = commit.adds.iter().map(|add| add.index).collect();
+    assert_eq!(adds, committed, "commit of {}", file.file_name());
 }
 
 /// Drops the `ImportNames` of the parses that no one holds now (at the
