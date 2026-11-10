@@ -1418,11 +1418,12 @@ impl Checker {
         next_type: TypeId,
         is_async_generator: bool,
     ) -> TypeId {
-        let resolver = if is_async_generator {
-            self.async_iteration_types_resolver.clone()
-        } else {
-            self.sync_iteration_types_resolver.clone()
-        };
+        let resolver = if_else(
+            is_async_generator,
+            &self.async_iteration_types_resolver,
+            &self.sync_iteration_types_resolver,
+        )
+        .clone();
         let global_generator_type = (resolver.get_global_generator_type)(self);
         let resolved_yield =
             (resolver.resolve_iteration_type)(self, yield_type, Node::NIL /*errorNode*/);
