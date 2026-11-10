@@ -84,69 +84,69 @@ pub fn get_source_file_symbol_index(
         &*SOURCE_FILE_SYMBOL_INDEX_KEY,
         |file: Node| {
             let mut index: FxHashMap<SymbolID, SymbolId> = FxHashMap::default();
-            // PORT: Go's recursive addSymbol; a work list here (parents and
-            // members form long chains).
             let mut work: Vec<SymbolId> = Vec::new();
-            let mut add_symbols = |work: &mut Vec<SymbolId>| {
-                while let Some(symbol) = work.pop() {
-                    if symbol.is_nil()
-                        || symbols.sym(symbol).flags.intersects(SymbolFlags::TRANSIENT)
-                    {
-                        continue;
-                    }
-                    go_assert!(get_source_file_of_symbol(symbols, symbol) == file);
-                    let id = symbol_handle(symbols, symbol);
-                    if let Some(&existing) = index.get(&id) {
-                        go_assert!(symbols.id_slot(existing) == symbols.id_slot(symbol));
-                        continue;
-                    }
-                    index.insert(id, symbol);
-                    let sym = symbols.sym(symbol);
-                    let (parent, export_symbol, members, exports) =
-                        (sym.parent, sym.export_symbol, sym.members, sym.exports);
-                    // Go visits the parent, the export symbol, then the
-                    // members and exports; the stack pops them in that order.
-                    let mut children: Vec<SymbolId> = Vec::new();
-                    for table in [members, exports] {
-                        if !table.is_nil() {
-                            children.extend(symbols.values(table));
-                        }
-                    }
-                    work.extend(children.into_iter().rev());
-                    work.push(export_symbol);
-                    work.push(parent);
-                }
-            };
+            let mut add_symbol =
+                |symbol: SymbolId| add_symbol(symbols, file, &mut index, &mut work, symbol);
             for &node in encoder::get_node_index_table(file).nodes.iter() {
                 if node.is_nil() {
                     continue;
                 }
-                work.push(node.symbol());
-                add_symbols(&mut work);
-                work.push(node.local_symbol());
-                add_symbols(&mut work);
-                let locals = node.locals();
-                if !locals.is_nil() {
-                    for symbol in symbols.values(locals) {
-                        work.push(symbol);
-                        add_symbols(&mut work);
-                    }
+                add_symbol(node.symbol());
+                add_symbol(node.local_symbol());
+                for symbol in symbols.values(node.locals()) {
+                    add_symbol(symbol);
                 }
             }
             let bind = crate::ast::file_bind_data(file);
-            if !bind.global_exports.is_nil() {
-                for symbol in symbols.values(bind.global_exports) {
-                    work.push(symbol);
-                    add_symbols(&mut work);
-                }
+            for symbol in symbols.values(bind.global_exports) {
+                add_symbol(symbol);
             }
             for module in bind.pattern_ambient_modules.iter() {
-                work.push(module.symbol);
-                add_symbols(&mut work);
+                add_symbol(module.symbol);
             }
             Rc::new(index)
         },
     )
+}
+
+/// Part of Go `getSourceFileSymbolIndex`: its recursive `addSymbol` closure,
+/// which adds `symbol`, then its parent, its export symbol, and its members
+/// and exports.
+/// PORT: a work list instead of recursion (parents and members form long
+/// chains). `work` is empty between calls; the caller passes one buffer for
+/// the whole index build.
+fn add_symbol(
+    symbols: &SymbolArena,
+    file: Node,
+    index: &mut FxHashMap<SymbolID, SymbolId>,
+    work: &mut Vec<SymbolId>,
+    symbol: SymbolId,
+) {
+    work.push(symbol);
+    while let Some(symbol) = work.pop() {
+        if symbol.is_nil() || symbols.sym(symbol).flags.intersects(SymbolFlags::TRANSIENT) {
+            continue;
+        }
+        go_assert!(get_source_file_of_symbol(symbols, symbol) == file);
+        let id = symbol_handle(symbols, symbol);
+        if let Some(&existing) = index.get(&id) {
+            go_assert!(symbols.id_slot(existing) == symbols.id_slot(symbol));
+            continue;
+        }
+        index.insert(id, symbol);
+        let sym = symbols.sym(symbol);
+        let (parent, export_symbol, members, exports) =
+            (sym.parent, sym.export_symbol, sym.members, sym.exports);
+        // Go visits the parent, the export symbol, then the members and
+        // exports; the stack pops them in that order.
+        let mut children: Vec<SymbolId> = Vec::new();
+        for table in [members, exports] {
+            children.extend(symbols.values(table));
+        }
+        work.extend(children.into_iter().rev());
+        work.push(export_symbol);
+        work.push(parent);
+    }
 }
 
 // Go: api/session.go:53 snapshotData
