@@ -1664,3 +1664,20 @@ once a **reconciliation step** is built and tested.
     not seen, no envelope validation. These are documented. Fixing them
     resets every lsp Go fill, so lane **H8** will port `parity_api_init.py`
     to `sandbox.mjs`/`client.mjs`.
+- **Q7 finished** (`t3/gate-diagnostics-counters`, head `e0f1a4187`).
+  - **All 7 items done:** the counters are gated whole, the fingerprint
+    reuses Q6's verifier, the inference debug scan sits in a debug-only
+    module, the resolve-ahead check runs in diagnostics builds, and the cfg
+    boundary sits in goport_core as macros, which removes `not(doctest)`.
+  - **The watch flake:** the 25 ms median bound measured kernel teardown
+    (SIGKILL shows it too). The test now waits on events, and a unit test
+    checks that the futex wait has no timeout. It passed 50/50 under 96 CPU
+    burners.
+  - **Cost of the resolve-ahead check:** not measurable.
+  - **Checks:** parity full OK (`runs/q7-e0f1a4187-full`); GATING OK; icount
+    within 0.03%.
+  - **Astra review:** running.
+  - **Open items for the backlog:**
+    - `set_emit_test_panic` is a shipped test hook.
+    - `cargo fmt --check` fails on a go_baselines file at the base.
+    - go_baselines has 87 clippy errors that CI doesn't run.
