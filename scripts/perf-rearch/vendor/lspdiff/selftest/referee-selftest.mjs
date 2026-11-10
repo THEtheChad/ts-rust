@@ -199,9 +199,10 @@ if (!process.argv.includes("--unit")) {
   const at = (re) => r3.items.findIndex((it) => re.test(it.step));
   const [hang, crash] = [at(/^src\/a\.ts:5:16 references$/), at(/^src\/b\.ts:2:16 hover$/)];
   const before = r3.items.slice(0, hang);
-  // The answers to the script's requests: not the run-level items, and not the two answers after them (lane
-  // H8: the initialize answer, given before any crash, and the server's home, an output of the whole run).
-  const tail = (it) => it.step === "initialize" || it.step === "session home";
+  // The answers to the script's requests: not the run-level items, and not the items after them (lane H8:
+  // the initialize answer, given before any crash, and the server's messages, storage and writes, outputs
+  // of the whole run).
+  const tail = (it) => ["initialize", "session messages", "session storage", "session writes"].includes(it.step);
   const after = r3.items.slice(hang).filter((it) => !it.method.startsWith("server/") && !tail(it));
   check("answers before Go's first crash or hang are MATCH", hang > 0 && before.every((it) => it.status === "MATCH"), JSON.stringify(before.filter((it) => it.status !== "MATCH").slice(0, 3)));
   check("a Go timeout makes the answers from there GO-BROKEN", after.length > 0 && after.every((it) => it.status === "GO-BROKEN" && /go2 timed out/.test(it.detail)), JSON.stringify(after.find((it) => it.status !== "GO-BROKEN" || !/go2 timed out/.test(it.detail))));
