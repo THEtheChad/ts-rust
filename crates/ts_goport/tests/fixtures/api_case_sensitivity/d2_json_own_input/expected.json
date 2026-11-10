@@ -1,0 +1,53 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "/b2/src/a.ts",
+      "/b2/src/data.json",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "allowSyntheticDefaultImports": true,
+      "module": 99,
+      "moduleResolution": 100,
+      "noLib": true,
+      "outDir": "/b2/SRC",
+      "resolveJsonModule": true,
+      "rootDir": "/b2/src"
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "/b2/SRC/a.js",
+    "sourceFileName": "/b2/src/a.ts",
+    "text": "import d from \"./data.json\";\nexport const v = d.x;\n"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "/b2/src/data.json",
+  "/b2/src/a.ts",
+  "/b2/g.d.ts"
+ ]
+}

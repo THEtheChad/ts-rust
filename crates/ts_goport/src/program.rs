@@ -17,6 +17,7 @@
 //! checker pool of each version, by program id.
 
 use crate::execute::tsc::compile::CompileTimes;
+use crate::frontend::compiler::json_file_may_be_emitted;
 use crate::frontend::parser::ExternalModuleIndicatorOptions;
 use crate::frontend::tspath;
 use crate::gostd::{Context, context};
@@ -3900,71 +3901,14 @@ fn source_file_may_be_emitted_worker(
     if !is_json_source_file(source_file) {
         return true;
     }
+    // The JSON part is the frontend's (`json_file_may_be_emitted`), so the
+    // two hosts give one answer.
     json_file_may_be_emitted(
         &info.file_name,
         options,
         get_current_directory(),
         use_case_sensitive_file_names(),
     )
-}
-
-// Go: compiler/emitter.go:518-537 sourceFileMayBeEmitted: the JSON file part
-// PORT: its own function, so the tests below can run it without a loaded
-// program. Like `frontend::compiler::source_file_may_be_emitted`, it uses the
-// Go ports in `frontend::outputpaths` and `frontend::tspath`. ts#64159
-// (emitter.go:523-535): `GetSourceFileNameInNewDir` takes the path below the
-// common directory with `RelativeFilePathFromDirectory`, so a file that is
-// not under it keeps its name and is not emitted, and a file under it is
-// not emitted when outDir is the common directory.
-fn json_file_may_be_emitted(
-    file_name: &str,
-    options: &CompilerOptions,
-    current_directory: &str,
-    use_case_sensitive_file_names: bool,
-) -> bool {
-    use crate::frontend::outputpaths;
-    use crate::frontend::tspath::{
-        ComparePathsOptions, compare_paths, get_normalized_absolute_path,
-    };
-
-    // Json file is not emitted if outDir is not specified
-    if options.out_dir.is_empty() {
-        return false;
-    }
-
-    // Otherwise, if rootDir is specified or a config file exists, we know the common source directory and can check if the file would be emitted in the same location
-    if !options.root_dir.is_empty() || !options.config_file_path.is_empty() {
-        let common_dir = get_normalized_absolute_path(
-            &outputpaths::get_common_source_directory(
-                options,
-                Vec::new,
-                current_directory,
-                use_case_sensitive_file_names,
-                None,
-            ),
-            current_directory,
-        );
-        let output_path = outputpaths::get_source_file_path_in_new_dir_worker(
-            file_name,
-            &options.out_dir,
-            current_directory,
-            &common_dir,
-            use_case_sensitive_file_names,
-        );
-        if compare_paths(
-            file_name,
-            &output_path,
-            &ComparePathsOptions {
-                use_case_sensitive_file_names,
-                current_directory: current_directory.to_string(),
-            },
-        ) == 0
-        {
-            return false;
-        }
-    }
-
-    true
 }
 
 // Go: compiler/program.go:2107 GetSourceFile

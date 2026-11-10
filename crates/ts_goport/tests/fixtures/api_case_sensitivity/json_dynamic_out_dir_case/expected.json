@@ -1,0 +1,58 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "^/~ts-uri~/mem/auth/src/a.ts",
+      "^/~ts-uri~/mem/auth/src/data.json",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "allowSyntheticDefaultImports": true,
+      "module": 99,
+      "moduleResolution": 100,
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/SRC",
+      "resolveJsonModule": true,
+      "rootDir": "^/~ts-uri~/mem/auth/src"
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "^/~ts-uri~/mem/auth/SRC/a.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/a.ts",
+    "text": "import d from \"./data.json\";\nexport const v = d.x;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/SRC/data.json",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/data.json",
+    "text": "{ \"x\": 1 }\n"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "^/~ts-uri~/mem/auth/src/data.json",
+  "^/~ts-uri~/mem/auth/src/a.ts",
+  "/b2/g.d.ts"
+ ]
+}

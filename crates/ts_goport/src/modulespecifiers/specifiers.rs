@@ -786,10 +786,7 @@ fn get_local_module_specifier(
         if !package_json_paths_are_equal(
             &nearest_target_package_json,
             &nearest_source_package_json,
-            &tspath::ComparePathsOptions {
-                use_case_sensitive_file_names: case,
-                current_directory: cwd,
-            },
+            case,
         ) {
             // 2. The importing and imported files are part of different packages.
             //
@@ -1643,16 +1640,17 @@ fn try_get_module_name_from_exports_or_imports(
             let mut output_file = String::new();
             let mut declaration_file = String::new();
             if is_imports {
-                output_file = deps::get_output_js_file_name_worker(
+                output_file = crate::frontend::outputpaths::get_output_js_file_name_worker(
                     target_file_path,
                     options,
                     host.as_output_paths_host(),
                 );
-                declaration_file = deps::get_output_declaration_file_name_worker(
-                    target_file_path,
-                    options,
-                    host.as_output_paths_host(),
-                );
+                declaration_file =
+                    crate::frontend::outputpaths::get_output_declaration_file_name_worker(
+                        target_file_path,
+                        options,
+                        host.as_output_paths_host(),
+                    );
             }
 
             let mut extension_swapped_target = String::new();
@@ -2063,7 +2061,7 @@ mod tests {
         use_case_sensitive_file_names: bool,
     }
 
-    impl deps::OutputPathsHost for CaseHost {
+    impl crate::frontend::outputpaths::OutputPathsHost for CaseHost {
         fn common_source_directory(&self) -> String {
             unreachable!()
         }
@@ -2145,7 +2143,7 @@ mod tests {
         ) -> ResolutionMode {
             unreachable!()
         }
-        fn as_output_paths_host(&self) -> &dyn deps::OutputPathsHost {
+        fn as_output_paths_host(&self) -> &dyn crate::frontend::outputpaths::OutputPathsHost {
             self
         }
     }

@@ -1790,12 +1790,13 @@ impl FileLoader {
         }
 
         if has_extension(file_name) {
-            // Go `PathKey`: the name itself when the file system is case
-            // sensitive (`get_canonical_file_name`).
+            // Go `p.caseSensitivity.PathKey`: an encoded dynamic name keeps
+            // its case (`path_key`). On a case-sensitive file system the key
+            // of a name with an extension is the name itself.
             let canonical_file_name: Cow<str> = if fs.use_case_sensitive_file_names() {
                 Cow::Borrowed(file_name)
             } else {
-                Cow::Owned(get_canonical_file_name(file_name, false))
+                Cow::Owned(path_key(file_name, false))
             };
             if !allow_non_ts_extensions && !self.is_supported_extension(&canonical_file_name) {
                 if has_js_file_extension(&canonical_file_name) {

@@ -1010,6 +1010,30 @@ pub fn source_file_may_be_emitted(
         return true;
     }
 
+    json_file_may_be_emitted(
+        source_file.file_name(),
+        options,
+        &host.get_current_directory(),
+        host.use_case_sensitive_file_names(),
+    )
+}
+
+// Go: compiler/emitter.go:518-537 sourceFileMayBeEmitted: the JSON file part
+/// Whether JSON file `file_name` (rooted) may be emitted: only with an
+/// outDir, and not when its output would be the file itself. The
+/// emit-side program (`program::source_file_may_be_emitted`) asks this too,
+/// so the two hosts give one answer.
+// ts#64159: `GetSourceFileNameInNewDir` takes the path below the common
+// directory with `RelativeFilePathFromDirectory`, so a file that is not
+// under it keeps its name and is not emitted. The comparison is
+// `CaseSensitivity.CompareFilePaths`: an encoded dynamic name compares
+// case-sensitively.
+pub fn json_file_may_be_emitted(
+    file_name: &str,
+    options: &CompilerOptions,
+    current_directory: &str,
+    use_case_sensitive_file_names: bool,
+) -> bool {
     // Json file is not emitted if outDir is not specified
     if options.out_dir.is_empty() {
         return false;
@@ -1017,33 +1041,24 @@ pub fn source_file_may_be_emitted(
 
     // Otherwise, if rootDir is specified or a config file exists, we know the common source directory and can check if the file would be emitted in the same location
     if !options.root_dir.is_empty() || !options.config_file_path.is_empty() {
-        let current_directory = host.get_current_directory();
         let common_dir = get_normalized_absolute_path(
             &get_common_source_directory(
                 options,
                 Vec::new,
-                &current_directory,
-                host.use_case_sensitive_file_names(),
+                current_directory,
+                use_case_sensitive_file_names,
                 None,
             ),
-            &current_directory,
+            current_directory,
         );
         let output_path = get_source_file_path_in_new_dir_worker(
-            source_file.file_name(),
+            file_name,
             &options.out_dir,
-            &current_directory,
+            current_directory,
             &common_dir,
-            host.use_case_sensitive_file_names(),
+            use_case_sensitive_file_names,
         );
-        if compare_paths(
-            source_file.file_name(),
-            &output_path,
-            &ComparePathsOptions {
-                use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-                current_directory,
-            },
-        ) == 0
-        {
+        if compare_rooted_text(file_name, &output_path, use_case_sensitive_file_names) == 0 {
             return false;
         }
     }

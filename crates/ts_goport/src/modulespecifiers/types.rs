@@ -142,7 +142,7 @@ pub trait ModuleSpecifierGenerationHost {
     // PORT: Go passes the same host value as an `outputpaths.OutputPathsHost`.
     // A Rust trait object cannot convert to an unrelated trait, so the host
     // returns itself through this method.
-    fn as_output_paths_host(&self) -> &dyn super::deps::OutputPathsHost;
+    fn as_output_paths_host(&self) -> &dyn crate::frontend::outputpaths::OutputPathsHost;
 }
 
 // Go: modulespecifiers/types.go:72 ImportModuleSpecifierPreference

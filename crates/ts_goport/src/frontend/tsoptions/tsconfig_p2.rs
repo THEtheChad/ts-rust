@@ -2005,10 +2005,12 @@ fn remove_wildcard_files_with_lower_priority_extension(
             return;
         }
         let changed = priority.changed(file, ext);
+        // Go `keyMapper`: `CaseSensitivity.PathKey`, the name itself on a
+        // case-sensitive file system.
         if use_case_sensitive_file_names {
             wildcard_files.shift_remove(changed);
         } else {
-            wildcard_files.shift_remove(&get_canonical_file_name(changed, false));
+            wildcard_files.shift_remove(&path_key(changed, false));
         }
     }
 }
@@ -2032,9 +2034,9 @@ pub(crate) fn get_file_names_from_config_specs(
     extra_extensions: &[String],
 ) -> (Vec<String>, i32) {
     let base_path = normalize_path(base_path);
-    let key_mappper = |value: &str| -> String {
-        get_canonical_file_name(value, host.use_case_sensitive_file_names())
-    };
+    // Go: `host.CaseSensitivity().PathKey`.
+    let key_mappper =
+        |value: &str| -> String { path_key(value, host.use_case_sensitive_file_names()) };
     // Literal file names (provided via the "files" array in tsconfig.json) are stored in a
     // file map with a possibly case insensitive key. We use this map later when when including
     // wildcard paths.

@@ -113,13 +113,10 @@ pub fn get_output_paths_for_file(
     let is_json_file = script_kind == ScriptKind::JSON;
     // If json file emits to the same location skip writing it, if emitDeclarationOnly skip writing it
     let is_json_emitted_to_same_location = is_json_file
-        && compare_paths(
+        && compare_rooted_text(
             file_name,
             &own_output_file_path,
-            &ComparePathsOptions {
-                current_directory: host.get_current_directory(),
-                use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-            },
+            host.use_case_sensitive_file_names(),
         ) == 0;
     let mut paths = OutputPaths::default();
     if !content_mapper.is_empty() {
@@ -214,13 +211,10 @@ pub fn get_output_js_file_name(
     }
     let output_file_name = get_output_js_file_name_worker(input_file_name, options, host);
     if !file_extension_is(&output_file_name, EXTENSION_JSON)
-        || compare_paths(
+        || compare_rooted_text(
             input_file_name,
             &output_file_name,
-            &ComparePathsOptions {
-                current_directory: host.get_current_directory(),
-                use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-            },
+            host.use_case_sensitive_file_names(),
         ) != 0
     {
         return output_file_name;
@@ -389,25 +383,24 @@ pub fn get_source_file_path_in_new_dir(
     )
 }
 
-// Go: outputpaths/outputpaths.go:165 getOutputPathWithoutChangingExtension (at 673a5f17d713;
-// ts#64159 renames it getOutputFileNameWithoutChangingExtension, outputpaths/outputpaths.go:206)
+// Go: outputpaths/outputpaths.go:206 getOutputFileNameWithoutChangingExtension (ts#64159)
+// A file whose root differs from the common source directory's keeps its
+// name (Go `RelativePathFromDirectory` is not ok).
 fn get_output_path_without_changing_extension(
     input_file_name: &str,
     output_directory: &str,
     host: &dyn OutputPathsHost,
 ) -> String {
     if !output_directory.is_empty() {
-        return resolve_path(
-            output_directory,
-            &[&get_relative_path_from_directory(
-                &host.common_source_directory(),
-                input_file_name,
-                &ComparePathsOptions {
-                    use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-                    current_directory: host.get_current_directory(),
-                },
-            )],
-        );
+        let Some(relative_path) = relative_path_from_directory(
+            &host.common_source_directory(),
+            input_file_name,
+            host.use_case_sensitive_file_names(),
+        ) else {
+            return input_file_name.to_string();
+        };
+        // Go: outputDirectory.ResolveRelativeFile(relativePath)
+        return resolve_path(output_directory, &[&relative_path]);
     }
     input_file_name.to_string()
 }
@@ -521,67 +514,7 @@ fn compute_common_source_directory_of_filenames(
         // Can happen when all input files are .d.ts files.
         return current_directory.to_string();
     }
-    common_directory_of_files(file_names, current_directory, use_case_sensitive_file_names)
-}
-
-// Go: tspath/rooted_path.go:627 CaseSensitivity.CommonDirectoryOfFiles
-// PORT: the shape before the pin moved this loop into tspath. It differs
-// from Go at the pin: it normalizes `file_names` against
-// `current_directory` (Go's are rooted), has no case for encoded dynamic
-// file names, and an empty common path is `current_directory` (Go: "").
-fn common_directory_of_files(
-    file_names: &[String],
-    current_directory: &str,
-    use_case_sensitive_file_names: bool,
-) -> String {
-    // PORT: Go nil slice is `None`.
-    let mut common_path_components: Option<Vec<String>> = None;
-    for source_file in file_names {
-        // Each file contributes into common source file path
-        let mut source_path_components =
-            get_normalized_path_components(source_file, current_directory);
-
-        // The base file name is not part of the common directory path
-        source_path_components.pop();
-
-        let Some(common) = common_path_components.as_mut() else {
-            // first file
-            common_path_components = Some(source_path_components);
-            continue;
-        };
-
-        let n = common.len().min(source_path_components.len());
-        for i in 0..n {
-            if get_canonical_file_name(&common[i], use_case_sensitive_file_names)
-                != get_canonical_file_name(
-                    &source_path_components[i],
-                    use_case_sensitive_file_names,
-                )
-            {
-                if i == 0 {
-                    // Failed to find any common path component
-                    return String::new();
-                }
-
-                // New common path found that is 0 -> i-1
-                common.truncate(i);
-                break;
-            }
-        }
-
-        // If the sourcePathComponents was shorter than the commonPathComponents, truncate to the sourcePathComponents
-        if source_path_components.len() < common.len() {
-            common.truncate(source_path_components.len());
-        }
-    }
-
-    let common_path_components = common_path_components.unwrap_or_default();
-    if common_path_components.is_empty() {
-        // Can happen when all input files are .d.ts files
-        return current_directory.to_string();
-    }
-
-    get_path_from_path_components(&common_path_components)
+    common_directory_of_files(file_names, use_case_sensitive_file_names)
 }
 
 // Go: outputpaths/commonsourcedirectory.go:16 GetComputedCommonSourceDirectory
@@ -640,4 +573,108 @@ pub fn get_common_source_directory(
     }
 
     common_source_directory
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A case-insensitive host whose common source directory is
+    /// `common_source_directory`.
+    struct InsensitiveHost {
+        common_source_directory: &'static str,
+    }
+
+    impl OutputPathsHost for InsensitiveHost {
+        fn common_source_directory(&self) -> String {
+            self.common_source_directory.to_string()
+        }
+        fn content_mapper_extensions(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn content_mapper_extension_rewrites(&self) -> Vec<ExtensionRewrite> {
+            Vec::new()
+        }
+        fn get_current_directory(&self) -> String {
+            "/".to_string()
+        }
+        fn use_case_sensitive_file_names(&self) -> bool {
+            false
+        }
+    }
+
+    const ROOT: &str = "^/~ts-uri~/mem/auth";
+
+    // Go `getOutputFileNameWithoutChangingExtension` takes the path below the
+    // common directory with `CaseSensitivity.RelativePathFromDirectory`,
+    // which keeps the case of an encoded dynamic name. Go's answer (lane B2,
+    // API probe `c_rootcase` with the oracle at the pin): rootDir
+    // `<root>/a`, outDir `<root>/out`, file `<root>/A/x.ts` emits
+    // `<root>/A/x.js`, not `<root>/out/x.js`.
+    #[test]
+    fn output_name_of_dynamic_name_keeps_case_below_common_directory() {
+        let host = InsensitiveHost {
+            common_source_directory: "^/~ts-uri~/mem/auth/a/",
+        };
+        let options = CompilerOptions {
+            out_dir: format!("{ROOT}/out"),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name_worker(&format!("{ROOT}/A/x.ts"), &options, &host),
+            format!("{ROOT}/A/x.js")
+        );
+        // A disk name folds case.
+        let host = InsensitiveHost {
+            common_source_directory: "/p/a/",
+        };
+        let options = CompilerOptions {
+            out_dir: "/p/out".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name_worker("/p/A/x.ts", &options, &host),
+            "/p/out/x.js"
+        );
+    }
+
+    // Go `GetOutputPathsFor` and `GetOutputJSFileName` compare the JSON
+    // output with its input by `CaseSensitivity.CompareFilePaths`: a dynamic
+    // name keeps its case, so outDir `<root>/SRC` is not the input directory
+    // `<root>/src`. Go's answer (API case `json_dynamic_out_dir_case`):
+    // `<root>/SRC/data.json` is emitted.
+    #[test]
+    fn json_output_of_dynamic_name_compares_with_case() {
+        let host = InsensitiveHost {
+            common_source_directory: "^/~ts-uri~/mem/auth/src/",
+        };
+        let options = CompilerOptions {
+            out_dir: format!("{ROOT}/SRC"),
+            ..Default::default()
+        };
+        let input = format!("{ROOT}/src/data.json");
+        let output = format!("{ROOT}/SRC/data.json");
+        assert_eq!(get_output_js_file_name(&input, &options, &host), output);
+        let paths = get_output_paths_for_file(
+            &input,
+            ScriptKind::JSON,
+            "",
+            &options,
+            &host,
+            ForceEmitPaths::default(),
+        );
+        assert_eq!(paths.js_file_path(), output);
+        // A disk name folds case: the output would be its own input.
+        let host = InsensitiveHost {
+            common_source_directory: "/p/src/",
+        };
+        let options = CompilerOptions {
+            out_dir: "/p/SRC".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_output_js_file_name("/p/src/data.json", &options, &host),
+            ""
+        );
+    }
 }

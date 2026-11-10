@@ -1,0 +1,28 @@
+{
+ "fileSystem": {
+  "kind": "full",
+  "files": {
+   "/b2/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+   "/b2/src/data.json": "{\"x\": 1}",
+   "/b2/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}"
+  }
+ },
+ "createPrograms": [
+  {
+   "rootFiles": [
+    "/b2/src/a.ts",
+    "/b2/src/data.json",
+    "/b2/g.d.ts"
+   ],
+   "compilerOptions": {
+    "noLib": true,
+    "outDir": "/b2/SRC",
+    "rootDir": "/b2/src",
+    "module": 99,
+    "moduleResolution": 100,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true
+   }
+  }
+ ]
+}

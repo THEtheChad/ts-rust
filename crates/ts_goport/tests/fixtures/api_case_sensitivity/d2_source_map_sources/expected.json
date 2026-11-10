@@ -1,0 +1,76 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "/b2/src/a.ts",
+      "/b2/src/sub/b.ts",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "declaration": true,
+      "noLib": true,
+      "outDir": "/b2/SRC",
+      "rootDir": "/b2/src",
+      "sourceMap": true
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "/b2/SRC/a.d.ts",
+    "sourceFileName": "/b2/src/a.ts",
+    "text": "export declare const a = 1;\n"
+   },
+   {
+    "fileName": "/b2/SRC/a.js",
+    "sourceFileName": "/b2/src/a.ts",
+    "text": "export const a = 1;\n//# sourceMappingURL=a.js.map"
+   },
+   {
+    "fileName": "/b2/SRC/a.js.map",
+    "sourceFileName": "/b2/src/a.ts",
+    "text": "{\"version\":3,\"file\":\"a.js\",\"sources\":[\"a.ts\"],\"names\":[],\"mappings\":\"AAAA,MAAM,CAAC,MAAM,CAAC,GAAG,CAAC,CAAC\"}"
+   },
+   {
+    "fileName": "/b2/SRC/sub/b.d.ts",
+    "sourceFileName": "/b2/src/sub/b.ts",
+    "text": "export declare const b = 2;\n"
+   },
+   {
+    "fileName": "/b2/SRC/sub/b.js",
+    "sourceFileName": "/b2/src/sub/b.ts",
+    "text": "export const b = 2;\n//# sourceMappingURL=b.js.map"
+   },
+   {
+    "fileName": "/b2/SRC/sub/b.js.map",
+    "sourceFileName": "/b2/src/sub/b.ts",
+    "text": "{\"version\":3,\"file\":\"b.js\",\"sources\":[\"b.ts\"],\"names\":[],\"mappings\":\"AAAA,MAAM,CAAC,MAAM,CAAC,GAAG,CAAC,CAAC\"}"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "/b2/src/a.ts",
+  "/b2/src/sub/b.ts",
+  "/b2/g.d.ts"
+ ]
+}

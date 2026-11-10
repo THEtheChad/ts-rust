@@ -158,12 +158,14 @@ impl ResolutionState<'_> {
     // Go: module/resolver.go:1416 getOriginalAndResolvedFileName
     pub fn get_original_and_resolved_file_name(&mut self, file_name: &str) -> (String, String) {
         let resolved_file_name = self.real_path(file_name);
-        let current_directory = self.resolver.host.get_current_directory();
-        let compare_paths_options = ComparePathsOptions {
-            use_case_sensitive_file_names: self.resolver.host.fs().use_case_sensitive_file_names(),
-            current_directory: current_directory.to_string(),
-        };
-        if compare_paths(file_name, &resolved_file_name, &compare_paths_options) == 0 {
+        let use_case_sensitive_file_names = self.resolver.host.fs().use_case_sensitive_file_names();
+        // Go: `caseSensitivity.CompareFilePaths` (ts#64159).
+        if compare_rooted_text(
+            file_name,
+            &resolved_file_name,
+            use_case_sensitive_file_names,
+        ) == 0
+        {
             // If the fileName and realpath are differing only in casing, prefer fileName
             // so that we can issue correct errors for casing under forceConsistentCasingInFileNames
             return (String::new(), file_name.to_string());

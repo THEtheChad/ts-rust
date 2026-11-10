@@ -672,11 +672,9 @@ impl vfs::Fs for OverlayFS {
             directories: host_entries.directories.clone(),
             symlinks: host_entries.symlinks,
         };
-        let use_case_sensitive_file_names = vfs::Fs::use_case_sensitive_file_names(self);
-        let equal_name = |left: &str, right: &str| -> bool {
-            tspath::get_canonical_file_name(left, use_case_sensitive_file_names)
-                == tspath::get_canonical_file_name(right, use_case_sensitive_file_names)
-        };
+        // Go: `fs.caseSensitivity.GetComparer()(left, right) == 0`.
+        let comparer = tspath::get_string_comparer(!vfs::Fs::use_case_sensitive_file_names(self));
+        let equal_name = |left: &str, right: &str| -> bool { comparer(left, right) == 0 };
         for (child_path, child_name) in directory.iter().flatten() {
             entries.files.retain(|name| !equal_name(name, child_name));
             entries

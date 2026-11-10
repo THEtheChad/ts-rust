@@ -1,0 +1,26 @@
+{
+ "fileSystem": {
+  "kind": "full",
+  "files": {
+   "/b2/src/a.ts": "export const a = 1;",
+   "/b2/src/sub/b.ts": "export const b = 2;",
+   "/b2/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}"
+  }
+ },
+ "createPrograms": [
+  {
+   "rootFiles": [
+    "/b2/src/a.ts",
+    "/b2/src/sub/b.ts",
+    "/b2/g.d.ts"
+   ],
+   "compilerOptions": {
+    "noLib": true,
+    "outDir": "/b2/SRC",
+    "rootDir": "/b2/src",
+    "declaration": true,
+    "sourceMap": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,123 @@
+{
+ "createSnapshot": {
+  "operation": {},
+  "projects": [
+   {
+    "configFileName": "^/~ts-uri~/mem/auth/tsconfig.json",
+    "currentDirectory": "^/~ts-uri~/mem/auth/",
+    "dirty": false,
+    "id": "^/~ts-uri~/mem/auth/tsconfig.json",
+    "parsedCommandLine": {
+     "compileOnSave": false,
+     "errors": [],
+     "fileNames": [
+      "^/~ts-uri~/mem/auth/src/P.ts",
+      "^/~ts-uri~/mem/auth/src/Y.ts",
+      "^/~ts-uri~/mem/auth/src/g.d.ts",
+      "^/~ts-uri~/mem/auth/src/p.ts",
+      "^/~ts-uri~/mem/auth/src/y.js",
+      "^/~ts-uri~/mem/auth/src/A/x.ts",
+      "^/~ts-uri~/mem/auth/src/a/y.ts"
+     ],
+     "options": {
+      "allowJs": true,
+      "configFilePath": "^/~ts-uri~/mem/auth/tsconfig.json",
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/out"
+     },
+     "raw": {
+      "compilerOptions": {
+       "allowJs": true,
+       "noLib": true,
+       "outDir": "out"
+      },
+      "include": [
+       "src/**/*"
+      ]
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString ^/~ts-uri~/mem/auth/tsconfig.json": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/A/x.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/A/x.ts",
+    "text": "export const x = 0;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/P.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/P.ts",
+    "text": "export const p = 2;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/Y.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/Y.ts",
+    "text": "export const r = 4;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/a/y.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/a/y.ts",
+    "text": "export const y = 1;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/p.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/p.ts",
+    "text": "export const q = 3;\n"
+   },
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/src/y.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/src/y.js",
+    "text": "export const s = 5;\n"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics ^/~ts-uri~/mem/auth/tsconfig.json": [],
+ "getProgramDiagnostics ^/~ts-uri~/mem/auth/tsconfig.json": [
+  {
+   "category": 1,
+   "code": 5011,
+   "end": 61,
+   "endPosition": {
+    "character": 61,
+    "line": 0
+   },
+   "fileName": "^/~ts-uri~/mem/auth/tsconfig.json",
+   "messageChain": [
+    {
+     "category": 3,
+     "code": 5111,
+     "end": -1,
+     "pos": -1,
+     "text": "Visit https://aka.ms/ts6 for migration information."
+    }
+   ],
+   "pos": 53,
+   "sourceLines": [
+    {
+     "line": 0,
+     "text": "{\"compilerOptions\": {\"noLib\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\"]}"
+    }
+   ],
+   "startPosition": {
+    "character": 53,
+    "line": 0
+   },
+   "text": "The common source directory of 'tsconfig.json' is './src'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout."
+  }
+ ],
+ "getSemanticDiagnostics ^/~ts-uri~/mem/auth/tsconfig.json": [],
+ "getSourceFileNames ^/~ts-uri~/mem/auth/tsconfig.json": [
+  "^/~ts-uri~/mem/auth/src/P.ts",
+  "^/~ts-uri~/mem/auth/src/Y.ts",
+  "^/~ts-uri~/mem/auth/src/g.d.ts",
+  "^/~ts-uri~/mem/auth/src/p.ts",
+  "^/~ts-uri~/mem/auth/src/y.js",
+  "^/~ts-uri~/mem/auth/src/A/x.ts",
+  "^/~ts-uri~/mem/auth/src/a/y.ts"
+ ]
+}

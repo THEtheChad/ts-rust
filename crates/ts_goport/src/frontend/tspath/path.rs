@@ -93,7 +93,7 @@ fn compare_strings_case_sensitive(a: &str, b: &str) -> i32 {
 }
 
 // Go: stringutil/compare.go:67 GetStringComparer
-fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> i32 {
+pub fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> i32 {
     if ignore_case {
         return compare_strings_case_insensitive;
     }
@@ -563,15 +563,6 @@ pub fn resolve_path_without_trailing_directory_separator(path: &str, paths: &[&s
     resolved
 }
 
-// Go: tspath/path.go:333 ResolveTripleslashReference (at 673a5f17d713; removed by ts#64159)
-pub fn resolve_tripleslash_reference(module_name: &str, containing_file: &str) -> String {
-    let base_path = get_directory_path(containing_file);
-    if is_rooted_disk_path(module_name) {
-        return normalize_path(module_name);
-    }
-    normalize_path(&combine_paths(&base_path, &[module_name]))
-}
-
 // Go: tspath/path.go:351 GetNormalizedPathComponents
 pub fn get_normalized_path_components(path: &str, current_directory: &str) -> Vec<String> {
     let combined = combine_paths(current_directory, &[path]);
@@ -986,6 +977,18 @@ fn is_bare_root(path: &str) -> bool {
     root_length != 0 && root_length == path.len() && !has_trailing_directory_separator(path)
 }
 
+// Go: tspath/pathkey.go:43 CaseSensitivity.PathKey (ts#64159)
+/// PathKey returns the canonical key for an already rooted, normalized path:
+/// an encoded dynamic name keeps its case (with its root's separator), any
+/// other path is canonicalized under the case setting.
+#[inline]
+pub fn path_key(path: &str, use_case_sensitive_file_names: bool) -> String {
+    if is_encoded_dynamic_file_name(path) {
+        return canonical_dynamic_uri_path(path).into_owned();
+    }
+    get_canonical_file_name(path, use_case_sensitive_file_names)
+}
+
 // Go: tspath/path.go:612 GetCanonicalFileName (at 673a5f17d713;
 // ts#64159 makes it CaseSensitivity.PathKey, tspath/pathkey.go:43)
 pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: bool) -> String {
@@ -1131,23 +1134,14 @@ pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: 
     // PERF: a rooted name that is normal already is its own normal path
     // (`normalize_path`), so only the canonical copy is made.
     if is_rooted_disk_path(file_name) && is_normalized_path(file_name) {
-        if is_encoded_dynamic_file_name(file_name) {
-            return Path(canonical_dynamic_uri_path(file_name).into_owned());
-        }
-        return Path(get_canonical_file_name(
-            file_name,
-            use_case_sensitive_file_names,
-        ));
+        return Path(path_key(file_name, use_case_sensitive_file_names));
     }
     let non_canonicalized_path = if is_rooted_disk_path(file_name) {
         normalize_path(file_name)
     } else {
         get_normalized_absolute_path(file_name, base_path)
     };
-    if is_encoded_dynamic_file_name(&non_canonicalized_path) {
-        return Path(canonical_dynamic_uri_path(&non_canonicalized_path).into_owned());
-    }
-    Path(get_canonical_file_name(
+    Path(path_key(
         &non_canonicalized_path,
         use_case_sensitive_file_names,
     ))
@@ -1343,6 +1337,71 @@ fn relative_path_from_normalized_paths(
         to_components,
         use_case_sensitive_file_names,
     ))
+}
+
+// Go: tspath/rooted_path.go:627 CaseSensitivity.CommonDirectoryOfFiles (ts#64159)
+/// CommonDirectoryOfFiles returns the deepest directory containing every
+/// file. It preserves the spelling of the first file name.
+// PORT: Go takes typed rooted file names; `file_names` are rooted and
+// normalized, so this does not resolve or reduce them. When a name or the
+// common directory is an encoded dynamic name, Go compares case-sensitively
+// and without the root's trailing separator; `get_path_from_path_components`
+// puts the separator back.
+pub fn common_directory_of_files(
+    file_names: &[String],
+    use_case_sensitive_file_names: bool,
+) -> String {
+    // PORT: Go nil slice is `None`.
+    let mut common_path_components: Option<Vec<String>> = None;
+    for file_name in file_names {
+        let mut path_components = get_path_components(file_name, "");
+        path_components.pop();
+        let Some(common) = common_path_components.as_mut() else {
+            common_path_components = Some(path_components);
+            continue;
+        };
+
+        let n = common.len().min(path_components.len());
+        let mut effective_case_sensitive = use_case_sensitive_file_names;
+        if is_encoded_dynamic_file_name(file_name)
+            || is_encoded_dynamic_file_name(&get_path_from_path_components(common))
+        {
+            effective_case_sensitive = true;
+            for root in [&mut common[0], &mut path_components[0]] {
+                if root.ends_with('/') {
+                    root.pop();
+                }
+            }
+        }
+        for i in 0..n {
+            if path_key_text(&common[i], effective_case_sensitive)
+                != path_key_text(&path_components[i], effective_case_sensitive)
+            {
+                if i == 0 {
+                    return String::new();
+                }
+                common.truncate(i);
+                break;
+            }
+        }
+        if path_components.len() < common.len() {
+            common.truncate(path_components.len());
+        }
+    }
+    match common_path_components {
+        Some(common) if !common.is_empty() => get_path_from_path_components(&common),
+        _ => String::new(),
+    }
+}
+
+/// Go `CaseSensitivity.Canonicalize` (tspath/path.go:1019) of `text`,
+/// borrowing it when the case setting keeps it.
+fn path_key_text(text: &str, use_case_sensitive_file_names: bool) -> Cow<'_, str> {
+    if use_case_sensitive_file_names {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(to_file_name_lower_case(text))
+    }
 }
 
 // Go: tspath/rooted_path.go:58 TryRootedPathFromAbsolute (ts#64159)
@@ -1720,30 +1779,6 @@ pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
         }
     }
     a_components.len().cmp(&b_components.len()) as i32
-}
-
-// Go: tspath/path.go:1046 ComparePathsCaseSensitive (at 673a5f17d713; removed by ts#64159)
-pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(
-        a,
-        b,
-        &ComparePathsOptions {
-            use_case_sensitive_file_names: true,
-            current_directory: current_directory.to_string(),
-        },
-    )
-}
-
-// Go: tspath/path.go:1050 ComparePathsCaseInsensitive (at 673a5f17d713; removed by ts#64159)
-pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(
-        a,
-        b,
-        &ComparePathsOptions {
-            use_case_sensitive_file_names: false,
-            current_directory: current_directory.to_string(),
-        },
-    )
 }
 
 // Go: tspath/rooted_path.go:524 CaseSensitivity.compareRootedText (ts#64159)

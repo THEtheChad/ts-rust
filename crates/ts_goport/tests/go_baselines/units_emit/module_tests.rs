@@ -18,9 +18,9 @@ use ts_goport::frontend::module::{
     node_module_package_root_for_directory, node_module_package_root_for_file,
     normalize_path_for_cjs_resolution,
 };
+use ts_goport::frontend::outputpaths::OutputPathsHost;
 use ts_goport::frontend::tspath::{self, ExtensionRewrite, Path};
 use ts_goport::frontend::vfs::{Fs, Replacements, wrapvfs_wrap};
-use ts_goport::modulespecifiers::deps::OutputPathsHost;
 use ts_goport::modulespecifiers::packagejson::InfoCacheEntry;
 use ts_goport::modulespecifiers::symlinks::{KnownDirectoryLink, KnownSymlinks};
 use ts_goport::modulespecifiers::{

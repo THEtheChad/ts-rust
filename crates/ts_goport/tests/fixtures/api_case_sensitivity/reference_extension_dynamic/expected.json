@@ -1,0 +1,69 @@
+{
+ "createSnapshot": {
+  "operation": {
+   "createdPrograms": [
+    "/dev/null/synthetic/1"
+   ]
+  },
+  "projects": [
+   {
+    "currentDirectory": "/",
+    "dirty": false,
+    "id": "/dev/null/synthetic/1",
+    "parsedCommandLine": {
+     "errors": [],
+     "fileNames": [
+      "^/~ts-uri~/mem/auth/main.ts",
+      "/b2/g.d.ts"
+     ],
+     "options": {
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/out"
+     }
+    }
+   }
+  ],
+  "snapshot": 1
+ },
+ "emitToString /dev/null/synthetic/1": {
+  "diagnostics": [],
+  "emitSkipped": false,
+  "outputFiles": [
+   {
+    "fileName": "^/~ts-uri~/mem/auth/out/main.js",
+    "sourceFileName": "^/~ts-uri~/mem/auth/main.ts",
+    "text": "/// <reference path=\"./x.TS\" />\nexport const m = 0;\n"
+   }
+  ]
+ },
+ "getConfigFileParsingDiagnostics /dev/null/synthetic/1": [],
+ "getProgramDiagnostics /dev/null/synthetic/1": [],
+ "getSemanticDiagnostics /dev/null/synthetic/1": [
+  {
+   "category": 1,
+   "code": 6054,
+   "end": 27,
+   "endPosition": {
+    "character": 27,
+    "line": 0
+   },
+   "fileName": "^/~ts-uri~/mem/auth/main.ts",
+   "pos": 21,
+   "sourceLines": [
+    {
+     "line": 0,
+     "text": "/// <reference path=\"./x.TS\" />\n"
+    }
+   ],
+   "startPosition": {
+    "character": 21,
+    "line": 0
+   },
+   "text": "File './x.TS' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'."
+  }
+ ],
+ "getSourceFileNames /dev/null/synthetic/1": [
+  "^/~ts-uri~/mem/auth/main.ts",
+  "/b2/g.d.ts"
+ ]
+}
