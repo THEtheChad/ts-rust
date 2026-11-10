@@ -126,12 +126,12 @@ fn effect_or_layer_channels(tp: &mut TypeParser<'_>, node: Node) -> Option<(Type
     }
 
     // Try strict Effect type first, then Layer type
-    let (e_type, r_type) = if let Some(eff) = tp.strict_effect_type(t) {
-        (eff.e, eff.r)
-    } else if let Some(layer) = tp.layer_type(t) {
-        (layer.e, layer.r_in)
-    } else {
-        return None;
+    let (e_type, r_type) = match tp.strict_effect_type(t) {
+        Some(eff) => (eff.e, eff.r),
+        None => {
+            let layer = tp.layer_type(t)?;
+            (layer.e, layer.r_in)
+        }
     };
     (e_type.is_some() && r_type.is_some()).then_some((e_type, r_type))
 }
