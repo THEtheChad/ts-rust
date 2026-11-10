@@ -199,11 +199,14 @@ if (!process.argv.includes("--unit")) {
   const at = (re) => r3.items.findIndex((it) => re.test(it.step));
   const [hang, crash] = [at(/^src\/a\.ts:5:16 references$/), at(/^src\/b\.ts:2:16 hover$/)];
   const before = r3.items.slice(0, hang);
-  const after = r3.items.slice(hang).filter((it) => !it.method.startsWith("server/")); // answers, not the run-level items
+  // The answers to the script's requests: not the run-level items, and not the two answers after them (lane
+  // H8: the initialize answer, given before any crash, and the server's home, an output of the whole run).
+  const tail = (it) => it.step === "initialize" || it.step === "session home";
+  const after = r3.items.slice(hang).filter((it) => !it.method.startsWith("server/") && !tail(it));
   check("answers before Go's first crash or hang are MATCH", hang > 0 && before.every((it) => it.status === "MATCH"), JSON.stringify(before.filter((it) => it.status !== "MATCH").slice(0, 3)));
   check("a Go timeout makes the answers from there GO-BROKEN", after.length > 0 && after.every((it) => it.status === "GO-BROKEN" && /go2 timed out/.test(it.detail)), JSON.stringify(after.find((it) => it.status !== "GO-BROKEN" || !/go2 timed out/.test(it.detail))));
   // The run-level items (server/session, server/order: lane H4) judge whole runs, not answers.
-  const answers3 = r3.items.slice(crash).filter((it) => !it.method.startsWith("server/"));
+  const answers3 = r3.items.slice(crash).filter((it) => !it.method.startsWith("server/") && !tail(it));
   check("a Go crash is named in the detail from the crashed request on", crash > hang && answers3.length > 0 && answers3.every((it) => /go crashed .*server exited \(3\)/.test(it.detail)), JSON.stringify(r3.items[crash]));
   check("the GO-BROKEN answers were confirmed by one more tsc-rs run", /rs-confirm: \d+ answers/.test(r3.stdout));
 
@@ -231,7 +234,7 @@ if (!process.argv.includes("--unit")) {
   check("negative control: finding 5: the confirming run changing a MATCH answer is rs-nondet", early.length > 0 && early.every((it) => it.status === "DIFF" && /rs-nondet: the confirming/.test(it.detail)), JSON.stringify(early).slice(0, 300) + (c1.error ?? ""));
   const c2 = lspdiffWith("confirm-crash", [], { ...both, proxyRules: [lateCrash, { method: "textDocument/hover", file: "src/a.ts", word: "pick", edit: "crash", runs: [4] }] });
   const server = c2.items.filter((it) => it.step === "rs-confirm server");
-  const afterCrash = c2.items.filter((it) => it.status === "MATCH" && it.i > (c2.items.find((x) => /^src\/a\.ts:1:19 hover$/.test(x.step))?.i ?? -1));
+  const afterCrash = c2.items.filter((it) => it.status === "MATCH" && !tail(it) && it.i > (c2.items.find((x) => /^src\/a\.ts:1:19 hover$/.test(x.step))?.i ?? -1));
   check("negative control: finding 5: a crash of the confirming run is a DIFF (its own item, and every answer after it)", server.length === 1 && server[0].status === "DIFF" && server[0].rsFailure === "crash" && afterCrash.length === 0, JSON.stringify(server) + ` ${afterCrash.length} MATCH after the crash` + (c2.error ?? ""));
   // Finding 11: a prepareRename that tsc-rs answers with null: Go is asked the rename, tsc-rs is not.
   // That is one difference; the answers after it stay aligned.

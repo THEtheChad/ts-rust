@@ -87,10 +87,13 @@ material and is read only when it matches (lane H4).
   `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
   `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
-  `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`.
+  `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`. Since lane H8 the
+  sources also hold `json.mjs` (the wire's JSON reader) and the sandbox's init
+  (`parity_sandbox_init.py`, shared with the api tier), and the ancestor dirs keyed are only the ones a
+  server sees (none in the sandbox's hidden dirs: on MS-A2 only `/`).
 - **api** (lane H7): the scenario as expanded (request filesystem, options, requests, build steps, the
   case flag), its root, the disk fixture's content hash, the session's sources (`parity_api_session.py`
-  and `parity_api_init.py`: protocol client, requests, sandbox, timeouts), the protocol, the private
+  and `parity_sandbox_init.py`: protocol client, requests, sandbox, timeouts), the protocol, the private
   home path, the ancestor dirs' lookup names, the Go binary's sha and the Go run count. See "api: API
   sessions".
 - **fuzz and corpus:** the case's id and `json_hash` of its content (every file, the options, the
@@ -213,6 +216,15 @@ binary runs once more on its own, and is FLAKY if it then passes.
 This tier uses lspdiff from `perf/lsp-concurrency` (931fad409). The vendored copy adds
 `--go-cache`, a per-answer `items.json`, the watch scenarios (`scenario.mjs`, `fixtures.mjs`),
 repeated tsc-rs runs and more Go runs (below). Up to 4 sessions run side by side (`--jobs`).
+
+**Servers and the wire (lane H8).** Every server process (Go, tsc-rs, JS tsserver) runs in the api
+tier's sandbox (`parity_sandbox_init.py`): PID 1 of its own PID namespace, the host's state dirs empty,
+the whole tree read-only but its project overlay and its private home, no privilege, no fd but 0, 1
+and 2, no network; a process left behind when it ends fails the session. The client reads the wire
+strictly (Content-Length framing, exact JSON-RPC 2.0 envelopes, no duplicate key, every number's text
+kept), and every session has two more items after its last answer: `initialize` (the initialize
+answer) and `session home` (what the server wrote into its home: the final listing and its history).
+A server that cannot be started is ERROR, never GO-BROKEN. See "LSP sandbox and wire (lane H8)".
 
 **Standard sessions** (`session.mjs`; umami, ts-pattern and, in full only, hono). Each session opens 12 files of the project. For
 each file it asks for diagnostics, semantic tokens, inlay hints, document symbols and folding
@@ -342,8 +354,9 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   `scratch/api/<scenario>/root` for the requests that use the host filesystem: the build orchestrator,
   and `kind: "layer"` filesystems, which are allowed only over a fixture (they fall back to the host,
   which in the sandbox is the fixture and nothing else). `host` symlinks are refused.
-- **The sandbox** (`parity_api_init.py`, PID 1 of a new user, mount, network and PID namespace; `unshare
-  --pid --fork --kill-child --mount-proc`):
+- **The sandbox** (`parity_sandbox_init.py`, until lane H8 `parity_api_init.py`; the lsp tier's too since
+  then; PID 1 of a new user, mount, network and PID namespace; `unshare --pid --fork --kill-child
+  --mount-proc`):
   - `/home`, `/tmp`, `/var/tmp`, `/run`, `/mnt`, `/media`, `/srv`, `/opt` and `/dev/shm` are empty tmpfs
     dirs: the user's files (the real `~/.cache/typescript`, `~/.npm`, `~/.config`, every other lane's
     trees) do not exist for the server, not even for `stat`. The dirs the sandbox makes there have mode
@@ -397,7 +410,7 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   are the sandbox's own) are keyed and watched for the names module resolution looks up. A change to
   either is ERROR. There are no tripwires: the dirs they guarded do not exist in the sandbox.
 - **Key** (`material`): the expanded scenario, its root, the fixture hash, the sha of
-  `parity_api_session.py` and `parity_api_init.py` (`SOURCES`), `PROTOCOL` (the wire protocol: JSON-RPC
+  `parity_api_session.py` and `parity_sandbox_init.py` (`SOURCES`), `PROTOCOL` (the wire protocol: JSON-RPC
   `--async`, the pin's protocol 5 in `api_oracle.py`'s numbering), the home path, the ancestors' state,
   whether `/parity-api` exists, the timeouts, the Go command's identity (a binary's sha256) and the Go run
   count. Go's two sessions per scenario are cached in `go-cache/<go sha>/api/<scenario>-<key>.json` with
@@ -1950,15 +1963,21 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   turn base MATCHes into new results, so rerun the base after one.
 - **Inputs outside the snapshots.** The Go and tsc-rs binaries are keyed by their sha, and JS by its
   package. In the lsp tier (lane H5) the node, the typings store and the ancestor dirs' lookup names
-  are keyed too, the servers see none of the harness's environment, and the tripwires cover the
-  shared typings cache, npm's cache and `~/.config`. Not keyed: the kernel, the CPU count and the
-  host's load (which change how Go's goroutines race, not its inputs), the system libraries, and
-  `stat` of a guarded path (a tripwire sees opens and reads, not lookups). The CLI, fuzz and corpus
+  are keyed too, and the servers see none of the harness's environment; since lane H8 the servers run
+  in the api tier's sealed sandbox, where the shared typings cache, npm's cache, `~/.config` and every
+  other user file do not exist. Not keyed: the kernel, the CPU count and the host's load (which change
+  how Go's goroutines race, not its inputs), and the system libraries (`/usr`, `/etc`: visible,
+  read-only). The CLI, fuzz and corpus
   tiers still pass the harness's environment through and do not key their ancestor dirs (none holds
   a lookup name on MS-A2 now).
-- **Transient changes of a fixture scenario's dir by a server.** The fixture must hold exactly what
-  the script made it after each run, but a change a server makes and undoes inside its own run is not
-  seen there (the script writes the same dir; inotify cannot tell the writers apart).
+- **Transient changes of a fixture scenario's dir by a server:** closed by lane H8. The server sees the
+  fixture dir through a read-only bind (the script writes it from outside), so it cannot change it at
+  all; the end check stays.
+- **The home with ATA on (lane H8).** In the scenarios with ATA on the home is listed at every wait
+  (quiet, checkpoint), where ATA is idle, not after every answer (ATA writes it in the background, so a
+  listing between two waits would depend on npm's timing). A file a server writes and removes again
+  between two waits of such a scenario is not seen; one that stays, or one a server writes in a session
+  with ATA off, is.
 
 ## Grandfather pins without Rust line numbers (lane H6, 2026-11-09)
 
@@ -2245,7 +2264,7 @@ mapping and change them back before the end check: both content checks pass, and
 is another host process racing the harness, not the compiler under test, which runs in the sandbox
 and cannot reach the fixture snapshot. The same holds for the snapshots of the cli and lsp tiers.
 
-### The lsp tier: the same gaps (reported, not fixed; for lane H8)
+### The lsp tier: the same gaps (reported here; fixed by lane H8, see "LSP sandbox and wire (lane H8)")
 
 `vendor/lspdiff/sandbox.mjs` runs each server under `unshare -rmn` with overlays of its inputs and its
 home bound, and `client.mjs` kills only that process. With Astra's corrections from her recheck:
@@ -2391,7 +2410,7 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   (about 1 minute together; the JS file also has lane ND2's and H5's).
 - `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
 - `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
-  (the protocol client, the requests, the storage reads); `parity_api_init.py`: the session's sandbox,
+  (the protocol client, the requests, the storage reads); `parity_sandbox_init.py`: the session's sandbox,
   PID 1 of its namespaces (both keyed: their sha is in every api key); `parity-api-scenarios.json`: the
   scenarios; `parity_h7_test.py`: lane H7's negative controls (30 s to 2.5 minutes; `--unit` about 14 s;
   `--e2e-only --harness DIR` against another harness); `parity_h7_fake.py`: its fake server, Astra's
@@ -2405,12 +2424,17 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   minutes; `SELFTEST OK`).
 - `parity-projects.json`: the CLI projects; `prepare-parity-projects.sh`: the parity lane's
   project copies.
+- `parity_sandbox_init.py`: PID 1 of every api and lsp server's sandbox (lane H8 made it shared; it was
+  `parity_api_init.py`); `parity_h8_test.py`: lane H8's negative controls for the lsp tier (`--unit` in
+  seconds; the end-to-end controls about 10 minutes; `--e2e-only --harness DIR` against another harness);
+  `parity_h8_fake.py`: its fake LSP server, a proxy in front of the Go oracle.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
   `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm, the only npm a
   server can run; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
-  the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process and its session result,
+  the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process (under the shared init) and
+  its session result, `json.mjs` the strict JSON reader of the wire,
   `settings.mjs` every setting, `selftest/` their self-tests) and `vendor/difffuzz/` (feat/difffuzz
   033e55442; `oracle.py` checks the inputs since lane H4).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `js-cache/`,
