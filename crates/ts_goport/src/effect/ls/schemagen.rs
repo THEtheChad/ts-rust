@@ -203,144 +203,141 @@ impl<'f> SchemaGen<'f> {
         }
 
         // Primitive keywords
-        let keyword = match node.kind() {
-            SyntaxKind::AnyKeyword => Some("Any"),
-            SyntaxKind::NeverKeyword => Some("Never"),
-            SyntaxKind::UnknownKeyword => Some("Unknown"),
-            SyntaxKind::VoidKeyword => Some("Void"),
-            SyntaxKind::NullKeyword => Some("Null"),
-            SyntaxKind::UndefinedKeyword => Some("Undefined"),
-            SyntaxKind::StringKeyword => Some("String"),
-            SyntaxKind::NumberKeyword => Some("Number"),
-            SyntaxKind::BooleanKeyword => Some("Boolean"),
-            SyntaxKind::BigIntKeyword => Some("BigInt"),
-            _ => None,
-        };
-        if let Some(name) = keyword {
+        if let Some(name) = keyword_schema_name(node.kind()) {
             return Ok(self.create_api_property_access(name));
         }
 
-        // Literal types: string/number/boolean literals and null
-        if node.kind() == SyntaxKind::LiteralType {
-            if node.literal().kind() == SyntaxKind::NullKeyword {
-                return Ok(self.create_api_property_access("Null"));
+        let processed = match node.kind() {
+            // Literal types: string/number/boolean literals and null
+            SyntaxKind::LiteralType => self.process_literal_type(node),
+            // Union types: A | B
+            SyntaxKind::UnionType => Some(self.process_union_type(node)?),
+            // Intersection types: A & B
+            SyntaxKind::IntersectionType => Some(self.process_intersection_type(node)?),
+            // Type operator: keyof T, readonly T
+            SyntaxKind::TypeOperator => self.process_type_operator(node)?,
+            // Array type: T[]
+            SyntaxKind::ArrayType => {
+                let elem_schema = self.process_node(node.element_type())?;
+                Some(self.create_api_call("Array", &[elem_schema]))
             }
-            if let Some(literals) = self.parse_all_literals(node)
-                && !literals.is_empty()
-            {
-                return Ok(self.create_api_call("Literal", &literals));
+            // Tuple type: [A, B, C]
+            SyntaxKind::TupleType => {
+                // PORT: Go processes `tt.Elements` only when the list is not nil;
+                // a nil list gives no elements, as `elements()` does.
+                let elems = self.process_node_list(node.elements())?;
+                Some(self.create_api_call("Tuple", &self.version_list_args(elems)))
             }
-        }
-
-        // Union types: A | B
-        if node.kind() == SyntaxKind::UnionType {
-            let types = node.types();
-            if types.is_nil() {
-                return Ok(self.unsupported_comment(node));
-            }
-
-            // Optimization: try to collapse all-literal unions into Schema.Literal(...)
-            if self.version != EffectMajorVersion::V4
-                && let Some(all_literals) = self.parse_all_literals(node)
-                && !all_literals.is_empty()
-            {
-                return Ok(self.create_api_call("Literal", &all_literals));
-            }
-
-            let members = self.process_node_list(types.nodes())?;
-
-            let args = if self.version == EffectMajorVersion::V4 {
-                vec![
+            // Type literal (object shape): { a: string, b: number }
+            SyntaxKind::TypeLiteral => {
+                let (properties, records) = self.process_members(node.members())?;
+                let mut args = vec![
                     self.f
-                        .new_array_literal_expression(self.f.new_node_list(&members), false),
-                ]
-            } else {
-                members
-            };
-            return Ok(self.create_api_call("Union", &args));
-        }
-
-        // Intersection types: A & B
-        if node.kind() == SyntaxKind::IntersectionType {
-            let types = node.types();
-            if types.is_nil() || types.nodes().is_empty() {
-                return Ok(self.unsupported_comment(node));
+                        .new_object_literal_expression(self.f.new_node_list(&properties), true),
+                ];
+                args.extend(records);
+                Some(self.create_api_call("Struct", &args))
             }
-
-            let members = self.process_node_list(types.nodes())?;
-
-            if members.len() == 1 {
-                return Ok(members[0]);
-            }
-
-            // firstSchema.pipe(Schema.extend(second), Schema.extend(third), ...)
-            return Ok(extend_pipe(self.f, &self.schema_identifier, &members));
-        }
-
-        // Type operator: keyof T, readonly T
-        if node.kind() == SyntaxKind::TypeOperator {
-            if node.operator() == SyntaxKind::KeyOfKeyword {
-                let inner = self.process_node(node.type_())?;
-                return Ok(self.create_api_call("keyof", &[inner]));
-            }
-            if node.operator() == SyntaxKind::ReadonlyKeyword {
-                return self.process_node(node.type_());
-            }
-        }
-
-        // Array type: T[]
-        if node.kind() == SyntaxKind::ArrayType {
-            let elem_schema = self.process_node(node.element_type())?;
-            return Ok(self.create_api_call("Array", &[elem_schema]));
-        }
-
-        // Tuple type: [A, B, C]
-        if node.kind() == SyntaxKind::TupleType {
-            // PORT: Go processes `tt.Elements` only when the list is not nil;
-            // a nil list gives no elements, as `elements()` does.
-            let elems = self.process_node_list(node.elements())?;
-            let args = if self.version == EffectMajorVersion::V4 {
-                vec![
-                    self.f
-                        .new_array_literal_expression(self.f.new_node_list(&elems), false),
-                ]
-            } else {
-                elems
-            };
-            return Ok(self.create_api_call("Tuple", &args));
-        }
-
-        // Type literal (object shape): { a: string, b: number }
-        if node.kind() == SyntaxKind::TypeLiteral {
-            let (properties, records) = self.process_members(node.members())?;
-            let mut args = vec![
-                self.f
-                    .new_object_literal_expression(self.f.new_node_list(&properties), true),
-            ];
-            args.extend(records);
-            return Ok(self.create_api_call("Struct", &args));
-        }
-
-        // Parenthesized type: (A)
-        if node.kind() == SyntaxKind::ParenthesizedType {
-            return self.process_node(node.type_());
-        }
-
-        // Type reference: resolve known Effect types and data types
-        if node.kind() == SyntaxKind::TypeReference {
-            let data_type_name = self.entity_name_to_data_type_name(node.type_name());
-            if !data_type_name.is_empty() {
-                return self.process_type_reference(node, data_type_name);
-            }
-
-            // Simple type reference without type arguments → pass through as identifier
-            if node.type_arguments().is_empty() {
-                return Ok(self.type_entity_name_to_node(node.type_name()));
-            }
-        }
+            // Parenthesized type: (A)
+            SyntaxKind::ParenthesizedType => Some(self.process_node(node.type_())?),
+            // Type reference: resolve known Effect types and data types
+            SyntaxKind::TypeReference => self.process_type_reference_node(node)?,
+            _ => None,
+        };
 
         // Unsupported
-        Ok(self.unsupported_comment(node))
+        Ok(processed.unwrap_or_else(|| self.unsupported_comment(node)))
+    }
+
+    /// The members of a union or tuple as `Schema.Union`/`Schema.Tuple`
+    /// arguments: one array literal of them in Effect v4, else the members.
+    fn version_list_args(&self, members: Vec<Node>) -> Vec<Node> {
+        if self.version == EffectMajorVersion::V4 {
+            vec![
+                self.f
+                    .new_array_literal_expression(self.f.new_node_list(&members), false),
+            ]
+        } else {
+            members
+        }
+    }
+
+    /// The literal type case of `processNode`: `Schema.Null` for `null`,
+    /// `Schema.Literal(...)` for string, number and boolean literals, else
+    /// `None` (unsupported).
+    fn process_literal_type(&self, node: Node) -> Option<Node> {
+        if node.literal().kind() == SyntaxKind::NullKeyword {
+            return Some(self.create_api_property_access("Null"));
+        }
+        let literals = self.parse_all_literals(node)?;
+        (!literals.is_empty()).then(|| self.create_api_call("Literal", &literals))
+    }
+
+    /// The union type case of `processNode`. Before Effect v4 an all-literal
+    /// union collapses into one `Schema.Literal(...)`.
+    fn process_union_type(&self, node: Node) -> Result<Node, &'static str> {
+        let types = node.types();
+        if types.is_nil() {
+            return Ok(self.unsupported_comment(node));
+        }
+
+        // Optimization: try to collapse all-literal unions into Schema.Literal(...)
+        if self.version != EffectMajorVersion::V4
+            && let Some(all_literals) = self.parse_all_literals(node)
+            && !all_literals.is_empty()
+        {
+            return Ok(self.create_api_call("Literal", &all_literals));
+        }
+
+        let members = self.process_node_list(types.nodes())?;
+        Ok(self.create_api_call("Union", &self.version_list_args(members)))
+    }
+
+    /// The intersection type case of `processNode`: one member stands for
+    /// itself; more become `first.pipe(Schema.extend(second), ...)`.
+    fn process_intersection_type(&self, node: Node) -> Result<Node, &'static str> {
+        let types = node.types();
+        if types.is_nil() || types.nodes().is_empty() {
+            return Ok(self.unsupported_comment(node));
+        }
+
+        let members = self.process_node_list(types.nodes())?;
+
+        if members.len() == 1 {
+            return Ok(members[0]);
+        }
+
+        // firstSchema.pipe(Schema.extend(second), Schema.extend(third), ...)
+        Ok(extend_pipe(self.f, &self.schema_identifier, &members))
+    }
+
+    /// The type operator case of `processNode`: `Schema.keyof(...)` for
+    /// `keyof T`, the operand for `readonly T`, else `None` (unsupported).
+    fn process_type_operator(&self, node: Node) -> Result<Option<Node>, &'static str> {
+        if node.operator() == SyntaxKind::KeyOfKeyword {
+            let inner = self.process_node(node.type_())?;
+            return Ok(Some(self.create_api_call("keyof", &[inner])));
+        }
+        if node.operator() == SyntaxKind::ReadonlyKeyword {
+            return self.process_node(node.type_()).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// The type reference case of `processNode`: a known data type through
+    /// `processTypeReference`, a reference without type arguments as its
+    /// name, else `None` (unsupported).
+    fn process_type_reference_node(&self, node: Node) -> Result<Option<Node>, &'static str> {
+        let data_type_name = self.entity_name_to_data_type_name(node.type_name());
+        if !data_type_name.is_empty() {
+            return self.process_type_reference(node, data_type_name).map(Some);
+        }
+
+        // Simple type reference without type arguments → pass through as identifier
+        if node.type_arguments().is_empty() {
+            return Ok(Some(self.type_entity_name_to_node(node.type_name())));
+        }
+        Ok(None)
     }
 
     // Go: schemagen/schemagen.go:268 processTypeReference
@@ -554,66 +551,77 @@ impl<'f> SchemaGen<'f> {
     /// Returns (properties, records).
     // PORT: Go's unused `membersResult` type is not ported.
     fn process_members(&self, members: NodeSlice) -> Result<(Vec<Node>, Vec<Node>), &'static str> {
-        let f = self.f;
         let mut properties = Vec::new();
         let mut records = Vec::new();
         for member in members {
             if member.kind() == SyntaxKind::PropertySignature {
-                let name = member.name();
-                if name.is_nil() {
-                    return Err(ERR_ONLY_LITERAL_PROPERTIES_SUPPORTED);
-                }
-                if name.kind() != SyntaxKind::Identifier && name.kind() != SyntaxKind::StringLiteral
-                {
-                    return Err(ERR_ONLY_LITERAL_PROPERTIES_SUPPORTED);
-                }
-                let type_node = member.type_();
-                if type_node.is_nil() {
-                    return Err(ERR_REQUIRED_EXPLICIT_TYPES);
-                }
-
-                let mut prop_schema = self.process_node(type_node)?;
-
-                // Wrap in Schema.optional(...) if question token present
-                if member.question_token().is_some() {
-                    prop_schema = self.create_api_call("optional", &[prop_schema]);
-                }
-
-                // Create property name node
-                let prop_name = if name.kind() == SyntaxKind::Identifier {
-                    f.new_identifier(name.text())
-                } else {
-                    f.new_string_literal(name.text(), TokenFlags::NONE)
-                };
-
-                let assignment = f.new_property_assignment(
-                    ModifierList::NIL,
-                    prop_name,
-                    Node::NIL,
-                    Node::NIL,
-                    prop_schema,
-                );
-                properties.push(assignment);
+                properties.push(self.process_property_signature(member)?);
             }
-
             if member.kind() == SyntaxKind::IndexSignature {
-                let parameters = member.parameter_list();
-                if parameters.is_nil() || parameters.nodes().len() != 1 {
-                    return Err(ERR_INDEX_SIGNATURE_MULTIPLE_PARAMETERS);
-                }
-                let param = parameters.nodes().get(0);
-                let param_type = param.type_();
-                if param_type.is_nil() {
-                    return Err(ERR_REQUIRED_EXPLICIT_TYPES);
-                }
-
-                let key = self.process_node(param_type)?;
-                let value = self.process_node(member.type_())?;
-
-                records.push(two_property_object(f, "key", key, "value", value));
+                records.push(self.process_index_signature(member)?);
             }
         }
         Ok((properties, records))
+    }
+
+    /// A property signature of `processMembers` as a property assignment
+    /// `name: <schema>` (wrapped in `Schema.optional(...)` when optional).
+    /// The name must be an identifier or a string literal, and the type
+    /// explicit.
+    fn process_property_signature(&self, member: Node) -> Result<Node, &'static str> {
+        let f = self.f;
+        let name = member.name();
+        if name.is_nil() {
+            return Err(ERR_ONLY_LITERAL_PROPERTIES_SUPPORTED);
+        }
+        if name.kind() != SyntaxKind::Identifier && name.kind() != SyntaxKind::StringLiteral {
+            return Err(ERR_ONLY_LITERAL_PROPERTIES_SUPPORTED);
+        }
+        let type_node = member.type_();
+        if type_node.is_nil() {
+            return Err(ERR_REQUIRED_EXPLICIT_TYPES);
+        }
+
+        let mut prop_schema = self.process_node(type_node)?;
+
+        // Wrap in Schema.optional(...) if question token present
+        if member.question_token().is_some() {
+            prop_schema = self.create_api_call("optional", &[prop_schema]);
+        }
+
+        // Create property name node
+        let prop_name = if name.kind() == SyntaxKind::Identifier {
+            f.new_identifier(name.text())
+        } else {
+            f.new_string_literal(name.text(), TokenFlags::NONE)
+        };
+
+        Ok(f.new_property_assignment(
+            ModifierList::NIL,
+            prop_name,
+            Node::NIL,
+            Node::NIL,
+            prop_schema,
+        ))
+    }
+
+    /// An index signature of `processMembers` as a `{ key, value }` record
+    /// object. It must have one parameter, with an explicit type.
+    fn process_index_signature(&self, member: Node) -> Result<Node, &'static str> {
+        let parameters = member.parameter_list();
+        if parameters.is_nil() || parameters.nodes().len() != 1 {
+            return Err(ERR_INDEX_SIGNATURE_MULTIPLE_PARAMETERS);
+        }
+        let param = parameters.nodes().get(0);
+        let param_type = param.type_();
+        if param_type.is_nil() {
+            return Err(ERR_REQUIRED_EXPLICIT_TYPES);
+        }
+
+        let key = self.process_node(param_type)?;
+        let value = self.process_node(member.type_())?;
+
+        Ok(two_property_object(self.f, "key", key, "value", value))
     }
 
     // Go: schemagen/schemagen.go:545 ProcessInterfaceDeclaration
@@ -733,6 +741,23 @@ impl<'f> SchemaGen<'f> {
                 result
             }
         }
+    }
+}
+
+/// The Schema API name of a primitive keyword type (`any`, `string`, ...).
+fn keyword_schema_name(kind: SyntaxKind) -> Option<&'static str> {
+    match kind {
+        SyntaxKind::AnyKeyword => Some("Any"),
+        SyntaxKind::NeverKeyword => Some("Never"),
+        SyntaxKind::UnknownKeyword => Some("Unknown"),
+        SyntaxKind::VoidKeyword => Some("Void"),
+        SyntaxKind::NullKeyword => Some("Null"),
+        SyntaxKind::UndefinedKeyword => Some("Undefined"),
+        SyntaxKind::StringKeyword => Some("String"),
+        SyntaxKind::NumberKeyword => Some("Number"),
+        SyntaxKind::BooleanKeyword => Some("Boolean"),
+        SyntaxKind::BigIntKeyword => Some("BigInt"),
+        _ => None,
     }
 }
 
@@ -1407,36 +1432,7 @@ impl<'f, 'a, 'c> StructuralSchemaGen<'f, 'a, 'c> {
 
         // Add export modifiers to requested type statements
         if is_exported {
-            let export_indices: FxHashSet<usize> = self
-                .name_to_type
-                .values()
-                .filter_map(|t| self.type_to_statement_index.get(t).copied())
-                .collect();
-            for i in 0..self.schema_statements.len() {
-                if !export_indices.contains(&i) {
-                    continue;
-                }
-                let stmt = self.schema_statements[i];
-                if stmt.kind() == SyntaxKind::VariableStatement {
-                    // Already has export modifier from non-hoisted path; skip if so
-                    if !stmt.modifiers().nodes().is_empty() {
-                        continue;
-                    }
-                    self.schema_statements[i] =
-                        f.new_variable_statement(export_modifiers(f), stmt.declaration_list());
-                } else if stmt.kind() == SyntaxKind::ClassDeclaration {
-                    if !stmt.modifiers().nodes().is_empty() {
-                        continue;
-                    }
-                    self.schema_statements[i] = f.new_class_declaration(
-                        export_modifiers(f),
-                        stmt.name(),
-                        stmt.type_parameter_list(),
-                        stmt.heritage_clauses(),
-                        stmt.member_list(),
-                    );
-                }
-            }
+            self.export_requested_statements();
         }
 
         // Set parent pointers
@@ -1445,6 +1441,40 @@ impl<'f, 'a, 'c> StructuralSchemaGen<'f, 'a, 'c> {
         }
 
         self.schema_statements.clone()
+    }
+
+    /// Adds the export modifier to the statements of the requested types
+    /// that have no modifiers yet (hoisted variable statements and class
+    /// declarations).
+    fn export_requested_statements(&mut self) {
+        let f = self.f;
+        let export_indices: FxHashSet<usize> = self
+            .name_to_type
+            .values()
+            .filter_map(|t| self.type_to_statement_index.get(t).copied())
+            .collect();
+        for i in 0..self.schema_statements.len() {
+            if !export_indices.contains(&i) {
+                continue;
+            }
+            let stmt = self.schema_statements[i];
+            // Already has export modifier from non-hoisted path; skip if so
+            if !stmt.modifiers().nodes().is_empty() {
+                continue;
+            }
+            if stmt.kind() == SyntaxKind::VariableStatement {
+                self.schema_statements[i] =
+                    f.new_variable_statement(export_modifiers(f), stmt.declaration_list());
+            } else if stmt.kind() == SyntaxKind::ClassDeclaration {
+                self.schema_statements[i] = f.new_class_declaration(
+                    export_modifiers(f),
+                    stmt.name(),
+                    stmt.type_parameter_list(),
+                    stmt.heritage_clauses(),
+                    stmt.member_list(),
+                );
+            }
+        }
     }
 }
 
