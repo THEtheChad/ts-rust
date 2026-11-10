@@ -1,0 +1,98 @@
+#### file .src/effectFnOpportunity_comments.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":14}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":2,"character":13},"end":{"line":2,"character":14}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":14}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_comments.ts": [
+          {
+            "range": {"start":{"line":2,"character":17},"end":{"line":3,"character":26}},
+            "newText": "Effect.fnUntraced(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":8,"character":3},"end":{"line":8,"character":4}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":14}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_comments.ts": [
+          {
+            "range": {"start":{"line":2,"character":17},"end":{"line":3,"character":26}},
+            "newText": "Effect.fn(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":8,"character":3},"end":{"line":8,"character":4}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"f\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":14}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_comments.ts": [
+          {
+            "range": {"start":{"line":2,"character":17},"end":{"line":3,"character":26}},
+            "newText": "Effect.fn(\"f\")(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":8,"character":3},"end":{"line":8,"character":4}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,766 @@
+#### file .src/preferSucceedSomeOrNone.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":6,"character":42},"end":{"line":6,"character":49}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":9,"character":33},"end":{"line":9,"character":47}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":12,"character":33},"end":{"line":12,"character":47}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":15,"character":36},"end":{"line":15,"character":46}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":18,"character":38},"end":{"line":18,"character":52}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":19,"character":38},"end":{"line":19,"character":52}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":22,"character":42},"end":{"line":22,"character":56}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":25,"character":45},"end":{"line":25,"character":59}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":28,"character":56},"end":{"line":28,"character":70}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":29,"character":57},"end":{"line":29,"character":71}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":32,"character":65},"end":{"line":32,"character":79}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":33,"character":66},"end":{"line":33,"character":80}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":36,"character":68},"end":{"line":36,"character":82}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":39,"character":68},"end":{"line":39,"character":82}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":42,"character":71},"end":{"line":42,"character":85}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":43,"character":69},"end":{"line":43,"character":83}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":44,"character":68},"end":{"line":44,"character":82}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":47,"character":51},"end":{"line":47,"character":107}},
+      "severity": 4,
+      "code": 377015,
+      "source": "ts",
+      "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+    },
+    {
+      "range": {"start":{"line":47,"character":72},"end":{"line":47,"character":86}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":48,"character":51},"end":{"line":48,"character":107}},
+      "severity": 4,
+      "code": 377015,
+      "source": "ts",
+      "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+    },
+    {
+      "range": {"start":{"line":48,"character":76},"end":{"line":48,"character":90}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    },
+    {
+      "range": {"start":{"line":49,"character":57},"end":{"line":49,"character":113}},
+      "severity": 4,
+      "code": 377015,
+      "source": "ts",
+      "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+    },
+    {
+      "range": {"start":{"line":49,"character":83},"end":{"line":49,"character":97}},
+      "severity": 4,
+      "code": 377117,
+      "source": "ts",
+      "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+    }
+  ]
+}
+#### quickfix 377117 {"start":{"line":6,"character":42},"end":{"line":6,"character":49}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":42},"end":{"line":6,"character":49}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":6,"character":42},"end":{"line":6,"character":65}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":9,"character":33},"end":{"line":9,"character":47}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":9,"character":33},"end":{"line":9,"character":47}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":9,"character":33},"end":{"line":9,"character":62}},
+            "newText": "Effect.succeedNone"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":12,"character":33},"end":{"line":12,"character":47}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":12,"character":33},"end":{"line":12,"character":47}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":12,"character":33},"end":{"line":12,"character":63}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":15,"character":36},"end":{"line":15,"character":46}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":15,"character":36},"end":{"line":15,"character":46}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":15,"character":36},"end":{"line":15,"character":63}},
+            "newText": "Fx.succeedSome(\"value\")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":18,"character":38},"end":{"line":18,"character":52}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":38},"end":{"line":18,"character":52}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":18,"character":38},"end":{"line":18,"character":66}},
+            "newText": "Effect.succeedNone"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":19,"character":38},"end":{"line":19,"character":52}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":19,"character":38},"end":{"line":19,"character":52}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":19,"character":38},"end":{"line":19,"character":67}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":22,"character":42},"end":{"line":22,"character":56}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":22,"character":42},"end":{"line":22,"character":56}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":22,"character":42},"end":{"line":22,"character":74}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":25,"character":45},"end":{"line":25,"character":59}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":25,"character":45},"end":{"line":25,"character":59}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":25,"character":45},"end":{"line":25,"character":83}},
+            "newText": "Effect.succeedSome<number>(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":28,"character":56},"end":{"line":28,"character":70}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":28,"character":56},"end":{"line":28,"character":70}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":28,"character":37},"end":{"line":28,"character":71}},
+            "newText": "Effect.succeedNone"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":29,"character":57},"end":{"line":29,"character":71}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":29,"character":57},"end":{"line":29,"character":71}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":29,"character":37},"end":{"line":29,"character":72}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":32,"character":65},"end":{"line":32,"character":79}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":32,"character":65},"end":{"line":32,"character":79}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":32,"character":45},"end":{"line":32,"character":80}},
+            "newText": "Effect.succeedNone"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":33,"character":66},"end":{"line":33,"character":80}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":33,"character":66},"end":{"line":33,"character":80}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":33,"character":45},"end":{"line":33,"character":81}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":36,"character":68},"end":{"line":36,"character":82}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":36,"character":68},"end":{"line":36,"character":82}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":36,"character":47},"end":{"line":36,"character":83}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":39,"character":68},"end":{"line":39,"character":82}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":39,"character":68},"end":{"line":39,"character":82}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":39,"character":47},"end":{"line":39,"character":98}},
+            "newText": "pipe(Effect.succeedSome(1), Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":42,"character":71},"end":{"line":42,"character":85}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":42,"character":71},"end":{"line":42,"character":85}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":42,"character":51},"end":{"line":42,"character":101}},
+            "newText": "pipe(Effect.succeedNone, Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":43,"character":69},"end":{"line":43,"character":83}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":43,"character":69},"end":{"line":43,"character":83}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":43,"character":49},"end":{"line":43,"character":99}},
+            "newText": "Effect.succeedSome(1).pipe(Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":44,"character":68},"end":{"line":44,"character":82}}
+[
+  {
+    "title": "Replace with Effect.succeedNone",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":44,"character":68},"end":{"line":44,"character":82}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":44,"character":49},"end":{"line":44,"character":98}},
+            "newText": "Effect.succeedNone.pipe(Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377015 {"start":{"line":47,"character":51},"end":{"line":47,"character":107}}
+[
+  {
+    "title": "Rewrite as single pipe call",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":47,"character":51},"end":{"line":47,"character":107}},
+        "severity": 4,
+        "code": 377015,
+        "source": "ts",
+        "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":47,"character":51},"end":{"line":47,"character":107}},
+            "newText": "pipe(Option.some(1), Effect.succeed, Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":47,"character":72},"end":{"line":47,"character":86}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":47,"character":72},"end":{"line":47,"character":86}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":47,"character":51},"end":{"line":47,"character":87}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377015 {"start":{"line":48,"character":51},"end":{"line":48,"character":107}}
+[
+  {
+    "title": "Rewrite as single pipe call",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":48,"character":51},"end":{"line":48,"character":107}},
+        "severity": 4,
+        "code": 377015,
+        "source": "ts",
+        "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":48,"character":51},"end":{"line":48,"character":107}},
+            "newText": "Option.some(1).pipe(Effect.succeed, Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":48,"character":76},"end":{"line":48,"character":90}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":48,"character":76},"end":{"line":48,"character":90}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":48,"character":56},"end":{"line":48,"character":91}},
+            "newText": "Effect.succeedSome(1)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377015 {"start":{"line":49,"character":57},"end":{"line":49,"character":113}}
+[
+  {
+    "title": "Rewrite as single pipe call",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":49,"character":57},"end":{"line":49,"character":113}},
+        "severity": 4,
+        "code": 377015,
+        "source": "ts",
+        "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":49,"character":57},"end":{"line":49,"character":113}},
+            "newText": "pipe(1, Option.some, Effect.succeed, Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377117 {"start":{"line":49,"character":83},"end":{"line":49,"character":97}}
+[
+  {
+    "title": "Replace with Effect.succeedSome",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":49,"character":83},"end":{"line":49,"character":97}},
+        "severity": 4,
+        "code": 377117,
+        "source": "ts",
+        "message": "`Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/preferSucceedSomeOrNone.ts": [
+          {
+            "range": {"start":{"line":49,"character":57},"end":{"line":49,"character":113}},
+            "newText": "Effect.succeedSome(1).pipe(Effect.asVoid)"
+          }
+        ]
+      }
+    }
+  }
+]

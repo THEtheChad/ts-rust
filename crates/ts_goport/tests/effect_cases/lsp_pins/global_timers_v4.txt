@@ -1,0 +1,41 @@
+#### file .src/globalTimersInEffect.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":5,"character":2},"end":{"line":5,"character":27}},
+      "severity": 2,
+      "code": 377073,
+      "source": "ts",
+      "message": "This Effect code uses `setTimeout`, the corresponding timer API in this context is `Effect.sleep or Schedule` from Effect. effect(globalTimersInEffect)"
+    },
+    {
+      "range": {"start":{"line":10,"character":2},"end":{"line":10,"character":29}},
+      "severity": 2,
+      "code": 377073,
+      "source": "ts",
+      "message": "This Effect code uses `setInterval`, the corresponding timer API in this context is `Schedule or Effect.repeat` from Effect. effect(globalTimersInEffect)"
+    },
+    {
+      "range": {"start":{"line":16,"character":2},"end":{"line":16,"character":26}},
+      "severity": 2,
+      "code": 377073,
+      "source": "ts",
+      "message": "This Effect code uses `setTimeout`, the corresponding timer API in this context is `Effect.sleep or Schedule` from Effect. effect(globalTimersInEffect)"
+    },
+    {
+      "range": {"start":{"line":23,"character":6},"end":{"line":23,"character":16}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_regularFn' is declared but its value is never read."
+    }
+  ]
+}
+#### quickfix 377073 {"start":{"line":5,"character":2},"end":{"line":5,"character":27}}
+[]
+#### quickfix 377073 {"start":{"line":10,"character":2},"end":{"line":10,"character":29}}
+[]
+#### quickfix 377073 {"start":{"line":16,"character":2},"end":{"line":16,"character":26}}
+[]

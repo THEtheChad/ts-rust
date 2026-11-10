@@ -1,0 +1,71 @@
+#### file .src/globalTimers.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":5,"character":17},"end":{"line":5,"character":42}},
+      "severity": 2,
+      "code": 377072,
+      "source": "ts",
+      "message": "This code uses `setTimeout`, the corresponding Effect timer API is `Effect.sleep or Schedule` from Effect. effect(globalTimers)"
+    },
+    {
+      "range": {"start":{"line":8,"character":24},"end":{"line":8,"character":50}},
+      "severity": 2,
+      "code": 377072,
+      "source": "ts",
+      "message": "This code uses `setInterval`, the corresponding Effect timer API is `Schedule or Effect.repeat` from Effect. effect(globalTimers)"
+    },
+    {
+      "range": {"start":{"line":12,"character":24},"end":{"line":12,"character":44}},
+      "severity": 2,
+      "code": 377072,
+      "source": "ts",
+      "message": "This code uses `setTimeout`, the corresponding Effect timer API is `Effect.sleep or Schedule` from Effect. effect(globalTimers)"
+    },
+    {
+      "range": {"start":{"line":21,"character":19},"end":{"line":21,"character":45}},
+      "severity": 2,
+      "code": 377072,
+      "source": "ts",
+      "message": "This code uses `setInterval`, the corresponding Effect timer API is `Schedule or Effect.repeat` from Effect. effect(globalTimers)"
+    },
+    {
+      "range": {"start":{"line":5,"character":6},"end":{"line":5,"character":14}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_timeout' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":8,"character":6},"end":{"line":8,"character":15}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_interval' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":12,"character":6},"end":{"line":12,"character":21}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_aliasedTimeout' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":26,"character":6},"end":{"line":26,"character":22}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_shadowedTimeout' is declared but its value is never read."
+    }
+  ]
+}
+#### quickfix 377072 {"start":{"line":5,"character":17},"end":{"line":5,"character":42}}
+[]
+#### quickfix 377072 {"start":{"line":8,"character":24},"end":{"line":8,"character":50}}
+[]
+#### quickfix 377072 {"start":{"line":12,"character":24},"end":{"line":12,"character":44}}
+[]
+#### quickfix 377072 {"start":{"line":21,"character":19},"end":{"line":21,"character":45}}
+[]

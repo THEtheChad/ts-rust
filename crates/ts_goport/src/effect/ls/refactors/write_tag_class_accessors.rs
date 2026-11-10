@@ -39,93 +39,19 @@ fn run_write_tag_class_accessors(ctx: &mut RefactorContext<'_, '_>) -> Vec<CodeA
         return Vec::new();
     }
 
-    // Walk ancestors to find a ClassDeclaration
-    let mut class_node = Node::NIL;
-    let mut node = token;
-    while node.is_some() && node.kind() != SyntaxKind::SourceFile {
-        if node.kind() == SyntaxKind::ClassDeclaration {
-            class_node = node;
-            break;
-        }
-        node = node.parent();
-    }
+    let class_node = enclosing_class_declaration(token);
     if class_node.is_nil() {
         return Vec::new();
     }
-
-    // Check ExtendsEffectService (with accessors: true) or ExtendsEffectTag
-    let class_name;
-    if let Some(service_result) = ctx.tp.extends_effect_v3_service(class_node) {
-        if !has_accessors_true(service_result.options) {
-            return Vec::new();
-        }
-        class_name = service_result.class_name;
-    } else if let Some(tag_result) = ctx.tp.extends_effect_tag(class_node) {
-        // Effect.Tag always has accessors
-        class_name = tag_result.class_name;
-    } else {
-        return Vec::new();
-    }
-
+    let class_name = service_class_name(ctx.tp, class_node);
     if class_name.is_nil() {
         return Vec::new();
     }
-
-    // Resolve the service shape type via the _Service variance struct
-    let class_symbol = ctx.tp.get_symbol_at_location(class_name);
-    if class_symbol.is_nil() {
+    let services = non_primitive_service_shapes(ctx.tp, class_name, class_node);
+    if services.is_empty() {
         return Vec::new();
     }
-    let class_type = ctx
-        .tp
-        .checker
-        .get_type_of_symbol_at_location(class_symbol, class_node);
-    if class_type.is_nil() {
-        return Vec::new();
-    }
-
-    let Some(context_tag) = ctx.tp.context_tag(class_type) else {
-        return Vec::new();
-    };
-    if context_tag.shape.is_nil() {
-        return Vec::new();
-    }
-
-    // Unroll union and filter out primitives
-    let services = ctx.tp.unroll_union_members(context_tag.shape);
-    let non_primitive_services = filter_non_primitive_types(ctx.tp.checker, services);
-    if non_primitive_services.is_empty() {
-        return Vec::new();
-    }
-
-    // Find involved members (those with generics or multiple overloads)
-    let mut members: Vec<InvolvedMember> = Vec::new();
-    let mut seen: FxHashSet<&'static str> = FxHashSet::default();
-    let c = &mut *ctx.tp.checker;
-    for &service in &non_primitive_services {
-        for property in c.get_properties_of_type_exported(service) {
-            let prop_name = c.sym(property).name.as_str();
-            if seen.contains(prop_name) {
-                continue;
-            }
-            let property_type = c.get_type_of_symbol_at_location(property, class_node);
-            let call_signatures = c.get_signatures_of_type(property_type, SignatureKind::CALL);
-            if call_signatures.is_empty() {
-                continue;
-            }
-            let has_generics = call_signatures
-                .iter()
-                .any(|&sig| !c.sig(sig).type_parameters().is_empty());
-            if call_signatures.len() > 1 || has_generics {
-                members.push(InvolvedMember {
-                    property,
-                    property_type,
-                });
-                seen.insert(prop_name);
-            }
-        }
-    }
-
+    let members = involved_members(ctx.tp.checker, &services, class_node);
     if members.is_empty() {
         return Vec::new();
     }
@@ -150,6 +76,95 @@ fn run_write_tag_class_accessors(ctx: &mut RefactorContext<'_, '_>) -> Vec<CodeA
         tracker.insert_text(sf, insert_pos, &text);
     });
     with_kind(action, "refactor.rewrite.effect.writeTagClassAccessors")
+}
+
+/// The nearest class declaration at or above `token`, below the source
+/// file, or `Node::NIL`.
+fn enclosing_class_declaration(token: Node) -> Node {
+    let mut node = token;
+    while node.is_some() && node.kind() != SyntaxKind::SourceFile {
+        if node.kind() == SyntaxKind::ClassDeclaration {
+            return node;
+        }
+        node = node.parent();
+    }
+    Node::NIL
+}
+
+/// The class name of a class that extends `Effect.Service` with
+/// `accessors: true`, or `Effect.Tag` (which always has accessors), or
+/// `Node::NIL`.
+fn service_class_name(tp: &mut TypeParser<'_>, class_node: Node) -> Node {
+    if let Some(service_result) = tp.extends_effect_v3_service(class_node) {
+        if !has_accessors_true(service_result.options) {
+            return Node::NIL;
+        }
+        return service_result.class_name;
+    }
+    if let Some(tag_result) = tp.extends_effect_tag(class_node) {
+        return tag_result.class_name;
+    }
+    Node::NIL
+}
+
+/// The service shape of the class (through the `_Service` variance struct
+/// of its context tag), unrolled into union members without the primitive
+/// ones. Empty when the class has no symbol, type, tag or shape.
+fn non_primitive_service_shapes(
+    tp: &mut TypeParser<'_>,
+    class_name: Node,
+    class_node: Node,
+) -> Vec<TypeId> {
+    let class_symbol = tp.get_symbol_at_location(class_name);
+    if class_symbol.is_nil() {
+        return Vec::new();
+    }
+    let class_type = tp
+        .checker
+        .get_type_of_symbol_at_location(class_symbol, class_node);
+    if class_type.is_nil() {
+        return Vec::new();
+    }
+    let Some(context_tag) = tp.context_tag(class_type) else {
+        return Vec::new();
+    };
+    if context_tag.shape.is_nil() {
+        return Vec::new();
+    }
+    let services = tp.unroll_union_members(context_tag.shape);
+    filter_non_primitive_types(tp.checker, services)
+}
+
+/// The members of `services` that need an accessor: properties with call
+/// signatures that are generic or overloaded, each name once (the first
+/// service that has it as such a member wins).
+fn involved_members(c: &mut Checker, services: &[TypeId], class_node: Node) -> Vec<InvolvedMember> {
+    let mut members: Vec<InvolvedMember> = Vec::new();
+    let mut seen: FxHashSet<&'static str> = FxHashSet::default();
+    for &service in services {
+        for property in c.get_properties_of_type_exported(service) {
+            let prop_name = c.sym(property).name.as_str();
+            if seen.contains(prop_name) {
+                continue;
+            }
+            let property_type = c.get_type_of_symbol_at_location(property, class_node);
+            let call_signatures = c.get_signatures_of_type(property_type, SignatureKind::CALL);
+            if call_signatures.is_empty() {
+                continue;
+            }
+            let has_generics = call_signatures
+                .iter()
+                .any(|&sig| !c.sig(sig).type_parameters().is_empty());
+            if call_signatures.len() > 1 || has_generics {
+                members.push(InvolvedMember {
+                    property,
+                    property_type,
+                });
+                seen.insert(prop_name);
+            }
+        }
+    }
+    members
 }
 
 // Go: refactors/write_tag_class_accessors.go:147 hasAccessorsTrue

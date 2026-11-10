@@ -65,103 +65,21 @@ pub fn analyze_run_of_exit_to_run_exit(
     let mut matches: Vec<RunOfExitToRunExitMatch> = Vec::new();
     let flows = tp.piping_flows(sf, false);
     for flow in flows.iter() {
-        let mut is_exit = |tp: &mut TypeParser<'_>, transformation: &PipingFlowTransformation| {
-            transformation.callee.is_some()
-                && transformation.args.is_empty()
-                && tp.is_node_reference_to_effect_module_api(transformation.callee, member!("exit"))
-        };
-        let mut is_runner = |tp: &mut TypeParser<'_>, transformation: &PipingFlowTransformation| {
-            let (_, _, runner_name, _) = run_of_exit_runner(tp, transformation.callee);
-            !runner_name.is_empty()
-        };
-        let mut predicates: [&mut PipingFlowTransformationPredicate<'_>; 2] =
-            [&mut is_exit, &mut is_runner];
-        let sequences = flow.find_transformation_sequences(tp, &mut predicates);
-        for sequence in &sequences {
-            let start = sequence.start as usize;
-            let exit_transformation = &flow.transformations[start];
-            let runner_transformation = &flow.transformations[start + 1];
-            let (runner_callee, runner_name_node, runner_name, replacement_name) =
-                run_of_exit_runner(tp, runner_transformation.callee);
-
-            append_run_of_exit_match(
-                &mut matches,
-                RunOfExitToRunExitMatch {
-                    source_file: sf,
-                    location: run_of_exit_location(
-                        sf,
-                        runner_transformation.callee,
-                        runner_name_node,
-                    ),
-                    exit_transformation: exit_transformation.clone(),
-                    runner_callee,
-                    runner_name_node,
-                    runner_name: runner_name.to_string(),
-                    replacement_name: replacement_name.to_string(),
-                },
-            );
-        }
+        append_flow_run_of_exit_matches(tp, sf, flow, &mut matches);
     }
 
     // Non-dual runners with RunOptions are not piping-flow transformations,
     // because their effect parameter is one of multiple arguments. Inspect the
     // runner call itself, then still use a piping flow for its effect argument so
     // direct Effect.exit calls and pipe tails share the same matching logic.
-    fn visit(
-        tp: &mut TypeParser<'_>,
-        sf: Node,
-        matches: &mut Vec<RunOfExitToRunExitMatch>,
-        node: Node,
-    ) {
-        if node.kind() == SyntaxKind::CallExpression {
-            let call = node;
-            if call.is_some()
-                && call.expression().is_some()
-                && call.argument_list().is_some()
-                && !call.arguments().is_empty()
-            {
-                let (runner_callee, runner_name_node, runner_name, replacement_name) =
-                    run_of_exit_runner(tp, call.expression());
-                if !runner_name.is_empty() {
-                    let argument_flow = tp.longest_piping_flow_at(call.arguments().get(0), false);
-                    if let Some(argument_flow) = argument_flow
-                        && !argument_flow.transformations.is_empty()
-                    {
-                        let exit_transformation =
-                            &argument_flow.transformations[argument_flow.transformations.len() - 1];
-                        if exit_transformation.callee.is_some()
-                            && exit_transformation.args.is_empty()
-                            && tp.is_node_reference_to_effect_module_api(
-                                exit_transformation.callee,
-                                member!("exit"),
-                            )
-                        {
-                            append_run_of_exit_match(
-                                matches,
-                                RunOfExitToRunExitMatch {
-                                    source_file: sf,
-                                    location: run_of_exit_location(
-                                        sf,
-                                        call.expression(),
-                                        runner_name_node,
-                                    ),
-                                    exit_transformation: exit_transformation.clone(),
-                                    runner_callee,
-                                    runner_name_node,
-                                    runner_name: runner_name.to_string(),
-                                    replacement_name: replacement_name.to_string(),
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
     // PERF: Go walks the tree; the node order has the same nodes in the same
     // order (effperf4).
     for &n in tp.node_order(sf).nodes() {
-        visit(tp, sf, &mut matches, n);
+        if n.kind() == SyntaxKind::CallExpression
+            && let Some(m) = runner_call_match(tp, sf, n)
+        {
+            append_run_of_exit_match(&mut matches, m);
+        }
     }
 
     // PORT: Go `sort.Slice` is not stable; matches with an equal start come
@@ -170,6 +88,100 @@ pub fn analyze_run_of_exit_to_run_exit(
         a.location.pos().cmp(&b.location.pos())
     });
     matches
+}
+
+/// Whether a transformation is `Effect.exit` with no arguments.
+fn is_exit_transformation(
+    tp: &mut TypeParser<'_>,
+    transformation: &PipingFlowTransformation,
+) -> bool {
+    transformation.callee.is_some()
+        && transformation.args.is_empty()
+        && tp.is_node_reference_to_effect_module_api(transformation.callee, member!("exit"))
+}
+
+/// Appends the matches of one piping flow: each `Effect.exit` step that is
+/// immediately followed by a non-Exit runner step.
+fn append_flow_run_of_exit_matches(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    flow: &PipingFlow,
+    matches: &mut Vec<RunOfExitToRunExitMatch>,
+) {
+    let mut is_exit = is_exit_transformation;
+    let mut is_runner = |tp: &mut TypeParser<'_>, transformation: &PipingFlowTransformation| {
+        let (_, _, runner_name, _) = run_of_exit_runner(tp, transformation.callee);
+        !runner_name.is_empty()
+    };
+    let mut predicates: [&mut PipingFlowTransformationPredicate<'_>; 2] =
+        [&mut is_exit, &mut is_runner];
+    let sequences = flow.find_transformation_sequences(tp, &mut predicates);
+    for sequence in &sequences {
+        let start = sequence.start as usize;
+        let exit_transformation = &flow.transformations[start];
+        let runner_transformation = &flow.transformations[start + 1];
+        let runner = run_of_exit_runner(tp, runner_transformation.callee);
+        append_run_of_exit_match(
+            matches,
+            run_of_exit_match(
+                sf,
+                exit_transformation,
+                runner_transformation.callee,
+                runner,
+            ),
+        );
+    }
+}
+
+/// The match of a runner call (with arguments) whose first argument's
+/// longest piping flow ends in `Effect.exit`.
+fn runner_call_match(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    call: Node,
+) -> Option<RunOfExitToRunExitMatch> {
+    if call.expression().is_nil() || call.argument_list().is_nil() || call.arguments().is_empty() {
+        return None;
+    }
+    let runner = run_of_exit_runner(tp, call.expression());
+    if runner.2.is_empty() {
+        return None;
+    }
+    let argument_flow = tp.longest_piping_flow_at(call.arguments().get(0), false)?;
+    let exit_transformation = argument_flow.transformations.last()?;
+    if !is_exit_transformation(tp, exit_transformation) {
+        return None;
+    }
+    Some(run_of_exit_match(
+        sf,
+        exit_transformation,
+        call.expression(),
+        runner,
+    ))
+}
+
+/// The match of an `Effect.exit` transformation run by the runner that
+/// `run_of_exit_runner` found at `runner_expression`.
+fn run_of_exit_match(
+    sf: Node,
+    exit_transformation: &PipingFlowTransformation,
+    runner_expression: Node,
+    (runner_callee, runner_name_node, runner_name, replacement_name): (
+        Node,
+        Node,
+        &'static str,
+        &'static str,
+    ),
+) -> RunOfExitToRunExitMatch {
+    RunOfExitToRunExitMatch {
+        source_file: sf,
+        location: run_of_exit_location(sf, runner_expression, runner_name_node),
+        exit_transformation: exit_transformation.clone(),
+        runner_callee,
+        runner_name_node,
+        runner_name: runner_name.to_string(),
+        replacement_name: replacement_name.to_string(),
+    }
 }
 
 // Go: rules/run_of_exit_to_run_exit.go appendRunOfExitMatch

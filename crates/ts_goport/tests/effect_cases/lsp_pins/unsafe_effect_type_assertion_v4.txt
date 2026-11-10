@@ -1,0 +1,238 @@
+#### file .src/unsafeEffectTypeAssertion.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":13,"character":27},"end":{"line":13,"character":73}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":17,"character":35},"end":{"line":17,"character":81}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":18,"character":28},"end":{"line":18,"character":81}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":19,"character":33},"end":{"line":19,"character":78}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":20,"character":32},"end":{"line":20,"character":73}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":21,"character":40},"end":{"line":21,"character":88}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    },
+    {
+      "range": {"start":{"line":22,"character":33},"end":{"line":22,"character":88}},
+      "severity": 2,
+      "code": 377075,
+      "source": "ts",
+      "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+    }
+  ]
+}
+#### quickfix 377075 {"start":{"line":13,"character":27},"end":{"line":13,"character":73}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":13,"character":27},"end":{"line":13,"character":73}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":13,"character":27},"end":{"line":13,"character":73}},
+            "newText": "program"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":17,"character":35},"end":{"line":17,"character":81}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":17,"character":35},"end":{"line":17,"character":81}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":17,"character":35},"end":{"line":17,"character":81}},
+            "newText": "noError"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":18,"character":28},"end":{"line":18,"character":81}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":28},"end":{"line":18,"character":81}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":18,"character":28},"end":{"line":18,"character":81}},
+            "newText": "noRequirements"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":19,"character":33},"end":{"line":19,"character":78}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":19,"character":33},"end":{"line":19,"character":78}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":19,"character":33},"end":{"line":19,"character":78}},
+            "newText": "stream"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":20,"character":32},"end":{"line":20,"character":73}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":20,"character":32},"end":{"line":20,"character":73}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":20,"character":32},"end":{"line":20,"character":73}},
+            "newText": "layer"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":21,"character":40},"end":{"line":21,"character":88}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":21,"character":40},"end":{"line":21,"character":88}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":21,"character":40},"end":{"line":21,"character":88}},
+            "newText": "layerNoError"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377075 {"start":{"line":22,"character":33},"end":{"line":22,"character":88}}
+[
+  {
+    "title": "Remove the unsafe assertion",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":22,"character":33},"end":{"line":22,"character":88}},
+        "severity": 2,
+        "code": 377075,
+        "source": "ts",
+        "message": "This type assertion unsafely narrows the error or requirements channels. effect(unsafeEffectTypeAssertion)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/unsafeEffectTypeAssertion.ts": [
+          {
+            "range": {"start":{"line":22,"character":33},"end":{"line":22,"character":88}},
+            "newText": "layerNoRequirements"
+          }
+        ]
+      }
+    }
+  }
+]

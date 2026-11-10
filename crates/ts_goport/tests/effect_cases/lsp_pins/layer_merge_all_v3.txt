@@ -1,0 +1,260 @@
+#### file .src/layerMergeAllWithDependencies.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":21,"character":2},"end":{"line":21,"character":20}},
+      "severity": 2,
+      "code": 377035,
+      "source": "ts",
+      "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+    },
+    {
+      "range": {"start":{"line":37,"character":2},"end":{"line":37,"character":20}},
+      "severity": 2,
+      "code": 377035,
+      "source": "ts",
+      "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+    },
+    {
+      "range": {"start":{"line":42,"character":2},"end":{"line":42,"character":22}},
+      "severity": 2,
+      "code": 377035,
+      "source": "ts",
+      "message": "This layer provides DbConnection which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+    },
+    {
+      "range": {"start":{"line":43,"character":2},"end":{"line":43,"character":20}},
+      "severity": 2,
+      "code": 377035,
+      "source": "ts",
+      "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+    },
+    {
+      "range": {"start":{"line":44,"character":2},"end":{"line":44,"character":15}},
+      "severity": 2,
+      "code": 377035,
+      "source": "ts",
+      "message": "This layer provides Cache which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+    }
+  ]
+}
+#### quickfix 377035 {"start":{"line":21,"character":2},"end":{"line":21,"character":20}}
+[
+  {
+    "title": "Move layer to Layer.provideMerge",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":21,"character":2},"end":{"line":21,"character":20}},
+        "severity": 2,
+        "code": 377035,
+        "source": "ts",
+        "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/layerMergeAllWithDependencies.ts": [
+          {
+            "range": {"start":{"line":20,"character":48},"end":{"line":21,"character":21}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":23,"character":1},"end":{"line":23,"character":1}},
+            "newText": ".pipe(Layer.provideMerge(FileSystem.Default)"
+          },
+          {
+            "range": {"start":{"line":23,"character":1},"end":{"line":23,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377035 {"start":{"line":37,"character":2},"end":{"line":37,"character":20}}
+[
+  {
+    "title": "Move layer to Layer.provideMerge",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":37,"character":2},"end":{"line":37,"character":20}},
+        "severity": 2,
+        "code": 377035,
+        "source": "ts",
+        "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/layerMergeAllWithDependencies.ts": [
+          {
+            "range": {"start":{"line":36,"character":22},"end":{"line":37,"character":20}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":39,"character":1},"end":{"line":39,"character":1}},
+            "newText": ".pipe(Layer.provideMerge(FileSystem.Default)"
+          },
+          {
+            "range": {"start":{"line":39,"character":1},"end":{"line":39,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377035 {"start":{"line":42,"character":2},"end":{"line":42,"character":22}}
+[
+  {
+    "title": "Move layer to Layer.provideMerge",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":42,"character":2},"end":{"line":42,"character":22}},
+        "severity": 2,
+        "code": 377035,
+        "source": "ts",
+        "message": "This layer provides DbConnection which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/layerMergeAllWithDependencies.ts": [
+          {
+            "range": {"start":{"line":41,"character":42},"end":{"line":42,"character":23}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ".pipe(Layer.provideMerge(DbConnection.Default)"
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377035 {"start":{"line":43,"character":2},"end":{"line":43,"character":20}}
+[
+  {
+    "title": "Move layer to Layer.provideMerge",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":43,"character":2},"end":{"line":43,"character":20}},
+        "severity": 2,
+        "code": 377035,
+        "source": "ts",
+        "message": "This layer provides FileSystem which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/layerMergeAllWithDependencies.ts": [
+          {
+            "range": {"start":{"line":42,"character":22},"end":{"line":43,"character":20}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ".pipe(Layer.provideMerge(FileSystem.Default)"
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377035 {"start":{"line":44,"character":2},"end":{"line":44,"character":15}}
+[
+  {
+    "title": "Move layer to Layer.provideMerge",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":44,"character":2},"end":{"line":44,"character":15}},
+        "severity": 2,
+        "code": 377035,
+        "source": "ts",
+        "message": "This layer provides Cache which is required by another layer in the same Layer.mergeAll call. Layer.mergeAll creates layers in parallel, so dependencies between layers will not be satisfied. Consider moving this layer into a Layer.provideMerge after the Layer.mergeAll. effect(layerMergeAllWithDependencies)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/layerMergeAllWithDependencies.ts": [
+          {
+            "range": {"start":{"line":43,"character":20},"end":{"line":44,"character":15}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ".pipe(Layer.provideMerge(Cache.Default)"
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":46,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### hover 16:6
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst cachePassthrough: Layer.Layer<Cache, never, Cache>\n```\n```\n/**\n * - Cache provided at ln 17 col 6 by `cachePassthrough`\n * \n * - Cache required at ln 17 col 6 by `cachePassthrough`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqNkEEOgjAQRa8y6QXEmGjCUi9gjDsxWMtoibXFadEY490FgaYIC1ed9v-818yLCZMhi9lJmYeQnBxsl4kGsOXxTLyQEMEuYQfBhcQ1t9ZJMuVZJmUUzcSRJt8Bm6u9cqWah1RpmC5AGAXztEknQXxI2L62hJ70UZ2VC3zWSwlvZU5oYbdpJ9-CIE6jCrGqfxtgUGee6J4KQ5x1ZC4Ya6NxxFqQuedZbV23U8_axf9aPW5g9eWuWm8DTrlSsSOubcEJtRup_JBaTlsZANj7AyNEpRg) - [Show outline](https://mermaid.live/edit#pako:eNoBMgDN_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiY2FjaGVQYXNzdGhyb3VnaFwiXSJ9sYkRUg)\n\n"
+  },
+  "range": {"start":{"line":16,"character":6},"end":{"line":16,"character":22}}
+}
+#### hover 20:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst shouldWarnConstantAlias: Layer.Layer<Cache | FileSystem, never, FileSystem>\n```\n```\n/**\n * - Cache provided at ln 23 col 2 by `Cache.Default`\n * - FileSystem provided at ln 22 col 2 by `FileSystem.Default`\n * \n * - FileSystem required at ln 23 col 2 by `Cache.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdlEFzgjAQhf_KDneVrDdvrZ2eO21nepAORlgL05jYJNRxOv3vVUAMlgnoiZB98174NstPkKiUglmwFmqXZFxbeL2PJIApVh-abzMIYREFyzlPMho_0JoXwkZFGE6TlZ6UC6pezYYLUW3EQgJOIVECMK6qE6e8jIL3Y4QbEu8Oz0MQNLVWVdNXkWsysHiuV40KnHIcHiwec0Eve2Np43iRTBtbuxfkehqr1SfNpJLUEb3V6jtPj9FP9aoVfSqX0SUlf2pj9y-1EZ-kRySwzoWYWc2l2XJN0nZILpxqn1rSadB8HiubeyZ2VYfxmg4zb4eZHzNrYx7WYTacNetnzfpZMz9rLFmbTBUifeNazpU0lkt7J3JuBgFnJXA2HUYcvcTRP1N4y0zhsJlCf7PRP1MtAbvibINvA_bfBuy_Ddhp4J4dRuNR1b3WBa9kZ_yOzP3TXbi1Zeft4PcP2Wjzzw) - [Show outline](https://mermaid.live/edit#pako:eNpdyTEKgDAMAMCvhOxKipurxQ_oZhxKTalQLWiLiPh3dXW9u9DGSbBGF-JhvdkS9JpXABoYG2O9lFqcySExjp-r19s5SHfuSZZfEhQFZ6JKQOH9AH6WHUI)\n\n"
+  },
+  "range": {"start":{"line":20,"character":13},"end":{"line":20,"character":36}}
+}
+#### hover 25:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst shouldNotWarn: Layer.Layer<DbConnection | FileSystem, never, never>\n```\n```\n/**\n * - DbConnection provided at ln 27 col 2 by `DbConnection.Default`\n * - FileSystem provided at ln 28 col 2 by `FileSystem.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqVk1FPgzAUhf_KDe_baJeo2aMuPhoTTXwYhhW4CLFrSVtcFuN_lwFiWUjpnig9J-fefrf9DlKZYbAJci6PacGUgdf7SADoOvlQrCoghF0U7B9Lji8nbfCw3GLOam6iOgzXaaJW7QK7X31gnHcbMRdA7yCVHGjcqStL3kfB-7mOXSk-Nt-mGgzaSK2U_Coz1LB77leDCyw5DpuI_36tLBTZEGtOHO1MbZT8xI2QAjvPYP6znpuDvOR8YxQTumIKhZmwXCT1Ob1lMmA4I2lZb5MHKQSmppTiKtq319AmTtrETZuMadsdu3gTf95knjeZ503cvGnLWxey5tmTNG9MCS_QNy1osvYjTZ2kqZs09SI98hHv-0_950Hn50Hn50EnA-wzwmK56EiOLtmFjVg2--UHP78C5JrM) - [Show outline](https://mermaid.live/edit#pako:eNpNybEOQDAQANBfae4DhNWq8QNsaqi6RpNzl3AiIv4dW-d3Q5AZoYZIcobFb2p669iYcnDQJsLu2hXXwmL0B6mD8cfqQzs1woxBk3DG8LyaPBxW)\n\n"
+  },
+  "range": {"start":{"line":25,"character":13},"end":{"line":25,"character":26}}
+}
+#### hover 30:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst shouldNotWarn2: Layer.Layer<Cache | UserRepository, never, Cache | DbConnection>\n```\n```\n/**\n * - Cache provided at ln 33 col 2 by `cachePassthrough`\n * - UserRepository provided at ln 32 col 2 by `UserRepository.Default`\n * \n * - Cache required at ln 32 col 2 by `UserRepository.Default`, ln 33 col 2 by `cachePassthrough`\n * - DbConnection required at ln 32 col 2 by `UserRepository.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdlF9vgjAUxb9Kw7vKLW8-Tp8XY7bsQRasUIWsa1lbZsyy7z7-CVRJqXuyco_nyD0_-PFikVBv6R2ZOMcpkRq9PIUcIVUcTpLkKfLRLvT2MYlTuiFK6VSK4pSGhe8H8UEu6gNtvqpPwlhzIWIcBQGKBUM4aqaLwXgfeu9VyjAnOpefZRbqZsZU0q8ik1Sh3bY9dSo0GEd-abGq_u3AhvKkc9QXRod2SkvxQZdccDqSmkvxnSVV6qY9GanXsWtqZ3eX2omv0mob6JgxttSScJUTSbkekdw4tT6tZNSguz2oq31VVG5pLlSmhbzM1_RICqadCsaPFAzWgsFeMNgLNgRQCtaHleCcxjoT3FYJuIEAdhDABMHcqD3emQiYJgKmiQA7EbgmQqWiYMmz0G9EcuxEAtQkQOCGAraigO0o4CkU8P9QwG4oYDsK2P5OMATwECvYnRU8zQqeZgWPGgzXj2bzWVOy8YDeyGBcBo2s34Yh67doCfXvQvufGbL-svf7ByXnTE0) - [Show outline](https://mermaid.live/edit#pako:eNoBUwCs_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiY2FjaGVQYXNzdGhyb3VnaFwiXVxuICAxW1wiVXNlclJlcG9zaXRvcnkuRGVmYXVsdFwiXSJ9r8wdEw)\n\n"
+  },
+  "range": {"start":{"line":30,"character":13},"end":{"line":30,"character":27}}
+}
+#### hover 35:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst shouldWarn: Layer.Layer<Cache | DbConnection | FileSystem, never, FileSystem>\n```\n```\n/**\n * - Cache provided at ln 39 col 2 by `Cache.Default`\n * - DbConnection provided at ln 37 col 2 by `DbConnection.Default`\n * - FileSystem provided at ln 38 col 2 by `FileSystem.Default`\n * \n * - FileSystem required at ln 39 col 2 by `Cache.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdlV9PwyAUxb8K6btbgcQ_e3SLz0ZNfFhNx1pmGxlMoC6L8bu70a6DrVLqUyn35Jzyuzf0O8pETqNJtGJimxVEavByn3AAVLV8l2RTgBjMk2gxJVlBRzO6IhXTSRXHOFvKsVnQ-lWtCWP1Rso4wHcgEwygtK6OrfIiid4OEXZIut0_90GgrTlVST-rUlIF5k_NqlUBq5zGe4uHktHnndJ0bXlRnre2eseo7am0FB90wgWnHdEbKb7K_BD92Kyc6GPZRBtK_tTW7iK1FR-lByRgVTI20ZJwtSGSct0hOXNqfBpJp0F7PGiaeyI2qMO3QzoMvR2GfszQxRzWYRjOGvazhv2soZ81Mqxny6ngnGa6FHwQ7ZshtJGXNvLTRi5t-4t9vFE4b9TPG_XzRn7e2PBWhahY_kokD6J8bShDHIYZezFj_7WF_3Nt4bBrC_s7jP3XliOAf4-Ao0MDzhA8KLh_UHD_oOBOA_uM4Gp0VXfZmf4zGbJk8EJ26qYls_9NZ26u7LQd_fwCYaCDSw) - [Show outline](https://mermaid.live/edit#pako:eNpdyTEKgCAUANCrfP5eWG2tSReoLRvMfiiYQikR0d2z1fW9B5VfCVvcrL-UlkeAkQsHwCaBnVSaSk6bjDYInH-vkvfG0nCfgfYs65R86bxzpILxLmsGRSEiYw1Bhe8H4G8n2w)\n\n"
+  },
+  "range": {"start":{"line":35,"character":13},"end":{"line":35,"character":23}}
+}
+#### hover 41:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst shouldWarn2: Layer.Layer<Cache | DbConnection | FileSystem | UserRepository, never, Cache | DbConnection | FileSystem>\n```\n```\n/**\n * - Cache provided at ln 45 col 2 by `Cache.Default`\n * - DbConnection provided at ln 43 col 2 by `DbConnection.Default`\n * - FileSystem provided at ln 44 col 2 by `FileSystem.Default`\n * - UserRepository provided at ln 46 col 2 by `UserRepository.Default`\n * \n * - Cache required at ln 46 col 2 by `UserRepository.Default`\n * - DbConnection required at ln 46 col 2 by `UserRepository.Default`\n * - FileSystem required at ln 45 col 2 by `Cache.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqVlc1SwjAUhV8l073Q_OiCpTCuHdRxAQ6UEqRjSDBJZRjHdxfa0ialJOmK0nvm3uQ7p8lvlIo1jUbRholDuk2kBq-Pcw6AylefMtlvQQxm82j5pqic0r1QmRbyOJjQTZIzPc_jGKcrOSweaPlX7RLGyhcLxgF5AKlgAC3K6tAoL-fRx3mWOW1xOP2eJoK6ZlUl_c4zSRWYTaunWgWM8iI-tRgn6ZYabSwBPAkmq7HgnKY6E9zQUb6uJ-sjo-ZYpaX4oiMuOO1Y3V6Kn2x9Xt1z9WQNv5SL1dlE3ePrvlfja_FFesYHNhljIy0TrvaJpFx3SFqdqj6VpLNBvU9YJKKg2ysI932CAJ1BgO4gQDsITxmjL0el6c6FGYa5DN0uQ9vldgY7pgabC_3mQr-50G0uKsxtiPVymPRxGDkdRm7MyMYc5jAKZ438rJGfNXKzxgVr8xTqRRv3oY2dtLGbNrZph56bOJw39vPGft7YzZsUvNVW5Gz9nkiOgjCjAjPEYZyJkzNxn1vEd4GRoAvM0qHgz4OEHYDEnRXiPgAtgWcPte7mHiwV7nWrkvBwEn84iT-cpLOBSQPcDe7KYFlfXEuGDBm6kjW-GzLzPmx1iy3ZzW6mLL7q1oSyWwZbQ7Ela4ZGf_85S37P) - [Show outline](https://mermaid.live/edit#pako:eNpdjcsKwjAQRX9lmH0lbXZuG_wAHyvjIsYpDcSMJFOkiP9udCNkec85cF_o-Ua4xSny088uCxyNTQDqbPFUKO_pwSUI53VjaHJLFIuXb9DXYHR-poYPle9CpMNahO6N1FWa68gpkZfAqdEKus4uSmmCvtn69_nfA74_LLY7Pg)\n\n"
+  },
+  "range": {"start":{"line":41,"character":13},"end":{"line":41,"character":24}}
+}

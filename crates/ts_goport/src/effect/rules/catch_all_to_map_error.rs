@@ -3,6 +3,7 @@
 use crate::effect::diag;
 use crate::effect::etscore::*;
 use crate::effect::rule::*;
+use crate::effect::rules::catch_callback::{catch_callback_call, catch_method_name};
 use crate::effect::typeparser::*;
 use crate::prelude::*;
 
@@ -66,59 +67,24 @@ pub fn analyze_catch_all_to_map_error(
     let flows = tp.piping_flows(sf, true);
     for flow in flows.iter() {
         for transformation in &flow.transformations {
-            if !tp.is_node_reference_to_effect_module_api(transformation.callee, member!("catch"))
-                && !tp.is_node_reference_to_effect_module_api(
-                    transformation.callee,
-                    member!("catchAll"),
-                )
-            {
-                continue;
-            }
-
-            if transformation.args.is_empty() {
-                continue;
-            }
-            let callback = transformation.args[0];
-
-            let Some(lazy) = parse_lazy_expression(callback, LazyExpressionFlags::NONE) else {
+            let Some(call) = catch_callback_call(tp, transformation, LazyExpressionFlags::NONE)
+            else {
                 continue;
             };
-
-            let expr = lazy.expression;
-            if expr.is_nil() || expr.kind() != SyntaxKind::CallExpression {
-                continue;
-            }
-            let call = expr;
-            if call.is_nil() || call.expression().is_nil() {
-                continue;
-            }
             if call.argument_list().is_nil() || call.arguments().is_empty() {
                 continue;
             }
-
             if !tp.is_node_reference_to_effect_module_api(call.expression(), member!("fail")) {
                 continue;
             }
-
-            // Extract the "catch" name node from the PropertyAccessExpression callee
-            let mut callee_name_node = Node::NIL;
-            let mut catch_method_name = "catch".to_string();
-            let callee = transformation.callee;
-            if callee.kind() == SyntaxKind::PropertyAccessExpression {
-                let prop = callee;
-                if prop.is_some() && prop.name().is_some() {
-                    callee_name_node = prop.name();
-                    catch_method_name = prop.name().text().to_string();
-                }
-            }
-
+            let (callee_name_node, catch_method_name) = catch_method_name(transformation.callee);
             matches.push(CatchAllToMapErrorMatch {
                 source_file: sf,
                 location: get_error_range_for_node(sf, transformation.callee),
                 callee: transformation.callee,
                 callee_name_node,
                 catch_method_name,
-                fail_call_expression: expr,
+                fail_call_expression: call,
                 fail_argument: call.arguments().get(0),
             });
         }

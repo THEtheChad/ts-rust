@@ -225,40 +225,10 @@ fn effect_fn_build_replacement(
         // Keep the original function expression's signature verbatim.
         prefix += &slice(start, body_start);
     } else {
-        prefix += "function";
-        if result.has_gen_body {
-            prefix.push('*');
-        }
-        let signature = effect_fn_signature_range(sf, target);
-        // `signature.end()` is one byte past the closing parenthesis (or the
-        // `=` of a bare parameter's `=>`), an ASCII byte in a parsed tree, so
-        // the cut bytes of `slice` stay a Go-only case here.
-        let mut signature_text = slice(signature.pos(), signature.end()).into_owned();
-        // Go `signatureText[0]` on an empty text panics.
-        let Some(&first) = signature_text.as_bytes().first() else {
-            crate::core::go_panic(
-                "runtime error: index out of range [0] with length 0".to_string(),
-            );
-        };
-        if first != b'(' && first != b'<' {
-            signature_text = format!("({signature_text})");
-        }
-        let mut comment_start = start;
-        if is_func_decl && target.modifiers().is_some() {
-            comment_start = target.modifiers().end();
-        }
-        prefix += &effect_fn_comments(sf, comment_start, signature.pos(), Node::NIL);
-        prefix += &signature_text;
-        let comments = effect_fn_comments(sf, signature.end(), body_start, Node::NIL);
-        if !comments.is_empty() {
-            prefix += &comments;
-        } else {
-            prefix.push(' ');
-        }
-        if body.kind() != SyntaxKind::Block {
-            prefix += "{ return ";
-            suffix += " }";
-        }
+        let (function_prefix, function_suffix) =
+            effect_fn_function_text(sf, target, body, result.has_gen_body, is_func_decl);
+        prefix += &function_prefix;
+        suffix += function_suffix;
     }
 
     if is_func_decl {
@@ -271,19 +241,8 @@ fn effect_fn_build_replacement(
         prefix = declaration_prefix + "const " + &get_text_of_node(decl.name()) + " = " + &prefix;
     }
 
-    let mut cursor = body.end();
-    for &arg in pipe_args {
-        // Include both leading and trailing trivia, including line comments before
-        // the next comma/closing parenthesis. Never reprint the argument itself.
-        let end = skip_trivia(text, arg.end());
-        let start = get_token_pos_of_node(arg, sf, false);
-        suffix.push(',');
-        suffix += &effect_fn_comments(sf, cursor, arg.pos(), Node::NIL);
-        suffix += &slice(arg.pos(), start);
-        suffix += &effect_fn_pipe_argument_text(arg, &slice(start, arg.end()));
-        suffix += &slice(arg.end(), end);
-        cursor = end;
-    }
+    let (pipe_suffix, cursor) = effect_fn_pipe_arguments_text(sf, text, body.end(), pipe_args);
+    suffix += &pipe_suffix;
     let moved_trace = if trace.is_empty() {
         Node::NIL
     } else {
@@ -311,6 +270,82 @@ fn effect_fn_build_replacement(
         },
         &suffix,
     );
+}
+
+/// The text of the replacement `function` (or `function*`) from its
+/// signature to its body, and the text after the body: the signature's own
+/// comments and text (in parentheses unless it starts with `(` or `<`), and
+/// `{ return ` ... ` }` around an expression body.
+fn effect_fn_function_text(
+    sf: Node,
+    target: Node,
+    body: Node,
+    has_gen_body: bool,
+    is_func_decl: bool,
+) -> (String, &'static str) {
+    let text = source_file_text(sf);
+    let slice = |a: i32, b: i32| go_text_slice(&text, a, b);
+    let start = get_token_pos_of_node(target, sf, false);
+    let body_start = get_token_pos_of_node(body, sf, false);
+    let mut prefix = String::from("function");
+    if has_gen_body {
+        prefix.push('*');
+    }
+    let signature = effect_fn_signature_range(sf, target);
+    // `signature.end()` is one byte past the closing parenthesis (or the
+    // `=` of a bare parameter's `=>`), an ASCII byte in a parsed tree, so
+    // the cut bytes of `slice` stay a Go-only case here.
+    let mut signature_text = slice(signature.pos(), signature.end()).into_owned();
+    // Go `signatureText[0]` on an empty text panics.
+    let Some(&first) = signature_text.as_bytes().first() else {
+        crate::core::go_panic("runtime error: index out of range [0] with length 0".to_string());
+    };
+    if first != b'(' && first != b'<' {
+        signature_text = format!("({signature_text})");
+    }
+    let mut comment_start = start;
+    if is_func_decl && target.modifiers().is_some() {
+        comment_start = target.modifiers().end();
+    }
+    prefix += &effect_fn_comments(sf, comment_start, signature.pos(), Node::NIL);
+    prefix += &signature_text;
+    let comments = effect_fn_comments(sf, signature.end(), body_start, Node::NIL);
+    if !comments.is_empty() {
+        prefix += &comments;
+    } else {
+        prefix.push(' ');
+    }
+    if body.kind() != SyntaxKind::Block {
+        prefix += "{ return ";
+        return (prefix, " }");
+    }
+    (prefix, "")
+}
+
+/// The text of the pipe arguments that follow the body (from `cursor`),
+/// each after a `,` with its leading and trailing trivia, and the position
+/// after the last one. The arguments are never reprinted.
+fn effect_fn_pipe_arguments_text(
+    sf: Node,
+    text: &str,
+    mut cursor: i32,
+    pipe_args: &[Node],
+) -> (String, i32) {
+    let slice = |a: i32, b: i32| go_text_slice(text, a, b);
+    let mut suffix = String::new();
+    for &arg in pipe_args {
+        // Include both leading and trailing trivia, including line comments before
+        // the next comma/closing parenthesis. Never reprint the argument itself.
+        let end = skip_trivia(text, arg.end());
+        let start = get_token_pos_of_node(arg, sf, false);
+        suffix.push(',');
+        suffix += &effect_fn_comments(sf, cursor, arg.pos(), Node::NIL);
+        suffix += &slice(arg.pos(), start);
+        suffix += &effect_fn_pipe_argument_text(arg, &slice(start, arg.end()));
+        suffix += &slice(arg.end(), end);
+        cursor = end;
+    }
+    (suffix, cursor)
 }
 
 // Go: fixables/effect_fn_opportunity.go:243 effectFnPipeArgumentText

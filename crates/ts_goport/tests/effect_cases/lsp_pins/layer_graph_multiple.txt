@@ -1,0 +1,75 @@
+#### file .src/layerGraphMultiple.ts
+#### diagnostic
+{"kind":"full","items":[]}
+#### hover 13:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) Database.Default: Layer.Layer<Database, never, never>\n```\n```\n/**\n * - Database provided at ln 14 col 9 by `Database.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjssOgjAQRX9l0g8QjG5kafgAF-7AwACDEMeWtEVijP8uyCP1sep07sm58xC5KkgEomTV5RVqC8d9LAFMm501NhX4EMUiDdFihoZWIZXYso1b39_kmfbeA41fc0XmcZGwhPUWcsWwS8bUc-I0Fqehxe1Juv7tu2DJPtJGq1tdkIHoME0LBU6c-L1ivtYxkSwWqb0zuUZjtbpQIJWkkVngGR1Og7JmDqxGaRrUJO0f5Ms0eSbkRyCeLyaNf4s) - [Show outline](https://mermaid.live/edit#pako:eNoBMgDN_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRGF0YWJhc2UuRGVmYXVsdFwiXSJ9qn0Qzg)\n\n"
+  },
+  "range": {"start":{"line":13,"character":9},"end":{"line":13,"character":16}}
+}
+#### hover 19:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) UserRepository.Default: Layer.Layer<UserRepository, never, Database>\n```\n```\n/**\n * - UserRepository provided at ln 20 col 9 by `UserRepository.Default`\n * \n * - Database required at ln 20 col 9 by `UserRepository.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kEFuwjAQRa8y8gGK1a6aZcUBKtSuSBUmyaREDHYYOyCEuDsJCZYDiJXH87_ek-akCluSSlTF9lCsUTz8fKUGwLX5v2CzBg3LVK1-HcmCGutqb-X4NqcKW_Zpq_VHkcvsOtDwdVtkHhYZG3jXUFiGz2xIZ1G8StVf74pt2aF7OyOEbJIK7dpayMFyMU6hBVGc6Q4xR485OopIZMoA9UemmOi82A0lxhp6Im7E7uuyF3-P00R8i6_i6bFe6wP3QR_Kt2p_Gahq5sQLGtegkPFPKnekkTNWHgDqfAFqVqyn) - [Show outline](https://mermaid.live/edit#pako:eNoBOADH_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiVXNlclJlcG9zaXRvcnkuRGVmYXVsdFwiXSJ9I94TmA)\n\n"
+  },
+  "range": {"start":{"line":19,"character":9},"end":{"line":19,"character":16}}
+}
+#### hover 25:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) EventsRepository.Default: Layer.Layer<EventsRepository, never, Database>\n```\n```\n/**\n * - EventsRepository provided at ln 26 col 9 by `EventsRepository.Default`\n * \n * - Database required at ln 26 col 9 by `EventsRepository.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kN2KwjAQhV9lyAOsZRcWtpeL3ot4Z6VO26kWx6ROUkXEd7e1NcQfvMok5_B9Yc4qNwWpWJVsjvkGxcH8P9EAtsnWgvUGIlgkajU5kHZ2RrWxlTNy-hpTiQ27pIminzyT0W2g_mp3yNw_pKzh-xdyw_CX9ukoiFeJWna20Jce27N1gs8eUqF9UwlZWMyGybcgiNOoRYzRYYaWAhLpwkPdiSkkWidmS7E2mt6IazGHqujE02F6EN_jm_h5XZ8_4MkvH_Dle7XbDZQVc-wEta1RWtGbyhNp4AyVF4C6XAGSd65Z) - [Show outline](https://mermaid.live/edit#pako:eNoBOgDF_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRXZlbnRzUmVwb3NpdG9yeS5EZWZhdWx0XCJdIn1N7BRu)\n\n"
+  },
+  "range": {"start":{"line":25,"character":9},"end":{"line":25,"character":16}}
+}
+#### hover 31:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) Analytics.Default: Layer.Layer<Analytics, never, never>\n```\n```\n/**\n * - Analytics provided at ln 32 col 9 by `Analytics.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjk0OgjAQha8y6QGEyEp2Gg_gwh0YKGUQ4tiStkiI8e6CYFN_Vp3O-_K9uTOhSmQxq0j1oubawnGXSgDTFWfN2xpCSFKWbyWnwTbCrPZY8Y5s2oVhJAodvAacv-bKieZFRhKiNQhFsMnmNPDiPGWnqcYvyvrxHcvAZR9pq9WtKdFAclgmR4EXZ-GocOd6KpSls9qB0Fcaq9UFY6kkzoyD3-h0G1QNUWw1l6blGqX9g3yZFs-C_AjY4wmfS4Cx) - [Show outline](https://mermaid.live/edit#pako:eNoBMwDM_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiQW5hbHl0aWNzLkRlZmF1bHRcIl0ifb9vEWE)\n\n"
+  },
+  "range": {"start":{"line":31,"character":9},"end":{"line":31,"character":16}}
+}
+#### hover 37:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) UserService.Default: Layer.Layer<UserService, never, Analytics | UserRepository>\n```\n```\n/**\n * - UserService provided at ln 38 col 9 by `UserService.Default`\n * \n * - Analytics required at ln 38 col 9 by `UserService.Default`\n * - UserRepository required at ln 38 col 9 by `UserService.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kEFuwjAQRa8y8gFKKjZtdq16gIq2K1IF40zAYrDD2AFFiLuTkGA5gFhl4v_039hHoWyBIhUl2YNaS_bw-5kZAFcvVyyrNSQwz8TizyH_IO-1wpcvLGVNPquTZKqWPLkM2P-6rSTqD3IyMH0DZQne8z6dRPEiE_-dKFblh_bb6iBko5RxV2tGB_PZMAUKojhP2ooPI6nxWrmoagS9tlB3qxlW1mlvuYlINEXw-4YwljvPdoOpsQYf7Fix3eui2_F7mEb6a3zZMXrU5-5QeucO8BXtXhBKTZR6lsZVktH4B8hN09AzIHcF4nQGIQi4UQ) - [Show outline](https://mermaid.live/edit#pako:eNoBNQDK_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiVXNlclNlcnZpY2UuRGVmYXVsdFwiXSJ95QMSKQ)\n\n"
+  },
+  "range": {"start":{"line":37,"character":9},"end":{"line":37,"character":16}}
+}
+#### hover 43:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) EventService.Default: Layer.Layer<EventService, never, Analytics | EventsRepository>\n```\n```\n/**\n * - EventService provided at ln 44 col 9 by `EventService.Default`\n * \n * - Analytics required at ln 44 col 9 by `EventService.Default`\n * - EventsRepository required at ln 44 col 9 by `EventService.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kM1OwzAQhF9l5QegQfRCbiC4o8KtQanrbKjFYoe1kypCvDvOTy2HVj157fk0M94foWyFIhc12aM6SPbw9lgYANfuP1g2B8hgW4jdc4fGvyJ3WuHNE9ayJV-0WXan9rwaB5yu7ksSTQ8lGVivQVmC-3JSV4m8K8T7kJRmlcdwhjyI2kJl_G41o4PtZp4iBYlcZsHiwUjqvVYusVpAtwEav-U22FinveU-YdFUsYHvCdN459l-Ym6swQstG7adroaWL_O0KHCSx5bpXq-HR9ez8Aif0GGJUGui3LM0rpEcQi4g_5xmnxk5MxC_f1Hrueo) - [Show outline](https://mermaid.live/edit#pako:eNoBNgDJ_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRXZlbnRTZXJ2aWNlLkRlZmF1bHRcIl0ifffSEow)\n\n"
+  },
+  "range": {"start":{"line":43,"character":9},"end":{"line":43,"character":16}}
+}
+#### hover 49:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) AppService.Default: Layer.Layer<AppService, never, EventService | UserService>\n```\n```\n/**\n * - AppService provided at ln 50 col 9 by `AppService.Default`\n * \n * - EventService required at ln 50 col 9 by `AppService.Default`\n * - UserService required at ln 50 col 9 by `AppService.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kMtOwzAQRX9l5A-gRogF2YFgj3isGpS6zoRGGNuMnVQI8e91Gtd1mqqrTHyP7hnNH5OmRlawRpmt3Ajy8PZQagDXrT9J2A1wWJZsdW_tK1LfSrx6xEZ0ypcd5zdyTYv9gOOv-xZKjQ-V0nDLQRoFd9WYLrJ4VbKPwZObqm34BhukbJIS_nQtoYPlS5wSBVlc8VDx1KP2ceOsbcJdB-7dIc0x1HXy-1-Fudx5Ml9YaKPxzI6WTN_Ww47PcZq4D_F-x-NNL6tT50yd4AM6HBCaVqnCk9DOCgpnOIOcNMWeiMwK2P8O93u3Cw) - [Show outline](https://mermaid.live/edit#pako:eNoBNADL_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiQXBwU2VydmljZS5EZWZhdWx0XCJdIn3QCRGr)\n\n"
+  },
+  "range": {"start":{"line":49,"character":9},"end":{"line":49,"character":16}}
+}
+#### hover 52:6
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst DatabaseLive: Layer.Layer<Database, never, never>\n```\n```\n/**\n * - Database provided at ln 53 col 6 by `DatabaseLive`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjssOgjAQRX9l0h-AhOiCpXHpwoU7MKWUQYi1JW2BGOO_C1Ka-lh1Ovfk3HkQriokKamFGnnDtIXTLpcApi8vmnUNxJDlpNgzy0pm8NAOmPdxnPBSR-_Bfc2NCbEsqJCwSYArAVu6pFEQFzk5zw1hBx2nd-oBn32knVZDW6GB7OgmT0EQ03hSrJcGJpSVl9q7wNBorFZXTKWSuDAeXtH5NKhbIVKrmTQd0yjtH-TL5DwO-RGQ5wsXiX4o) - [Show outline](https://mermaid.live/edit#pako:eNoBLgDR_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRGF0YWJhc2VMaXZlXCJdIn1p7w9r)\n\n"
+  },
+  "range": {"start":{"line":52,"character":6},"end":{"line":52,"character":18}}
+}
+#### hover 54:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst AppLive: Layer.Layer<Analytics | AppService | Database | EventService | EventsRepository | UserRepository | UserService, never, Analytics | Database | EventService | EventsRepository | UserRepository | UserService>\n```\n```\n/**\n * - Analytics provided at ln 59 col 14 by `Analytics.Default`\n * - AppService provided at ln 62 col 21 by `AppService.Default`\n * - Database provided at ln 56 col 2 by `DatabaseLive`\n * - EventService provided at ln 61 col 21 by `EventService.Default`\n * - EventsRepository provided at ln 58 col 21 by `EventsRepository.Default`\n * - UserRepository provided at ln 57 col 21 by `UserRepository.Default`\n * - UserService provided at ln 60 col 21 by `UserService.Default`\n * \n * - Analytics required at ln 61 col 21 by `EventService.Default`, ln 60 col 21 by `UserService.Default`\n * - Database required at ln 58 col 21 by `EventsRepository.Default`, ln 57 col 21 by `UserRepository.Default`\n * - EventService required at ln 62 col 21 by `AppService.Default`\n * - EventsRepository required at ln 61 col 21 by `EventService.Default`\n * - UserRepository required at ln 60 col 21 by `UserService.Default`\n * - UserService required at ln 62 col 21 by `AppService.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdmk1z2zYQhv8KR6f6EEeLJfjhWzrpLZ3ppO0p7ji0TCeaKpJKys54OvnvkUWJApaLxUKnKOE7BLD77CthN__PFpuHdnYze1xtvi--Nt0u--vX23WW9U_3X7pm-zWbZ59uZ5_fbbd_tt3zctFev28fm6fV7vZpPsfFfff28KEd_tp_a1ar4R_uVuusMNlis8oM3A2P3zrPP9_O_nldyF3q7vv-z_1y2fjMe9q1_z0tu7bPPn08fhpVmfP4br5_xW_P7Xp33LLzNk8He93ffdtNZe36YVx_97Jq3cX7Xbf5t71Zb9Yts8dtt3lePrzu8Y_jJ2_t0-PDHs9BlZce3zlZehSfpK8BzB6Xq9XNrmvW_bbp9mFgJORNx_ccJewLxjPCAYgPzUvbXR939nvbfWl_mTJylQKJjhEQGQGZEfAZebduVi-75aL3AAEfkPfNrrlv-jakMRJsjg5Puv5ju930y92mewlp8yOYcaXVIww6hEFGGAjCgRCOIghx7qlMONCjBuVAj7o8HuhRa2OBHpVFSqDVBQvxgoV4wYJcsOZQsG7okjwckjzciPVp5Po0mvo0fn0KqZ5kxuhKwMglYPwSCDDJLK7GwsSxMHEsjIwFhnycI-UqBRUdKSiSgjIpqCEFFU6OjJOHjAN9Nw8axyT1qOMOZe5QY73oW2_gzJ7xBk0VGfMNx8YzYMFUcWq_iupBffVgvHowXj0oV09-qB5n80meOk_y1FyslFyulFxTKfn0R7GO7FxHdi6TnftkK5HI9UjkcSTyOBK5jIQNGSpDyVUKJjpKrEiJlSmxGkqswk-t76d6kqyOJCuTZDUeaRUeaRmPDHmf9X1S8D47dUkF6FYPuo2DbuOgWxn0YmgJnGKb4ny2PiANuY7pQmS6kFko4ixMQl3oQ13EQ13EQ13IoS4dT_k23LJp2K8S4q60klIMeylbSelbCVNdk6iXutov5XyXmtovFbVfJtR-qax95sxq0so4aWWctFImrTrfEp2zJtV2lfSrphIhq2TIqnTIKh1klQxZxVz-lLfPSp_xKp7xKp7xSs54LV4AGQiuUijQQVCLENQyBHU6BLUOglqGoPYhYE2k9o1GNJHaNxy9idR6pOo4UnUcqTrSG56P16ILPaRM8hCQRwYQmRnAPJ0gUI4CIDILgPn00qNLOiRMBEAxEgDFTABiQwGQLj-XWkmZNBmIjAZiswG4gAVtTz3WVAeFoQDpqicAk9KR1rSkNT3pSFMahq706aQfls-tCokiCQm5Gw2RRi-YaFqmsU5o84KizwuKRi9EOr2ApxmuOsx2uKahMs5yLxcizVxQdXNB084F1E7mMGU0h_rZHF42nFO2iCHSIwZVkxhQN6BDzYQOtSM6TJnRoX5Ih5dN6RI6yqBoKYOipwx8U9mdJmdvrt8Mdeb9jwYis7wMBtk5t57sDMarzK05R2bIosjvzZBFXVI8mb-o5RfNyaKWXzQni7rdNE_mL-r2BRxZQWQ1v7eK7K3mw1uRt3k_JxwdTLIayBfMp29kzwFGdxBvR-QkREffx-bW2_gQZ3bdmixb8uetw1kzvAyIDHmZIUS5i5YT8NiQlBOM2SOUZG-WP0I52Rt7BPdkQsHacMECLwMiQ15mSF37i1IzYQNiSUCQP6klAUG-ru0kIOevCF6WE9t0j4BhdwVeBkSGvMwQWc7LkHi1vzdS-jxISMILfHiRhBf48CIJL_DhxUl4z9--vMweZAF8qSlBgF-geQh8MQFNRAB0oJlAPmNuIqnO8rrTeXl3pakNlA41Vwh8wwJNbqDGgGY3UGRA0xuoMpjml-XAxWP24yc42wBJ) - [Show outline](https://mermaid.live/edit#pako:eNp1j70KwjAUhV8lZK-kv4ObUDcnfybjEOMtBkoTkjRSxHc3DZWWUMfvfofDPW_M5QPwFjetfPEn0xada9ohRK4U75Q6gXaCw6aGhvWtpfg2ytTLvYPOruvM64sBvW7zsblj7WAFN5ErfsXmCEoaYaUeokg5lf8NVD5QM8vuzMBBOJjOBCUJ7QnJAaURZ2HTzHnERRgV-QWX4fWZq_DngvHnC_yPbsw)\n\n"
+  },
+  "range": {"start":{"line":54,"character":13},"end":{"line":54,"character":20}}
+}

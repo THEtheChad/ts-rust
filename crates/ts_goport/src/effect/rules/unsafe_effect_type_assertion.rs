@@ -59,18 +59,6 @@ pub fn analyze_unsafe_effect_type_assertion(
     }
 
     let mut matches = Vec::new();
-    fn parse_effect_stream_or_layer(tp: &mut TypeParser<'_>, t: TypeId) -> (TypeId, TypeId, bool) {
-        if let Some(effect) = tp.effect_type(t) {
-            return (effect.e, effect.r, true);
-        }
-        if let Some(stream) = tp.stream_type(t) {
-            return (stream.e, stream.r, true);
-        }
-        if let Some(layer) = tp.layer_type(t) {
-            return (layer.e, layer.r_in, true);
-        }
-        (TypeId::NIL, TypeId::NIL, false)
-    }
     // PERF: Go walks the tree with a stack of nodes; this stack holds node
     // order indexes and pushes and pops at the same points (effperf4).
     let order = tp.node_order(sf);
@@ -79,79 +67,98 @@ pub fn analyze_unsafe_effect_type_assertion(
     while let Some(i) = nodes_to_visit.pop() {
         let node = order.node(i);
         nodes_to_visit.extend(order.children(i));
-
-        if node.kind() != SyntaxKind::AsExpression
-            && node.kind() != SyntaxKind::TypeAssertionExpression
+        if node.kind() == SyntaxKind::AsExpression
+            || node.kind() == SyntaxKind::TypeAssertionExpression
         {
-            continue;
+            matches.extend(unsafe_assertion_match(tp, sf, node));
         }
-
-        let expr = node.expression();
-        if expr.is_nil() {
-            continue;
-        }
-
-        let original_type = tp.get_type_at_location(expr);
-        let asserted_type = tp.get_type_at_location(node);
-        if original_type.is_nil() || asserted_type.is_nil() {
-            continue;
-        }
-
-        let (original_e, original_r, ok) = parse_effect_stream_or_layer(tp, original_type);
-        if !ok {
-            continue;
-        }
-
-        let (asserted_e, asserted_r, ok) = parse_effect_stream_or_layer(tp, asserted_type);
-        if !ok {
-            continue;
-        }
-
-        let c = &mut *tp.checker;
-        let mut channels = Vec::with_capacity(2);
-        if original_e.is_some()
-            && asserted_e.is_some()
-            && !is_any_type(c, original_e)
-            && !c.is_type_assignable_to(original_e, asserted_e)
-        {
-            channels.push(UnsafeEffectTypeAssertionChannel {
-                name: "error".to_string(),
-                original: c.type_to_string_exported(original_e),
-                asserted: c.type_to_string_exported(asserted_e),
-            });
-        }
-        if original_r.is_some()
-            && asserted_r.is_some()
-            && !is_any_type(c, original_r)
-            && !c.is_type_assignable_to(original_r, asserted_r)
-        {
-            channels.push(UnsafeEffectTypeAssertionChannel {
-                name: "requirements".to_string(),
-                original: c.type_to_string_exported(original_r),
-                asserted: c.type_to_string_exported(asserted_r),
-            });
-        }
-        if channels.is_empty() {
-            continue;
-        }
-
-        let mut location_node = node;
-        let type_node = node.type_();
-        if type_node.is_some() {
-            location_node = type_node;
-        }
-
-        matches.push(UnsafeEffectTypeAssertionMatch {
-            source_file: sf,
-            location: get_error_range_for_node(sf, node),
-            assertion_node: node,
-            expression_node: expr,
-            location_node,
-            channels,
-        });
     }
 
     matches
+}
+
+/// The match of one `as` or `<T>` assertion whose expression and asserted
+/// type are both an Effect, Stream or Layer, when the assertion narrows the
+/// error or requirements channel to a type the original is not assignable
+/// to.
+fn unsafe_assertion_match(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    node: Node,
+) -> Option<UnsafeEffectTypeAssertionMatch> {
+    let expr = node.expression();
+    if expr.is_nil() {
+        return None;
+    }
+
+    let original_type = tp.get_type_at_location(expr);
+    let asserted_type = tp.get_type_at_location(node);
+    if original_type.is_nil() || asserted_type.is_nil() {
+        return None;
+    }
+
+    let (original_e, original_r) = parse_effect_stream_or_layer(tp, original_type)?;
+    let (asserted_e, asserted_r) = parse_effect_stream_or_layer(tp, asserted_type)?;
+
+    let c = &mut *tp.checker;
+    let channels: Vec<UnsafeEffectTypeAssertionChannel> = [
+        unsafe_channel(c, "error", original_e, asserted_e),
+        unsafe_channel(c, "requirements", original_r, asserted_r),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if channels.is_empty() {
+        return None;
+    }
+
+    let type_node = node.type_();
+    let location_node = if type_node.is_some() { type_node } else { node };
+    Some(UnsafeEffectTypeAssertionMatch {
+        source_file: sf,
+        location: get_error_range_for_node(sf, node),
+        assertion_node: node,
+        expression_node: expr,
+        location_node,
+        channels,
+    })
+}
+
+/// The error and requirements channel types of an Effect, a Stream or a
+/// Layer (its `RIn`), or `None` for any other type.
+fn parse_effect_stream_or_layer(tp: &mut TypeParser<'_>, t: TypeId) -> Option<(TypeId, TypeId)> {
+    if let Some(effect) = tp.effect_type(t) {
+        return Some((effect.e, effect.r));
+    }
+    if let Some(stream) = tp.stream_type(t) {
+        return Some((stream.e, stream.r));
+    }
+    if let Some(layer) = tp.layer_type(t) {
+        return Some((layer.e, layer.r_in));
+    }
+    None
+}
+
+/// The channel `name` when its original type (not `any`) is not assignable
+/// to the asserted one.
+fn unsafe_channel(
+    c: &mut Checker,
+    name: &str,
+    original: TypeId,
+    asserted: TypeId,
+) -> Option<UnsafeEffectTypeAssertionChannel> {
+    if original.is_nil()
+        || asserted.is_nil()
+        || is_any_type(c, original)
+        || c.is_type_assignable_to(original, asserted)
+    {
+        return None;
+    }
+    Some(UnsafeEffectTypeAssertionChannel {
+        name: name.to_string(),
+        original: c.type_to_string_exported(original),
+        asserted: c.type_to_string_exported(asserted),
+    })
 }
 
 // Go: rules/unsafe_effect_type_assertion.go isAnyType

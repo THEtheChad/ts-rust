@@ -13,6 +13,7 @@ pub mod api_stability_leak;
 pub mod async_function;
 pub mod catch_all_tag_dispatch_to_catch_tag;
 pub mod catch_all_to_map_error;
+pub mod catch_callback;
 pub mod catch_chain_to_first_success_of;
 pub mod catch_conditional_refail_to_catch_if;
 pub mod catch_die_to_or_die;

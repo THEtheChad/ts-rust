@@ -1,0 +1,3 @@
+#### file .src/layerMergeAllWithDependenciesNonPropertyAccess.ts
+#### diagnostic
+{"kind":"full","items":[]}

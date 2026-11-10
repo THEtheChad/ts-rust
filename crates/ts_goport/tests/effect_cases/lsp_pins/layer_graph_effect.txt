@@ -1,0 +1,19 @@
+#### file .src/layerGraphEffect.ts
+#### diagnostic
+{"kind":"full","items":[]}
+#### hover 7:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) DatabaseContext.Default: Layer.Layer<DatabaseContext, never, never>\n```\n```\n/**\n * - DatabaseContext provided at ln 8 col 9 by `DatabaseContext.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjkEOgjAQRa8y6QGUxI2yVA_gwp0YHGBQ4tiSdhCN8e6CIKnoqtP5L-_PQ6UmIxWqnE2dntAKbJeRBnBVcrRYniCAXaQOaxRM0NHKaKGbTNaUY8USVUEwSxM7fQ_Ufd0FmbtFzBrmkBqGRdyFUy89RGrfdvltcd28TSMM2VdaWnMtMnKw2_TTQIEXx0GjGN3sCUlng1vuTL7YiTVnCrXR1DED_EHbCyEvmEOxqF2JlrT8QUam3tMjPwL1fAEGVIUo) - [Show outline](https://mermaid.live/edit#pako:eNoBOQDG_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRGF0YWJhc2VDb250ZXh0LkRlZmF1bHRcIl0ifTHME7M)\n\n"
+  },
+  "range": {"start":{"line":7,"character":9},"end":{"line":7,"character":16}}
+}
+#### hover 10:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst AppLive: Layer.Layer<never, never, never>\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqVUstOwzAQ_BUrp4DUNLbFgd6AcusBIW4NSt1k00YYO9hOH6r4d_IimFLq5pR1djS7OzMHL5EpeBMv43KbrJky6OU-EgjpcrlSrFijEM0jbzFlhi2ZhgcpDOxMMIWMldxEZRjSZKnGTQHtU78zztsfMRcI36BEckRo3LbHVn8Rea_1NHtevK2-1UzU9351CyU3eQoazZ-6qkchqx2HFcXR1hYhiLTnNnsONrE2Sr7BREgBLaYHf0PrDVGWcz4xigldMAXCnIAcMXU8HeQkQX8obmSfsT2ooNvM_8eEqwEu3F5mAv5rwpEI2C0CdouAz4tALBEgyyAx01wnTKX-Y_MKViD8rBSJyaW49q_QoTpS6MtiiQfFkpyNJYkVfJS5qmP53FVWLH_aQ2NpEbtiSdyOELcj5LwjtHHkrihm-QYGyIwvlJk6g0fdZ1L3mfQkAUajYLRDoVWTuqZtjb3PL22nukA) - [Show outline](https://mermaid.live/edit#pako:eNplkD0PgjAQhv_KpW4mYBFZJE7i5ugmDqVckaRpk3JVifG_K1gGcbqPvHfvc_dk0tbItkxpe5dX4QhORWkA-LlkhSBRiQ731hA-KC5QCa-pZJdBkXwUR9Gji1EplFS0nRSuXqRZvuH5YezFDZrQUN5Iaq1ZhnoMSQ5DTNZpXnrOU1m51ZgggLSmI6h_GWAHfYu6XsIMbjb-t80heWem4UCnbRNoZjbxTWiPAXG26wucTQdMovAUiKJgydnrDTfDbMs)\n\n"
+  },
+  "range": {"start":{"line":10,"character":13},"end":{"line":10,"character":20}}
+}

@@ -174,33 +174,16 @@ fn format_layer_hover(
     // Generate Mermaid diagram links when we have a graph and external links are not suppressed.
     if has_graph && !effect_config.no_external {
         let base_url = effect_config.get_mermaid_base_url();
-
-        let mut nested_url = String::new();
-        let mut outline_url = String::new();
-        if !nested_diagram.is_empty() {
-            nested_url = layergraph::encode_mermaid_url(&base_url, &nested_diagram);
-        }
-        if !outline_diagram.is_empty() {
-            outline_url = layergraph::encode_mermaid_url(&base_url, &outline_diagram);
-        }
-
-        if is_markdown {
-            match (nested_url.is_empty(), outline_url.is_empty()) {
-                (false, false) => b.push_str(&format!(
-                    "[Show full graph]({nested_url}) - [Show outline]({outline_url})\n\n"
-                )),
-                (false, true) => b.push_str(&format!("[Show full graph]({nested_url})\n\n")),
-                (true, false) => b.push_str(&format!("[Show outline]({outline_url})\n\n")),
-                (true, true) => {}
+        let encode = |diagram: &str| {
+            if diagram.is_empty() {
+                String::new()
+            } else {
+                layergraph::encode_mermaid_url(&base_url, diagram)
             }
-        } else {
-            if !nested_url.is_empty() {
-                b.push_str(&format!("{{@link {nested_url} Show full graph}}\n\n"));
-            }
-            if !outline_url.is_empty() {
-                b.push_str(&format!("{{@link {outline_url} Show outline}}\n\n"));
-            }
-        }
+        };
+        let nested_url = encode(&nested_diagram);
+        let outline_url = encode(&outline_diagram);
+        b.push_str(&mermaid_graph_links(&nested_url, &outline_url, is_markdown));
     }
 
     if !documentation.is_empty() {
@@ -209,6 +192,30 @@ fn format_layer_hover(
     }
 
     b
+}
+
+/// The "Show full graph" and "Show outline" links of a Layer hover, for the
+/// URLs that are not empty: one markdown line, or one `{@link}` paragraph
+/// each.
+fn mermaid_graph_links(nested_url: &str, outline_url: &str, is_markdown: bool) -> String {
+    if is_markdown {
+        return match (nested_url.is_empty(), outline_url.is_empty()) {
+            (false, false) => {
+                format!("[Show full graph]({nested_url}) - [Show outline]({outline_url})\n\n")
+            }
+            (false, true) => format!("[Show full graph]({nested_url})\n\n"),
+            (true, false) => format!("[Show outline]({outline_url})\n\n"),
+            (true, true) => String::new(),
+        };
+    }
+    let mut links = String::new();
+    if !nested_url.is_empty() {
+        links.push_str(&format!("{{@link {nested_url} Show full graph}}\n\n"));
+    }
+    if !outline_url.is_empty() {
+        links.push_str(&format!("{{@link {outline_url} Show outline}}\n\n"));
+    }
+    links
 }
 
 // Go: etslshooks/init.go:332 isDeclarationName

@@ -1,0 +1,171 @@
+#### file .src/matchEffectToMatch.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":8,"character":41},"end":{"line":8,"character":52}},
+      "severity": 4,
+      "code": 377125,
+      "source": "ts",
+      "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+    },
+    {
+      "range": {"start":{"line":13,"character":25},"end":{"line":13,"character":43}},
+      "severity": 4,
+      "code": 377125,
+      "source": "ts",
+      "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+    },
+    {
+      "range": {"start":{"line":18,"character":36},"end":{"line":18,"character":59}},
+      "severity": 4,
+      "code": 377125,
+      "source": "ts",
+      "message": "`Effect.matchCause` expresses this non-effectful fold more directly than `Effect.matchCauseEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+    },
+    {
+      "range": {"start":{"line":23,"character":44},"end":{"line":23,"character":62}},
+      "severity": 4,
+      "code": 377125,
+      "source": "ts",
+      "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+    }
+  ]
+}
+#### quickfix 377125 {"start":{"line":8,"character":41},"end":{"line":8,"character":52}}
+[
+  {
+    "title": "Replace with Effect.match",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":8,"character":41},"end":{"line":8,"character":52}},
+        "severity": 4,
+        "code": 377125,
+        "source": "ts",
+        "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/matchEffectToMatch.ts": [
+          {
+            "range": {"start":{"line":8,"character":41},"end":{"line":8,"character":52}},
+            "newText": "Effect.match"
+          },
+          {
+            "range": {"start":{"line":9,"character":24},"end":{"line":9,"character":52}},
+            "newText": "error.length"
+          },
+          {
+            "range": {"start":{"line":10,"character":24},"end":{"line":10,"character":49}},
+            "newText": "value + 1"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377125 {"start":{"line":13,"character":25},"end":{"line":13,"character":43}}
+[
+  {
+    "title": "Replace with Effect.match",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":13,"character":25},"end":{"line":13,"character":43}},
+        "severity": 4,
+        "code": 377125,
+        "source": "ts",
+        "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/matchEffectToMatch.ts": [
+          {
+            "range": {"start":{"line":13,"character":32},"end":{"line":13,"character":43}},
+            "newText": "match"
+          },
+          {
+            "range": {"start":{"line":14,"character":24},"end":{"line":14,"character":52}},
+            "newText": "error.length"
+          },
+          {
+            "range": {"start":{"line":15,"character":24},"end":{"line":15,"character":49}},
+            "newText": "value + 1"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377125 {"start":{"line":18,"character":36},"end":{"line":18,"character":59}}
+[
+  {
+    "title": "Replace with Effect.matchCause",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":36},"end":{"line":18,"character":59}},
+        "severity": 4,
+        "code": 377125,
+        "source": "ts",
+        "message": "`Effect.matchCause` expresses this non-effectful fold more directly than `Effect.matchCauseEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/matchEffectToMatch.ts": [
+          {
+            "range": {"start":{"line":18,"character":43},"end":{"line":18,"character":59}},
+            "newText": "matchCause"
+          },
+          {
+            "range": {"start":{"line":19,"character":24},"end":{"line":19,"character":53}},
+            "newText": "String(cause)"
+          },
+          {
+            "range": {"start":{"line":20,"character":24},"end":{"line":20,"character":55}},
+            "newText": "value + 1"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377125 {"start":{"line":23,"character":44},"end":{"line":23,"character":62}}
+[
+  {
+    "title": "Replace with Effect.match",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":23,"character":44},"end":{"line":23,"character":62}},
+        "severity": 4,
+        "code": 377125,
+        "source": "ts",
+        "message": "`Effect.match` expresses this non-effectful fold more directly than `Effect.matchEffect` with `Effect.succeed` handlers. effect(matchEffectToMatch)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/matchEffectToMatch.ts": [
+          {
+            "range": {"start":{"line":23,"character":51},"end":{"line":23,"character":62}},
+            "newText": "match"
+          },
+          {
+            "range": {"start":{"line":24,"character":26},"end":{"line":24,"character":54}},
+            "newText": "error.length"
+          },
+          {
+            "range": {"start":{"line":25,"character":26},"end":{"line":25,"character":51}},
+            "newText": "value + 1"
+          }
+        ]
+      }
+    }
+  }
+]

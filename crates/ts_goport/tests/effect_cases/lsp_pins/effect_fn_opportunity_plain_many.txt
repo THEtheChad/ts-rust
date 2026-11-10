@@ -1,0 +1,199 @@
+#### file .src/effectFnOpportunity_plainMany.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":8,"character":13},"end":{"line":8,"character":27}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":17,"character":13},"end":{"line":17,"character":40}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":27,"character":16},"end":{"line":27,"character":44}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":8,"character":13},"end":{"line":8,"character":27}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":8,"character":13},"end":{"line":8,"character":27}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":8,"character":30},"end":{"line":8,"character":45}},
+            "newText": "Effect.fn(function(n: number) "
+          },
+          {
+            "range": {"start":{"line":15,"character":1},"end":{"line":15,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"arrowPlainMany\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":8,"character":13},"end":{"line":8,"character":27}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":8,"character":30},"end":{"line":8,"character":45}},
+            "newText": "Effect.fn(\"arrowPlainMany\")(function(n: number) "
+          },
+          {
+            "range": {"start":{"line":15,"character":1},"end":{"line":15,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":17,"character":13},"end":{"line":17,"character":40}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":17,"character":13},"end":{"line":17,"character":40}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":17,"character":43},"end":{"line":17,"character":65}},
+            "newText": "Effect.fn(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":25,"character":1},"end":{"line":25,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionExpressionPlainMany\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":17,"character":13},"end":{"line":17,"character":40}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":17,"character":43},"end":{"line":17,"character":65}},
+            "newText": "Effect.fn(\"functionExpressionPlainMany\")(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":25,"character":1},"end":{"line":25,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":27,"character":16},"end":{"line":27,"character":44}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":16},"end":{"line":27,"character":44}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":27,"character":0},"end":{"line":27,"character":58}},
+            "newText": "export const functionDeclarationPlainMany = Effect.fn(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":35,"character":1},"end":{"line":35,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionDeclarationPlainMany\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":16},"end":{"line":27,"character":44}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_plainMany.ts": [
+          {
+            "range": {"start":{"line":27,"character":0},"end":{"line":27,"character":58}},
+            "newText": "export const functionDeclarationPlainMany = Effect.fn(\"functionDeclarationPlainMany\")(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":35,"character":1},"end":{"line":35,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  }
+]

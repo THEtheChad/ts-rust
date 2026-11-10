@@ -1,0 +1,99 @@
+#### file .src/catchAllToMapError.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":8,"character":74},"end":{"line":8,"character":78}},
+      "severity": 1,
+      "code": 2554,
+      "source": "ts",
+      "message": "Expected 1 arguments, but got 0."
+    },
+    {
+      "range": {"start":{"line":9,"character":77},"end":{"line":9,"character":84}},
+      "severity": 1,
+      "code": 2554,
+      "source": "ts",
+      "message": "Expected 1 arguments, but got 0."
+    },
+    {
+      "range": {"start":{"line":11,"character":38},"end":{"line":11,"character":50}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":12,"character":42},"end":{"line":12,"character":54}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    }
+  ]
+}
+#### quickfix 377010 {"start":{"line":11,"character":38},"end":{"line":11,"character":50}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":38},"end":{"line":11,"character":50}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":11,"character":45},"end":{"line":11,"character":50}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":11,"character":61},"end":{"line":11,"character":74}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":11,"character":86},"end":{"line":11,"character":87}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377095 {"start":{"line":12,"character":42},"end":{"line":12,"character":54}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":12,"character":42},"end":{"line":12,"character":54}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":12,"character":49},"end":{"line":12,"character":54}},
+            "newText": "orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":12,"character":61},"end":{"line":12,"character":78}},
+            "newText": "0"
+          }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,118 @@
+#### file .src/effectFnOpportunity_returnType.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":10,"character":9},"end":{"line":12,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":16,"character":9},"end":{"line":18,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":22,"character":9},"end":{"line":24,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    }
+  ]
+}
+#### quickfix 377017 {"start":{"line":10,"character":9},"end":{"line":12,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":10,"character":9},"end":{"line":12,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_returnType.ts": [
+          {
+            "range": {"start":{"line":10,"character":8},"end":{"line":11,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":11,"character":35},"end":{"line":12,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":16,"character":9},"end":{"line":18,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":16,"character":9},"end":{"line":18,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_returnType.ts": [
+          {
+            "range": {"start":{"line":16,"character":8},"end":{"line":17,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":17,"character":35},"end":{"line":18,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":22,"character":9},"end":{"line":24,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":22,"character":9},"end":{"line":24,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_returnType.ts": [
+          {
+            "range": {"start":{"line":22,"character":8},"end":{"line":23,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":23,"character":35},"end":{"line":24,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]

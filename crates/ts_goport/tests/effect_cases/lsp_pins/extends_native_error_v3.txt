@@ -1,0 +1,62 @@
+#### file .src/extendsNativeError.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":4,"character":6},"end":{"line":4,"character":13}},
+      "severity": 2,
+      "code": 377055,
+      "source": "ts",
+      "message": "This class extends the native `Error` type directly. Untagged native errors lose distinction in the Effect failure channel. effect(extendsNativeError)"
+    },
+    {
+      "range": {"start":{"line":8,"character":6},"end":{"line":8,"character":14}},
+      "severity": 2,
+      "code": 377055,
+      "source": "ts",
+      "message": "This class extends the native `Error` type directly. Untagged native errors lose distinction in the Effect failure channel. effect(extendsNativeError)"
+    },
+    {
+      "range": {"start":{"line":11,"character":6},"end":{"line":11,"character":10}},
+      "severity": 2,
+      "code": 377055,
+      "source": "ts",
+      "message": "This class extends the native `Error` type directly. Untagged native errors lose distinction in the Effect failure channel. effect(extendsNativeError)"
+    },
+    {
+      "range": {"start":{"line":4,"character":6},"end":{"line":4,"character":13}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'MyError' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":8,"character":6},"end":{"line":8,"character":14}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'MyError2' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":12,"character":6},"end":{"line":12,"character":14}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'MyError3' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":16,"character":6},"end":{"line":16,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Foo' is declared but never used."
+    }
+  ]
+}
+#### quickfix 377055 {"start":{"line":4,"character":6},"end":{"line":4,"character":13}}
+[]
+#### quickfix 377055 {"start":{"line":8,"character":6},"end":{"line":8,"character":14}}
+[]
+#### quickfix 377055 {"start":{"line":11,"character":6},"end":{"line":11,"character":10}}
+[]

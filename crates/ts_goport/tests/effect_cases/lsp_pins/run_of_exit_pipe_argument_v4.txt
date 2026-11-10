@@ -1,0 +1,118 @@
+#### file .src/runOfExitToRunExit.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":6,"character":34},"end":{"line":6,"character":51}},
+      "severity": 4,
+      "code": 377123,
+      "source": "ts",
+      "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+    },
+    {
+      "range": {"start":{"line":7,"character":36},"end":{"line":7,"character":53}},
+      "severity": 4,
+      "code": 377123,
+      "source": "ts",
+      "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+    },
+    {
+      "range": {"start":{"line":9,"character":34},"end":{"line":9,"character":51}},
+      "severity": 4,
+      "code": 377123,
+      "source": "ts",
+      "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+    }
+  ]
+}
+#### quickfix 377123 {"start":{"line":6,"character":34},"end":{"line":6,"character":51}}
+[
+  {
+    "title": "Replace with Effect.runPromiseExit",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":34},"end":{"line":6,"character":51}},
+        "severity": 4,
+        "code": 377123,
+        "source": "ts",
+        "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/runOfExitToRunExit.ts": [
+          {
+            "range": {"start":{"line":6,"character":41},"end":{"line":6,"character":51}},
+            "newText": "runPromiseExit"
+          },
+          {
+            "range": {"start":{"line":6,"character":52},"end":{"line":6,"character":77}},
+            "newText": "program"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377123 {"start":{"line":7,"character":36},"end":{"line":7,"character":53}}
+[
+  {
+    "title": "Replace with Effect.runPromiseExit",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":7,"character":36},"end":{"line":7,"character":53}},
+        "severity": 4,
+        "code": 377123,
+        "source": "ts",
+        "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/runOfExitToRunExit.ts": [
+          {
+            "range": {"start":{"line":7,"character":43},"end":{"line":7,"character":53}},
+            "newText": "runPromiseExit"
+          },
+          {
+            "range": {"start":{"line":7,"character":54},"end":{"line":7,"character":80}},
+            "newText": "program"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377123 {"start":{"line":9,"character":34},"end":{"line":9,"character":51}}
+[
+  {
+    "title": "Replace with Effect.runPromiseExit",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":9,"character":34},"end":{"line":9,"character":51}},
+        "severity": 4,
+        "code": 377123,
+        "source": "ts",
+        "message": "`Effect.runPromise` of `Effect.exit` re-implements `Effect.runPromiseExit`. Use the dedicated Exit runner directly. effect(runOfExitToRunExit)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/runOfExitToRunExit.ts": [
+          {
+            "range": {"start":{"line":9,"character":41},"end":{"line":9,"character":51}},
+            "newText": "runPromiseExit"
+          },
+          {
+            "range": {"start":{"line":9,"character":89},"end":{"line":9,"character":102}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]

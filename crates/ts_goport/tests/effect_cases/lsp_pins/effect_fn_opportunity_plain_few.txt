@@ -1,0 +1,3 @@
+#### file .src/effectFnOpportunity_plainFew.ts
+#### diagnostic
+{"kind":"full","items":[]}

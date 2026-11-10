@@ -1,0 +1,552 @@
+#### file .src/schemaSync.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":9,"character":30},"end":{"line":9,"character":30}},
+      "severity": 1,
+      "code": 1003,
+      "source": "ts",
+      "message": "Identifier expected."
+    },
+    {
+      "range": {"start":{"line":10,"character":0},"end":{"line":10,"character":6}},
+      "severity": 1,
+      "code": 1005,
+      "source": "ts",
+      "message": "',' expected."
+    },
+    {
+      "range": {"start":{"line":10,"character":25},"end":{"line":10,"character":25}},
+      "severity": 1,
+      "code": 1003,
+      "source": "ts",
+      "message": "Identifier expected."
+    },
+    {
+      "range": {"start":{"line":11,"character":0},"end":{"line":11,"character":6}},
+      "severity": 1,
+      "code": 1005,
+      "source": "ts",
+      "message": "',' expected."
+    },
+    {
+      "range": {"start":{"line":11,"character":29},"end":{"line":11,"character":29}},
+      "severity": 1,
+      "code": 1003,
+      "source": "ts",
+      "message": "Identifier expected."
+    },
+    {
+      "range": {"start":{"line":12,"character":0},"end":{"line":12,"character":6}},
+      "severity": 1,
+      "code": 1005,
+      "source": "ts",
+      "message": "',' expected."
+    },
+    {
+      "range": {"start":{"line":14,"character":0},"end":{"line":14,"character":0}},
+      "severity": 1,
+      "code": 1005,
+      "source": "ts",
+      "message": "'{' expected."
+    },
+    {
+      "range": {"start":{"line":2,"character":22},"end":{"line":2,"character":37}},
+      "severity": 1,
+      "code": 2307,
+      "source": "ts",
+      "message": "Cannot find module 'effect/schema' or its corresponding type declarations."
+    },
+    {
+      "range": {"start":{"line":5,"character":23},"end":{"line":5,"character":34}},
+      "severity": 1,
+      "code": 2507,
+      "source": "ts",
+      "message": "Type '<Self = never>(identifier: string) => <Fields extends Struct.Fields>(fieldsOr: Fields | HasFields<Fields>, annotations?: ClassAnnotations<Self, { [K in keyof Type<Fields>]: Type<Fields>[K]; }> | undefined) => [Self] extends [never] ? \"Missing `Self` generic - use `class Self extends Class<Self>()({ ... })`\" : Class<Self, Fields, Encoded<Fields>, Context<Fields[keyof Fields]>, Constructor<Fields>, {}, {}>' is not a constructor function type."
+    },
+    {
+      "range": {"start":{"line":6,"character":23},"end":{"line":6,"character":34}},
+      "severity": 1,
+      "code": 2507,
+      "source": "ts",
+      "message": "Type '<Self = never>(identifier?: string | undefined) => <Tag extends string, Fields extends Struct.Fields>(tag: Tag, fieldsOr: Fields | HasFields<Fields>, annotations?: ClassAnnotations<Self, { [K in keyof Type<{ readonly _tag: tag<Tag>; } & Fields>]: Type<{ readonly _tag: tag<Tag>; } & Fields>[K]; }> | undefined) => [Self] extends [never] ? \"Missing `Self` generic - use `class Self extends TaggedError<Self>()(\\\"Tag\\\", { ... })`\" : TaggedErrorClass<Self, Tag, { readonly _tag: tag<Tag>; } & Fields>' is not a constructor function type."
+    },
+    {
+      "range": {"start":{"line":13,"character":30},"end":{"line":13,"character":36}},
+      "severity": 1,
+      "code": 2339,
+      "source": "ts",
+      "message": "Property 'Tagged' does not exist on type 'typeof import(\"<modules>/effect/dist/dts/Schema\")'."
+    }
+  ]
+}
+#### completion 5:34
+[
+  {
+    "label": "Class<F>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "SchemaClass.Class<F>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":5,"character":23},"end":{"line":5,"character":34}},
+      "newText": "Class<F>(\"F\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 206,
+      "name": "Class<F>"
+    }
+  }
+]
+#### completion 6:34
+[
+  {
+    "label": "TaggedError<G>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "TaggedError.TaggedError<G>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":6,"character":23},"end":{"line":6,"character":34}},
+      "newText": "TaggedError<G>()(\"G\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 244,
+      "name": "TaggedError<G>"
+    }
+  }
+]
+#### completion 7:28
+[
+  {
+    "label": "Class<H>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Model.Class<H>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":7,"character":23},"end":{"line":7,"character":28}},
+      "newText": "Model.Class<H>(\"H\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 276,
+      "name": "Class<H>"
+    }
+  }
+]
+#### completion 7:29
+[
+  {
+    "label": "Class<H>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Model.Class<H>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":7,"character":23},"end":{"line":7,"character":29}},
+      "newText": "Model.Class<H>(\"H\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 277,
+      "name": "Class<H>"
+    }
+  }
+]
+#### completion 7:34
+[
+  {
+    "label": "Class<H>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Model.Class<H>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":7,"character":23},"end":{"line":7,"character":34}},
+      "newText": "Model.Class<H>(\"H\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 282,
+      "name": "Class<H>"
+    }
+  }
+]
+#### completion 9:29
+[
+  {
+    "label": "Class<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.Class<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":29}},
+      "newText": "Schema.Class<A>(\"A\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 316,
+      "name": "Class<A>"
+    }
+  },
+  {
+    "label": "TaggedError<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedError<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":29}},
+      "newText": "Schema.TaggedError<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 316,
+      "name": "TaggedError<A>"
+    }
+  },
+  {
+    "label": "TaggedClass<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedClass<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":29}},
+      "newText": "Schema.TaggedClass<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 316,
+      "name": "TaggedClass<A>"
+    }
+  },
+  {
+    "label": "TaggedRequest<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedRequest<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":29}},
+      "newText": "Schema.TaggedRequest<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 316,
+      "name": "TaggedRequest<A>"
+    }
+  }
+]
+#### completion 9:30
+[
+  {
+    "label": "Class<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.Class<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":30}},
+      "newText": "Schema.Class<A>(\"A\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 317,
+      "name": "Class<A>"
+    }
+  },
+  {
+    "label": "TaggedError<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedError<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":30}},
+      "newText": "Schema.TaggedError<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 317,
+      "name": "TaggedError<A>"
+    }
+  },
+  {
+    "label": "TaggedClass<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedClass<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":30}},
+      "newText": "Schema.TaggedClass<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 317,
+      "name": "TaggedClass<A>"
+    }
+  },
+  {
+    "label": "TaggedRequest<A>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedRequest<A>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":9,"character":23},"end":{"line":9,"character":30}},
+      "newText": "Schema.TaggedRequest<A>()(\"A\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 317,
+      "name": "TaggedRequest<A>"
+    }
+  }
+]
+#### completion 11:28
+[
+  {
+    "label": "Class<C>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Model.Class<C>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":11,"character":23},"end":{"line":11,"character":28}},
+      "newText": "Model.Class<C>(\"C\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 372,
+      "name": "Class<C>"
+    }
+  }
+]
+#### completion 11:29
+[
+  {
+    "label": "Class<C>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Model.Class<C>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":11,"character":23},"end":{"line":11,"character":29}},
+      "newText": "Model.Class<C>(\"C\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 373,
+      "name": "Class<C>"
+    }
+  }
+]
+#### completion 13:29
+[
+  {
+    "label": "Class<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.Class<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":29}},
+      "newText": "Schema.Class<E>(\"E\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 454,
+      "name": "Class<E>"
+    }
+  },
+  {
+    "label": "TaggedError<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedError<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":29}},
+      "newText": "Schema.TaggedError<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 454,
+      "name": "TaggedError<E>"
+    }
+  },
+  {
+    "label": "TaggedClass<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedClass<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":29}},
+      "newText": "Schema.TaggedClass<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 454,
+      "name": "TaggedClass<E>"
+    }
+  },
+  {
+    "label": "TaggedRequest<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedRequest<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":29}},
+      "newText": "Schema.TaggedRequest<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 454,
+      "name": "TaggedRequest<E>"
+    }
+  }
+]
+#### completion 13:30
+[
+  {
+    "label": "Class<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.Class<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":30}},
+      "newText": "Schema.Class<E>(\"E\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 455,
+      "name": "Class<E>"
+    }
+  },
+  {
+    "label": "TaggedError<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedError<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":30}},
+      "newText": "Schema.TaggedError<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 455,
+      "name": "TaggedError<E>"
+    }
+  },
+  {
+    "label": "TaggedClass<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedClass<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":30}},
+      "newText": "Schema.TaggedClass<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 455,
+      "name": "TaggedClass<E>"
+    }
+  },
+  {
+    "label": "TaggedRequest<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedRequest<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":30}},
+      "newText": "Schema.TaggedRequest<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 455,
+      "name": "TaggedRequest<E>"
+    }
+  }
+]
+#### completion 13:36
+[
+  {
+    "label": "Class<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.Class<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":36}},
+      "newText": "Schema.Class<E>(\"E\")({${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 461,
+      "name": "Class<E>"
+    }
+  },
+  {
+    "label": "TaggedError<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedError<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":36}},
+      "newText": "Schema.TaggedError<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 461,
+      "name": "TaggedError<E>"
+    }
+  },
+  {
+    "label": "TaggedClass<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedClass<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":36}},
+      "newText": "Schema.TaggedClass<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 461,
+      "name": "TaggedClass<E>"
+    }
+  },
+  {
+    "label": "TaggedRequest<E>",
+    "kind": 6,
+    "sortText": "11",
+    "filterText": "Schema.TaggedRequest<E>",
+    "insertTextFormat": 2,
+    "textEdit": {
+      "range": {"start":{"line":13,"character":23},"end":{"line":13,"character":36}},
+      "newText": "Schema.TaggedRequest<E>()(\"E\", {${0}}){}"
+    },
+    "data": {
+      "fileName": "<case>/.src/schemaSync.ts",
+      "position": 461,
+      "name": "TaggedRequest<E>"
+    }
+  }
+]

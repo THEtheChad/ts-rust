@@ -63,42 +63,7 @@ fn run_promise_in_effect_success(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnosti
             continue;
         }
 
-        if !is_expression(node) || is_declaration_name(node) {
-            continue;
-        }
-
-        // Declared-type prefilter: a diagnostic requires a strict Effect
-        // flow type on the node, which reference nodes with a
-        // conclusively non-Effect declared type — and calls whose
-        // resolved signature conclusively cannot return one — can never
-        // have. Skipped nodes can never match, so no matched-map
-        // bookkeeping is needed.
-        if !ctx.tp.node_could_be_strict_effect(node) {
-            continue;
-        }
-
-        let mut t = TypeId::NIL;
-        if node.kind() == SyntaxKind::CallExpression {
-            let signature = ctx.tp.checker.get_resolved_signature_exported(node);
-            if signature.is_some() {
-                t = ctx.tp.checker.get_return_type_of_signature(signature);
-            }
-        }
-        if t.is_nil() {
-            t = ctx.tp.get_type_at_location(node);
-        }
-        let effect = ctx.tp.strict_effect_type(t);
-        let Some(effect) = effect else {
-            continue;
-        };
-        if !type_contains_promise(ctx.tp, effect.a) {
-            continue;
-        }
-
-        if has_explicit_promise_effect_context(ctx.tp, node)
-            || has_explicit_promise_success_type_arguments(ctx.tp, node)
-            || is_effect_sync_call(ctx.tp, node)
-        {
+        if !has_unawaited_promise_success(ctx.tp, node) {
             continue;
         }
 
@@ -115,6 +80,48 @@ fn run_promise_in_effect_success(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnosti
     }
 
     diags
+}
+
+/// Whether `node` is an expression (not a declaration name) whose strict
+/// Effect type has a Promise in its success channel, and neither an explicit
+/// Promise-returning Effect type, explicit Promise success type arguments nor
+/// an `Effect.sync` call asks for that Promise. A call's type is the return
+/// type of its resolved signature, else the type at the node.
+fn has_unawaited_promise_success(tp: &mut TypeParser<'_>, node: Node) -> bool {
+    if !is_expression(node) || is_declaration_name(node) {
+        return false;
+    }
+
+    // Declared-type prefilter: a diagnostic requires a strict Effect
+    // flow type on the node, which reference nodes with a
+    // conclusively non-Effect declared type — and calls whose
+    // resolved signature conclusively cannot return one — can never
+    // have. Skipped nodes can never match, so no matched-map
+    // bookkeeping is needed.
+    if !tp.node_could_be_strict_effect(node) {
+        return false;
+    }
+
+    let mut t = TypeId::NIL;
+    if node.kind() == SyntaxKind::CallExpression {
+        let signature = tp.checker.get_resolved_signature_exported(node);
+        if signature.is_some() {
+            t = tp.checker.get_return_type_of_signature(signature);
+        }
+    }
+    if t.is_nil() {
+        t = tp.get_type_at_location(node);
+    }
+    let Some(effect) = tp.strict_effect_type(t) else {
+        return false;
+    };
+    if !type_contains_promise(tp, effect.a) {
+        return false;
+    }
+
+    !(has_explicit_promise_effect_context(tp, node)
+        || has_explicit_promise_success_type_arguments(tp, node)
+        || is_effect_sync_call(tp, node))
 }
 
 // Go: rules/promise_in_effect_success.go hasExplicitPromiseEffectContext

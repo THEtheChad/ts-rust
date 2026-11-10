@@ -1,0 +1,125 @@
+#### file .src/effectFnOpportunity_layerComments.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":14,"character":6},"end":{"line":14,"character":9}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(key) { ... })`. effect(effectFnOpportunity)"
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":14,"character":6},"end":{"line":14,"character":9}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":14,"character":6},"end":{"line":14,"character":9}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(key) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_layerComments.ts": [
+          {
+            "range": {"start":{"line":14,"character":11},"end":{"line":15,"character":32}},
+            "newText": "Effect.fnUntraced(function*(key: string) "
+          },
+          {
+            "range": {"start":{"line":18,"character":9},"end":{"line":18,"character":10}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":14,"character":6},"end":{"line":14,"character":9}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(key) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_layerComments.ts": [
+          {
+            "range": {"start":{"line":14,"character":11},"end":{"line":15,"character":32}},
+            "newText": "Effect.fn(function*(key: string) "
+          },
+          {
+            "range": {"start":{"line":18,"character":9},"end":{"line":18,"character":10}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"Store.get\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":14,"character":6},"end":{"line":14,"character":9}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(key) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_layerComments.ts": [
+          {
+            "range": {"start":{"line":14,"character":11},"end":{"line":15,"character":32}},
+            "newText": "Effect.fn(\"Store.get\")(function*(key: string) "
+          },
+          {
+            "range": {"start":{"line":18,"character":9},"end":{"line":18,"character":10}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"get\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":14,"character":6},"end":{"line":14,"character":9}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(key) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_layerComments.ts": [
+          {
+            "range": {"start":{"line":14,"character":11},"end":{"line":15,"character":32}},
+            "newText": "Effect.fn(\"get\")(function*(key: string) "
+          },
+          {
+            "range": {"start":{"line":18,"character":9},"end":{"line":18,"character":10}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
