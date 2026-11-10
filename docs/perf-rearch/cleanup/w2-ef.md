@@ -155,3 +155,175 @@ context budget, not for a risk.
 - icount `--profile goport`, base `f59c229c5`: all 9 cells within ±0.07%.
   Effect on (`TSC_RS_EFFECT=1`, projects/effect `packages/effect`,
   `--singleThreaded --noEmit`): 26.601 G → 26.601 G (−0.002%), same stdout.
+
+## W2-EF2 (continuation)
+
+Lane W2-EF2 took the 24 rows left above. Base `perf/first-principles` @
+`68755a4fa` (code as `09661c926`): 24 Effect rows over 25, Σ (cog − 25) = 124.
+Head: 0 rows over 25. The 49 new functions have cog ≤ 13.
+
+### LS pins first
+
+The 1,060 `effect_cases` check diagnostics only, so before any split
+`e97919185` added `lsp_pins` to the `effect_cases` test binary
+(`tests/effect_cases/lsp_pins.rs`, expected answers in
+`tests/effect_cases/lsp_pins/<pin>.txt`). There are 60 pins. Each takes a
+case of `effect_v3`/`effect_v4`, and four of them replace the case's source
+with a fixture of their own (`schemagen.ts`, `schema_self_in_classes.ts`,
+`write_tag_class_accessors.ts`, `pipeable_to_datafirst.ts`). A pin runs
+`TSC_RS_EFFECT=1 tsgo --lsp --stdio` and records:
+- the pull diagnostics;
+- the Effect quick fixes of each Effect diagnostic, without the generic
+  "Disable <rule>" fixes;
+- with `REFACTORS`, the Effect refactors at every identifier start;
+- with `HOVERS`, the Layer hovers at every identifier start;
+- with `COMPLETIONS`, the snippet completions after each `.` on an
+  `extends` line.
+
+Answers that repeat at several positions are written once. The expected
+files were blessed (`EFFECT_LSP_PINS_BLESS=1`) from the base binary, and a
+second base run matched them. Their content is not checked against
+Effect-TS/tsgo: they pin what tsc-rs answered at the base.
+
+They cover every LS path this lane touches:
+- schemagen (all three type-to-Schema refactors, v3 and v4);
+- the Schema self completions (v3 and v4);
+- `writeTagClassAccessors`;
+- `pipeableToDatafirst`;
+- the Layer hover (six layer-graph cases);
+- the fixes of `serviceNotAsClass`, `effectFnOpportunity` (24 cases),
+  `runOfExitToRunExit`, `preferSucceedSomeOrNone`, `catchAllToMapError`,
+  `catchToOrElseSucceed`, `layerMergeAllWithDependencies` and
+  `matchEffectToMatch`.
+
+The pins share two pieces of test code, moved rather than copied:
+- the case set-up of `effect_cases.rs`, as `CaseDir`;
+- the LSP client of `effect_lsp_module_specifier.rs`, as
+  `tests/effect_lsp/` (with a small JSON reader and printer).
+
+### Shared structure
+
+| Shared helper | Replaces |
+|---|---|
+| `rules/catch_callback.rs`: `catch_callback_call`, `catch_method_name` | the `Effect.catch`/`catchAll` callee check, lazy callback parse, returned-call check and callee-name read, copied in `analyze_catch_all_to_map_error` and `analyze_catch_to_or_else_succeed` (each keeps its own argument check, in its own order relative to the `fail`/`succeed` reference check) |
+| `rules/run_of_exit_to_run_exit.rs`: `is_exit_transformation`, `run_of_exit_match` | the `Effect.exit` step test and the match construction, each written twice (piping-flow sequences and runner calls) |
+| `rules/unsafe_effect_type_assertion.rs`: `unsafe_channel` | the error and requirements channel checks, written twice |
+| `ls/refactors/pipeable_to_datafirst.rs`: `apply_conversion_step` | three copies of "build the call, set parents" |
+| `ls/schemagen.rs`: `version_list_args` | the v4 array-literal wrapping of union and tuple members |
+
+### Targets
+
+Cog by rust-code-analysis, as `quality.sh ranking` reports it. "After" is the
+function's own cog; "largest helper" is the largest new function it split into.
+
+| Function | File | Before | After | Largest helper | What | Commit |
+|---|---|---:|---:|---:|---|---|
+| `SchemaGen::process_node` | ls/schemagen.rs | 39 | 3 | 3 | one method per type-node case (`process_literal_type`, `process_union_type`, `process_intersection_type`, `process_type_operator`, `process_type_reference_node`), `keyword_schema_name` | 29f6114ed |
+| `SchemaGen::process_members` | ls/schemagen.rs | 29 | 5 | 7 | `process_property_signature`, `process_index_signature` | 29f6114ed |
+| `StructuralSchemaGen::process` | ls/schemagen.rs | 26 | 9 | 8 | `export_requested_statements` | 29f6114ed |
+| `run_effect_schema_self_in_classes` | ls/completions/effect_schema_self_in_classes.rs | 36 | 15 | – | `SCHEMA_CLASS_ENTRIES` table (member, version, call text) in the old item order | 7cb2b7775 |
+| `parse_effect_fn_opportunity_inner` | typeparser/effect_fn_opportunity.rs | 35 | 13 | 6 | `is_effect_fn_opportunity_shape`, `returns_only_strict_effects`, `effect_fn_opportunity_name` (step order kept: shape, inside Effect.fn, signature, name) | f083c9d7c |
+| `analyze_catch_all_to_map_error` | rules/catch_all_to_map_error.rs | 34 | 11 | 4 | `catch_callback` | d688d8ba4 |
+| `analyze_catch_to_or_else_succeed` | rules/catch_to_or_else_succeed.rs | 31 | 10 | 4 | `catch_callback` | d688d8ba4 |
+| `analyze_layer_merge_all_call` | rules/layer_merge_all_with_dependencies.rs | 34 | 8 | 12 | `parse_layer_infos`, `provider_consumers`, `unique_type_names` | 5a2ff35ae |
+| `run_promise_in_effect_success` | rules/promise_in_effect_success.rs | 34 | 18 | 11 | `has_unawaited_promise_success` (the walk stays) | 33ad8ef81 |
+| `run_write_tag_class_accessors` | ls/refactors/write_tag_class_accessors.rs | 33 | 7 | 13 | `enclosing_class_declaration`, `service_class_name`, `non_primitive_service_shapes`, `involved_members` | 793e5d762 |
+| `reconstruct_piping_flow` | typeparser/reconstruct.rs | 31 | 4 | 2 | `apply_transformation_text`; the all-`Effect.fn` early return is the same as skipping every `Effect.fn` step. The function has no caller (dead since its port, `1352bca5f`); left in place, as removing a port function is outside this lane | f0258e459 |
+| `run_schema_literal_non_finite` (and `visit`) | rules/schema_literal_non_finite.rs | 30, 29 | 10, 9 | 8 | `schema_literal_values` | c7554e577 |
+| `analyze_unsafe_effect_type_assertion` | rules/unsafe_effect_type_assertion.rs | 30 | 5 | 6 | `unsafe_assertion_match`, `parse_effect_stream_or_layer` (moved out of the function), `unsafe_channel` | 357379b83 |
+| `effect_fn_build_replacement` | ls/fixables/effect_fn_opportunity.rs | 29 | 14 | 9 | `effect_fn_function_text`, `effect_fn_pipe_arguments_text` | 084fca119 |
+| `run_service_not_as_class_fix` | ls/fixables/service_not_as_class.rs | 29 | 6 | 8 | `service_class_declaration` | 1f5bdba09 |
+| `format_layer_hover` | ls/hover.rs | 28 | 16 | 5 | `mermaid_graph_links` | 27c5eca63 |
+| `try_convert_to_datafirst` | ls/refactors/pipeable_to_datafirst.rs | 28 | 4 | 5 | `is_data_first_step`, `apply_conversion_step` (node creation order kept) | b99425f12 |
+| `check_extends_native_error` | rules/extends_native_error.rs | 28 | 9 | 7 | `is_native_error_expression` | 601b88bba |
+| `analyze_run_of_exit_to_run_exit` | rules/run_of_exit_to_run_exit.rs | 28 | 5 | 4 | `append_flow_run_of_exit_matches`, `runner_call_match`, `is_exit_transformation`, `run_of_exit_match` | e3965f7cd |
+| `evaluate_constant_expression` | typeparser/constant_evaluation.rs | 28 | 12 | 6 | `number_global_constant`, `inlinable_constant_declaration` | b8680ba75 |
+| `run_prefer_succeed_some_or_none_fix` | ls/fixables/prefer_succeed_some_or_none.rs | 26 | 11 | 5 | `succeed_some_or_none_replacement` | 5a7c0d6a7 |
+| `remove_exit_transformation` | ls/fixables/run_of_exit_to_run_exit.rs | 26 | 3 | 9 | `remove_direct_exit_call`, `remove_exit_pipe_argument`, `exit_pipe_subject` | fe2f36ca9 |
+| `run_global_timers` | rules/global_timers.rs | 26 | 6 | 3 | `resolve_global_timers`, `global_timer_call` | 44a873ae4 |
+| `analyze_match_effect_to_match` | rules/match_effect_to_match.rs | 26 | 13 | 4 | `match_effect_callee_names`, `succeed_handlers` | 7e1afd53e |
+
+### Notes
+
+- **No behaviour change intended, and none found.** The LS pins and the
+  1,060 diagnostic cases pass on the head.
+- **Call order kept.** Every split keeps the order of checker calls,
+  including short-circuits:
+  - `returns_only_strict_effects` stops at the first non-Effect union member,
+    as the `?` loop did;
+  - `unsafe_channel` checks the error channel (with its type strings) before
+    the requirements channel;
+  - `catchToOrElseSucceed` still checks the `succeed` reference before the
+    argument count.
+- **Factory node order kept** in the rewritten fixes and refactors: the
+  callee clone comes before the argument clones, and `pipe` comes after the
+  extended arguments.
+- **Files:** one new file, `rules/catch_callback.rs`, with its `pub mod` line
+  in `rules/mod.rs`. No production file outside `effect/` changed. The test
+  files (all Effect's own) are listed under "LS pins first".
+- **Switches:** none added or removed.
+
+### Evidence (W2-EF2)
+
+Sources: the code head is `62691936b` (`7e1afd53e`, the last split, plus a
+clippy fix in the test client). The base is `68755a4fa`. `perf/first-principles`
+has since moved to `c268e2ef5` (W2-CC); this lane is not rebased onto it.
+
+- **Effect area** (`quality.sh ranking`, own code > 25): 24 rows, Σ excess
+  124 → 0 rows. Report `quality.sh report HEAD --base 68755a4fa`:
+  - own_gt25 75 → 51, own_excess_sum 962 → 838 (the rest are outside
+    `effect/`);
+  - prod functions over cog 25: 609 → 584;
+  - duplication 16,168 → 16,136 lines (blocks 662 → 661, 0 new);
+  - hygiene unchanged; escape hatches 11 → 11;
+  - clippy (repo config) 0 → 0, `--force-warn clippy::all` 1,126 → 1,126.
+- **Tests:** workspace `test --release` with `TS_GO_REPO` at the pin, on
+  `7e1afd53e`:
+  - plain: 2,181 passed, 0 failed, 2 ignored;
+  - `--features ts_goport/diagnostics,ts_goport/test-hooks`: 2,209 passed,
+    0 failed, 2 ignored.
+
+  On `62691936b`, `effect_cases` passes 1,120 of 1,120 (1,060 cases and 60
+  pins), and `effect_lsp_module_specifier` passes 6 of 6. The pins and cases
+  also passed after the first 12 splits.
+- **Clippy** 1.95.0, CI command, `-D warnings`: plain and with the features
+  ok on `62691936b`. The first run flagged two lints in the new test client
+  (`format_push_string`, `duration_suboptimal_units`), fixed in `62691936b`.
+- **Parity full** on `62691936b`: PARITY OK
+  (`~/.cache/perf-rearch/parity/runs/20261110-010447-full-22d4d1ada8`,
+  `meta.json` `checkoutHead` `62691936b`).
+  - Results: 0 lost, 0 not run, 0 new items not good, 0 crashes on good
+    items, 0 newly good by a referee.
+  - The 36 grandfathered items are the same as at the base.
+  - Tiers: cli 170 MATCH; tests 139,976 PASS, 0 FLAKY; lsp 2,629 MATCH and
+    29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN
+    and 1 JS-AGREES, all as at the base; corpus 12,727 MATCH.
+- **Gating:** `quality.sh gating 62691936b`: GATING OK (0 findings not
+  allowed, 3 allowed, 0 stale).
+- **icount** `--profile goport` (1.95.0) bins of `68755a4fa` and `7e1afd53e`,
+  `icount_ab.sh`, 2 runs, means:
+
+  | cell | base | head | Δ |
+  |---|---:|---:|---:|
+  | query noemit-st | 0.6834 G | 0.6834 G | −0.006% |
+  | query emit-st | 0.7191 G | 0.7191 G | +0.004% |
+  | query emit-mt | 0.8168 G | 0.8153 G | −0.190% |
+  | umami noemit-st | 16.5015 G | 16.5013 G | −0.001% |
+  | umami emit-st | 19.0168 G | 19.0168 G | +0.000% |
+  | umami emit-mt | 22.2670 G | 22.3198 G | +0.237% |
+  | hono noemit-st | 2.1414 G | 2.1414 G | +0.000% |
+  | hono emit-st | 2.8555 G | 2.8555 G | −0.000% |
+  | hono emit-mt | 3.7039 G | 3.7047 G | +0.022% |
+
+  - umami emit-mt was rechecked with 5 interleaved runs (load 6–14): base
+    median 22.266 G (22.020–22.418), head 22.297 G (22.125–22.367), +0.14%.
+    That is inside the base's own spread of 1.8%, so it is noise.
+  - None of these cells runs Effect code (it needs `TSC_RS_EFFECT=1`), and
+    every single-threaded cell is within ±0.006%.
+  - **Effect on:** `TSC_RS_EFFECT=1`, projects/effect `packages/effect`,
+    `--singleThreaded --noEmit`, with a scratch `--tsBuildInfoFile` removed
+    before each run, 3 interleaved runs: base median 26.5835 G, head
+    26.5839 G (+0.001%). Stdout (12 lines) was the same in every run.
+  - W2-EF's own Effect-on command is not recorded. `--composite false` makes
+    this config fail with TS5069, so these runs keep the config's composite
+    setting and send the build info to scratch.
