@@ -1130,29 +1130,39 @@ impl Checker {
         &mut self,
         extensionless_import_path: &str,
     ) -> &'static str {
-        // PORT: Go's `switch true` over the probed files, as a list of
-        // (file extension, import extension) pairs in Go's case order.
-        let tsx_import_extension = if_else(
-            self.compiler_options.jsx == JsxEmit::PRESERVE,
-            ".jsx",
-            ".js",
-        );
-        [
-            (".mts", ".mjs"),
-            (".ts", ".js"),
-            (".cts", ".cjs"),
-            (".mjs", ".mjs"),
-            (".js", ".js"),
-            (".cjs", ".cjs"),
-            (".tsx", tsx_import_extension),
-            (".jsx", ".jsx"),
-            (".json", ".json"),
-        ]
-        .into_iter()
-        .find(|(file_extension, _)| {
-            file_exists(&format!("{extensionless_import_path}{file_extension}"))
-        })
-        .map_or("", |(_, import_extension)| import_extension)
+        let exists = |ext: &str| file_exists(&format!("{extensionless_import_path}{ext}"));
+        if exists(".mts") {
+            return ".mjs";
+        }
+        if exists(".ts") {
+            return ".js";
+        }
+        if exists(".cts") {
+            return ".cjs";
+        }
+        if exists(".mjs") {
+            return ".mjs";
+        }
+        if exists(".js") {
+            return ".js";
+        }
+        if exists(".cjs") {
+            return ".cjs";
+        }
+        if exists(".tsx") {
+            return if_else(
+                self.compiler_options.jsx == JsxEmit::PRESERVE,
+                ".jsx",
+                ".js",
+            );
+        }
+        if exists(".jsx") {
+            return ".jsx";
+        }
+        if exists(".json") {
+            return ".json";
+        }
+        ""
     }
 
     // Go: checker/checker.go:15884 errorOnImplicitAnyModule
