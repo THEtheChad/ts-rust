@@ -376,11 +376,6 @@ impl Fs for OsFs {
     }
 
     // Go: os.go:223 Chtimes (ts#64832)
-    // PORT: Go `os.Chtimes` is utimensat(AT_FDCWD, path, times, 0) on unix,
-    // so it works on a file without read permission; a zero Go time
-    // (`None` here) is UTIME_OMIT. Off unix, Rust std sets times through an
-    // open file (opened read-only here).
-    #[cfg(unix)]
     fn chtimes(
         &self,
         path: &str,
@@ -390,62 +385,83 @@ impl Fs for OsFs {
         if is_network_path(path) {
             return Err(err_network_path());
         }
-        use rustix::fs::{AtFlags, CWD, Timespec, Timestamps, UTIME_OMIT};
-        // Go: syscall.NsecToTimespec(t.UnixNano())
-        let timespec = |time: Option<SystemTime>| match time {
-            None => Timespec {
-                tv_sec: 0,
-                tv_nsec: UTIME_OMIT,
-            },
-            Some(time) => {
-                let (sec, nsec) = match time.duration_since(SystemTime::UNIX_EPOCH) {
-                    Ok(d) => (d.as_secs() as i64, i64::from(d.subsec_nanos())),
-                    Err(err) => {
-                        let d = err.duration();
-                        let (sec, nsec) = (-(d.as_secs() as i64), -i64::from(d.subsec_nanos()));
-                        if nsec < 0 {
-                            (sec - 1, nsec + 1_000_000_000)
-                        } else {
-                            (sec, nsec)
-                        }
-                    }
-                };
-                Timespec {
-                    tv_sec: sec,
-                    tv_nsec: nsec as _,
-                }
-            }
-        };
-        let times = Timestamps {
-            last_access: timespec(a_time),
-            last_modification: timespec(m_time),
-        };
-        rustix::fs::utimensat(CWD, &*os_path(path), &times, AtFlags::empty())
-            .map_err(|err| FsError::path("chtimes", path, io::Error::from(err)))
+        os_chtimes(path, a_time, m_time)
     }
+}
 
-    #[cfg(not(unix))]
-    fn chtimes(
-        &self,
-        path: &str,
-        a_time: Option<SystemTime>,
-        m_time: Option<SystemTime>,
-    ) -> Result<(), FsError> {
-        if is_network_path(path) {
-            return Err(err_network_path());
+// Go: os/file_posix.go Chtimes
+// PORT: Go standard library. Go `os.Chtimes` is utimensat(AT_FDCWD, path,
+// times, 0) on unix, so it works on a file without read permission; a
+// zero Go time (`None` here) is UTIME_OMIT.
+#[cfg(unix)]
+fn os_chtimes(
+    path: &str,
+    a_time: Option<SystemTime>,
+    m_time: Option<SystemTime>,
+) -> Result<(), FsError> {
+    let times = rustix::fs::Timestamps {
+        last_access: chtimes_timespec(a_time),
+        last_modification: chtimes_timespec(m_time),
+    };
+    rustix::fs::utimensat(
+        rustix::fs::CWD,
+        &*os_path(path),
+        &times,
+        rustix::fs::AtFlags::empty(),
+    )
+    .map_err(|err| FsError::path("chtimes", path, io::Error::from(err)))
+}
+
+// Go: os/file_posix.go Chtimes, its `set` closure
+// PORT: Go standard library. A zero Go time (`None`) is UTIME_OMIT, any
+// other is `syscall.NsecToTimespec(t.UnixNano())`.
+#[cfg(unix)]
+fn chtimes_timespec(time: Option<SystemTime>) -> rustix::fs::Timespec {
+    let Some(time) = time else {
+        return rustix::fs::Timespec {
+            tv_sec: 0,
+            tv_nsec: rustix::fs::UTIME_OMIT,
+        };
+    };
+    let (sec, nsec) = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, i64::from(d.subsec_nanos())),
+        Err(err) => {
+            let d = err.duration();
+            let (sec, nsec) = (-(d.as_secs() as i64), -i64::from(d.subsec_nanos()));
+            if nsec < 0 {
+                (sec - 1, nsec + 1_000_000_000)
+            } else {
+                (sec, nsec)
+            }
         }
-        let file = std::fs::File::open(os_path(path))
-            .map_err(|err| FsError::path("chtimes", path, err))?;
-        let mut times = std::fs::FileTimes::new();
-        if let Some(a_time) = a_time {
-            times = times.set_accessed(a_time);
-        }
-        if let Some(m_time) = m_time {
-            times = times.set_modified(m_time);
-        }
-        file.set_times(times)
-            .map_err(|err| FsError::path("chtimes", path, err))
+    };
+    rustix::fs::Timespec {
+        tv_sec: sec,
+        tv_nsec: nsec as _,
     }
+}
+
+// Go: os/file_posix.go Chtimes
+// PORT: Go standard library. Off unix, Rust std sets times through an open
+// file (opened read-only here); a zero Go time (`None` here) is left as it
+// is.
+#[cfg(not(unix))]
+fn os_chtimes(
+    path: &str,
+    a_time: Option<SystemTime>,
+    m_time: Option<SystemTime>,
+) -> Result<(), FsError> {
+    let file =
+        std::fs::File::open(os_path(path)).map_err(|err| FsError::path("chtimes", path, err))?;
+    let mut times = std::fs::FileTimes::new();
+    if let Some(a_time) = a_time {
+        times = times.set_accessed(a_time);
+    }
+    if let Some(m_time) = m_time {
+        times = times.set_modified(m_time);
+    }
+    file.set_times(times)
+        .map_err(|err| FsError::path("chtimes", path, err))
 }
 
 /// PORT: not in Go (perf). None (not read) for each normalized absolute
