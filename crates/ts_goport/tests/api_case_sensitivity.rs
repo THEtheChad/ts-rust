@@ -87,7 +87,8 @@ fn check_case(name: &str) {
     let snapshot = api.call("createSnapshot", Some(request.trim()));
     assert_answer(name, "createSnapshot", &snapshot, &expected);
     let snapshot_id = match get(&snapshot, "snapshot") {
-        LspAny::Number(id) => *id as u64,
+        // A JSON number prints as Go's integer id.
+        LspAny::Number(id) => id.to_string(),
         other => panic!("{name}: snapshot id {other:?}"),
     };
     let LspAny::Array(projects) = get(&snapshot, "projects") else {
@@ -199,7 +200,7 @@ impl Api {
             let mut body = vec![0; length];
             self.stdout.read_exact(&mut body).expect("read a message");
             let message = parse(&String::from_utf8(body).expect("UTF-8 message"));
-            let is_response = matches!(get(&message, "id"), LspAny::Number(id) if *id == f64::from(self.id))
+            let is_response = matches!(get(&message, "id"), LspAny::Number(id) if id.to_string() == self.id.to_string())
                 && matches!(get(&message, "method"), LspAny::Null);
             if is_response {
                 assert!(
