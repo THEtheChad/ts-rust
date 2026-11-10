@@ -427,10 +427,7 @@ impl Checker {
             expanding_enum = true;
         }
         if t_flags.intersects(TypeFlags::STRING_LITERAL) {
-            let value = match &self.ty(t).as_literal_type().value {
-                Some(LiteralValue::String(s)) => s.clone(),
-                _ => panic!("interface conversion: literal value is not string"),
-            };
+            let value = self.get_string_literal_value(t);
             // PORT: Go `len` counts Go bytes (see `scanner_util::go_len`).
             nb_add_length(b, go_len(&value) as i32 + 2);
             let lit = self.nb_new_string_literal(b, &value);
@@ -438,10 +435,7 @@ impl Checker {
             return f.new_literal_type_node(lit);
         }
         if t_flags.intersects(TypeFlags::NUMBER_LITERAL) {
-            let value = match &self.ty(t).as_literal_type().value {
-                Some(LiteralValue::Number(n)) => *n,
-                _ => panic!("interface conversion: literal value is not jsnum.Number"),
-            };
+            let value = self.get_number_literal_value(t);
             let text = value.to_string();
             nb_add_length(b, text.len() as i32);
             if value.0 < 0.0 {
@@ -459,11 +453,7 @@ impl Checker {
             return f.new_literal_type_node(f.new_big_int_literal(text + "n", TokenFlags::NONE));
         }
         if t_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
-            let value = match &self.ty(t).as_literal_type().value {
-                Some(LiteralValue::Bool(v)) => *v,
-                _ => panic!("interface conversion: literal value is not bool"),
-            };
-            if value {
+            if self.get_boolean_literal_value(t) {
                 nb_add_length(b, 4);
                 return f.new_literal_type_node(f.new_keyword_expression(SyntaxKind::TrueKeyword));
             } else {
@@ -536,46 +526,34 @@ impl Checker {
 
         if in_type_alias.is_empty()
             && let Some(alias) = &t_alias
+            && (nb_flags(b).intersects(NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE)
+                || {
+                    let enclosing = ctx.borrow().enclosing_declaration;
+                    self.is_type_symbol_accessible(alias.symbol(), enclosing)
+                })
         {
-            let use_outside =
-                nb_flags(b).intersects(NodeBuilderFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
-            let accessible = use_outside || {
-                let enclosing = ctx.borrow().enclosing_declaration;
-                self.is_type_symbol_accessible(alias.symbol(), enclosing)
-            };
-            if accessible {
-                // If we should expand this type alias, skip the alias and fall through to expand the underlying type
-                if !self.should_expand_type(b, t, true /*isAlias*/) {
-                    let sym = alias.symbol();
-                    let type_argument_nodes = self.map_to_type_nodes(
-                        b,
-                        alias.type_arguments(),
-                        false, /*isBareList*/
-                    );
-                    if is_reserved_member_name(&self.sym(sym).name)
-                        && !self.sym(sym).flags.intersects(SymbolFlags::CLASS)
-                    {
-                        return f
-                            .new_type_reference_node(f.new_identifier(""), type_argument_nodes);
-                    }
-                    let global_array_symbol = self.ty(self.global_array_type).symbol;
-                    if type_argument_nodes.is_some()
-                        && type_argument_nodes.nodes().len() == 1
-                        && sym == global_array_symbol
-                    {
-                        return f.new_array_type_node(type_argument_nodes.nodes().get(0));
-                    }
-                    return self.symbol_to_type_node(
-                        b,
-                        sym,
-                        SymbolFlags::TYPE,
-                        type_argument_nodes,
-                    );
+            // If we should expand this type alias, skip the alias and fall through to expand the underlying type
+            if !self.should_expand_type(b, t, true /*isAlias*/) {
+                let sym = alias.symbol();
+                let type_argument_nodes =
+                    self.map_to_type_nodes(b, alias.type_arguments(), false /*isBareList*/);
+                if is_reserved_member_name(&self.sym(sym).name)
+                    && !self.sym(sym).flags.intersects(SymbolFlags::CLASS)
+                {
+                    return f.new_type_reference_node(f.new_identifier(""), type_argument_nodes);
                 }
-                // Expanding: increment depth and process the underlying type
-                ctx.borrow_mut().depth += 1;
-                *depth_incremented = true;
+                let global_array_symbol = self.ty(self.global_array_type).symbol;
+                if type_argument_nodes.is_some()
+                    && type_argument_nodes.nodes().len() == 1
+                    && sym == global_array_symbol
+                {
+                    return f.new_array_type_node(type_argument_nodes.nodes().get(0));
+                }
+                return self.symbol_to_type_node(b, sym, SymbolFlags::TYPE, type_argument_nodes);
             }
+            // Expanding: increment depth and process the underlying type
+            ctx.borrow_mut().depth += 1;
+            *depth_incremented = true;
         }
 
         let object_flags = self.ty(t).object_flags;
@@ -655,15 +633,10 @@ impl Checker {
             if t_symbol.is_some() {
                 return self.symbol_to_type_node(b, t_symbol, SymbolFlags::TYPE, NodeList::NIL);
             }
-            let variance_symbol = if self.variance_type_parameter.is_some() {
-                self.ty(self.variance_type_parameter).symbol
-            } else {
-                SymbolId::NIL
-            };
             let name = if (t == self.marker_super_type_for_check
                 || t == self.marker_sub_type_for_check)
                 && self.variance_type_parameter.is_some()
-                && variance_symbol.is_some()
+                && self.ty(self.variance_type_parameter).symbol.is_some()
             {
                 (if t == self.marker_sub_type_for_check {
                     "sub-"
@@ -671,7 +644,7 @@ impl Checker {
                     "super-"
                 })
                 .to_string()
-                    + &symbol_name(&self.symbols, variance_symbol)
+                    + &symbol_name(&self.symbols, self.ty(self.variance_type_parameter).symbol)
             } else {
                 "?".to_string()
             };
