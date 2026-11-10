@@ -760,25 +760,13 @@ fn elf_build_id(file: &[u8]) -> Option<String> {
     }
 
     // Go: binary.LittleEndian (1) or binary.BigEndian (2). `uint` reads
-    // the unsigned value of all bytes of `b`.
+    // the unsigned value of all bytes of `b` (`byte_order_uint`).
     let big_endian = match buf[5] {
         1 => false,       // little-endian
         2 => true,        // big-endian
         _ => return None, // errBadELF
     };
-    let uint = move |b: &[u8]| -> u64 {
-        let mut x = 0u64;
-        if big_endian {
-            for &c in b {
-                x = x << 8 | u64::from(c);
-            }
-        } else {
-            for &c in b.iter().rev() {
-                x = x << 8 | u64::from(c);
-            }
-        }
-        x
-    };
+    let uint = move |b: &[u8]| byte_order_uint(b, big_endian);
 
     let (shnum, shoff, shentsize): (i64, i64, i64) = match buf[4] {
         1 => {
@@ -836,15 +824,30 @@ fn elf_build_id(file: &[u8]) -> Option<String> {
                 return None; // errBadELF
             }
             read_at(&f, &mut buf[..desc_size as usize], desc_off)?;
-            // Go: fmt.Sprintf("%x", buf[:descSize])
-            let mut id = String::with_capacity(desc_size as usize * 2);
-            for c in &buf[..desc_size as usize] {
-                id.push_str(&format!("{c:02x}"));
-            }
-            return Some(id);
+            return Some(hex_lower(&buf[..desc_size as usize]));
         }
     }
     None // errNoBuildID
+}
+
+// Go: binary.LittleEndian or binary.BigEndian Uint16, Uint32 and Uint64,
+// for the unsigned value of all bytes of `b`.
+fn byte_order_uint(b: &[u8], big_endian: bool) -> u64 {
+    let push = |x: u64, &c: &u8| x << 8 | u64::from(c);
+    if big_endian {
+        b.iter().fold(0, push)
+    } else {
+        b.iter().rev().fold(0, push)
+    }
+}
+
+// Go: fmt.Sprintf("%x", b)
+fn hex_lower(b: &[u8]) -> String {
+    let mut id = String::with_capacity(b.len() * 2);
+    for c in b {
+        id.push_str(&format!("{c:02x}"));
+    }
+    id
 }
 
 // Go: (*os.File).ReadAt, which fails on a negative offset and on a short
