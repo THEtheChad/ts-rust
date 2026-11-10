@@ -62,83 +62,25 @@ pub fn create_string(
             continue;
         }
 
-        // Construct onlyFileName: basename without extension, strip "index" suffix
-        let mut only_file_name: String = match source_file_name.rfind('/') {
-            None => source_file_name.to_string(),
-            Some(last_index) => source_file_name[last_index + 1..].to_string(),
-        };
-        if let Some(last_ext_index) = only_file_name.rfind('.') {
-            only_file_name.truncate(last_ext_index);
-        }
-        if strings_to_lower(&only_file_name).ends_with("/index") {
-            only_file_name.truncate(only_file_name.len() - 6);
-        }
-        // The TS reference strips "index" when the filename IS "index" (after removing extension)
-        if strings_to_lower(&only_file_name) == "index" {
-            only_file_name = String::new();
-        }
-        if let Some(rest) = only_file_name.strip_prefix('/') {
-            only_file_name = rest.to_string();
-        }
-
-        // Construct subDirectory: directory relative to package directory
-        let mut sub_directory = crate::frontend::tspath::get_directory_path(source_file_name);
-        if !sub_directory.starts_with(package_directory) {
+        let only_file_name = key_only_file_name(source_file_name);
+        let Some(sub_directory) =
+            key_sub_directory(source_file_name, package_directory, key_pattern)
+        else {
             continue;
-        }
-        sub_directory = sub_directory[package_directory.len()..].to_string();
-        if !sub_directory.ends_with('/') {
-            sub_directory.push('/');
-        }
-        if let Some(rest) = sub_directory.strip_prefix('/') {
-            sub_directory = rest.to_string();
-        }
-        for prefix in key_pattern.skip_leading_path.iter().flatten() {
-            if sub_directory.starts_with(prefix.as_str()) {
-                sub_directory = sub_directory[prefix.len()..].to_string();
-                break;
-            }
-        }
+        };
 
         // Construct parts based on pattern
-        let mut parts: Vec<String>;
         let class_name_matches =
             crate::fswatch::pathcompare::equal_fold(&only_file_name, class_name);
-
-        match key_pattern.pattern.as_str() {
-            "package-identifier" => {
-                parts = vec![package_name.to_string(), only_file_name.clone()];
-                if !class_name_matches {
-                    parts.push(class_name.to_string());
-                }
-            }
-            _ => {
-                // "default" and "default-hashed"
-                parts = vec![
-                    package_name.to_string(),
-                    sub_directory.clone(),
-                    only_file_name.clone(),
-                ];
-                if !class_name_matches {
-                    parts.push(class_name.to_string());
-                }
-            }
+        let mut parts: Vec<String> = match key_pattern.pattern.as_str() {
+            "package-identifier" => vec![package_name.to_string(), only_file_name],
+            // "default" and "default-hashed"
+            _ => vec![package_name.to_string(), sub_directory, only_file_name],
+        };
+        if !class_name_matches {
+            parts.push(class_name.to_string());
         }
-
-        // Strip leading/trailing slashes from each part
-        for part in &mut parts {
-            let mut p: &str = part.as_str();
-            p = p.strip_prefix('/').unwrap_or(p);
-            p = p.strip_suffix('/').unwrap_or(p);
-            *part = p.to_string();
-        }
-
-        // Filter empty parts and join
-        let filtered: Vec<String> = parts
-            .into_iter()
-            .filter(|part| !part.trim().is_empty())
-            .collect();
-        let full_key = filtered.join("/");
+        let full_key = join_key_parts(parts);
 
         // Hash if default-hashed pattern
         if key_pattern.pattern == "default-hashed" {
@@ -148,4 +90,66 @@ pub fn create_string(
     }
 
     String::new()
+}
+
+/// Go `onlyFileName`: the base name of `source_file_name` without its
+/// extension, empty for an `index` file.
+fn key_only_file_name(source_file_name: &str) -> String {
+    let mut only_file_name: String = match source_file_name.rfind('/') {
+        None => source_file_name.to_string(),
+        Some(last_index) => source_file_name[last_index + 1..].to_string(),
+    };
+    if let Some(last_ext_index) = only_file_name.rfind('.') {
+        only_file_name.truncate(last_ext_index);
+    }
+    if strings_to_lower(&only_file_name).ends_with("/index") {
+        only_file_name.truncate(only_file_name.len() - 6);
+    }
+    // The TS reference strips "index" when the filename IS "index" (after removing extension)
+    if strings_to_lower(&only_file_name) == "index" {
+        only_file_name = String::new();
+    }
+    if let Some(rest) = only_file_name.strip_prefix('/') {
+        only_file_name = rest.to_string();
+    }
+    only_file_name
+}
+
+/// Go `subDirectory`: the directory of `source_file_name` relative to the
+/// package directory (with a trailing `/`), less the first of the pattern's
+/// leading paths it starts with. `None` outside the package directory.
+fn key_sub_directory(
+    source_file_name: &str,
+    package_directory: &str,
+    key_pattern: &KeyPattern,
+) -> Option<String> {
+    let sub_directory = crate::frontend::tspath::get_directory_path(source_file_name);
+    let mut sub_directory = sub_directory.strip_prefix(package_directory)?.to_string();
+    if !sub_directory.ends_with('/') {
+        sub_directory.push('/');
+    }
+    if let Some(rest) = sub_directory.strip_prefix('/') {
+        sub_directory = rest.to_string();
+    }
+    for prefix in key_pattern.skip_leading_path.iter().flatten() {
+        if let Some(rest) = sub_directory.strip_prefix(prefix.as_str()) {
+            sub_directory = rest.to_string();
+            break;
+        }
+    }
+    Some(sub_directory)
+}
+
+/// The key parts without leading and trailing slashes, joined with `/`
+/// (blank parts left out).
+fn join_key_parts(parts: Vec<String>) -> String {
+    parts
+        .iter()
+        .map(|part| {
+            let p = part.strip_prefix('/').unwrap_or(part);
+            p.strip_suffix('/').unwrap_or(p)
+        })
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
