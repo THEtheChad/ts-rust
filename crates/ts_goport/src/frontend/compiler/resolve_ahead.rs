@@ -1724,6 +1724,56 @@ pub mod resolve_ahead_verify {
     }
 }
 
+/// Where this crate compiles `resolve_ahead_verify`, the code of another
+/// crate that uses it (project/compilerhost.rs makes
+/// `ResolveAheadHost::scratch`). That crate cannot test the cfg itself:
+/// `debug_assertions` is a setting of each crate, and rustdoc compiles
+/// ts_goport's doctests with it on against a release goport_core. So the
+/// boundary is here, in the crate that owns the module: `verify_only!`
+/// keeps its items or statements where the module is compiled and drops
+/// them where it is not.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __resolve_ahead_verify_only {
+    ($($code:tt)*) => { $($code)* };
+}
+
+#[cfg(not(any(debug_assertions, feature = "diagnostics")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __resolve_ahead_verify_only {
+    ($($code:tt)*) => {};
+}
+
+pub use crate::__resolve_ahead_verify_only as verify_only;
+
+/// A `ResolveAheadHost` literal for another crate (see `verify_only!`): its
+/// first field is `scratch`, which the host has where this crate compiles
+/// `resolve_ahead_verify`, and which is dropped where it does not.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __resolve_ahead_host {
+    (scratch: $scratch:expr, $($field:ident $(: $value:expr)?),* $(,)?) => {
+        $crate::frontend::compiler::resolve_ahead::ResolveAheadHost {
+            scratch: $scratch,
+            $($field $(: $value)?),*
+        }
+    };
+}
+
+#[cfg(not(any(debug_assertions, feature = "diagnostics")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __resolve_ahead_host {
+    (scratch: $scratch:expr, $($field:ident $(: $value:expr)?),* $(,)?) => {
+        $crate::frontend::compiler::resolve_ahead::ResolveAheadHost { $($field $(: $value)?),* }
+    };
+}
+
+pub use crate::__resolve_ahead_host as host;
+
 /// The debug log of resolve ahead (`GOPORT_RESOLVE_AHEAD_STATS`) and the
 /// counts of each load (`last_stats`). Diagnostics only: shipped builds
 /// keep neither.
