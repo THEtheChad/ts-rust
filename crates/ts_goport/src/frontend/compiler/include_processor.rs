@@ -213,20 +213,30 @@ impl FileIncludeReasons {
             }),
         })
     }
+}
 
-    /// Calls `f` with each synthetic specifier that a reason keeps, with
-    /// the path of the file the specifier belongs to. The verify mode of
-    /// the reuse (`reuse_verify`) checks them; the order is not observable.
-    pub fn for_each_synthetic(&self, f: &mut dyn FnMut(&Path, Node)) {
-        self.for_each(&mut |_, reasons| {
-            for reason in reasons {
-                if let FileIncludeData::ReferencedFile(data) = &reason.data
-                    && !data.synthetic.is_nil()
-                {
-                    f(&data.file, data.synthetic);
+/// The reasons' part of the reuse dump (`program::reuse_verify`): a
+/// `diagnostics` feature build only.
+#[cfg(feature = "diagnostics")]
+mod reuse_verify {
+    use super::*;
+
+    impl FileIncludeReasons {
+        /// Calls `f` with each synthetic specifier that a reason keeps, with
+        /// the path of the file the specifier belongs to. The verify mode of
+        /// the reuse (`reuse_verify`) checks them; the order is not
+        /// observable.
+        pub fn for_each_synthetic(&self, f: &mut dyn FnMut(&Path, Node)) {
+            self.for_each(&mut |_, reasons| {
+                for reason in reasons {
+                    if let FileIncludeData::ReferencedFile(data) = &reason.data
+                        && !data.synthetic.is_nil()
+                    {
+                        f(&data.file, data.synthetic);
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 }
 
