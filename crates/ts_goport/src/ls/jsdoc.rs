@@ -287,25 +287,26 @@ pub fn get_js_doc_or_tag(
                     c.get_base_constructor_type_of_class_exported(class_type);
                 let static_base_type = c.get_apparent_type_exported(base_constructor_type);
                 let prop = c.get_property_of_type_exported(static_base_type, symbol_name);
-                if prop.is_some() {
-                    let prop_value_declaration = c.sym(prop).value_declaration;
-                    if prop_value_declaration.is_some() && seen_symbols.insert(prop) {
-                        let js_doc = get_js_doc_or_tag(c, prop_value_declaration, seen_symbols);
-                        if js_doc.is_some() {
-                            return js_doc;
-                        }
+                if prop.is_some()
+                    && c.sym(prop).value_declaration.is_some()
+                    && seen_symbols.insert(prop)
+                {
+                    let js_doc = get_js_doc_or_tag(c, c.sym(prop).value_declaration, seen_symbols);
+                    if js_doc.is_some() {
+                        return js_doc;
                     }
                 }
             } else {
                 for base_type in c.get_base_types_exported(class_type) {
                     let prop = c.get_property_of_type_exported(base_type, symbol_name);
-                    if prop.is_some() {
-                        let prop_value_declaration = c.sym(prop).value_declaration;
-                        if prop_value_declaration.is_some() && seen_symbols.insert(prop) {
-                            let js_doc = get_js_doc_or_tag(c, prop_value_declaration, seen_symbols);
-                            if js_doc.is_some() {
-                                return js_doc;
-                            }
+                    if prop.is_some()
+                        && c.sym(prop).value_declaration.is_some()
+                        && seen_symbols.insert(prop)
+                    {
+                        let js_doc =
+                            get_js_doc_or_tag(c, c.sym(prop).value_declaration, seen_symbols);
+                        if js_doc.is_some() {
+                            return js_doc;
                         }
                     }
                 }
