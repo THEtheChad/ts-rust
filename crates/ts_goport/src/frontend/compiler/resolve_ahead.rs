@@ -279,8 +279,9 @@ pub struct ResolveAheadHost {
     pub share: Rc<KeptShare>,
     /// Debug builds: makes a new tracking view of the host's file system,
     /// to check that the calls of each taken answer list every side effect
-    /// of its resolution (`debug_check_answer`).
-    pub scratch: Option<Rc<dyn Fn() -> ScratchFs>>,
+    /// of its resolution (`resolve_ahead_verify`).
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
+    pub scratch: Option<Rc<dyn Fn() -> resolve_ahead_verify::ScratchFs>>,
 }
 
 /// A project's share in what the workers keep from job to job: the known
@@ -309,16 +310,6 @@ impl Drop for KeptShare {
             workers.forget(epoch);
         }
     }
-}
-
-/// A view of a host's file system that tracks its seen files and missing
-/// directories in new sets (`ResolveAheadHost::scratch`).
-pub struct ScratchFs {
-    pub fs: Rc<dyn Fs>,
-    /// The seen files and missing directories of `fs` so far.
-    pub tracked: Box<dyn Fn() -> (FxHashSet<Path>, FxHashSet<Path>)>,
-    /// The host's `to_path`.
-    pub to_path: Rc<dyn Fn(&str) -> Path>,
 }
 
 /// What a worker resolver needs: the loader resolver's options.
@@ -433,19 +424,10 @@ impl ResolveAhead {
             }
             host.share.epoch.set(Some(job.epoch));
         }
-        let accept = match host.scratch.filter(|_| cfg!(debug_assertions)) {
-            None => host.accept,
-            Some(scratch) => {
-                let accept = host.accept;
-                Rc::new(move |answer: AheadAnswer<'_>, calls: &[AheadCall]| {
-                    let accepted = accept(answer, calls);
-                    if accepted {
-                        debug_check_answer(&config, &scratch(), answer, calls);
-                    }
-                    accepted
-                }) as AheadAccept
-            }
-        };
+        #[cfg(any(debug_assertions, feature = "diagnostics"))]
+        let accept = resolve_ahead_verify::checked_accept(host.accept, host.scratch, config);
+        #[cfg(not(any(debug_assertions, feature = "diagnostics")))]
+        let accept = host.accept;
         *resolver.caches.ahead.borrow_mut() = Some(AheadLink {
             answers: job.as_ref().map(|job| job.answers.clone()),
             accept,
@@ -1612,94 +1594,134 @@ impl Fs for AheadFs {
     }
 }
 
-/// Debug builds: checks a taken answer against a resolution of its key (a
-/// module key or the package scope of a directory) by a new resolver on a
-/// new tracking view of the host's file system. The answer must be the
-/// same, and the calls must list exactly the files that the view saw and
-/// the directories that it found missing. A new resolver reads every
-/// package.json itself, so this also checks that each answer lists the
-/// calls of the package.json cache entries it read.
-fn debug_check_answer(
-    config: &ResolverConfig,
-    scratch: &ScratchFs,
-    answer: AheadAnswer<'_>,
-    calls: &[AheadCall],
-) {
-    let resolver = config.new_resolver(scratch.fs.clone(), None);
-    match answer {
-        AheadAnswer::Module((containing_directory, module_name, mode, _), value) => {
-            let (own, _, _) = resolver.resolve_module_name_from_directory(
-                module_name,
-                containing_directory,
-                mode,
-            );
-            assert_eq!(
-                describe(&own),
-                describe(value),
-                "resolve ahead: the answer for {answer:?} differs"
-            );
-        }
-        AheadAnswer::Scope(directory, scope) => {
-            let own = PackageScope::of(resolver.get_package_scope_for_path(directory).as_deref());
-            assert_eq!(
-                own.as_ref(),
-                scope,
-                "resolve ahead: the answer for {answer:?} differs"
-            );
-        }
+/// Debug builds: checks each answer that a load takes against a resolution
+/// of its key on a new tracking view of the host's file system
+/// (`ResolveAheadHost::scratch`, which project/compilerhost.rs makes in a
+/// debug build only). Compiled in debug and `diagnostics` builds; a release
+/// build without `diagnostics` has none of it.
+#[cfg(any(debug_assertions, feature = "diagnostics"))]
+pub mod resolve_ahead_verify {
+    use super::*;
+
+    /// A view of a host's file system that tracks its seen files and missing
+    /// directories in new sets (`ResolveAheadHost::scratch`).
+    pub struct ScratchFs {
+        pub fs: Rc<dyn Fs>,
+        /// The seen files and missing directories of `fs` so far.
+        pub tracked: Box<dyn Fn() -> (FxHashSet<Path>, FxHashSet<Path>)>,
+        /// The host's `to_path`.
+        pub to_path: Rc<dyn Fn(&str) -> Path>,
     }
-    let mut seen = FxHashSet::default();
-    let mut missing = FxHashSet::default();
-    AheadCall::each(calls, &mut |call| match call {
-        AheadCall::FileExists { path, .. } => {
-            seen.insert(path.clone());
-        }
-        AheadCall::DirectoryExists {
-            path,
-            exists: false,
-        } => {
-            missing.insert(path.clone());
-        }
-        AheadCall::Read { file_name, .. } => {
-            seen.insert((scratch.to_path)(file_name));
-        }
-        // `each` gives the calls of a `PackageJson` and a `Shared`.
-        AheadCall::DirectoryExists { exists: true, .. }
-        | AheadCall::Realpath { .. }
-        | AheadCall::PackageJson(_)
-        | AheadCall::Shared(_) => {}
-    });
-    let (own_seen, own_missing) = (scratch.tracked)();
-    assert!(
-        own_seen == seen && own_missing == missing,
-        "resolve ahead: the calls for {answer:?} differ: seen {:?}, logged {:?}; missing {:?}, logged {:?}",
-        sorted(&own_seen),
-        sorted(&seen),
-        sorted(&own_missing),
-        sorted(&missing),
-    );
-}
 
-fn sorted(paths: &FxHashSet<Path>) -> Vec<&str> {
-    let mut paths: Vec<&str> = paths.iter().map(Path::as_str).collect();
-    crate::gostd::slices::stable_sort_by(&mut paths, Ord::cmp);
-    paths
-}
+    /// `accept`, which with a `scratch` view (debug builds) also checks each
+    /// taken answer (`check_answer`).
+    pub(super) fn checked_accept(
+        accept: AheadAccept,
+        scratch: Option<Rc<dyn Fn() -> ScratchFs>>,
+        config: Arc<ResolverConfig>,
+    ) -> AheadAccept {
+        let Some(scratch) = scratch.filter(|_| cfg!(debug_assertions)) else {
+            return accept;
+        };
+        Rc::new(move |answer: AheadAnswer<'_>, calls: &[AheadCall]| {
+            let accepted = accept(answer, calls);
+            if accepted {
+                check_answer(&config, &scratch(), answer, calls);
+            }
+            accepted
+        }) as AheadAccept
+    }
 
-/// The fields of a resolved module, for `debug_check_answer`.
-fn describe(module: &ResolvedModule) -> String {
-    format!(
-        "{} {} {} {} {} {:?} {} {} {:?}",
-        module.resolved_file_name,
-        module.original_path,
-        module.extension,
-        module.resolved_using_ts_extension,
-        module.resolved_using_extra_extensions,
-        module.package_id,
-        module.is_external_library_import,
-        module.alternate_result,
-        module.resolution_diagnostics,
-    )
+    /// Debug builds: checks a taken answer against a resolution of its key (a
+    /// module key or the package scope of a directory) by a new resolver on a
+    /// new tracking view of the host's file system. The answer must be the
+    /// same, and the calls must list exactly the files that the view saw and
+    /// the directories that it found missing. A new resolver reads every
+    /// package.json itself, so this also checks that each answer lists the
+    /// calls of the package.json cache entries it read.
+    fn check_answer(
+        config: &ResolverConfig,
+        scratch: &ScratchFs,
+        answer: AheadAnswer<'_>,
+        calls: &[AheadCall],
+    ) {
+        let resolver = config.new_resolver(scratch.fs.clone(), None);
+        match answer {
+            AheadAnswer::Module((containing_directory, module_name, mode, _), value) => {
+                let (own, _, _) = resolver.resolve_module_name_from_directory(
+                    module_name,
+                    containing_directory,
+                    mode,
+                );
+                assert_eq!(
+                    describe(&own),
+                    describe(value),
+                    "resolve ahead: the answer for {answer:?} differs"
+                );
+            }
+            AheadAnswer::Scope(directory, scope) => {
+                let own =
+                    PackageScope::of(resolver.get_package_scope_for_path(directory).as_deref());
+                assert_eq!(
+                    own.as_ref(),
+                    scope,
+                    "resolve ahead: the answer for {answer:?} differs"
+                );
+            }
+        }
+        let mut seen = FxHashSet::default();
+        let mut missing = FxHashSet::default();
+        AheadCall::each(calls, &mut |call| match call {
+            AheadCall::FileExists { path, .. } => {
+                seen.insert(path.clone());
+            }
+            AheadCall::DirectoryExists {
+                path,
+                exists: false,
+            } => {
+                missing.insert(path.clone());
+            }
+            AheadCall::Read { file_name, .. } => {
+                seen.insert((scratch.to_path)(file_name));
+            }
+            // `each` gives the calls of a `PackageJson` and a `Shared`.
+            AheadCall::DirectoryExists { exists: true, .. }
+            | AheadCall::Realpath { .. }
+            | AheadCall::PackageJson(_)
+            | AheadCall::Shared(_) => {}
+        });
+        let (own_seen, own_missing) = (scratch.tracked)();
+        assert!(
+            own_seen == seen && own_missing == missing,
+            "resolve ahead: the calls for {answer:?} differ: seen {:?}, logged {:?}; missing {:?}, logged {:?}",
+            sorted(&own_seen),
+            sorted(&seen),
+            sorted(&own_missing),
+            sorted(&missing),
+        );
+    }
+
+    fn sorted(paths: &FxHashSet<Path>) -> Vec<&str> {
+        let mut paths: Vec<&str> = paths.iter().map(Path::as_str).collect();
+        crate::gostd::slices::stable_sort_by(&mut paths, Ord::cmp);
+        paths
+    }
+
+    /// The fields of a resolved module, for `check_answer`.
+    fn describe(module: &ResolvedModule) -> String {
+        format!(
+            "{} {} {} {} {} {:?} {} {} {:?}",
+            module.resolved_file_name,
+            module.original_path,
+            module.extension,
+            module.resolved_using_ts_extension,
+            module.resolved_using_extra_extensions,
+            module.package_id,
+            module.is_external_library_import,
+            module.alternate_result,
+            module.resolution_diagnostics,
+        )
+    }
 }
 
 /// The debug log of resolve ahead (`GOPORT_RESOLVE_AHEAD_STATS`) and the

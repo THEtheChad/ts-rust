@@ -722,6 +722,8 @@ child_test! {
     }
 }
 
+// `synthetic_live_slot_count` is in a `diagnostics` feature build only.
+#[cfg(feature = "diagnostics")]
 child_test! {
     // PORT: no Go counterpart (the GC frees the nodes). A released program
     // version frees the synthetic nodes that the dispatch thread made for
@@ -777,6 +779,8 @@ child_test! {
     }
 }
 
+// `synthetic_live_slot_count` is in a `diagnostics` feature build only.
+#[cfg(feature = "diagnostics")]
 child_test! {
     // PORT: no Go counterpart (the GC frees the nodes). The declaration
     // transform gives the parsed nodes that it keeps alias slots, and those
@@ -815,6 +819,8 @@ child_test! {
     }
 }
 
+// `synthetic_live_slot_count` is in a `diagnostics` feature build only.
+#[cfg(feature = "diagnostics")]
 child_test! {
     // PORT: no Go counterpart (the GC frees the nodes). A lazy JSDoc parse
     // gives its nodes to the file version of the node it parses for, so

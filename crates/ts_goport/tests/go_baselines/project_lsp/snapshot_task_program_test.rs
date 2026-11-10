@@ -56,8 +56,11 @@ child_test! {
     // ls_program::new_program, or it is released".
     fn task_reads_the_program_of_a_disposed_snapshot() {
         let (session, utils) = two_program_changes();
+        // `registered_programs` is in a `diagnostics` feature build only.
+        #[cfg(feature = "diagnostics")]
         let held = ls_program::registered_programs();
         session.wait_for_background_tasks();
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
             ls_program::registered_programs(),
             held - 1,

@@ -704,6 +704,7 @@ child_test! {
         open(&session, MAIN_URI, &content);
         assert!(!has_configured_project(&session, &cfg("tsconfig.spec.json")));
         assert_eq!(projects_len(&session), 1);
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
             ts_goport::program::ls_program::registered_programs(),
             1,
@@ -744,6 +745,7 @@ child_test! {
             projecttestutil::setup(files(&[(A, a), (B, "export const b: number = 2;")]));
         open(&session, A_URI, a);
         assert_eq!(default_project_kind(&session, A_URI), Kind::INFERRED);
+        #[cfg(feature = "diagnostics")]
         assert_eq!(ts_goport::program::ls_program::registered_programs(), 1);
 
         edit(&session, A_URI, 2, (0, 0), (0, 0), "// edited\n");
@@ -768,12 +770,14 @@ child_test! {
         // depend on timing: the program of the first snapshot waits for
         // its queued diagnostics task, the project keeps the last program,
         // and the first program of the clone is released already.
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
             ts_goport::program::ls_program::registered_programs(),
             2,
             "the first snapshot's program and the last program should be registered before the wait"
         );
         session.wait_for_background_tasks();
+        #[cfg(feature = "diagnostics")]
         assert_eq!(
             ts_goport::program::ls_program::registered_programs(),
             1,
