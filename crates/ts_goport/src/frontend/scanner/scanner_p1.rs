@@ -950,13 +950,34 @@ impl<'a> Scanner<'a> {
         Some(((start + close) as i32, line_start))
     }
 
-    /// The length of the single-line comment body at `pos`, up to the next
-    /// `\n` or `\r` or the end, when that body is ASCII. `None` sends the
-    /// single-line comment scan to its byte loop.
-    fn ascii_line_comment_len(&self) -> Option<i32> {
+    /// Skips the single-line comment body at `pos`, up to the next `\n`
+    /// or `\r` or the end, when that body is ASCII. Else `pos` stays, and
+    /// the single-line comment scan of `scan` reads it in its byte loop.
+    #[inline(always)]
+    fn skip_ascii_line_comment(&mut self) {
         let rest = &self.text.as_bytes()[self.scanner_state.pos as usize..self.end as usize];
         let body = &rest[..memchr::memchr2(b'\n', b'\r', rest).unwrap_or(rest.len())];
-        body.is_ascii().then_some(body.len() as i32)
+        if body.is_ascii() {
+            self.scanner_state.pos += body.len() as i32;
+        }
+    }
+
+    /// Skips the multi-line comment body at `pos` and its `*/` when the
+    /// text up to it is ASCII (`ascii_comment_end`), with the line break
+    /// flag and the start of the last line (`last_line_start`) as the byte
+    /// loop of `scan` sets them. False, with nothing changed, sends the
+    /// scan to that loop.
+    #[inline(always)]
+    fn skip_ascii_multi_line_comment(&mut self, last_line_start: &mut i32) -> bool {
+        let Some((close, line_start)) = self.ascii_comment_end() else {
+            return false;
+        };
+        if let Some(line_start) = line_start {
+            *last_line_start = line_start;
+            self.scanner_state.token_flags |= TokenFlags::PRECEDING_LINE_BREAK;
+        }
+        self.scanner_state.pos = close + 2;
+        true
     }
 
     // Go: scanner/scanner.go:464 scanASCIIWhile
@@ -1178,9 +1199,7 @@ impl<'a> Scanner<'a> {
 
                             // PORT: fast path for an ASCII comment; the loop
                             // below gives the same result byte by byte.
-                            if let Some(len) = self.ascii_line_comment_len() {
-                                self.scanner_state.pos += len;
-                            }
+                            self.skip_ascii_line_comment();
                             loop {
                                 self.scan_ascii_while(|b| b != b'\n' && b != b'\r');
                                 let (ch1, size) = self.char_and_size();
@@ -1208,19 +1227,11 @@ impl<'a> Scanner<'a> {
                             let is_js_doc = self.char() == i32::from(b'*')
                                 && self.char_at(1) != i32::from(b'/');
 
-                            let mut comment_closed = false;
                             let mut last_line_start = self.scanner_state.token_start;
                             // PORT: fast path for an ASCII comment; the loop
                             // below gives the same result byte by byte.
-                            if let Some((close, line_start)) = self.ascii_comment_end() {
-                                if let Some(line_start) = line_start {
-                                    last_line_start = line_start;
-                                    self.scanner_state.token_flags |=
-                                        TokenFlags::PRECEDING_LINE_BREAK;
-                                }
-                                self.scanner_state.pos = close + 2;
-                                comment_closed = true;
-                            }
+                            let mut comment_closed =
+                                self.skip_ascii_multi_line_comment(&mut last_line_start);
                             while !comment_closed {
                                 self.scan_ascii_while(|b| b != b'*' && b != b'\n' && b != b'\r');
                                 let (ch1, size) = self.char_and_size();
@@ -1280,68 +1291,64 @@ impl<'a> Scanner<'a> {
                             self.scanner_state.token = SyntaxKind::SlashToken;
                         }
                     }
-                    Some(b'0'..=b'9') => {
-                        if ch == i32::from(b'0') {
-                            if self.char_at(1) == i32::from(b'X')
-                                || self.char_at(1) == i32::from(b'x')
-                            {
-                                let start = self.scanner_state.pos;
-                                self.scanner_state.pos += 2;
-                                let mut digits = self.scan_hex_digits(1, true, true);
-                                if digits.is_empty() {
-                                    self.error(diag::Hexadecimal_digit_expected);
-                                    digits = "0";
-                                }
-                                if let Some(&cached_value) = self.hex_number_cache.get(digits) {
-                                    self.scanner_state.token_value = cached_value;
-                                } else {
-                                    let (start, end) =
-                                        (start as usize, self.scanner_state.pos as usize);
-                                    let raw_text = &self.text[start..end];
-                                    let value =
-                                        if raw_text.starts_with("0x") && &raw_text[2..] == digits {
-                                            // Go `s.tokenValue = rawText` shares the text.
-                                            self.text_token_value(start, end)
-                                        } else {
-                                            intern_token_value(&format!("0x{digits}"))
-                                        };
-                                    self.scanner_state.token_value = value;
-                                    self.hex_number_cache.insert(digits, value);
-                                }
-                                self.scanner_state.token_flags |= TokenFlags::HEX_SPECIFIER;
-                                self.scanner_state.token = self.scan_big_int_suffix();
-                                break 'sw;
-                            }
-                            if self.char_at(1) == i32::from(b'B')
-                                || self.char_at(1) == i32::from(b'b')
-                            {
-                                self.scanner_state.pos += 2;
-                                let mut digits = self.scan_binary_or_octal_digits(2);
-                                if digits.is_empty() {
-                                    self.error(diag::Binary_digit_expected);
-                                    digits = "0".to_string();
-                                }
-                                self.set_token_value(&format!("0b{digits}"));
-                                self.scanner_state.token_flags |= TokenFlags::BINARY_SPECIFIER;
-                                self.scanner_state.token = self.scan_big_int_suffix();
-                                break 'sw;
-                            }
-                            if self.char_at(1) == i32::from(b'O')
-                                || self.char_at(1) == i32::from(b'o')
-                            {
-                                self.scanner_state.pos += 2;
-                                let mut digits = self.scan_binary_or_octal_digits(8);
-                                if digits.is_empty() {
-                                    self.error(diag::Octal_digit_expected);
-                                    digits = "0".to_string();
-                                }
-                                self.set_token_value(&format!("0o{digits}"));
-                                self.scanner_state.token_flags |= TokenFlags::OCTAL_SPECIFIER;
-                                self.scanner_state.token = self.scan_big_int_suffix();
-                                break 'sw;
-                            }
-                            // Go: fallthrough
+                    Some(b'0')
+                        if self.char_at(1) == i32::from(b'X')
+                            || self.char_at(1) == i32::from(b'x') =>
+                    {
+                        let start = self.scanner_state.pos;
+                        self.scanner_state.pos += 2;
+                        let mut digits = self.scan_hex_digits(1, true, true);
+                        if digits.is_empty() {
+                            self.error(diag::Hexadecimal_digit_expected);
+                            digits = "0";
                         }
+                        if let Some(&cached_value) = self.hex_number_cache.get(digits) {
+                            self.scanner_state.token_value = cached_value;
+                        } else {
+                            let (start, end) = (start as usize, self.scanner_state.pos as usize);
+                            let raw_text = &self.text[start..end];
+                            let value = if raw_text.starts_with("0x") && &raw_text[2..] == digits {
+                                // Go `s.tokenValue = rawText` shares the text.
+                                self.text_token_value(start, end)
+                            } else {
+                                intern_token_value(&format!("0x{digits}"))
+                            };
+                            self.scanner_state.token_value = value;
+                            self.hex_number_cache.insert(digits, value);
+                        }
+                        self.scanner_state.token_flags |= TokenFlags::HEX_SPECIFIER;
+                        self.scanner_state.token = self.scan_big_int_suffix();
+                    }
+                    Some(b'0')
+                        if self.char_at(1) == i32::from(b'B')
+                            || self.char_at(1) == i32::from(b'b') =>
+                    {
+                        self.scanner_state.pos += 2;
+                        let mut digits = self.scan_binary_or_octal_digits(2);
+                        if digits.is_empty() {
+                            self.error(diag::Binary_digit_expected);
+                            digits = "0".to_string();
+                        }
+                        self.set_token_value(&format!("0b{digits}"));
+                        self.scanner_state.token_flags |= TokenFlags::BINARY_SPECIFIER;
+                        self.scanner_state.token = self.scan_big_int_suffix();
+                    }
+                    Some(b'0')
+                        if self.char_at(1) == i32::from(b'O')
+                            || self.char_at(1) == i32::from(b'o') =>
+                    {
+                        self.scanner_state.pos += 2;
+                        let mut digits = self.scan_binary_or_octal_digits(8);
+                        if digits.is_empty() {
+                            self.error(diag::Octal_digit_expected);
+                            digits = "0".to_string();
+                        }
+                        self.set_token_value(&format!("0o{digits}"));
+                        self.scanner_state.token_flags |= TokenFlags::OCTAL_SPECIFIER;
+                        self.scanner_state.token = self.scan_big_int_suffix();
+                    }
+                    // Go: `case '0'` falls through to `case '1', ..., '9'`.
+                    Some(b'0'..=b'9') => {
                         self.scanner_state.token = self.scan_number();
                     }
                     Some(b':') => {
