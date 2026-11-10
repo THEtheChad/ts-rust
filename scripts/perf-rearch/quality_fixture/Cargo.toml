@@ -1,0 +1,15 @@
+# Fixture crate of quality_test.py: rustc's cfg-expanded source (qexpand.py) on small cases.
+# Not a member of the repo workspace (it is its own). Env names in its sources:
+# GOPORT_SHIP_* must be read in the default build, GOPORT_FEAT_* only in the diagnostics build,
+# GOPORT_TEST_* in neither (test-only code).
+[package]
+name = "quality_fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+default = []
+diagnostics = []
