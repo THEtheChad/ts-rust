@@ -150,6 +150,9 @@ impl GoMutex {
 pub struct DoCycleCh {
     state: Mutex<DoCycleState>,
     cond: Condvar,
+    /// The shutdown faults that tests inject (`test_hooks`).
+    #[cfg(feature = "test-hooks")]
+    faults: test_hooks::ShutdownFaults,
 }
 
 #[derive(Default)]
@@ -608,13 +611,21 @@ impl WatchManager {
     // fire's "watch terminated" overflow, and then build a second time.
     pub fn run_loop(&self, ctx: &Context, do_cycle: &mut dyn FnMut()) {
         let do_cycle_ch = &self.shared.do_cycle_ch;
+        #[cfg(feature = "test-hooks")]
+        if do_cycle_ch.faults.timed_shutdown() {
+            return test_hooks::run_loop_polling(self, ctx, do_cycle);
+        }
         do_cycle_ch.reset_wake();
         let done = ctx.done();
         // `None` from `register_waker`: the context is done already. A nil
         // channel (`done` is `None`) is never ready.
         let waker = done.as_ref().map(|done| {
             let shared = self.shared.clone();
-            done.register_waker(move || shared.do_cycle_ch.wake())
+            done.register_waker(move || {
+                #[cfg(feature = "test-hooks")]
+                shared.do_cycle_ch.faults.delay_cancel();
+                shared.do_cycle_ch.wake();
+            })
         });
         if let Some(None) = waker {
             do_cycle_ch.wake();
@@ -803,6 +814,77 @@ fn write_stdout(text: &str) {
     );
 }
 
+/// Tests (`test-hooks`): faults of the shutdown of `run_loop` that the
+/// shutdown tests must catch (`tests::run_loop_ends_at_once_when_its_context_is_cancelled`
+/// and its fault tests). Each `DoCycleCh` has its own, so a fault reaches
+/// only the watch manager of the test that sets it.
+#[cfg(feature = "test-hooks")]
+mod test_hooks {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Duration;
+
+    use super::{Context, WatchManager};
+
+    /// The wait of `run_loop_polling` on the cycle channel.
+    const POLL: Duration = Duration::from_millis(50);
+
+    #[derive(Default)]
+    pub(super) struct ShutdownFaults {
+        /// `run_loop` waits with a timeout and looks at the context after
+        /// each timeout (`run_loop_polling`), as the port once did: the
+        /// cancel ends the loop only at the next timeout.
+        timed_shutdown: AtomicBool,
+        /// The waker of the context sleeps this long (ms) before its wake.
+        cancel_delay_ms: AtomicU64,
+    }
+
+    impl ShutdownFaults {
+        pub(super) fn set_timed_shutdown(&self, on: bool) {
+            self.timed_shutdown.store(on, Ordering::Relaxed);
+        }
+
+        pub(super) fn set_cancel_delay(&self, delay: Duration) {
+            let ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+            self.cancel_delay_ms.store(ms, Ordering::Relaxed);
+        }
+
+        pub(super) fn timed_shutdown(&self) -> bool {
+            self.timed_shutdown.load(Ordering::Relaxed)
+        }
+
+        /// On the cancel path, in the waker of `run_loop`.
+        pub(super) fn delay_cancel(&self) {
+            let ms = self.cancel_delay_ms.load(Ordering::Relaxed);
+            if ms > 0 {
+                std::thread::sleep(Duration::from_millis(ms));
+            }
+        }
+    }
+
+    /// `run_loop` with the timed shutdown fault: no waker, a wait of `POLL`
+    /// on the cycle channel, then a look at the context.
+    pub(super) fn run_loop_polling(wm: &WatchManager, ctx: &Context, do_cycle: &mut dyn FnMut()) {
+        let ch = &wm.shared.do_cycle_ch;
+        loop {
+            let mut state = ch.state.lock().unwrap();
+            // As `recv`, so the tests see the loop wait.
+            state.waiting = true;
+            let (mut state, _) = ch
+                .cond
+                .wait_timeout_while(state, POLL, |state| !state.buffered)
+                .unwrap();
+            state.waiting = false;
+            if std::mem::take(&mut state.buffered) {
+                drop(state);
+                do_cycle();
+            } else if ctx.err().is_some() {
+                break;
+            }
+        }
+        wm.close_all_watches();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,73 +993,220 @@ mod tests {
     }
 
     // PORT: not in Go. A cancel ends a waiting `run_loop` at once, as Go's
-    // select does: the loop waits with no timeout, so only the wake of the
-    // cancel can end the wait. (The loop once waited on the cycle channel
-    // with a 50 ms timeout and ended up to 50 ms after a signal.) On Linux
-    // the canceller checks that the loop's thread waits in a futex wait
-    // with no timeout before it cancels; then the cancel must end the loop.
-    // No step of the test depends on timing.
+    // select does. (The loop once waited on the cycle channel with a 50 ms
+    // timeout and ended up to 50 ms after a signal.) Measured in this
+    // process, from the cancel to the end of `run_loop`: the waker, the
+    // wake, the end of the wait and the cleanup after it. On Linux the test
+    // also checks, before each cancel, that the loop's thread waits with no
+    // timeout (`wait_check`). The fault tests below show that a shutdown
+    // that waits for a timer and a delay on the cancel path both fail it.
     #[test]
     fn run_loop_ends_at_once_when_its_context_is_cancelled() {
-        use crate::gostd::context;
-        let wm = new_watch_manager(
-            std::rc::Rc::new(std::cell::RefCell::new(Vec::<u8>::new())),
-            Box::new(|_| false),
-            true,
+        let ends = cancel_to_end_runs(|_| {});
+        for check in &ends.checks {
+            if let WaitCheck::Failed(why) = check {
+                panic!("run_loop's wait: {why}");
+            }
+        }
+        assert!(
+            ends.median() < AT_ONCE,
+            "median {:?} from the cancel to the end of run_loop, all {:?}",
+            ends.median(),
+            ends.took
         );
-        let (ctx, cancel) = context::with_cancel(&context::background());
-        #[cfg(target_os = "linux")]
-        let waiter = this_thread();
-        let canceller = {
-            let shared = wm.shared.clone();
-            std::thread::spawn(move || {
-                // `recv` sets `waiting` under the lock, and its wait gives
-                // the lock back. So once this sees the flag, the loop's
-                // thread has left the lock and waits, or is about to.
-                while !shared.do_cycle_ch.state.lock().unwrap().waiting {
-                    std::thread::yield_now();
-                }
-                #[cfg(target_os = "linux")]
-                expect_untimed_wait(&waiter);
-                cancel();
-            })
+    }
+
+    /// The fault of the old loop: a wait with a timeout, then a look at the
+    /// context (`test_hooks::run_loop_polling`). The cancel ends the loop
+    /// only at the next timeout, past `AT_ONCE`, and on Linux the wait check
+    /// sees the timeout.
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn run_loop_shutdown_test_catches_a_timed_shutdown() {
+        let ends = cancel_to_end_runs(|wm| wm.shared.do_cycle_ch.faults.set_timed_shutdown(true));
+        assert!(
+            ends.median() >= AT_ONCE,
+            "a timed shutdown passes: median {:?}, all {:?}",
+            ends.median(),
+            ends.took
+        );
+        for check in &ends.checks {
+            assert!(
+                !matches!(check, WaitCheck::Untimed),
+                "the wait check passes a timed wait"
+            );
+        }
+    }
+
+    /// A delay of 50 ms on the cancel path (the waker sleeps before its wake)
+    /// takes the end past `AT_ONCE`. The wait itself has no timeout.
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn run_loop_shutdown_test_catches_a_cancel_delay() {
+        let ends = cancel_to_end_runs(|wm| {
+            wm.shared
+                .do_cycle_ch
+                .faults
+                .set_cancel_delay(Duration::from_millis(50));
+        });
+        assert!(
+            ends.median() >= AT_ONCE,
+            "a delayed cancel passes: median {:?}, all {:?}",
+            ends.median(),
+            ends.took
+        );
+        for check in &ends.checks {
+            assert!(
+                !matches!(check, WaitCheck::Failed(_)),
+                "the wait check fails an untimed wait: {check:?}"
+            );
+        }
+    }
+
+    /// The longest median time from the cancel to the end of `run_loop`.
+    /// Only our code runs in it (the waker, the wake, the end of the wait,
+    /// `close_all_watches`); it takes well under 1 ms on an idle host, and
+    /// the rest is room for a loaded one. A 50 ms fault exceeds it.
+    const AT_ONCE: Duration = Duration::from_millis(10);
+
+    /// The runs of `cancel_to_end_runs`.
+    const RUNS: usize = 20;
+
+    /// What `RUNS` loops that a cancel ended took, sorted, and the wait
+    /// check of each.
+    struct LoopEnds {
+        took: Vec<Duration>,
+        checks: Vec<WaitCheck>,
+    }
+
+    impl LoopEnds {
+        fn median(&self) -> Duration {
+            self.took[self.took.len() / 2]
+        }
+    }
+
+    /// `RUNS` times `cancel_to_end`, each with a new watch manager that
+    /// `set` prepares. A skipped wait check is reported once.
+    fn cancel_to_end_runs(set: fn(&WatchManager)) -> LoopEnds {
+        let mut ends = LoopEnds {
+            took: Vec::new(),
+            checks: Vec::new(),
         };
-        let mut cycles = 0;
-        wm.run_loop(&ctx, &mut || cycles += 1);
-        canceller.join().unwrap();
-        assert_eq!(cycles, 0);
+        for _ in 0..RUNS {
+            let (took, check) = cancel_to_end(set);
+            ends.took.push(took);
+            ends.checks.push(check);
+        }
+        crate::gostd::slices::stable_sort_by(&mut ends.took, Ord::cmp);
+        if let Some(WaitCheck::Skipped(why)) = ends.checks.first() {
+            eprintln!("run_loop's wait check skipped: {why}");
+        }
+        eprintln!(
+            "cancel to the end of run_loop: median {:?}, all {:?}",
+            ends.median(),
+            ends.took
+        );
+        ends
     }
 
-    /// The /proc directory of this thread (`/proc/<pid>/task/<tid>`).
-    #[cfg(target_os = "linux")]
-    fn this_thread() -> std::path::PathBuf {
-        let task = std::fs::read_link("/proc/thread-self").expect("/proc/thread-self");
-        std::path::Path::new("/proc").join(task)
+    /// Runs `run_loop` on a new thread, on a watch manager that `set`
+    /// prepares, over a context that this thread cancels once the loop
+    /// waits. Returns the time from the cancel to the end of `run_loop`
+    /// and the check of the loop's wait. Every outcome of the check
+    /// cancels, and every wait is bounded by `LIMIT`: a loop that does not
+    /// wait or does not end fails the test, and does not hang it.
+    fn cancel_to_end(set: fn(&WatchManager)) -> (Duration, WaitCheck) {
+        use crate::gostd::context;
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (end_tx, end_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let wm = new_watch_manager(
+                std::rc::Rc::new(std::cell::RefCell::new(Vec::<u8>::new())),
+                Box::new(|_| false),
+                true,
+            );
+            set(&wm);
+            let (ctx, cancel) = context::with_cancel(&context::background());
+            let _ = ready_tx.send((wm.shared.clone(), cancel, this_thread()));
+            let mut cycles = 0;
+            wm.run_loop(&ctx, &mut || cycles += 1);
+            let _ = end_tx.send((Instant::now(), cycles));
+        });
+        let (shared, cancel, task) = ready_rx
+            .recv_timeout(LIMIT)
+            .expect("the loop's thread did not start");
+        // `recv` sets `waiting` under the lock, and its wait gives the lock
+        // back. So once this sees the flag, the loop's thread has left the
+        // lock and waits, or is about to.
+        let end = Instant::now() + LIMIT;
+        let mut check = WaitCheck::Failed(format!("run_loop did not wait within {LIMIT:?}"));
+        while Instant::now() < end {
+            if shared.do_cycle_ch.state.lock().unwrap().waiting {
+                check = wait_check(task.as_deref(), end);
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let start = Instant::now();
+        cancel();
+        let (ended, cycles) = end_rx
+            .recv_timeout(LIMIT)
+            .expect("run_loop did not end after the cancel");
+        assert_eq!(cycles, 0, "run_loop ran a cycle");
+        (ended.saturating_duration_since(start), check)
     }
 
-    /// Waits until the thread of `task` (`this_thread`) blocks in a futex
-    /// wait, and checks that the wait has no timeout. While a thread blocks,
-    /// its `syscall` file in /proc gives the call and its arguments:
-    /// `futex(uaddr, op, val, timeout, ..)`, where a wait op (`FUTEX_WAIT`,
-    /// `FUTEX_WAIT_BITSET`) has a null timeout when it waits until a wake
-    /// (std's `Condvar::wait`; `wait_timeout` passes a time). Another futex
-    /// op (the wake of the mutex's unlock) or a running thread is passed
-    /// over. Other architectures skip the check.
-    #[cfg(target_os = "linux")]
-    fn expect_untimed_wait(task: &std::path::Path) {
+    /// The result of `wait_check`.
+    #[derive(Debug)]
+    enum WaitCheck {
+        /// The loop's thread blocks in a futex wait with no timeout.
+        Untimed,
+        /// No check: not Linux, an architecture with no futex number here,
+        /// or no `/proc` of the thread.
+        Skipped(String),
+        /// A wait with a timeout, or no futex wait seen in time.
+        Failed(String),
+    }
+
+    /// The /proc directory of this thread (`/proc/<pid>/task/<tid>`), if
+    /// /proc has it.
+    fn this_thread() -> Option<std::path::PathBuf> {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        let task = std::fs::read_link("/proc/thread-self").ok()?;
+        Some(std::path::Path::new("/proc").join(task))
+    }
+
+    /// Waits, until `end`, for the thread of `task` (`this_thread`) to
+    /// block in a futex wait, and checks that the wait has no timeout. While
+    /// a thread blocks, its `syscall` file in /proc gives the call and its
+    /// arguments: `futex(uaddr, op, val, timeout, ..)`, where a wait op
+    /// (`FUTEX_WAIT`, `FUTEX_WAIT_BITSET`) has a null timeout when it waits
+    /// until a wake (std's `Condvar::wait`; `wait_timeout` passes a time).
+    /// Another futex op (the wake of the mutex's unlock) or a running
+    /// thread is passed over.
+    fn wait_check(task: Option<&std::path::Path>, end: Instant) -> WaitCheck {
         const FUTEX_WAIT: u64 = 0;
         const FUTEX_WAIT_BITSET: u64 = 9;
         /// The op without `FUTEX_PRIVATE_FLAG` and `FUTEX_CLOCK_REALTIME`.
         const FUTEX_CMD_MASK: u64 = 0x7f;
+        let Some(task) = task else {
+            return WaitCheck::Skipped("no /proc/thread-self (not Linux, or no /proc)".to_string());
+        };
         let futex = if cfg!(target_arch = "x86_64") {
             "202"
         } else if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
             "98"
         } else {
-            return;
+            return WaitCheck::Skipped("no futex syscall number for this architecture".to_string());
         };
-        loop {
-            let call = std::fs::read_to_string(task.join("syscall")).expect("/proc syscall");
+        let file = task.join("syscall");
+        while Instant::now() < end {
+            let call = match std::fs::read_to_string(&file) {
+                Ok(call) => call,
+                Err(error) => return WaitCheck::Skipped(format!("{}: {error}", file.display())),
+            };
             let fields: Vec<&str> = call.split_whitespace().collect();
             let op = fields
                 .get(2)
@@ -986,14 +1215,16 @@ mod tests {
                 && let Some(op) = op
                 && matches!(op & FUTEX_CMD_MASK, FUTEX_WAIT | FUTEX_WAIT_BITSET)
             {
-                assert_eq!(
-                    fields.get(4),
-                    Some(&"0x0"),
-                    "run_loop waits with a timeout: {call}"
-                );
-                return;
+                return if fields.get(4) == Some(&"0x0") {
+                    WaitCheck::Untimed
+                } else {
+                    WaitCheck::Failed(format!("run_loop waits with a timeout: {}", call.trim()))
+                };
             }
             std::thread::yield_now();
         }
+        WaitCheck::Failed(format!(
+            "no futex wait of run_loop's thread seen within {LIMIT:?}"
+        ))
     }
 }
