@@ -2308,22 +2308,17 @@ impl<'c, P: ProgramView> RefState<'c, P> {
             return false;
         }
 
-        // core.Some(declarations, core.Some(superTypeNodes, ..))
+        // Go: core.Some(declarations, core.Some(superTypeNodes, ..))
         let declarations = self.checker.sym(symbol).declarations.clone();
-        let mut inherits = false;
-        'declarations: for declaration in declarations {
+        let inherits = declarations.into_iter().any(|declaration| {
             let super_type_nodes = get_all_super_type_nodes(declaration);
-            for type_reference in super_type_nodes {
+            super_type_nodes.into_iter().any(|type_reference| {
                 let typ = self.checker.get_type_at_location(type_reference);
-                if typ.is_some() {
-                    let typ_symbol = self.checker.ty(typ).symbol;
-                    if typ_symbol.is_some() && self.explicitly_inherits_from(typ_symbol, parent) {
-                        inherits = true;
-                        break 'declarations;
-                    }
-                }
-            }
-        }
+                typ.is_some()
+                    && self.checker.ty(typ).symbol.is_some()
+                    && self.explicitly_inherits_from(self.checker.ty(typ).symbol, parent)
+            })
+        });
 
         // Update cache with the actual result
         self.inherits_from_cache.insert(key, inherits);
