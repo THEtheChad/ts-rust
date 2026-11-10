@@ -47,32 +47,8 @@ fn check_missing_pipeable_signatures(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagn
             continue;
         }
 
-        let mut pipeable_targets: FxHashMap<SignatureId, bool> = FxHashMap::default();
-        let mut has_pipeable_signature: FxHashMap<SignatureId, bool> = FxHashMap::default();
-        for &data_first in signatures.iter() {
-            if !is_eligible_data_first_signature(ctx.tp.checker, data_first) {
-                continue;
-            }
-            let params_len = ctx.tp.checker.sig(data_first).parameters().len() as i32;
-            for subject_index in [0, params_len - 1] {
-                for &candidate in signatures.iter() {
-                    if candidate == data_first {
-                        continue;
-                    }
-                    if matches_pipeable_signature(
-                        ctx.tp.checker,
-                        data_first,
-                        candidate,
-                        subject_index,
-                        None,
-                    ) {
-                        has_pipeable_signature.insert(data_first, true);
-                        pipeable_targets.insert(candidate, true);
-                    }
-                }
-            }
-        }
-
+        let (pipeable_targets, has_pipeable_signature) =
+            pipeable_signature_pairs(ctx.tp.checker, &signatures);
         for &signature in signatures.iter() {
             if !is_eligible_data_first_signature(ctx.tp.checker, signature)
                 || pipeable_targets.get(&signature).copied().unwrap_or(false)
@@ -101,6 +77,34 @@ fn check_missing_pipeable_signatures(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagn
     }
 
     diagnostics
+}
+
+/// The signatures of `signatures` that are the pipeable form of an eligible
+/// data-first signature among them (with the subject first or last), and
+/// the data-first signatures that have such a pipeable form.
+fn pipeable_signature_pairs(
+    c: &mut Checker,
+    signatures: &[SignatureId],
+) -> (FxHashMap<SignatureId, bool>, FxHashMap<SignatureId, bool>) {
+    let mut pipeable_targets: FxHashMap<SignatureId, bool> = FxHashMap::default();
+    let mut has_pipeable_signature: FxHashMap<SignatureId, bool> = FxHashMap::default();
+    for &data_first in signatures {
+        if !is_eligible_data_first_signature(c, data_first) {
+            continue;
+        }
+        let params_len = c.sig(data_first).parameters().len() as i32;
+        for subject_index in [0, params_len - 1] {
+            for &candidate in signatures {
+                if candidate != data_first
+                    && matches_pipeable_signature(c, data_first, candidate, subject_index, None)
+                {
+                    has_pipeable_signature.insert(data_first, true);
+                    pipeable_targets.insert(candidate, true);
+                }
+            }
+        }
+    }
+    (pipeable_targets, has_pipeable_signature)
 }
 
 // Go: rules/missing_pipeable_signature.go localExportTarget
