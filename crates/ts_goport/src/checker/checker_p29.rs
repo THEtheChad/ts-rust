@@ -1151,15 +1151,15 @@ impl Checker {
         {
             return self.string_number_symbol_type;
         }
-        let include = (if index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES) {
-            TypeFlags::STRING_LITERAL
-        } else {
-            TypeFlags::STRING_LIKE
-        }) | (if index_flags.intersects(IndexFlags::STRINGS_ONLY) {
-            TypeFlags::NONE
-        } else {
-            TypeFlags::NUMBER_LIKE | TypeFlags::ES_SYMBOL_LIKE
-        });
+        let include = if_else(
+            index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES),
+            TypeFlags::STRING_LITERAL,
+            TypeFlags::STRING_LIKE,
+        ) | if_else(
+            index_flags.intersects(IndexFlags::STRINGS_ONLY),
+            TypeFlags::NONE,
+            TypeFlags::NUMBER_LIKE | TypeFlags::ES_SYMBOL_LIKE,
+        );
         self.get_literal_type_from_properties(t, include, index_flags == IndexFlags::NONE)
     }
 
