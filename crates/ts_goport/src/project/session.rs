@@ -1890,31 +1890,22 @@ impl Session {
             update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_WITH_AUTO_IMPORTS;
         } else {
             for document in &request.documents {
-                match snapshot.get_default_project(document) {
-                    None => {
-                        update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
-                    }
-                    Some(project) => {
-                        if project.borrow().dirty {
-                            update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
-                        }
-                    }
+                let project = snapshot.get_default_project(document);
+                if project.is_none() {
+                    update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
+                } else if project.is_some_and(|project| project.borrow().dirty) {
+                    update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
                 }
             }
             if update_reason == UpdateReason::UNKNOWN {
                 for document in &request.configured_project_documents {
                     if snapshot.is_open_file(&document.file_name()) {
-                        match snapshot.get_default_project(document) {
-                            None => {
-                                update_reason =
-                                    UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
-                            }
-                            Some(project) => {
-                                if project.borrow().dirty {
-                                    update_reason =
-                                        UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
-                                }
-                            }
+                        let project = snapshot.get_default_project(document);
+                        if project.is_none() {
+                            update_reason =
+                                UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_NOT_LOADED;
+                        } else if project.is_some_and(|project| project.borrow().dirty) {
+                            update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_PROJECT_DIRTY;
                         }
                     } else {
                         update_reason = UpdateReason::REQUESTED_LANGUAGE_SERVICE_FOR_FILE_NOT_OPEN;
