@@ -1402,3 +1402,10 @@ once a **reconciliation step** is built and tested.
 - **Idiom follow-up lane:** once CC merges. Shared `if_else`/`or_else_*` go
   in `core.rs`; LS's and CB's copies go away; it applies them to the
   `core.IfElse` residue in CA and LS.
+- **W2-EF review: ACCEPT WITH FIXES** (`reviews/2026-11-09-astra-w2ef.md`).
+  Round 2 has two fixes:
+  - state the reachable lossy-unquote change (a crash becomes answers) as
+    intended, with an LSP regression test;
+  - rerun parity full on the final source.
+
+  Then W2-EF2 handles the 24 remaining rows.
