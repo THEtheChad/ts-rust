@@ -1095,18 +1095,16 @@ impl Checker {
                 let flags = element_infos[i].flags;
                 combined_flags |= flags;
                 if !combined_flags.intersects(ElementFlags::VARIABLE) {
-                    let symbol_flags = SymbolFlags::PROPERTY
-                        | if flags.intersects(ElementFlags::OPTIONAL) {
-                            SymbolFlags::OPTIONAL
-                        } else {
-                            SymbolFlags::NONE
-                        };
-                    let check_flags = if readonly {
-                        CheckFlags::READONLY
-                    } else {
-                        CheckFlags::NONE
-                    };
-                    let property = self.new_symbol_ex(symbol_flags, i.to_string(), check_flags);
+                    let property = self.new_symbol_ex(
+                        SymbolFlags::PROPERTY
+                            | if_else(
+                                flags.intersects(ElementFlags::OPTIONAL),
+                                SymbolFlags::OPTIONAL,
+                                SymbolFlags::NONE,
+                            ),
+                        i.to_string(),
+                        if_else(readonly, CheckFlags::READONLY, CheckFlags::NONE),
+                    );
                     self.value_symbol_links
                         .get_by_id(&self.symbols, property)
                         .resolved_type = type_parameter;
@@ -1120,11 +1118,7 @@ impl Checker {
         let length_symbol = self.new_symbol_ex(
             SymbolFlags::PROPERTY,
             "length",
-            if readonly {
-                CheckFlags::READONLY
-            } else {
-                CheckFlags::NONE
-            },
+            if_else(readonly, CheckFlags::READONLY, CheckFlags::NONE),
         );
         if combined_flags.intersects(ElementFlags::VARIABLE) {
             let number_type = self.number_type;
