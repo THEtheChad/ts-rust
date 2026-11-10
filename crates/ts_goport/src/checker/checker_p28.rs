@@ -1339,26 +1339,9 @@ impl Checker {
         if origin.is_nil() && includes.intersects(TypeFlags::UNION) {
             let named_unions = self.add_named_unions(Vec::new(), types);
             let mut reduced_types: Vec<TypeId> = Vec::new();
-            // Go: checker/checker.go:26311 `containsType(u.Types(), t)` for
-            // each `t` and named union `u`, until one contains `t`.
-            // PERF: unionsort1. The keys of each named union's types are read
-            // once, when it is first searched, and the key of each `t` once.
-            // The keyed searches make Go's comparisons (`search_keyed_types`).
-            // Before, these searches made most of the union comparisons.
             let mut named_keys: Vec<Vec<(u128, TypeId)>> = vec![Vec::new(); named_unions.len()];
             for &t in &type_set {
-                let key = self.union_sort_key(t);
-                let mut in_named = false;
-                for (i, &u) in named_unions.iter().enumerate() {
-                    if named_keys[i].is_empty() {
-                        named_keys[i] = self.union_sort_keys(self.ty(u).types());
-                    }
-                    if self.search_keyed_types(&named_keys[i], key, t).1 {
-                        in_named = true;
-                        break;
-                    }
-                }
-                if !in_named {
+                if !self.some_named_union_contains_type(&named_unions, &mut named_keys, t) {
                     reduced_types.push(t);
                 }
             }
@@ -1390,6 +1373,30 @@ impl Checker {
             ObjectFlags::NONE
         });
         self.get_union_type_from_sorted_list(&type_set, object_flags, alias, origin)
+    }
+
+    /// The named-union test, part of Go `getUnionTypeWorker`: its
+    /// `core.Some(namedUnions, func(u) { return containsType(u.Types(), t) })`
+    /// (checker.go:26311).
+    /// PERF: unionsort1. The keys of each named union's types are read once,
+    /// when it is first searched (`named_keys[i]` stays empty until then), and
+    /// the key of `t` once. The keyed searches make Go's comparisons
+    /// (`search_keyed_types`). Before, these searches made most of the union
+    /// comparisons.
+    #[inline]
+    fn some_named_union_contains_type(
+        &mut self,
+        named_unions: &[TypeId],
+        named_keys: &mut [Vec<(u128, TypeId)>],
+        t: TypeId,
+    ) -> bool {
+        let key = self.union_sort_key(t);
+        named_unions.iter().zip(named_keys).any(|(&u, keys)| {
+            if keys.is_empty() {
+                *keys = self.union_sort_keys(self.ty(u).types());
+            }
+            self.search_keyed_types(keys, key, t).1
+        })
     }
 
     // This function assumes the constituent type list is sorted and deduplicated.
