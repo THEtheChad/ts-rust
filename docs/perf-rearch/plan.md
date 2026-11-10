@@ -1456,3 +1456,14 @@ once a **reconciliation step** is built and tested.
     - `icount_ab.sh` now gets a private scratch dir per run, so concurrent
       lanes no longer delete each other's output.
     - After the merge, remove CC's base worktree and its 5 helper worktrees.
+- **W2-CC merged** (merge `5bbb0414f`) after Astra ACCEPT, with no findings
+  (`reviews/2026-11-10-astra-w2cc.md`).
+  - Root removed CC's base worktree and its 5 helper worktrees. All their
+    commits were already merged.
+  - The 4 remaining `.claude/worktrees/agent-*` belong to W2-FE, which is
+    still running. One note for W2-FE's review: its helpers' diffs touch
+    `gostd/`, which the lane was told to leave for last.
+- **All of `checker/` is done:** CA, CB and CC are merged.
+- **Next, lane Q8 (idioms):** shared `if_else`/`or_else_*` in `core.rs`, and
+  apply them to the remaining `core.IfElse`/`OrElse` residue in CA's and
+  LS's files.
