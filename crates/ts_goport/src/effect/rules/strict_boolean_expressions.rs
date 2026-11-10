@@ -23,8 +23,6 @@ pub static STRICT_BOOLEAN_EXPRESSIONS: Rule = Rule {
 fn run_strict_boolean_expressions(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut condition_checks: FxHashMap<Node, bool> = FxHashMap::default();
-    let is_condition_check =
-        |checks: &FxHashMap<Node, bool>, n: Node| checks.get(&n).copied().unwrap_or(false);
 
     // Breadth-first traversal matching the reference implementation
     // PERF: the queue holds node order indexes (effperf4).
@@ -36,99 +34,13 @@ fn run_strict_boolean_expressions(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnost
         // Enqueue children
         node_to_visit.extend(order.children(i));
 
-        let mut nodes_to_check: Vec<Node> = Vec::new();
-
-        match node.kind() {
-            SyntaxKind::IfStatement => {
-                condition_checks.insert(node, true);
-                nodes_to_check.push(node.expression());
-            }
-
-            SyntaxKind::WhileStatement => {
-                condition_checks.insert(node, true);
-                nodes_to_check.push(node.expression());
-            }
-
-            SyntaxKind::ConditionalExpression => {
-                condition_checks.insert(node, true);
-                nodes_to_check.push(node.condition());
-            }
-
-            SyntaxKind::PrefixUnaryExpression => {
-                let prefix = node;
-                if prefix.operator() == SyntaxKind::ExclamationToken {
-                    condition_checks.insert(node, true);
-                    nodes_to_check.push(prefix.operand());
-                }
-            }
-
-            SyntaxKind::BinaryExpression => {
-                let bin_expr = node;
-                let op_kind = bin_expr.operator_token().kind();
-                if op_kind == SyntaxKind::BarBarToken
-                    || op_kind == SyntaxKind::AmpersandAmpersandToken
-                {
-                    if is_condition_check(&condition_checks, node.parent()) {
-                        condition_checks.insert(node, true);
-                    }
-                    nodes_to_check.push(bin_expr.left());
-                    nodes_to_check.push(bin_expr.right());
-                }
-            }
-            _ => {}
-        }
-
-        for node_to_check in nodes_to_check {
-            if node_to_check.is_nil() {
+        for node_to_check in condition_operands(&mut condition_checks, node) {
+            if node_to_check.is_nil()
+                || !is_condition_check(&condition_checks, node_to_check.parent())
+            {
                 continue;
             }
-            if !is_condition_check(&condition_checks, node_to_check.parent()) {
-                continue;
-            }
-
-            let node_type = ctx.tp.get_type_at_location(node_to_check);
-            if node_type.is_nil() {
-                continue;
-            }
-
-            let constrained_type = ctx
-                .tp
-                .checker
-                .get_base_constraint_of_type_exported(node_type);
-            let mut types_to_check: Vec<TypeId> = Vec::new();
-            if constrained_type.is_some() {
-                types_to_check.push(constrained_type);
-            } else {
-                types_to_check.push(node_type);
-            }
-            let mut seen_type_names: FxHashSet<String> = FxHashSet::default();
-
-            while let Some(t) = types_to_check.pop() {
-                let flags = ctx.tp.checker.ty(t).flags;
-
-                // Unroll union types
-                if flags.intersects(TypeFlags::UNION) {
-                    types_to_check.extend(ctx.tp.unroll_union_members(t));
-                    continue;
-                }
-
-                // Skip boolean and never types
-                if flags.intersects(TypeFlags::BOOLEAN) {
-                    continue;
-                }
-                if flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
-                    continue;
-                }
-                if flags.intersects(TypeFlags::NEVER) {
-                    continue;
-                }
-
-                let type_name = ctx.tp.checker.type_to_string_exported(t);
-                if seen_type_names.contains(&type_name) {
-                    continue;
-                }
-                seen_type_names.insert(type_name.clone());
-
+            for type_name in non_boolean_condition_type_names(ctx.tp, node_to_check) {
                 // Report the error
                 let sf = ctx.source_file;
                 diags.push(ctx.new_diagnostic(
@@ -143,4 +55,83 @@ fn run_strict_boolean_expressions(ctx: &mut RuleContext<'_, '_>) -> Vec<Diagnost
     }
 
     diags
+}
+
+/// Whether `n` is recorded as a condition check.
+fn is_condition_check(checks: &FxHashMap<Node, bool>, n: Node) -> bool {
+    checks.get(&n).copied().unwrap_or(false)
+}
+
+/// The operands of `node` that are checked as conditions: the condition of
+/// an `if`, `while` or conditional expression, the operand of `!`, and both
+/// sides of `||` and `&&`. Records `node` as a condition check (a logical
+/// operator only when its parent is one).
+fn condition_operands(condition_checks: &mut FxHashMap<Node, bool>, node: Node) -> Vec<Node> {
+    match node.kind() {
+        SyntaxKind::IfStatement | SyntaxKind::WhileStatement => {
+            condition_checks.insert(node, true);
+            vec![node.expression()]
+        }
+        SyntaxKind::ConditionalExpression => {
+            condition_checks.insert(node, true);
+            vec![node.condition()]
+        }
+        SyntaxKind::PrefixUnaryExpression if node.operator() == SyntaxKind::ExclamationToken => {
+            condition_checks.insert(node, true);
+            vec![node.operand()]
+        }
+        SyntaxKind::BinaryExpression => {
+            let op_kind = node.operator_token().kind();
+            if op_kind != SyntaxKind::BarBarToken && op_kind != SyntaxKind::AmpersandAmpersandToken
+            {
+                return Vec::new();
+            }
+            if is_condition_check(condition_checks, node.parent()) {
+                condition_checks.insert(node, true);
+            }
+            vec![node.left(), node.right()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The names of the non-boolean types (union members unrolled; boolean,
+/// boolean literal and never types skipped; each name once) of the
+/// condition `node_to_check`, through its base constraint.
+fn non_boolean_condition_type_names(tp: &mut TypeParser<'_>, node_to_check: Node) -> Vec<String> {
+    let mut type_names = Vec::new();
+    let node_type = tp.get_type_at_location(node_to_check);
+    if node_type.is_nil() {
+        return type_names;
+    }
+
+    let constrained_type = tp.checker.get_base_constraint_of_type_exported(node_type);
+    let mut types_to_check: Vec<TypeId> = Vec::new();
+    if constrained_type.is_some() {
+        types_to_check.push(constrained_type);
+    } else {
+        types_to_check.push(node_type);
+    }
+    let mut seen_type_names: FxHashSet<String> = FxHashSet::default();
+
+    while let Some(t) = types_to_check.pop() {
+        let flags = tp.checker.ty(t).flags;
+
+        // Unroll union types
+        if flags.intersects(TypeFlags::UNION) {
+            types_to_check.extend(tp.unroll_union_members(t));
+            continue;
+        }
+
+        // Skip boolean and never types
+        if flags.intersects(TypeFlags::BOOLEAN | TypeFlags::BOOLEAN_LITERAL | TypeFlags::NEVER) {
+            continue;
+        }
+
+        let type_name = tp.checker.type_to_string_exported(t);
+        if seen_type_names.insert(type_name.clone()) {
+            type_names.push(type_name);
+        }
+    }
+    type_names
 }
