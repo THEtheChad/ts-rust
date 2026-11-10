@@ -60,38 +60,16 @@ pub fn analyze_match_effect_to_match(
             if transformation.args.len() != 1 || transformation.callee.is_nil() {
                 continue;
             }
-            let (match_effect_name, replacement_name) = if tp
-                .is_node_reference_to_effect_module_api(
-                    transformation.callee,
-                    member!("matchEffect"),
-                ) {
-                ("matchEffect", "match")
-            } else if tp.is_node_reference_to_effect_module_api(
-                transformation.callee,
-                member!("matchCauseEffect"),
-            ) {
-                ("matchCauseEffect", "matchCause")
-            } else {
+            let Some((match_effect_name, replacement_name)) =
+                match_effect_callee_names(tp, transformation.callee)
+            else {
                 continue;
             };
-
-            let on_failure =
-                object_literal_property_initializer(transformation.args[0], "onFailure");
-            let on_success =
-                object_literal_property_initializer(transformation.args[0], "onSuccess");
-            if on_failure.is_nil() || on_success.is_nil() {
+            let Some((handler_results, succeed_arguments)) =
+                succeed_handlers(tp, transformation.args[0])
+            else {
                 continue;
-            }
-            let (failure_result, failure_argument, ok) =
-                match_effect_constructor_handler(tp, on_failure, member!("succeed"));
-            if !ok {
-                continue;
-            }
-            let (success_result, success_argument, ok) =
-                match_effect_constructor_handler(tp, on_success, member!("succeed"));
-            if !ok {
-                continue;
-            }
+            };
             let mut callee_name = Node::NIL;
             if transformation.callee.kind() == SyntaxKind::PropertyAccessExpression {
                 callee_name = transformation.callee.name();
@@ -103,12 +81,53 @@ pub fn analyze_match_effect_to_match(
                 callee_name_node: callee_name,
                 match_effect_name: match_effect_name.to_string(),
                 replacement_name: replacement_name.to_string(),
-                handler_results: [failure_result, success_result],
-                succeed_arguments: [failure_argument, success_argument],
+                handler_results,
+                succeed_arguments,
             });
         }
     }
     matches
+}
+
+/// The rule's name and replacement for a callee that references
+/// `Effect.matchEffect` (`match`) or `Effect.matchCauseEffect`
+/// (`matchCause`).
+fn match_effect_callee_names(
+    tp: &mut TypeParser<'_>,
+    callee: Node,
+) -> Option<(&'static str, &'static str)> {
+    if tp.is_node_reference_to_effect_module_api(callee, member!("matchEffect")) {
+        return Some(("matchEffect", "match"));
+    }
+    if tp.is_node_reference_to_effect_module_api(callee, member!("matchCauseEffect")) {
+        return Some(("matchCauseEffect", "matchCause"));
+    }
+    None
+}
+
+/// The handler results and `Effect.succeed` arguments of the `onFailure`
+/// and `onSuccess` handlers of an options object, when both handlers end in
+/// `Effect.succeed`.
+fn succeed_handlers(tp: &mut TypeParser<'_>, options: Node) -> Option<([Node; 2], [Node; 2])> {
+    let on_failure = object_literal_property_initializer(options, "onFailure");
+    let on_success = object_literal_property_initializer(options, "onSuccess");
+    if on_failure.is_nil() || on_success.is_nil() {
+        return None;
+    }
+    let (failure_result, failure_argument, ok) =
+        match_effect_constructor_handler(tp, on_failure, member!("succeed"));
+    if !ok {
+        return None;
+    }
+    let (success_result, success_argument, ok) =
+        match_effect_constructor_handler(tp, on_success, member!("succeed"));
+    if !ok {
+        return None;
+    }
+    Some((
+        [failure_result, success_result],
+        [failure_argument, success_argument],
+    ))
 }
 
 // Go: rules/match_effect_to_match.go matchEffectConstructorHandler
