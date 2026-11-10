@@ -1798,3 +1798,21 @@ once a **reconciliation step** is built and tested.
     `build_watch_parses::build_watch_keeps_the_first_json_parse_of_a_cycle`
     fails 3/100 on the base under parallel load. It goes to the flake
     backlog, next to the Q7-style fix.
+- **B2 merged** (`eaf77bac4`) after Astra ACCEPT WITH FIXES
+  (`reviews/2026-11-10-astra-b2.md`).
+  - **API output now matches pinned Go** on every api scenario (49/49).
+  - **Root's fixes:**
+    - deleted `b2_icount_ab.sh` (`817be035f`), which had written a
+      tsbuildinfo into the shared Query input;
+    - removed the stray `query-core/dist-ts/`. A scan found no other write
+      into the inputs since 2026-11-05.
+  - **`base-current`:** now `runs/b2-29e23ede3-full`.
+  - **Guard:** `~/.cache/perf-rearch/projects/` is now read-only (see
+    below).
+- **Backlog from B2:**
+  - direct regression tests for risks 11 (a dynamic realpath case) and 14
+    (an overlay with `İ.ts` against `i.ts`);
+  - a sort-direction test for risk 8;
+  - a `regen` option to drop recovered pins;
+  - the `build_watch_keeps_the_first_json_parse_of_a_cycle` flake (CRLF
+    assertion at `build_watch_parses.rs:100`, which predates B2).
