@@ -1546,20 +1546,17 @@ impl Checker {
             self.has_effective_rest_parameter(left) || self.has_effective_rest_parameter(right);
         let needs_extra_rest_element =
             either_has_effective_rest && !self.has_effective_rest_parameter(longest);
-        let mut params: Vec<SymbolId> = vec![
-            SymbolId::NIL;
-            (longest_count + if needs_extra_rest_element { 1 } else { 0 })
-                as usize
-        ];
+        let mut params: Vec<SymbolId> =
+            vec![SymbolId::NIL; (longest_count + i32::from(needs_extra_rest_element)) as usize];
         for i in 0..longest_count {
             let mut longest_param_type = self.try_get_type_at_position(longest, i);
             if longest == right {
                 longest_param_type = self.instantiate_type(longest_param_type, mapper);
             }
-            let mut shorter_param_type = {
-                let pt = self.try_get_type_at_position(shorter, i);
-                if pt.is_some() { pt } else { self.unknown_type }
-            };
+            let mut shorter_param_type = self
+                .try_get_type_at_position(shorter, i)
+                .get()
+                .unwrap_or(self.unknown_type);
             if shorter == right {
                 shorter_param_type = self.instantiate_type(shorter_param_type, mapper);
             }
