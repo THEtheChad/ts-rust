@@ -1480,3 +1480,18 @@ once a **reconciliation step** is built and tested.
   - **Open:** `reconstruct_piping_flow` has had no caller since it was
     ported.
   - **Astra review:** running.
+- **W2-FE finished** (head `d40740836`, 59 commits; 4 helper worktrees
+  cherry-picked).
+  - **Targets:** frontend port 14 → 1, own 14 → 0; execute/build/emit port
+    3 → 0.
+  - **Duplication:** 3.48% → 3.42%.
+  - **Parity full:** OK.
+  - **icount:** single-threaded cells +0.03 to +0.07%, under the bar but
+    all positive; Astra is asked for the cause.
+  - **Lane decisions and questions:**
+    - `Scan` is left at +34: Go-style match arms cost +0.08 to +0.16%
+      icount.
+    - `common_directory_of_files` still has its pre-pin shape, which
+      differs from Go's at the pin. This is a possible parity gap that no
+      tier covers.
+  - **Astra review:** running.
