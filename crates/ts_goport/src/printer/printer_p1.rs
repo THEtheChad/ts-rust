@@ -4,6 +4,7 @@
 //!
 //! Other parts (printer_p2 to printer_p5) add more `impl Printer` blocks.
 
+use crate::checker::if_else;
 use crate::flags_macros::go_enum;
 use crate::gostd::debug::kind_string;
 use crate::prelude::*;
@@ -1057,15 +1058,15 @@ impl Printer {
                     )
                 });
             }
-            return if range_end_is_on_same_line_as_range_start(
-                node1.loc(),
-                node2.loc(),
-                current_source_file,
-            ) {
-                0
-            } else {
-                1
-            };
+            return if_else(
+                range_end_is_on_same_line_as_range_start(
+                    node1.loc(),
+                    node2.loc(),
+                    current_source_file,
+                ),
+                0,
+                1,
+            );
         }
 
         0
@@ -1111,14 +1112,13 @@ impl Printer {
             }
 
             if first_child.is_nil() {
-                return if parent_node.is_nil()
-                    || self.current_source_file.is_some()
-                        && range_is_on_single_line(parent_node.loc(), self.current_source_file)
-                {
-                    0
-                } else {
-                    1
-                };
+                return if_else(
+                    parent_node.is_nil()
+                        || self.current_source_file.is_some()
+                            && range_is_on_single_line(parent_node.loc(), self.current_source_file),
+                    0,
+                    1,
+                );
             }
             if self.next_list_element_pos > 0 && first_child.pos() == self.next_list_element_pos {
                 // If this child starts at the beginning of a list item in a parent list, its leading
@@ -1159,25 +1159,21 @@ impl Printer {
                         )
                     });
                 }
-                return if range_start_positions_are_on_same_line(
-                    parent_node.loc(),
-                    first_child.loc(),
-                    current_source_file,
-                ) {
-                    0
-                } else {
-                    1
-                };
+                return if_else(
+                    range_start_positions_are_on_same_line(
+                        parent_node.loc(),
+                        first_child.loc(),
+                        current_source_file,
+                    ),
+                    0,
+                    1,
+                );
             }
             if self.should_emit_on_new_line(first_child, format) {
                 return 1;
             }
         }
-        if format.intersects(ListFormat::MULTI_LINE) {
-            1
-        } else {
-            0
-        }
+        if_else(format.intersects(ListFormat::MULTI_LINE), 1, 0)
     }
 
     // Go: printer/printer.go:564 getSeparatingLineTerminatorCount
@@ -1222,23 +1218,19 @@ impl Printer {
                     // same node parent. If so, we intend to preserve a single line terminator. This is less precise and
                     // expensive than checking with `preserveSourceNewlines` as above, but the goal is not to preserve the
                     // effective source lines between two sibling nodes.
-                    return if range_end_is_on_same_line_as_range_start(
-                        previous_node.loc(),
-                        next_node.loc(),
-                        current_source_file,
-                    ) {
-                        0
-                    } else {
-                        1
-                    };
+                    return if_else(
+                        range_end_is_on_same_line_as_range_start(
+                            previous_node.loc(),
+                            next_node.loc(),
+                            current_source_file,
+                        ),
+                        0,
+                        1,
+                    );
                 }
                 // If the two nodes are not comparable, add a line terminator based on the format that can indicate
                 // whether new lines are preferred or not.
-                return if format.intersects(ListFormat::PREFER_NEW_LINE) {
-                    1
-                } else {
-                    0
-                };
+                return if_else(format.intersects(ListFormat::PREFER_NEW_LINE), 1, 0);
             } else if self.should_emit_on_new_line(previous_node, format)
                 || self.should_emit_on_new_line(next_node, format)
             {
@@ -1247,11 +1239,7 @@ impl Printer {
         } else if self.should_emit_on_new_line(next_node, ListFormat::NONE) {
             return 1;
         }
-        if format.intersects(ListFormat::MULTI_LINE) {
-            1
-        } else {
-            0
-        }
+        if_else(format.intersects(ListFormat::MULTI_LINE), 1, 0)
     }
 
     // Go: printer/printer.go:604 getClosingLineTerminatorCount
@@ -1267,14 +1255,13 @@ impl Printer {
                 return 1;
             }
             if last_child.is_nil() {
-                return if parent_node.is_nil()
-                    || self.current_source_file.is_some()
-                        && range_is_on_single_line(parent_node.loc(), self.current_source_file)
-                {
-                    0
-                } else {
-                    1
-                };
+                return if_else(
+                    parent_node.is_nil()
+                        || self.current_source_file.is_some()
+                            && range_is_on_single_line(parent_node.loc(), self.current_source_file),
+                    0,
+                    1,
+                );
             }
             if self.current_source_file.is_some()
                 && parent_node.is_some()
@@ -1294,15 +1281,15 @@ impl Printer {
                         )
                     });
                 }
-                return if range_end_positions_are_on_same_line(
-                    parent_node.loc(),
-                    last_child.loc(),
-                    current_source_file,
-                ) {
-                    0
-                } else {
-                    1
-                };
+                return if_else(
+                    range_end_positions_are_on_same_line(
+                        parent_node.loc(),
+                        last_child.loc(),
+                        current_source_file,
+                    ),
+                    0,
+                    1,
+                );
             }
             if self.should_emit_on_new_line(last_child, format) {
                 return 1;
