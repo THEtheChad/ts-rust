@@ -156,7 +156,11 @@ if (!process.argv.includes("--unit")) {
   const lspdiff = (tag, extra, { asGo = false, rsProxy = false, proxyRules = rules, env = {}, jsServer = DEFAULT_TSSERVER } = {}) => {
     const state = join(out, `${tag}.runs`);
     mkdirSync(out, { recursive: true });
-    const [goSide, rsSide] = asGo ? [proxy, rsProxy ? proxy : go] : [go, proxy];
+    // The proxy as a command (lspdiff splits --go and --rs at spaces): node, the script and its settings.
+    const settings = join(out, `${tag}.proxy.json`);
+    writeFileSync(settings, JSON.stringify({ go, rules: proxyRules, state }));
+    const proxyCmd = `${process.execPath} ${proxy} ${settings}`;
+    const [goSide, rsSide] = asGo ? [proxyCmd, rsProxy ? proxyCmd : go] : [go, proxyCmd];
     const stdout = execFileSync(
       process.execPath,
       [join(HERE, "../lspdiff.mjs"), "diff", "--project", root, "--file", "src/a.ts", "--file", "src/b.ts", "--positions", "20", "--go", goSide, "--rs", rsSide, "--out", join(out, tag), "--js", jsServer, ...extra],

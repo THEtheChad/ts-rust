@@ -312,7 +312,8 @@ function scriptProbe(npmLog, now, alive = true) {
   const script = new cls();
   const settles = [];
   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
-  script.client = { settle: async () => settles.push(now()) };
+  // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
+  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, mark: () => {} } };
   script.log = [];
   return { script, settles, reads: () => reads };
 }

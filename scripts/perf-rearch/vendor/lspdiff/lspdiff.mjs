@@ -143,7 +143,9 @@ if (scenario && !SCENARIOS[scenario]) {
 }
 // A fixture scenario writes its project into --project itself, so there is nothing to pick yet.
 const files = scenario && SCENARIOS[scenario].fixture ? [] : pickFiles(root, Number(opt.files), opt.file);
-const servers = { go: [opt.go, "--lsp", "--stdio"], rs: [opt.rs, "--lsp", "--stdio"] };
+// --go and --rs are commands: their words split at spaces (as the api tier's; a word that names a file is
+// bound into the sandbox, sandbox.mjs).
+const servers = { go: [...opt.go.split(" "), "--lsp", "--stdio"], rs: [...opt.rs.split(" "), "--lsp", "--stdio"] };
 const stderr = opt.verbose ? process.stderr : undefined;
 const outDir = join(opt.out, `${root.split("/").pop()}-${mode}${mode === "bench" && opt.pulls !== "all" ? `-${opt.pulls}` : ""}${scenario ? `-${scenario}` : ""}`);
 mkdirSync(outDir, { recursive: true });
