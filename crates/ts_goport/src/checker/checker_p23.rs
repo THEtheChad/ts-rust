@@ -959,27 +959,23 @@ impl Checker {
                             }
                             let prop = c.new_symbol(
                                 SymbolFlags::PROPERTY
-                                    | if is_optional {
-                                        SymbolFlags::OPTIONAL
-                                    } else {
-                                        SymbolFlags::NONE
-                                    },
+                                    | if_else(
+                                        is_optional,
+                                        SymbolFlags::OPTIONAL,
+                                        SymbolFlags::NONE,
+                                    ),
                                 // PERF: the `Name`, not its text, so the name
                                 // is not interned a second time.
                                 prop_name.clone(),
                             );
                             c.sym_mut(prop).check_flags = late_flag
                                 | CheckFlags::MAPPED
-                                | if is_readonly {
-                                    CheckFlags::READONLY
-                                } else {
-                                    CheckFlags::NONE
-                                }
-                                | if strip_optional {
-                                    CheckFlags::STRIP_OPTIONAL
-                                } else {
-                                    CheckFlags::NONE
-                                };
+                                | if_else(is_readonly, CheckFlags::READONLY, CheckFlags::NONE)
+                                | if_else(
+                                    strip_optional,
+                                    CheckFlags::STRIP_OPTIONAL,
+                                    CheckFlags::NONE,
+                                );
                             // PERF: Go `Get` and then sets the fields. `prop`
                             // is new, so each record is added once with its
                             // fields set. A nil `modifiers_prop` is the
@@ -1590,19 +1586,21 @@ impl Checker {
             }
             let param_symbol = self.new_symbol_ex(
                 SymbolFlags::FUNCTION_SCOPED_VARIABLE
-                    | if is_optional && !is_rest_param {
-                        SymbolFlags::OPTIONAL
-                    } else {
-                        SymbolFlags::NONE
-                    },
+                    | if_else(
+                        is_optional && !is_rest_param,
+                        SymbolFlags::OPTIONAL,
+                        SymbolFlags::NONE,
+                    ),
                 param_name.as_str(),
-                if is_rest_param {
-                    CheckFlags::REST_PARAMETER
-                } else if is_optional {
-                    CheckFlags::OPTIONAL_PARAMETER
-                } else {
-                    CheckFlags::NONE
-                },
+                if_else(
+                    is_rest_param,
+                    CheckFlags::REST_PARAMETER,
+                    if_else(
+                        is_optional,
+                        CheckFlags::OPTIONAL_PARAMETER,
+                        CheckFlags::NONE,
+                    ),
+                ),
             );
             let resolved_type = if is_rest_param {
                 self.create_array_type(combined_param_type)
