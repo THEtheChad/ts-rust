@@ -153,12 +153,11 @@ impl Checker {
                         object_type,
                         access_expression,
                     );
-                    let undefined_like_type =
-                        if access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED) {
-                            self.missing_type
-                        } else {
-                            TypeId::NIL
-                        };
+                    let undefined_like_type = if_else(
+                        access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED),
+                        self.missing_type,
+                        TypeId::NIL,
+                    );
                     return self.get_tuple_element_type_out_of_start_count(
                         object_type,
                         index,
