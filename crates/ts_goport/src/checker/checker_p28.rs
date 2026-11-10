@@ -1363,15 +1363,15 @@ impl Checker {
                 origin = self.new_union_type(ObjectFlags::NONE, &reduced_types);
             }
         }
-        let object_flags = (if includes.intersects(TypeFlags::NOT_PRIMITIVE_UNION) {
-            ObjectFlags::NONE
-        } else {
-            ObjectFlags::PRIMITIVE_UNION
-        }) | (if includes.intersects(TypeFlags::INTERSECTION) {
-            ObjectFlags::CONTAINS_INTERSECTIONS
-        } else {
-            ObjectFlags::NONE
-        });
+        let object_flags = if_else(
+            includes.intersects(TypeFlags::NOT_PRIMITIVE_UNION),
+            ObjectFlags::NONE,
+            ObjectFlags::PRIMITIVE_UNION,
+        ) | if_else(
+            includes.intersects(TypeFlags::INTERSECTION),
+            ObjectFlags::CONTAINS_INTERSECTIONS,
+            ObjectFlags::NONE,
+        );
         self.get_union_type_from_sorted_list(&type_set, object_flags, alias, origin)
     }
 
