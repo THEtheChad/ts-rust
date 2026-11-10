@@ -856,12 +856,19 @@ impl Checker {
         is_private: bool,
         is_static: bool,
     ) -> TypeId {
-        let kind = match (is_private, is_static) {
-            (true, true) => CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC,
-            (true, false) => CachedTypeKind::DECORATOR_CONTEXT_PRIVATE,
-            (false, true) => CachedTypeKind::DECORATOR_CONTEXT_STATIC,
-            (false, false) => CachedTypeKind::DECORATOR_CONTEXT,
-        };
+        let kind = if_else(
+            is_private,
+            if_else(
+                is_static,
+                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC,
+                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE,
+            ),
+            if_else(
+                is_static,
+                CachedTypeKind::DECORATOR_CONTEXT_STATIC,
+                CachedTypeKind::DECORATOR_CONTEXT,
+            ),
+        );
         let key = CachedTypeKey {
             kind,
             type_id: name_type,
@@ -874,19 +881,15 @@ impl Checker {
         let members = self.symbols.new_table();
         let name_prop = self.new_property("name", name_type);
         self.symbols.set(members, "name", name_prop);
-        let private_type = if is_private {
-            self.true_type
-        } else {
-            self.false_type
-        };
-        let private_prop = self.new_property("private", private_type);
+        let private_prop = self.new_property(
+            "private",
+            if_else(is_private, self.true_type, self.false_type),
+        );
         self.symbols.set(members, "private", private_prop);
-        let static_type = if is_static {
-            self.true_type
-        } else {
-            self.false_type
-        };
-        let static_prop = self.new_property("static", static_type);
+        let static_prop = self.new_property(
+            "static",
+            if_else(is_static, self.true_type, self.false_type),
+        );
         self.symbols.set(members, "static", static_prop);
         let override_type = self.new_anonymous_type(SymbolId::NIL, members, &[], &[], &[]);
         self.cached_types.insert(key, override_type);
