@@ -2145,11 +2145,8 @@ impl LanguageService {
                     program,
                 );
                 for module in &mut modules {
-                    let suffix = if module.kind == ModuleCompletionKind::FILE {
-                        path_suffix
-                    } else {
-                        ""
-                    };
+                    let suffix =
+                        if_else(module.kind == ModuleCompletionKind::FILE, path_suffix, "");
                     module.name = remaining_directory_prefix.clone() + &module.name + suffix;
                 }
                 completions.extend(modules);
@@ -2179,11 +2176,7 @@ impl LanguageService {
                 program,
             );
             for module in &mut modules {
-                let suffix = if module.kind == ModuleCompletionKind::FILE {
-                    path_suffix
-                } else {
-                    ""
-                };
+                let suffix = if_else(module.kind == ModuleCompletionKind::FILE, path_suffix, "");
                 module.name = remaining_directory_fragment.clone() + &module.name + suffix;
             }
             result.extend(modules);
