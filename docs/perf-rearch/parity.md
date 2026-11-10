@@ -2489,7 +2489,7 @@ overflow.py, home.py, the non-executable Go) and the api tier's round 2 and 3 pr
 | JSON-RPC envelopes not validated | strict framing and envelope | `dup-key`, `bad-rpc` (`"9.9"`), `extra-key`, `stray-answer` (an answer to no request) | MATCH ×4 | DIFF rsFailure crash ×4 |
 | controls | | `pass`, `fds`, `privs` | good, good, DIFF | good ×3 |
 
-The other self-tests on this harness: `parity_h7_test.py` (108 checks, the api tier on the shared init:
+The other self-tests on this harness: `parity_h7_test.py` (111 checks: 64 unit, 47 end to end; the api tier on the shared init:
 `H7 SELFTEST OK`; its finding 9 check no longer asks for the pin B2 removed), `parity_h4_test.py`,
 `parity_h5_test.py` (unit; its tripwire checks are gone with the tripwires, its ancestors checks follow
 the visible-only key, its e2e checks now ask that the real typings cache does not exist for tsc-rs and
@@ -2524,7 +2524,42 @@ it against the runs before: no fork error, the same results).
   `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly the
   calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
 
-@@GATE@@
+### Gate run
+
+`parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref t3/harden-lsp-parity-harness`
+(harness `31c3e1d44`; base `runs/b2-29e23ede3-full`), `runs/h8-head-865385add-full`, 35 min (22:26 to
+23:01 UTC, load 8 to 50), under the heavy-run lock: **PARITY OK**. 187,337 items compared (185,606 base
+items a full run must have), 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not good, 0
+crashes on good items, 36 grandfathered (the fuzz entries, exactly as pinned), 0 stale, 0 recovered,
+none newly good by a referee. cli 170 MATCH; tests 140,001 PASS, 1,731 IGNORED, 1 FLAKY
+(`project_lsp::resolveahead_test::load_view::a_view_held_by_a_worker_goes_when_the_worker_returns`,
+failed, then passed alone); lsp 2,655 MATCH, 29 GO-BROKEN (the base's 29; the 26 new items MATCH); api
+49 MATCH; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus
+12,727 MATCH.
+
+### Cost
+
+| | base (`b2-29e23ede3-full`) | H8 (`h8-head-865385add-full`) |
+|---|---|---|
+| lsp tier wall | 460 s | 641 s |
+| of it: tsc-rs's own runs, summed over sessions | 1,046 s | 978 s |
+| umami-f12-p6 (the longest session, so the tier's wall) | 434 s (tsc-rs 322 s) | 613 s (tsc-rs 299 s) |
+| any other session | 14 to 114 s | the same within 13 s, most a little less |
+| a server start and end (`/bin/true` under each sandbox, 20 runs) | 9.7 ms | 47.4 ms |
+
+- **Where the time goes:** not the servers or the sandbox (+38 ms a process: two more Python starts
+  and the namespaces), but lspdiff's own reading of umami's logs (about 340 MB a run, 4 Go logs from the
+  cache and 8 more from the refills as priors, then every answer normalized per run): `parseKeep`'s
+  reviver makes a JSON parse about 7 times slower (one 340 MB log: 1.1 s plain, 7.7 s with it), and the
+  wire's duplicate-key scan costs about 4.6 s per tsc-rs run of umami. A cheap guard (plain parse where
+  no number could be non-canonical) does not help: 684 of 689 lines of the log have a timing float or a
+  digit run in a string. The fix is a faster number check in `json.mjs`, which is a session source, so
+  it means another full lsp refill; not done here.
+- **The other tiers** do not use this lane's code (api shares the init: 9 s against 5 s, the same 49
+  scenarios). The cli tier took 536 s against 212 s: the inputs' ctimes changed when root made
+  `projects/` read-only, so the snapshot check hashed them again.
+- **Self-tests:** `parity_h8_test.py --unit` a few seconds; the end-to-end controls about 10 minutes
+  (24 lsp sessions on ts-pattern).
 
 ## Files
 
