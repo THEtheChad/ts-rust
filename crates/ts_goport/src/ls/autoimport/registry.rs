@@ -1500,18 +1500,19 @@ impl RegistryBuilder {
                         }
                         // Go: wg.Go(func() {...})
                         go_wait_group_goroutine(|| {
-                            if ctx.err().is_none() {
-                                let result = self.extract_package(
-                                    ctx,
-                                    &pkg.package_json,
-                                    &pkg.package_name,
-                                    &project_reference_outputs,
-                                    file_exclude_patterns.as_ref(),
-                                    enable_dir_search,
-                                );
-                                if let Some(result) = result {
-                                    extraction_cache.insert(pkg.realpath.clone(), result);
-                                }
+                            if ctx.err().is_some() {
+                                return;
+                            }
+                            let result = self.extract_package(
+                                ctx,
+                                &pkg.package_json,
+                                &pkg.package_name,
+                                &project_reference_outputs,
+                                file_exclude_patterns.as_ref(),
+                                enable_dir_search,
+                            );
+                            if let Some(result) = result {
+                                extraction_cache.insert(pkg.realpath.clone(), result);
                             }
                         });
                     }
@@ -1528,18 +1529,19 @@ impl RegistryBuilder {
                     }
                     // Go: wg.Go(func() {...})
                     go_wait_group_goroutine(|| {
-                        if ctx.err().is_none() {
-                            let result = self.extract_package(
-                                ctx,
-                                &pkg.types_package_json,
-                                &pkg.package_name,
-                                &project_reference_outputs,
-                                file_exclude_patterns.as_ref(),
-                                true, /*enableDirectorySearch*/
-                            );
-                            if let Some(result) = result {
-                                extraction_cache.insert(pkg.types_realpath.clone(), result);
-                            }
+                        if ctx.err().is_some() {
+                            return;
+                        }
+                        let result = self.extract_package(
+                            ctx,
+                            &pkg.types_package_json,
+                            &pkg.package_name,
+                            &project_reference_outputs,
+                            file_exclude_patterns.as_ref(),
+                            true, /*enableDirectorySearch*/
+                        );
+                        if let Some(result) = result {
+                            extraction_cache.insert(pkg.types_realpath.clone(), result);
                         }
                     });
                 }
@@ -1562,18 +1564,19 @@ impl RegistryBuilder {
             }
             // Go: wg.Go(func() {...})
             go_wait_group_goroutine(|| {
-                if ctx.err().is_none() {
-                    let result = self.extract_package(
-                        ctx,
-                        &pkg.types_package_json,
-                        &pkg.package_name,
-                        &project_reference_outputs,
-                        file_exclude_patterns.as_ref(),
-                        true, /*enableDirectorySearch*/
-                    );
-                    if let Some(result) = result {
-                        extraction_cache.insert(pkg.types_realpath.clone(), result);
-                    }
+                if ctx.err().is_some() {
+                    return;
+                }
+                let result = self.extract_package(
+                    ctx,
+                    &pkg.types_package_json,
+                    &pkg.package_name,
+                    &project_reference_outputs,
+                    file_exclude_patterns.as_ref(),
+                    true, /*enableDirectorySearch*/
+                );
+                if let Some(result) = result {
+                    extraction_cache.insert(pkg.types_realpath.clone(), result);
                 }
             });
         }
