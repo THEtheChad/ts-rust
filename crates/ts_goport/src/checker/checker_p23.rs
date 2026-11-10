@@ -887,10 +887,7 @@ impl Checker {
         // and T as the template type.
         let type_parameter = self.get_type_parameter_from_mapped_type(t);
         let constraint_type = self.get_constraint_type_from_mapped_type(t);
-        let mapped_type = {
-            let target = self.ty(t).as_mapped_type().object.target;
-            if target.is_some() { target } else { t }
-        };
+        let mapped_type = self.ty(t).as_mapped_type().object.target.get().unwrap_or(t);
         let name_type = self.get_name_type_from_mapped_type(mapped_type);
         let should_link_prop_declarations =
             self.get_mapped_type_name_type_kind(mapped_type) != MappedTypeNameTypeKind::REMAPPING;
