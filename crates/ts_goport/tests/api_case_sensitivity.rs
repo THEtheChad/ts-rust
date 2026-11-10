@@ -2,7 +2,8 @@
 //! (`tsgo --api --useCaseSensitiveFileNames=false` on Linux) answers as Go
 //! at the pin does. Lane B2 (B3 audit D1, D2 and their call sites):
 //! - D2: the emit side took its case setting from the OS file system, not
-//!   from the program host's (`d2_*`);
+//!   from the program host's (`d2_*`), which also moved the source map's
+//!   `sources` (`d2_source_map_sources`);
 //! - D1: the common source directory of encoded dynamic names
 //!   (`^/~ts-uri~/...`) folded their case (`d1_common_dir`);
 //! - the JSON part of `sourceFileMayBeEmitted` compares with
@@ -42,6 +43,11 @@ fn d2_out_dir() {
 #[test]
 fn d2_root_dir() {
     check_case("d2_root_dir");
+}
+
+#[test]
+fn d2_source_map_sources() {
+    check_case("d2_source_map_sources");
 }
 
 #[test]
