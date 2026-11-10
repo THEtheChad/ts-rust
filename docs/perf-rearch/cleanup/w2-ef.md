@@ -119,7 +119,7 @@ context budget, not for a risk.
   `rules/mod.rs`). No other file outside `effect/` changed.
 - No switch added or removed.
 
-## Evidence (head a3fd… see the final report for the exact hash)
+## Evidence
 
 - Effect area by `quality.sh` (own code > 25): 85 rows / Σ excess 1,312 at
   `f59c229c5` → 24 rows / 124.
