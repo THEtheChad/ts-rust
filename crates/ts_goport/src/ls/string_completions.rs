@@ -2186,9 +2186,7 @@ impl LanguageService {
                 };
                 module.name = remaining_directory_fragment.clone() + &module.name + suffix;
             }
-            if !modules.is_empty() {
-                result.extend(modules);
-            }
+            result.extend(modules);
         }
         result
     }
