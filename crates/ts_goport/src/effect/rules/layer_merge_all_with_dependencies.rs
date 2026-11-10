@@ -110,28 +110,53 @@ fn analyze_layer_merge_all_call(
     }
     let args = call.arguments().to_vec();
 
-    // Parse all layer arguments
-    let mut layer_infos: Vec<LayerInfo> = Vec::new();
-    // Map of actually provided types -> argument node that provides them
-    // PORT: Go ranges over this map below in random order, which decides the
-    // order of the type names in the message. The port keeps insertion order.
-    let mut actually_provided_map: IndexMap<TypeId, Node> = IndexMap::new();
+    let (layer_infos, actually_provided_map) = parse_layer_infos(tp, &args);
+    let provider_to_consumers = provider_consumers(tp, &layer_infos, &actually_provided_map);
 
-    for &arg in &args {
+    // Build matches for providers, iterating in argument order for determinism
+    let mut matches = Vec::new();
+    for (arg_index, &arg) in args.iter().enumerate() {
+        let Some(consumers) = provider_to_consumers.get(&arg) else {
+            continue;
+        };
+        if consumers.is_empty() {
+            continue;
+        }
+        matches.push(LayerMergeAllWithDependenciesMatch {
+            source_file: sf,
+            location: get_error_range_for_node(sf, arg),
+            call_node: node,
+            provider_arg: arg,
+            provider_index: arg_index as i32,
+            all_args: args.clone(),
+            provided_types: unique_type_names(tp, consumers),
+        });
+    }
+
+    matches
+}
+
+/// The Layer arguments of a `Layer.mergeAll` call, and the types each one
+/// actually provides (mapped to the argument that provides them): the
+/// members of its `ROut` that are not `never` and are not passed through
+/// (assignable to its own `RIn`).
+// PORT: Go ranges over the provided map in random order, which decides the
+// order of the type names in the message. The port keeps insertion order.
+fn parse_layer_infos(
+    tp: &mut TypeParser<'_>,
+    args: &[Node],
+) -> (Vec<LayerInfo>, IndexMap<TypeId, Node>) {
+    let mut layer_infos: Vec<LayerInfo> = Vec::new();
+    let mut actually_provided_map: IndexMap<TypeId, Node> = IndexMap::new();
+    for &arg in args {
         let arg_type = tp.get_type_at_location(arg);
         if arg_type.is_nil() {
             continue;
         }
-
         let Some(layer) = tp.layer_type(arg_type) else {
             continue;
         };
-
-        // Unroll union members for provided types (ROut)
-        let provided_members = tp.unroll_union_members(layer.r_out);
-
-        // Filter out never types and pass-through types
-        for provided_type in provided_members {
+        for provided_type in tp.unroll_union_members(layer.r_out) {
             if tp
                 .checker
                 .ty(provided_type)
@@ -146,26 +171,29 @@ fn analyze_layer_merge_all_call(
             }
             actually_provided_map.insert(provided_type, arg);
         }
-
         layer_infos.push(LayerInfo {
             arg,
             requirements_type: layer.r_in,
         });
     }
+    (layer_infos, actually_provided_map)
+}
 
-    // Check for interdependencies: build a map of provider -> consumed types
-    struct ProviderConsumer {
-        provided_type: TypeId,
-    }
-    let mut provider_to_consumers: FxHashMap<Node, Vec<ProviderConsumer>> = FxHashMap::default();
-
-    for li in &layer_infos {
-        for (&provided_type, &provider_arg) in &actually_provided_map {
+/// The interdependencies of the arguments: for each providing argument, the
+/// types it provides that another argument's requirements accept, by layer
+/// and then by provided type.
+fn provider_consumers(
+    tp: &mut TypeParser<'_>,
+    layer_infos: &[LayerInfo],
+    actually_provided_map: &IndexMap<TypeId, Node>,
+) -> FxHashMap<Node, Vec<TypeId>> {
+    let mut provider_to_consumers: FxHashMap<Node, Vec<TypeId>> = FxHashMap::default();
+    for li in layer_infos {
+        for (&provided_type, &provider_arg) in actually_provided_map {
             // Skip self-references
             if provider_arg == li.arg {
                 continue;
             }
-            // Check if this provided type satisfies the layer's requirements
             if tp
                 .checker
                 .is_type_assignable_to(provided_type, li.requirements_type)
@@ -173,42 +201,22 @@ fn analyze_layer_merge_all_call(
                 provider_to_consumers
                     .entry(provider_arg)
                     .or_default()
-                    .push(ProviderConsumer { provided_type });
+                    .push(provided_type);
             }
         }
     }
+    provider_to_consumers
+}
 
-    // Build matches for providers, iterating in argument order for determinism
-    let mut matches = Vec::new();
-    for (arg_index, &arg) in args.iter().enumerate() {
-        let Some(consumers) = provider_to_consumers.get(&arg) else {
-            continue;
-        };
-        if consumers.is_empty() {
-            continue;
+/// The names of `types`, each once, in order, joined with `, `.
+fn unique_type_names(tp: &mut TypeParser<'_>, types: &[TypeId]) -> String {
+    let mut seen: FxHashSet<String> = FxHashSet::default();
+    let mut type_names: Vec<String> = Vec::new();
+    for &t in types {
+        let name = tp.checker.type_to_string_exported(t);
+        if seen.insert(name.clone()) {
+            type_names.push(name);
         }
-
-        // Collect unique type names
-        let mut seen: FxHashSet<String> = FxHashSet::default();
-        let mut type_names: Vec<String> = Vec::new();
-        for consumer in consumers {
-            let name = tp.checker.type_to_string_exported(consumer.provided_type);
-            if !seen.contains(&name) {
-                seen.insert(name.clone());
-                type_names.push(name);
-            }
-        }
-
-        matches.push(LayerMergeAllWithDependenciesMatch {
-            source_file: sf,
-            location: get_error_range_for_node(sf, arg),
-            call_node: node,
-            provider_arg: arg,
-            provider_index: arg_index as i32,
-            all_args: args.clone(),
-            provided_types: type_names.join(", "),
-        });
     }
-
-    matches
+    type_names.join(", ")
 }
