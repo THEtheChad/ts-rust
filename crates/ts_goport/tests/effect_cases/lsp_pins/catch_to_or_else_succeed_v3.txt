@@ -1,0 +1,229 @@
+#### file .src/catchToOrElseSucceed.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":6,"character":2},"end":{"line":6,"character":17}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    },
+    {
+      "range": {"start":{"line":11,"character":2},"end":{"line":11,"character":17}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    },
+    {
+      "range": {"start":{"line":19,"character":2},"end":{"line":19,"character":17}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    },
+    {
+      "range": {"start":{"line":24,"character":2},"end":{"line":24,"character":17}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    },
+    {
+      "range": {"start":{"line":36,"character":24},"end":{"line":36,"character":35}},
+      "severity": 4,
+      "code": 377103,
+      "source": "ts",
+      "message": "`Effect.succeed` expresses this constant value more directly than `Effect.sync`. effect(syncToSucceed)"
+    },
+    {
+      "range": {"start":{"line":50,"character":2},"end":{"line":50,"character":12}},
+      "severity": 4,
+      "code": 377095,
+      "source": "ts",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+    }
+  ]
+}
+#### quickfix 377095 {"start":{"line":6,"character":2},"end":{"line":6,"character":17}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":2},"end":{"line":6,"character":17}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":6,"character":9},"end":{"line":6,"character":17}},
+            "newText": "orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":6,"character":24},"end":{"line":6,"character":42}},
+            "newText": "42"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377095 {"start":{"line":11,"character":2},"end":{"line":11,"character":17}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":2},"end":{"line":11,"character":17}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":11,"character":9},"end":{"line":11,"character":17}},
+            "newText": "orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":12,"character":11},"end":{"line":12,"character":29}},
+            "newText": "42"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377095 {"start":{"line":19,"character":2},"end":{"line":19,"character":17}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":19,"character":2},"end":{"line":19,"character":17}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":19,"character":9},"end":{"line":19,"character":17}},
+            "newText": "orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":19,"character":24},"end":{"line":19,"character":50}},
+            "newText": "\"fallback\""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377095 {"start":{"line":24,"character":2},"end":{"line":24,"character":17}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":24,"character":2},"end":{"line":24,"character":17}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catchAll` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":24,"character":9},"end":{"line":24,"character":17}},
+            "newText": "orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":25,"character":11},"end":{"line":25,"character":29}},
+            "newText": "42"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377103 {"start":{"line":36,"character":24},"end":{"line":36,"character":35}}
+[
+  {
+    "title": "Replace with Effect.succeed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":36,"character":24},"end":{"line":36,"character":35}},
+        "severity": 4,
+        "code": 377103,
+        "source": "ts",
+        "message": "`Effect.succeed` expresses this constant value more directly than `Effect.sync`. effect(syncToSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":36,"character":31},"end":{"line":36,"character":35}},
+            "newText": "succeed"
+          },
+          {
+            "range": {"start":{"line":36,"character":36},"end":{"line":36,"character":52}},
+            "newText": "\"fallback\""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377095 {"start":{"line":50,"character":2},"end":{"line":50,"character":12}}
+[
+  {
+    "title": "Replace with Effect.orElseSucceed",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":50,"character":2},"end":{"line":50,"character":12}},
+        "severity": 4,
+        "code": 377095,
+        "source": "ts",
+        "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`. effect(catchToOrElseSucceed)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchToOrElseSucceed.ts": [
+          {
+            "range": {"start":{"line":50,"character":2},"end":{"line":50,"character":12}},
+            "newText": "Effect.orElseSucceed"
+          },
+          {
+            "range": {"start":{"line":50,"character":19},"end":{"line":50,"character":37}},
+            "newText": "42"
+          }
+        ]
+      }
+    }
+  }
+]

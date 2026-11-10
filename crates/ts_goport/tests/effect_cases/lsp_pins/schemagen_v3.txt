@@ -1,0 +1,1578 @@
+#### file .src/schemaSync.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":27,"character":17},"end":{"line":27,"character":18}},
+      "severity": 1,
+      "code": 2411,
+      "source": "ts",
+      "message": "Property 'a' of type 'string' is not assignable to 'string' index type 'number'."
+    },
+    {
+      "range": {"start":{"line":28,"character":43},"end":{"line":28,"character":64}},
+      "severity": 1,
+      "code": 2413,
+      "source": "ts",
+      "message": "'number' index type 'string' is not assignable to 'string' index type 'number'."
+    },
+    {
+      "range": {"start":{"line":39,"character":6},"end":{"line":39,"character":20}},
+      "severity": 1,
+      "code": 2314,
+      "source": "ts",
+      "message": "Generic type 'Record' requires 2 type argument(s)."
+    },
+    {
+      "range": {"start":{"line":43,"character":24},"end":{"line":43,"character":30}},
+      "severity": 1,
+      "code": 2344,
+      "source": "ts",
+      "message": "Type 'string' does not satisfy the constraint 'keyof Primitives'."
+    },
+    {
+      "range": {"start":{"line":51,"character":19},"end":{"line":51,"character":20}},
+      "severity": 1,
+      "code": 7008,
+      "source": "ts",
+      "message": "Member 'a' implicitly has an 'any' type."
+    },
+    {
+      "range": {"start":{"line":0,"character":42},"end":{"line":0,"character":48}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'Schema' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":15,"character":5},"end":{"line":15,"character":13}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Literals' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":16,"character":5},"end":{"line":16,"character":16}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'LiteralNull' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":17,"character":5},"end":{"line":17,"character":10}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Mixed' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":18,"character":5},"end":{"line":18,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Both' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":19,"character":5},"end":{"line":19,"character":11}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Single' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":20,"character":5},"end":{"line":20,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Keys' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":21,"character":5},"end":{"line":21,"character":17}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'ReadonlyList' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":22,"character":5},"end":{"line":22,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'List' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":23,"character":5},"end":{"line":23,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Pair' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":24,"character":5},"end":{"line":24,"character":10}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Empty' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":25,"character":5},"end":{"line":25,"character":10}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Paren' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":26,"character":5},"end":{"line":26,"character":12}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Members' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":27,"character":5},"end":{"line":27,"character":12}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Records' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":28,"character":10},"end":{"line":28,"character":17}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Indexed' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":29,"character":10},"end":{"line":29,"character":18}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Optional' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":47,"character":5},"end":{"line":47,"character":7}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Fn' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":48,"character":5},"end":{"line":48,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Cond' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":49,"character":10},"end":{"line":49,"character":16}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Method' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":50,"character":10},"end":{"line":50,"character":18}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Computed' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":51,"character":10},"end":{"line":51,"character":16}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'NoType' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":52,"character":10},"end":{"line":52,"character":17}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Extends' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":53,"character":5},"end":{"line":53,"character":12}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Generic' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":54,"character":10},"end":{"line":54,"character":19}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Recursive' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":55,"character":5},"end":{"line":55,"character":9}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Tree' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":56,"character":5},"end":{"line":56,"character":10}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Union' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":57,"character":5},"end":{"line":57,"character":10}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Tuple' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":58,"character":5},"end":{"line":58,"character":13}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'Template' is declared but never used."
+    }
+  ]
+}
+#### refactor 2:17
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":2,"character":0},"end":{"line":2,"character":0}},
+            "newText": "export const Primitives = Schema.Struct({\n    a: Schema.Any,\n    b: Schema.Never,\n    c: Schema.Unknown,\n    d: Schema.Void,\n    e: Schema.Null,\n    f: Schema.Undefined,\n    g: Schema.String,\n    h: Schema.Number,\n    i: Schema.Boolean,\n    j: Schema.BigInt\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":2,"character":0},"end":{"line":2,"character":0}},
+            "newText": "export class Primitives extends Schema.Class<Primitives>(\"Primitives\")({\n    a: Schema.Any,\n    b: Schema.Never,\n    c: Schema.Unknown,\n    d: Schema.Void,\n    e: Schema.Null,\n    f: Schema.Undefined,\n    g: Schema.String,\n    h: Schema.Number,\n    i: Schema.Boolean,\n    j: Schema.BigInt\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":2,"character":0},"end":{"line":2,"character":0}},
+            "newText": "export class Primitives extends Schema.Class<Primitives>(\"Primitives\")({\n    a: Schema.Any,\n    b: Schema.Never,\n    c: Schema.Unknown,\n    d: Schema.Void,\n    e: Schema.Null,\n    f: Schema.Undefined,\n    g: Schema.String,\n    h: Schema.Number,\n    i: Schema.Boolean,\n    j: Schema.BigInt\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 15:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":15,"character":0},"end":{"line":15,"character":0}},
+            "newText": "export const Literals = Schema.Literal(\"a\", \"b\", 1, true, false);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":15,"character":0},"end":{"line":15,"character":0}},
+            "newText": "export const Literals = Schema.Literal(\"a\", \"b\", 1, true, false);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":15,"character":0},"end":{"line":15,"character":0}},
+            "newText": "const Literals = Schema.Literal(\"a\", \"b\", 1, false, true);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 16:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":16,"character":0},"end":{"line":16,"character":0}},
+            "newText": "export const LiteralNull = Schema.Null;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":16,"character":0},"end":{"line":16,"character":0}},
+            "newText": "export const LiteralNull = Schema.Null;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":16,"character":0},"end":{"line":16,"character":0}},
+            "newText": "export const LiteralNull = Schema.Null;\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 17:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "export const Mixed = Schema.Union(Schema.String, Schema.Number, Schema.Literal(\"x\"));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "export const Mixed = Schema.Union(Schema.String, Schema.Number, Schema.Literal(\"x\"));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "const Mixed = Schema.Union(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 18:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":18,"character":0}},
+            "newText": "export const Both = Schema.Struct({\n    a: Schema.String\n}).pipe(Schema.extend(Schema.Struct({\n    b: Schema.Number\n})), Schema.extend(Schema.Struct({\n    c: Schema.Boolean\n})));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":18,"character":0}},
+            "newText": "export const Both = Schema.Struct({\n    a: Schema.String\n}).pipe(Schema.extend(Schema.Struct({\n    b: Schema.Number\n})), Schema.extend(Schema.Struct({\n    c: Schema.Boolean\n})));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":18,"character":0}},
+            "newText": "const Both = Schema.Struct({\n    a: Schema.String\n}).pipe(Schema.extend(Schema.Struct({\n    b: Schema.Number\n})), Schema.extend(Schema.Struct({\n    c: Schema.Boolean\n})));\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 19:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":19,"character":0},"end":{"line":19,"character":0}},
+            "newText": "export const Single = Schema.Struct({\n    a: Schema.String\n}).pipe(Schema.extend(Schema.Struct({})));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":19,"character":0},"end":{"line":19,"character":0}},
+            "newText": "export const Single = Schema.Struct({\n    a: Schema.String\n}).pipe(Schema.extend(Schema.Struct({})));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":19,"character":0},"end":{"line":19,"character":0}},
+            "newText": "class Single extends Schema.Class<Single>(\"Single\")({\n    a: Schema.String\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 20:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":20,"character":0}},
+            "newText": "export const Keys = Schema.keyof(Primitives);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":20,"character":0}},
+            "newText": "export const Keys = Schema.keyof(Primitives);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":20,"character":0}},
+            "newText": "const Keys = Schema.Literal(\"a\", \"b\", \"c\", \"d\", \"e\", \"f\", \"g\", \"h\", \"i\", \"j\");\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 21:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":0},"end":{"line":21,"character":0}},
+            "newText": "export const ReadonlyList = Schema.Array(Schema.String);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":0},"end":{"line":21,"character":0}},
+            "newText": "export const ReadonlyList = Schema.Array(Schema.String);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":0},"end":{"line":21,"character":0}},
+            "newText": "const ReadonlyList = Schema.Array(Schema.String);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 22:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":22,"character":0},"end":{"line":22,"character":0}},
+            "newText": "export const List = Schema.Array(Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":22,"character":0},"end":{"line":22,"character":0}},
+            "newText": "export const List = Schema.Array(Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":22,"character":0},"end":{"line":22,"character":0}},
+            "newText": "const List = Schema.mutable(Schema.Array(Schema.Number));\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 23:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":23,"character":0},"end":{"line":23,"character":0}},
+            "newText": "export const Pair = Schema.Tuple(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":23,"character":0},"end":{"line":23,"character":0}},
+            "newText": "export const Pair = Schema.Tuple(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":23,"character":0},"end":{"line":23,"character":0}},
+            "newText": "const Pair = Schema.Tuple(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 24:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":24,"character":0},"end":{"line":24,"character":0}},
+            "newText": "export const Empty = Schema.Tuple();\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":24,"character":0},"end":{"line":24,"character":0}},
+            "newText": "export const Empty = Schema.Tuple();\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":24,"character":0},"end":{"line":24,"character":0}},
+            "newText": "const Empty = Schema.Tuple();\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 25:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":25,"character":0},"end":{"line":25,"character":0}},
+            "newText": "export const Paren = Schema.Union(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":25,"character":0},"end":{"line":25,"character":0}},
+            "newText": "export const Paren = Schema.Union(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":25,"character":0},"end":{"line":25,"character":0}},
+            "newText": "const Paren = Schema.Union(Schema.String, Schema.Number);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 26:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":26,"character":0},"end":{"line":26,"character":0}},
+            "newText": "undefined /* only literal properties are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":26,"character":0},"end":{"line":26,"character":0}},
+            "newText": "undefined /* only literal properties are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":26,"character":0},"end":{"line":26,"character":0}},
+            "newText": "class Members extends Schema.Class<Members>(\"Members\")({\n    a: Schema.optional(Schema.Union(Schema.Undefined, Schema.String)),\n    \"\\\"b-c\\\"\": Schema.Number,\n    \"1\": Schema.Boolean\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 27:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":27,"character":0},"end":{"line":27,"character":0}},
+            "newText": "export const Records = Schema.Struct({\n    a: Schema.String\n}, { key: Schema.String, value: Schema.Number });\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":27,"character":0},"end":{"line":27,"character":0}},
+            "newText": "const Records = Schema.Struct({\n    a: Schema.String\n}, { key: Schema.String, value: Schema.Number });\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 28:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":28,"character":0},"end":{"line":28,"character":0}},
+            "newText": "export const Indexed = Schema.Struct({}, { key: Schema.String, value: Schema.Number }, { key: Schema.Number, value: Schema.String });\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":28,"character":0},"end":{"line":28,"character":0}},
+            "newText": "export const Indexed = Schema.Struct({}, { key: Schema.String, value: Schema.Number }, { key: Schema.Number, value: Schema.String });\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 29:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "export const Optional = Schema.Struct({\n    a: Schema.optional(Schema.String),\n    b: Schema.optional(Schema.Option(Schema.Number))\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "export class Optional extends Schema.Class<Optional>(\"Optional\")({\n    a: Schema.optional(Schema.String),\n    b: Schema.optional(Schema.Option(Schema.Number))\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class Optional extends Schema.Class<Optional>(\"Optional\")({\n    a: Schema.optional(Schema.Union(Schema.Undefined, Schema.String)),\n    b: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({\n        _tag: Schema.Literal(\"None\"),\n        _op: Schema.Literal(\"None\"),\n        \"[TypeId]\": Schema.Struct({\n            _A: Covariant\n        }),\n        \"[Unify.typeSymbol]\": Schema.optional(Schema.Unknown),\n        \"[Unify.unifySymbol]\": Schema.optional(Schema.Union(Schema.Undefined, OptionUnify)),\n        \"[Unify.ignoreSymbol]\": Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({\n            Effect: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true))),\n            Tag: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true))),\n            Either: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true)))\n        }))),\n        \"[Symbol.iterator]\": Schema.Struct({}),\n        pipe: Schema.Struct({}),\n        \"[SinkTypeId]\": VarianceStruct,\n        \"[STMTypeId]\": Schema.Struct({\n            _A: Covariant,\n            _E: Covariant_4,\n            _R: Covariant_3\n        }),\n        \"[StreamTypeId]\": VarianceStruct_2,\n        \"[ChannelTypeId]\": VarianceStruct_3,\n        \"[EffectTypeId]\": VarianceStruct_4,\n        toString: Schema.Struct({}),\n        toJSON: Schema.Struct({}),\n        \"[NodeInspectSymbol]\": Schema.Struct({})\n    }), Schema.Struct({\n        _tag: Schema.Literal(\"Some\"),\n        _op: Schema.Literal(\"Some\"),\n        value: Schema.Number,\n        \"[TypeId]\": Schema.Struct({\n            _A: Covariant\n        }),\n        \"[Unify.typeSymbol]\": Schema.optional(Schema.Unknown),\n        \"[Unify.unifySymbol]\": Schema.optional(Schema.Union(Schema.Undefined, OptionUnify_2)),\n        \"[Unify.ignoreSymbol]\": Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({\n            Effect: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true))),\n            Tag: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true))),\n            Either: Schema.optional(Schema.Union(Schema.Undefined, Schema.Literal(true)))\n        }))),\n        \"[Symbol.iterator]\": Schema.Struct({}),\n        pipe: Schema.Struct({}),\n        \"[SinkTypeId]\": VarianceStruct,\n        \"[STMTypeId]\": VarianceStruct_2,\n        \"[StreamTypeId]\": VarianceStruct_2,\n        \"[ChannelTypeId]\": VarianceStruct_3,\n        \"[EffectTypeId]\": VarianceStruct_4,\n        toString: Schema.Struct({}),\n        toJSON: Schema.Struct({}),\n        \"[NodeInspectSymbol]\": Schema.Struct({})\n    })))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class OptionUnify_2 extends Schema.Class<OptionUnify_2>(\"OptionUnify_2\")({\n    Option: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class VarianceStruct_4 extends Schema.Class<VarianceStruct_4>(\"VarianceStruct_4\")({\n    _V: Schema.String,\n    _A: Covariant,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class VarianceStruct_3 extends Schema.Class<VarianceStruct_3>(\"VarianceStruct_3\")({\n    _Env: Covariant_3,\n    _InErr: Contravariant,\n    _InElem: Contravariant,\n    _InDone: Contravariant,\n    _OutErr: Covariant_4,\n    _OutElem: Covariant_3,\n    _OutDone: Covariant\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class VarianceStruct_2 extends Schema.Class<VarianceStruct_2>(\"VarianceStruct_2\")({\n    _A: Covariant,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class VarianceStruct extends Schema.Class<VarianceStruct>(\"VarianceStruct\")({\n    _A: Covariant,\n    _In: Contravariant,\n    _L: Covariant_3,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class Covariant_4 extends Schema.Class<Covariant_4>(\"Covariant_4\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class Covariant_3 extends Schema.Class<Covariant_3>(\"Covariant_3\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class Contravariant extends Schema.Class<Contravariant>(\"Contravariant\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class OptionUnify extends Schema.Class<OptionUnify>(\"OptionUnify\")({\n    Option: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":29,"character":0},"end":{"line":29,"character":0}},
+            "newText": "class Covariant extends Schema.Class<Covariant>(\"Covariant\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 30:12
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "export const Refs = Schema.Struct({\n    d: Schema.Date,\n    o: Schema.Option(Schema.String),\n    e: Schema.Either({ right: Schema.String, left: Schema.Number }),\n    c: Schema.Chunk(Schema.Number),\n    dur: Schema.Duration,\n    arr: Schema.Array(Schema.Number),\n    ro: Schema.Array(Schema.String),\n    r: Schema.Record({ key: Schema.String, value: Schema.Number }),\n    r1: undefined /* Not supported conversion: Record<string> */,\n    p: Primitives,\n    q: Primitives.pipe(Schema.pick(\"a\", \"g\")),\n    w: Primitives.pipe(Schema.omit(\"b\")),\n    bad: undefined /* Not supported conversion: Pick<Primitives, string> */,\n    m: undefined /* Not supported conversion: Map<string, number> */,\n    nested: Schema.Struct({\n        x: Schema.Struct({\n            y: Schema.Array(Schema.String)\n        })\n    })\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "export class Refs extends Schema.Class<Refs>(\"Refs\")({\n    d: Schema.Date,\n    o: Schema.Option(Schema.String),\n    e: Schema.Either({ right: Schema.String, left: Schema.Number }),\n    c: Schema.Chunk(Schema.Number),\n    dur: Schema.Duration,\n    arr: Schema.Array(Schema.Number),\n    ro: Schema.Array(Schema.String),\n    r: Schema.Record({ key: Schema.String, value: Schema.Number }),\n    r1: undefined /* Not supported conversion: Record<string> */,\n    p: Primitives,\n    q: Primitives.pipe(Schema.pick(\"a\", \"g\")),\n    w: Primitives.pipe(Schema.omit(\"b\")),\n    bad: undefined /* Not supported conversion: Pick<Primitives, string> */,\n    m: undefined /* Not supported conversion: Map<string, number> */,\n    nested: Schema.Struct({\n        x: Schema.Struct({\n            y: Schema.Array(Schema.String)\n        })\n    })\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "export const Refs = undefined /* type with flags 16384 is not supported */;\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class EitherUnify_2 extends Schema.Class<EitherUnify_2>(\"EitherUnify_2\")({\n    Either: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_12 extends Schema.Class<VarianceStruct_12>(\"VarianceStruct_12\")({\n    _V: Schema.String,\n    _A: Covariant,\n    _E: Covariant_21,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_11 extends Schema.Class<VarianceStruct_11>(\"VarianceStruct_11\")({\n    _Env: Covariant_3,\n    _InErr: Contravariant,\n    _InElem: Contravariant,\n    _InDone: Contravariant,\n    _OutErr: Covariant_21,\n    _OutElem: Covariant_3,\n    _OutDone: Covariant\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_10 extends Schema.Class<VarianceStruct_10>(\"VarianceStruct_10\")({\n    _A: Covariant,\n    _E: Covariant_21,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_9 extends Schema.Class<VarianceStruct_9>(\"VarianceStruct_9\")({\n    _A: Covariant,\n    _In: Contravariant,\n    _L: Covariant_3,\n    _E: Covariant_21,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class EitherUnify extends Schema.Class<EitherUnify>(\"EitherUnify\")({\n    Either: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class Covariant_21 extends Schema.Class<Covariant_21>(\"Covariant_21\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class OptionUnify_2 extends Schema.Class<OptionUnify_2>(\"OptionUnify_2\")({\n    Option: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_4 extends Schema.Class<VarianceStruct_4>(\"VarianceStruct_4\")({\n    _V: Schema.String,\n    _A: Covariant,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_3 extends Schema.Class<VarianceStruct_3>(\"VarianceStruct_3\")({\n    _Env: Covariant_3,\n    _InErr: Contravariant,\n    _InElem: Contravariant,\n    _InDone: Contravariant,\n    _OutErr: Covariant_4,\n    _OutElem: Covariant_3,\n    _OutDone: Covariant\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct_2 extends Schema.Class<VarianceStruct_2>(\"VarianceStruct_2\")({\n    _A: Covariant,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class VarianceStruct extends Schema.Class<VarianceStruct>(\"VarianceStruct\")({\n    _A: Covariant,\n    _In: Contravariant,\n    _L: Covariant_3,\n    _E: Covariant_4,\n    _R: Covariant_3\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class Covariant_4 extends Schema.Class<Covariant_4>(\"Covariant_4\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class Covariant_3 extends Schema.Class<Covariant_3>(\"Covariant_3\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class Contravariant extends Schema.Class<Contravariant>(\"Contravariant\")({}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class OptionUnify extends Schema.Class<OptionUnify>(\"OptionUnify\")({\n    Option: Schema.optional(Schema.Union(Schema.Undefined, Schema.Struct({})))\n}) {}\n\n"
+          },
+          {
+            "range": {"start":{"line":30,"character":0},"end":{"line":30,"character":0}},
+            "newText": "class Covariant extends Schema.Class<Covariant>(\"Covariant\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 47:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":47,"character":0},"end":{"line":47,"character":0}},
+            "newText": "export const Fn = undefined /* Not supported conversion: (a: string) => number */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":47,"character":0},"end":{"line":47,"character":0}},
+            "newText": "export const Fn = undefined /* Not supported conversion: (a: string) => number */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":47,"character":0},"end":{"line":47,"character":0}},
+            "newText": "class Fn extends Schema.Class<Fn>(\"Fn\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 48:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":48,"character":0},"end":{"line":48,"character":0}},
+            "newText": "export const Cond = undefined /* Not supported conversion: string extends number ? 1 : 2 */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":48,"character":0},"end":{"line":48,"character":0}},
+            "newText": "export const Cond = undefined /* Not supported conversion: string extends number ? 1 : 2 */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":48,"character":0},"end":{"line":48,"character":0}},
+            "newText": "export const Cond = Schema.Literal(2);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 49:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":49,"character":0},"end":{"line":49,"character":0}},
+            "newText": "export const Method = Schema.Struct({\n    n: undefined /* Not supported conversion: () => string */\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":49,"character":0},"end":{"line":49,"character":0}},
+            "newText": "export class Method extends Schema.Class<Method>(\"Method\")({\n    n: undefined /* Not supported conversion: () => string */\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":49,"character":0},"end":{"line":49,"character":0}},
+            "newText": "class Method extends Schema.Class<Method>(\"Method\")({\n    m: Schema.Struct({}),\n    n: Schema.Struct({})\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 50:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":50,"character":0},"end":{"line":50,"character":0}},
+            "newText": "undefined /* only literal properties are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":50,"character":0},"end":{"line":50,"character":0}},
+            "newText": "undefined /* only literal properties are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":50,"character":0},"end":{"line":50,"character":0}},
+            "newText": "class Computed extends Schema.Class<Computed>(\"Computed\")({\n    \"[Symbol.iterator]\": Schema.String\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 51:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":51,"character":0},"end":{"line":51,"character":0}},
+            "newText": "undefined /* only explicit types are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":51,"character":0},"end":{"line":51,"character":0}},
+            "newText": "undefined /* only explicit types are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":51,"character":0},"end":{"line":51,"character":0}},
+            "newText": "class NoType extends Schema.Class<NoType>(\"NoType\")({\n    a: Schema.Any\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 52:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":52,"character":0},"end":{"line":52,"character":0}},
+            "newText": "export const Extends = Schema.Struct({\n    k: Schema.String\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":52,"character":0},"end":{"line":52,"character":0}},
+            "newText": "export class Extends extends Schema.Class<Extends>(\"Extends\")({\n    k: Schema.String\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":52,"character":0},"end":{"line":52,"character":0}},
+            "newText": "class Extends extends Schema.Class<Extends>(\"Extends\")({\n    k: Schema.String,\n    a: Schema.Any,\n    b: Schema.Never,\n    c: Schema.Unknown,\n    d: Schema.Void,\n    e: Schema.Null,\n    f: Schema.Undefined,\n    g: Schema.String,\n    h: Schema.Number,\n    i: Schema.Boolean,\n    j: Schema.BigInt\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 54:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":54,"character":0},"end":{"line":54,"character":0}},
+            "newText": "export const Recursive = Schema.Struct({\n    name: Schema.String,\n    children: Schema.Array(Recursive)\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":54,"character":0},"end":{"line":54,"character":0}},
+            "newText": "export class Recursive extends Schema.Class<Recursive>(\"Recursive\")({\n    name: Schema.String,\n    children: Schema.Array(Recursive)\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":54,"character":0},"end":{"line":54,"character":0}},
+            "newText": "export const Recursive = undefined /* maximum depth exceeded */;\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 55:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":55,"character":0},"end":{"line":55,"character":0}},
+            "newText": "export const Tree = Schema.Struct({\n    value: Schema.Number,\n    left: Schema.optional(Tree),\n    right: Schema.optional(Tree)\n});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":55,"character":0},"end":{"line":55,"character":0}},
+            "newText": "export class Tree extends Schema.Class<Tree>(\"Tree\")({\n    value: Schema.Number,\n    left: Schema.optional(Tree),\n    right: Schema.optional(Tree)\n}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":55,"character":0},"end":{"line":55,"character":0}},
+            "newText": "export const Tree = undefined /* maximum depth exceeded */;\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 56:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":56,"character":0},"end":{"line":56,"character":0}},
+            "newText": "export const Union = Schema.Union(Schema.Struct({\n    kind: Schema.Literal(\"a\"),\n    a: Schema.String\n}), Schema.Struct({\n    kind: Schema.Literal(\"b\"),\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":56,"character":0},"end":{"line":56,"character":0}},
+            "newText": "export const Union = Schema.Union(Schema.Struct({\n    kind: Schema.Literal(\"a\"),\n    a: Schema.String\n}), Schema.Struct({\n    kind: Schema.Literal(\"b\"),\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":56,"character":0},"end":{"line":56,"character":0}},
+            "newText": "const Union = Schema.Union(Schema.Struct({\n    kind: Schema.Literal(\"a\"),\n    a: Schema.String\n}), Schema.Struct({\n    kind: Schema.Literal(\"b\"),\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 57:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":57,"character":0},"end":{"line":57,"character":0}},
+            "newText": "export const Tuple = Schema.Tuple(Schema.String, undefined /* Not supported conversion: number? */, undefined /* Not supported conversion: ...boolean[] */);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":57,"character":0},"end":{"line":57,"character":0}},
+            "newText": "export const Tuple = Schema.Tuple(Schema.String, undefined /* Not supported conversion: number? */, undefined /* Not supported conversion: ...boolean[] */);\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":57,"character":0},"end":{"line":57,"character":0}},
+            "newText": "const Tuple = Schema.Tuple(Schema.String, Schema.Union(Schema.Undefined, Schema.Number), Schema.Boolean);\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 58:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":58,"character":0},"end":{"line":58,"character":0}},
+            "newText": "export const Template = undefined /* Not supported conversion: `a${string}` */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":58,"character":0},"end":{"line":58,"character":0}},
+            "newText": "export const Template = undefined /* Not supported conversion: `a${string}` */;\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":58,"character":0},"end":{"line":58,"character":0}},
+            "newText": "export const Template = undefined /* type with flags 4194304 is not supported */;\n\n"
+          }
+        ]
+      }
+    }
+  }
+]

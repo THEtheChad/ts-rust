@@ -1,0 +1,88 @@
+#### file .src/effectFnOpportunity_inferred.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":9,"character":13},"end":{"line":9,"character":33}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"shouldHaveSuggestion\")(function*(n) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":16,"character":16},"end":{"line":16,"character":44}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"shouldHaveSuggestionFunction\")(function*(n) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":2,"character":6},"end":{"line":2,"character":30}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_notExportedNoSuggestion' is declared but its value is never read."
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":9,"character":13},"end":{"line":9,"character":33}}
+[
+  {
+    "title": "Convert to Effect.fn(\"shouldHaveSuggestion\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":9,"character":13},"end":{"line":9,"character":33}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"shouldHaveSuggestion\")(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferred.ts": [
+          {
+            "range": {"start":{"line":9,"character":36},"end":{"line":10,"character":32}},
+            "newText": "Effect.fn(\"shouldHaveSuggestion\")(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":13,"character":3},"end":{"line":14,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":16,"character":16},"end":{"line":16,"character":44}}
+[
+  {
+    "title": "Convert to Effect.fn(\"shouldHaveSuggestionFunction\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":16,"character":16},"end":{"line":16,"character":44}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"shouldHaveSuggestionFunction\")(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferred.ts": [
+          {
+            "range": {"start":{"line":16,"character":0},"end":{"line":17,"character":32}},
+            "newText": "export const shouldHaveSuggestionFunction = Effect.fn(\"shouldHaveSuggestionFunction\")(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":20,"character":3},"end":{"line":21,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  }
+]

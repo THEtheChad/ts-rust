@@ -1,0 +1,161 @@
+#### file .src/schemaSync.ts
+#### diagnostic
+{"kind":"full","items":[]}
+#### refactor 2:0 2:7 2:13 2:21 2:29 2:36 2:44 2:56 3:2 3:13 4:2 5:4 5:14 5:21 6:4 7:4
+[
+  {
+    "title": "Implement Service accessors",
+    "kind": "refactor.rewrite.effect.writeTagClassAccessors",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":9,"character":4},"end":{"line":9,"character":4}},
+            "newText": "\n  static override generic: <A>(value: A) => Effect.Effect<A, never, Service> = (...args) => Effect.andThen(Service, (_) => _.generic(...args))\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 6:14 6:17 6:24 6:30 6:37 6:45
+[
+  {
+    "title": "Toggle return type annotation",
+    "kind": "refactor.rewrite.effect.toggleReturnTypeAnnotation",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":6,"character":26},"end":{"line":6,"character":26}},
+            "newText": ": Effect.Effect<A, never, never>"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Implement Service accessors",
+    "kind": "refactor.rewrite.effect.writeTagClassAccessors",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":9,"character":4},"end":{"line":9,"character":4}},
+            "newText": "\n  static override generic: <A>(value: A) => Effect.Effect<A, never, Service> = (...args) => Effect.andThen(Service, (_) => _.generic(...args))\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 7:12 7:19 7:30 7:37 7:45 7:51
+[
+  {
+    "title": "Toggle return type annotation",
+    "kind": "refactor.rewrite.effect.toggleReturnTypeAnnotation",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":7,"character":26},"end":{"line":7,"character":26}},
+            "newText": ": Effect.Effect<number, never, never>"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Implement Service accessors",
+    "kind": "refactor.rewrite.effect.writeTagClassAccessors",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":9,"character":4},"end":{"line":9,"character":4}},
+            "newText": "\n  static override generic: <A>(value: A) => Effect.Effect<A, never, Service> = (...args) => Effect.andThen(Service, (_) => _.generic(...args))\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 13:14 13:17 13:24 13:30 13:37 13:45
+[
+  {
+    "title": "Toggle return type annotation",
+    "kind": "refactor.rewrite.effect.toggleReturnTypeAnnotation",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":13,"character":26},"end":{"line":13,"character":26}},
+            "newText": ": Effect.Effect<A, never, never>"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 17:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "export const Overloaded = Schema.Struct({});\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "export class Overloaded extends Schema.Class<Overloaded>(\"Overloaded\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":17,"character":0},"end":{"line":17,"character":0}},
+            "newText": "class Overloaded extends Schema.Class<Overloaded>(\"Overloaded\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 22:0 22:7 22:13 22:20 22:28 22:35 22:40 22:49 23:2 23:11 23:23 24:2 24:11 24:21 24:24 24:27 24:30 24:33 24:36 24:42 24:49 24:57 24:60 25:2 25:11 25:18
+[
+  {
+    "title": "Implement Service accessors",
+    "kind": "refactor.rewrite.effect.writeTagClassAccessors",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":26,"character":6},"end":{"line":26,"character":6}},
+            "newText": "\n  static override overloaded: ((value: string) => Effect.Effect<string, never, Tagged>) & ((value: number) => Effect.Effect<number, never, Tagged>) = (...args: any[]) => Effect.andThen(Tagged, (_: any) => _.overloaded(...args)) as any\n  static override generic: <A, B>(a: A, b: B) => Effect.Effect<[A, B], never, Tagged> = (...args) => Effect.andThen(Tagged, (_) => _.generic(...args))\n"
+          }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,253 @@
+#### file .src/catchAllToMapError.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":17,"character":2},"end":{"line":17,"character":17}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":22,"character":2},"end":{"line":22,"character":17}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":30,"character":2},"end":{"line":30,"character":17}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":35,"character":2},"end":{"line":35,"character":17}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":64,"character":2},"end":{"line":64,"character":17}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":70,"character":2},"end":{"line":70,"character":12}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+    }
+  ]
+}
+#### quickfix 377010 {"start":{"line":17,"character":2},"end":{"line":17,"character":17}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":17,"character":2},"end":{"line":17,"character":17}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":17,"character":9},"end":{"line":17,"character":17}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":17,"character":28},"end":{"line":17,"character":41}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":17,"character":65},"end":{"line":17,"character":66}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":22,"character":2},"end":{"line":22,"character":17}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":22,"character":2},"end":{"line":22,"character":17}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":22,"character":9},"end":{"line":22,"character":17}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":23,"character":10},"end":{"line":23,"character":23}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":23,"character":47},"end":{"line":23,"character":48}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":30,"character":2},"end":{"line":30,"character":17}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":30,"character":2},"end":{"line":30,"character":17}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":30,"character":9},"end":{"line":30,"character":17}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":30,"character":28},"end":{"line":30,"character":41}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":30,"character":65},"end":{"line":30,"character":66}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":35,"character":2},"end":{"line":35,"character":17}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":35,"character":2},"end":{"line":35,"character":17}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":35,"character":9},"end":{"line":35,"character":17}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":36,"character":10},"end":{"line":36,"character":23}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":36,"character":47},"end":{"line":36,"character":48}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":64,"character":2},"end":{"line":64,"character":17}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":64,"character":2},"end":{"line":64,"character":17}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catchAll` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":64,"character":9},"end":{"line":64,"character":17}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":64,"character":24},"end":{"line":64,"character":37}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":64,"character":64},"end":{"line":64,"character":65}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":70,"character":2},"end":{"line":70,"character":12}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":70,"character":2},"end":{"line":70,"character":12}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError.ts": [
+          {
+            "range": {"start":{"line":70,"character":2},"end":{"line":70,"character":12}},
+            "newText": "Effect.mapError"
+          },
+          {
+            "range": {"start":{"line":70,"character":23},"end":{"line":70,"character":36}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":70,"character":60},"end":{"line":70,"character":61}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]

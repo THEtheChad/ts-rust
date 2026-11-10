@@ -1,0 +1,95 @@
+#### file .src/effectFnOpportunity_inferredOf.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":8,"character":2},"end":{"line":8,"character":9}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"UserService.getUser\")(function*(id) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":9,"character":4},"end":{"line":11,"character":6}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":0,"character":17},"end":{"line":0,"character":22}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'Layer' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":7,"character":6},"end":{"line":7,"character":20}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_shouldTrigger' is declared but its value is never read."
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":8,"character":2},"end":{"line":8,"character":9}}
+[
+  {
+    "title": "Convert to Effect.fn(\"UserService.getUser\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":8,"character":2},"end":{"line":8,"character":9}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(\"UserService.getUser\")(function*(id) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredOf.ts": [
+          {
+            "range": {"start":{"line":8,"character":11},"end":{"line":9,"character":27}},
+            "newText": "Effect.fn(\"UserService.getUser\")(function*(id: string) "
+          },
+          {
+            "range": {"start":{"line":11,"character":5},"end":{"line":11,"character":6}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":9,"character":4},"end":{"line":11,"character":6}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":9,"character":4},"end":{"line":11,"character":6}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredOf.ts": [
+          {
+            "range": {"start":{"line":8,"character":26},"end":{"line":10,"character":12}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":10,"character":48},"end":{"line":11,"character":6}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]

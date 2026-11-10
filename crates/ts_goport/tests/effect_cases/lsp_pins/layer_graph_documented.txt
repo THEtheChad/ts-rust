@@ -1,0 +1,51 @@
+#### file .src/layerGraphDocumented.ts
+#### diagnostic
+{"kind":"full","items":[]}
+#### hover 8:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) DbConnection.Default: Layer.Layer<DbConnection, never, never>\n```\n```\n/**\n * - DbConnection provided at ln 9 col 9 by `DbConnection.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjk0OgjAQha8y6QGUxBUslQO4cAcGShmEOE5JWyTGeHdBkNSfVafzvnxv7kLpEkUkKtK9qqVxcNimDGC74mRkW0MASSryuNhpZlSu0byKsZIdubQLgo0qzPo14PS1F0k0LTJiCEFpgjCbwrWX5qk4jkV-VdYP71AHS_aRtkZfmxItJPt5Wijw4iwYFP7Bng25XMTuRuhbrTP6jBFrxolZ4Dc6ngdVQxQ5I9m20iC7P8iXafbMyI9APJ5s_oKh) - [Show outline](https://mermaid.live/edit#pako:eNoBNgDJ_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRGJDb25uZWN0aW9uLkRlZmF1bHRcIl0iffSBEm8)\n\n"
+  },
+  "range": {"start":{"line":8,"character":9},"end":{"line":8,"character":16}}
+}
+#### hover 17:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) FileSystem.Default: Layer.Layer<FileSystem, never, never>\n```\n```\n/**\n * - FileSystem provided at ln 18 col 9 by `FileSystem.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNptjssOgjAQRX9l0g9QjBtlaYxrE92BgQKDEIeWtEVCjP8uCNb6WHU69-TcubFUZsh8lpNs04IrA8dNKAB0k5wVrwvwIAhZvCsJD502WM22mPOGTNh43jJN1Pw54PjVFScaFxEJWKwglQTraEznThyH7DT0uE1R2799G9jsI62VvJYZagj202QpcOLI6xXvex0XisxqTUfoOrVR8oK-kAJHxsIvdDgO8pLIN4oLXXOFwvxBvkyTZ0J-BOz-ALO7gW8) - [Show outline](https://mermaid.live/edit#pako:eNoBNADL_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiRmlsZVN5c3RlbS5EZWZhdWx0XCJdIn3RKRG-)\n\n"
+  },
+  "range": {"start":{"line":17,"character":9},"end":{"line":17,"character":16}}
+}
+#### hover 26:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) Cache.Default: Layer.Layer<Cache, never, FileSystem>\n```\n```\n/**\n * - Cache provided at ln 27 col 9 by `Cache.Default`\n * \n * - FileSystem required at ln 27 col 9 by `Cache.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kMtuwjAQRX9l5A8oUbuommVbsUbAjqBgnAmJGOwwdkAI8e_khWUeYuXx3KtzpDkLZTIUscjJHFUh2cH8N9EAtl5vWFYFRLBIxOpPqgI__jGXNbmkjqIvteZRN2D_tTtJ1C9S0vD5DcoQ_KR9OgriVSKWrSKUpMfmbUTgs7uUcV-XjBYW02HyLQjiNGoQ45JwdrIOdwELdeax7kQYMq1js8VYG40v1BWbQ5m16skw3alvcafurvTe6nFPVl--VduTQF4SxY6ltpVk1O5F5YE0cIbKE0BcrqanpYg) - [Show outline](https://mermaid.live/edit#pako:eNoBLwDQ_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiQ2FjaGUuRGVmYXVsdFwiXSJ9diMPjQ)\n\n"
+  },
+  "range": {"start":{"line":26,"character":9},"end":{"line":26,"character":16}}
+}
+#### hover 35:9
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\n(property) UserRepository.Default: Layer.Layer<UserRepository, never, Cache | DbConnection>\n```\n```\n/**\n * - UserRepository provided at ln 36 col 9 by `UserRepository.Default`\n * \n * - Cache required at ln 36 col 9 by `UserRepository.Default`\n * - DbConnection required at ln 36 col 9 by `UserRepository.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNp9kEFqwzAQRa8y6ACNS6BQL5scoIR2FRdHlse1qTrjjuSGUHr32LEj5CRkpZH-479Bf8pwiSpVleW9qbV4eHvJCMB1xafotoYEtpnavTuUDbbsGs9yeFhjpTvrsy5JlqaQxWnA8eq-tbXjQ24Jlk9g2MJzPqaLKN5l6mNwxbZ835-9EUI2SwV_ukbQwXYzTYGCKM6TvmKlTY1RzQx47IF1sWIiNL5hijikMpj9wWKsdV74C1NiwhvbtcK_TTls9zpNM_k5Pm03_9H7-tB7pQ_wGR2-D6rG2tSLJtdqQfI3kIumqWdCrgrU_xENorgw) - [Show outline](https://mermaid.live/edit#pako:eNoBOADH_3siY29kZSI6ImZsb3djaGFydCBURFxuICAwW1wiVXNlclJlcG9zaXRvcnkuRGVmYXVsdFwiXSJ9I94TmA)\n\n"
+  },
+  "range": {"start":{"line":35,"character":9},"end":{"line":35,"character":16}}
+}
+#### hover 41:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst CacheLive: Layer.Layer<Cache, never, never>\n```\n```\n/**\n * - Cache provided at ln 42 col 25 by `Cache.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdkk9TgzAQxb_KDic9tCVJO-P0qI6nHhz1Vhya0q1lTEMNobXj-N3lnxAsE8ATC_t4u_m9fDlBtEFn7mxFdAp2XGl4ufUkQJys3xQ_7MCFpeesHkKBz-dY4358j1ueCO0lrsuCtZrkBRav8Z4LUXzwhYQphSASMLvxi_bE6K885zUbZI7yT-kzHQdVr9E9qOgYbjCG5WNZVSow2r6bWtQLG14oN5WtPgs0PWOtonecy0hioanEv9JsOdiGQsy14jI-cIVSt0j-OJU-paTVoDojyWEv-BnVuNzs6hL99QD202k_9sTKntjZkyb7Ox7s0Iad9MdOurGTbuzEjp3m2PO1_3G96awfYmpFTH2FH0moMsRPZWUgrtsDrrfhecG5MdqaLh2YLu2fLu1Ol3anS-3psjrdRXjEAckS1i9ZZk2W2fGygXhZf7ysGy_rxstaDQiMxqNPcPPaOEL2uQDVuDiZjLXLzL-d7x_q0izm) - [Show outline](https://mermaid.live/edit#pako:eNpdyTEKgDAMAMCvhOyViJurxQ_oZhxKTalQLWiLiPh3dXW9u9DGSbBGF-JhvdkS9JpXABoY2zlId-5JlkKLMzkkxvHL8s3GWC9_B6U4E1UChPcDjKsdQg)\n\n\nProvides cache with file system backing store"
+  },
+  "range": {"start":{"line":41,"character":13},"end":{"line":41,"character":22}}
+}
+#### hover 46:13
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```typescript\nconst AppLive: Layer.Layer<Cache | UserRepository, never, never>\n```\n```\n/**\n * - Cache provided at ln 48 col 21 by `Cache.Default`\n * - UserRepository provided at ln 47 col 23 by `UserRepository.Default`\n */\n```\n[Show full graph](https://mermaid.live/edit#pako:eNqdlV9vmzAUxb-KxVPz0BTjf1vetlZ76qSp256aKSXEadAoMEPaRdO--wJkxAbr2uQpDr46vpzzu-ZPkBQbGSyCbVa8JbtY1ejbx2WOULVfP6u43KEQPS6Dp7v1bZHnMqnTIp_fyW28z-rlPgxJslY37UJ2f6uXOMu6B6ssRyxESZEhzFfd9o22_7QMfjRH6Yet3o6_xwNRv2fslqp4TTeyQo9fTqu-Cmnbq_Aoobesqcl80wvXh0zqqlWtip9ykRe57Gr64v-lTXtom2bZolZxXpWxknltKRkonXROJVaB_i1xa_h9fJBqfursymb_bIL_kZ_9GLQfw_Zj0_7bONlJTcYowMeC75VUD7IsqrQu1AFKCPsnhN0JYXdCGE4oahP6lGby66Gq5cuUgaDvJw1EBCYSwYlEZiLnhiGzI3-zI7fZkdvsCDabWMZhbP1sgveew0BA68lKyV_7VDXWP5xWmvXn7Ul3kaY6Mt84HMyduCaRXDqJxB8O4oaDuOEgMBy0haN9wUlD-K4DAfuRQEESKEwCNUnwG0LqxwGFOaAwB5ZTvdOl7nSpO10Kp8vGo_9Zqmd5ZQQ-m5K4X-AMDJzBgTOv0TfqsDcYzA8MBoPBXBcEu_SCYP4IMTdCzI0QgxHiLUJm_5NuCtFxQ_zA4SA4HAaHm-CMU-EmMb4fFe7HDIeZ4SYz_khwfyS4GwnuRoLDSIgWiQ9leZ--ygkMYE8GBMiAgF0WrskUl06m8I9BuGMQ7hiEVQCj6_n1bxQ2a9Kto2at34bN485e4-vZlZ39McrOjwdqepk-QAM1bJSZasSuxga9EXtvbKRmPVTvpTXKrkYGatiuRgZqwq6GB2rCrqYfEvz9B4heXk4) - [Show outline](https://mermaid.live/edit#pako:eNpdi8sKwjAQAH9l2XslbW9eG_wAHyfjIcYtDcSsJFukiP9u7KWQ48wwH3T8INzjGPjtJpsEztpEAHU1qO8Dx0hOPMedptHOQQze_rkt-eADnZYs9KxiV-Jg3USV74u_ZEpHenH2wmmpR2gaMyvVE7TrsHFXscLvDxJwO0I)\n\n\nComplete application layer with all dependencies wired"
+  },
+  "range": {"start":{"line":46,"character":13},"end":{"line":46,"character":20}}
+}

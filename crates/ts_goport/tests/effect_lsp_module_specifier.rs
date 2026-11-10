@@ -19,12 +19,12 @@
 //! not opened, so its encoding is the file's).
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, Write};
+mod effect_lsp;
+
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::time::Duration;
+
+use effect_lsp::{Server, file_uri};
 
 /// The function the code actions are requested on (line 1, `load` at
 /// character 22).
@@ -59,111 +59,18 @@ impl Drop for Project {
     }
 }
 
-/// One LSP message body from `stdout`, or `None` at its end.
-fn read_message(stdout: &mut impl BufRead) -> Option<String> {
-    let mut length = 0;
-    loop {
-        let mut line = String::new();
-        if stdout.read_line(&mut line).ok()? == 0 {
-            return None;
-        }
-        let line = line.trim_end();
-        if line.is_empty() {
-            break;
-        }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            length = value.trim().parse().ok()?;
-        }
-    }
-    let mut body = vec![0; length];
-    stdout.read_exact(&mut body).ok()?;
-    String::from_utf8(body).ok()
-}
-
-/// The `id` of a server request (a message with a `method` and an `id`).
-fn server_request_id(body: &str) -> Option<&str> {
-    let head = body.split(r#""params""#).next()?;
-    if !head.contains(r#""method":"#) {
-        return None;
-    }
-    let start = head.find(r#""id":"#)? + 5;
-    let rest = &head[start..];
-    Some(&rest[..rest.find([',', '}'])?])
-}
-
-/// Whether `body` is the answer to the client request with id 2.
-fn is_answer_2(body: &str) -> bool {
-    let end = [r#""result""#, r#""error""#]
-        .iter()
-        .filter_map(|key| body.find(key))
-        .min()
-        .unwrap_or(body.len());
-    let head = &body[..end];
-    head.contains(r#""id":2"#) && !head.contains(r#""method":"#)
-}
-
 /// The answer of `textDocument/codeAction` on `load` in a project whose
 /// `main.ts` is `main_ts`.
 fn code_actions_on_load(main_ts: &[u8]) -> String {
     let project = Project::new(main_ts);
-    let root = format!("file://{}", project.0.display());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tsgo"))
-        .args(["--lsp", "--stdio"])
-        .current_dir(&project.0)
-        .env("TSC_RS_EFFECT", "1")
-        .env_remove("GOPORT_TRACE")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("run tsgo --lsp");
-    let mut stdin = child.stdin.take().expect("stdin");
-    let send = |stdin: &mut std::process::ChildStdin, body: &str| {
-        let _ = write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len());
-        let _ = stdin.flush();
-    };
-    send(
-        &mut stdin,
+    let main = file_uri(&project.0.join("main.ts"));
+    let mut server = Server::start(&project.0, "{}");
+    server.request(
+        "textDocument/codeAction",
         &format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"processId":null,"rootUri":"{root}","capabilities":{{}},"workspaceFolders":[{{"uri":"{root}","name":"p"}}]}}}}"#
+            r#"{{"textDocument":{{"uri":"{main}"}},"range":{{"start":{{"line":1,"character":22}},"end":{{"line":1,"character":26}}}},"context":{{"diagnostics":[]}}}}"#
         ),
-    );
-    send(
-        &mut stdin,
-        r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
-    );
-    send(
-        &mut stdin,
-        &format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction","params":{{"textDocument":{{"uri":"{root}/main.ts"}},"range":{{"start":{{"line":1,"character":22}},"end":{{"line":1,"character":26}}}},"context":{{"diagnostics":[]}}}}}}"#
-        ),
-    );
-    let (tx, rx) = mpsc::channel();
-    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
-    std::thread::spawn(move || {
-        while let Some(body) = read_message(&mut stdout) {
-            if tx.send(body).is_err() {
-                break;
-            }
-        }
-    });
-    let answer = loop {
-        let body = rx
-            .recv_timeout(Duration::from_secs(60))
-            .expect("an answer to textDocument/codeAction within 60 s");
-        if is_answer_2(&body) {
-            break body;
-        }
-        if let Some(id) = server_request_id(&body) {
-            send(
-                &mut stdin,
-                &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null}}"#),
-            );
-        }
-    };
-    let _ = child.kill();
-    let _ = child.wait();
-    answer
+    )
 }
 
 /// Asserts that the answer lists the Effect refactors of an async function

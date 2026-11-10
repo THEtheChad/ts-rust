@@ -1,0 +1,688 @@
+#### file .src/effectFnOpportunity_typeParams.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":6,"character":13},"end":{"line":6,"character":32}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":7,"character":9},"end":{"line":9,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":12,"character":13},"end":{"line":12,"character":45}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":13,"character":9},"end":{"line":15,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":18,"character":16},"end":{"line":18,"character":49}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":19,"character":9},"end":{"line":21,"character":4}},
+      "severity": 4,
+      "code": 377017,
+      "source": "ts",
+      "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+    },
+    {
+      "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":37}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(<T>(value) => { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":36,"character":13},"end":{"line":36,"character":50}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":45,"character":16},"end":{"line":45,"character":54}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":28,"character":8},"end":{"line":28,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_a' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":29,"character":8},"end":{"line":29,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_b' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":30,"character":8},"end":{"line":30,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_c' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":31,"character":8},"end":{"line":31,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_d' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":32,"character":8},"end":{"line":32,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_e' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":37,"character":8},"end":{"line":37,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_a' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":38,"character":8},"end":{"line":38,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_b' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":39,"character":8},"end":{"line":39,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_c' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":40,"character":8},"end":{"line":40,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_d' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":41,"character":8},"end":{"line":41,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_e' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":46,"character":8},"end":{"line":46,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_a' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":47,"character":8},"end":{"line":47,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_b' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":48,"character":8},"end":{"line":48,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_c' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":49,"character":8},"end":{"line":49,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_d' is declared but its value is never read."
+    },
+    {
+      "range": {"start":{"line":50,"character":8},"end":{"line":50,"character":10}},
+      "severity": 4,
+      "code": 6133,
+      "source": "ts",
+      "message": "'_e' is declared but its value is never read."
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":6,"character":13},"end":{"line":6,"character":32}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":13},"end":{"line":6,"character":32}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":6,"character":35},"end":{"line":7,"character":32}},
+            "newText": "Effect.fnUntraced(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":9,"character":3},"end":{"line":10,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":13},"end":{"line":6,"character":32}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":6,"character":35},"end":{"line":7,"character":32}},
+            "newText": "Effect.fn(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":9,"character":3},"end":{"line":10,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"arrowWithTypeParams\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":6,"character":13},"end":{"line":6,"character":32}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":6,"character":35},"end":{"line":7,"character":32}},
+            "newText": "Effect.fn(\"arrowWithTypeParams\")(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":9,"character":3},"end":{"line":10,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":7,"character":9},"end":{"line":9,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":7,"character":9},"end":{"line":9,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":7,"character":8},"end":{"line":8,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":8,"character":39},"end":{"line":9,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":12,"character":13},"end":{"line":12,"character":45}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":12,"character":13},"end":{"line":12,"character":45}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":12,"character":48},"end":{"line":13,"character":32}},
+            "newText": "Effect.fnUntraced(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":15,"character":3},"end":{"line":16,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":12,"character":13},"end":{"line":12,"character":45}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":12,"character":48},"end":{"line":13,"character":32}},
+            "newText": "Effect.fn(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":15,"character":3},"end":{"line":16,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionExpressionWithTypeParams\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":12,"character":13},"end":{"line":12,"character":45}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":12,"character":48},"end":{"line":13,"character":32}},
+            "newText": "Effect.fn(\"functionExpressionWithTypeParams\")(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":15,"character":3},"end":{"line":16,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":13,"character":9},"end":{"line":15,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":13,"character":9},"end":{"line":15,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":13,"character":8},"end":{"line":14,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":14,"character":39},"end":{"line":15,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":18,"character":16},"end":{"line":18,"character":49}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":16},"end":{"line":18,"character":49}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":19,"character":32}},
+            "newText": "export const functionDeclarationWithTypeParams = Effect.fnUntraced(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":21,"character":3},"end":{"line":22,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":16},"end":{"line":18,"character":49}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":19,"character":32}},
+            "newText": "export const functionDeclarationWithTypeParams = Effect.fn(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":21,"character":3},"end":{"line":22,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionDeclarationWithTypeParams\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":18,"character":16},"end":{"line":18,"character":49}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":18,"character":0},"end":{"line":19,"character":32}},
+            "newText": "export const functionDeclarationWithTypeParams = Effect.fn(\"functionDeclarationWithTypeParams\")(function*<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":21,"character":3},"end":{"line":22,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377017 {"start":{"line":19,"character":9},"end":{"line":21,"character":4}}
+[
+  {
+    "title": "Remove the Effect.gen, and keep the body",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":19,"character":9},"end":{"line":21,"character":4}},
+        "severity": 4,
+        "code": 377017,
+        "source": "ts",
+        "message": "This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":19,"character":8},"end":{"line":20,"character":17}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":20,"character":39},"end":{"line":21,"character":4}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":27,"character":13},"end":{"line":27,"character":37}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":37}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(<T>(value) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":27,"character":40},"end":{"line":27,"character":57}},
+            "newText": "Effect.fn(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":34,"character":1},"end":{"line":34,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"arrowWithTypeParamsNoGen\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":37}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(<T>(value) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":27,"character":40},"end":{"line":27,"character":57}},
+            "newText": "Effect.fn(\"arrowWithTypeParamsNoGen\")(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":34,"character":1},"end":{"line":34,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":36,"character":13},"end":{"line":36,"character":50}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":36,"character":13},"end":{"line":36,"character":50}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":36,"character":53},"end":{"line":36,"character":75}},
+            "newText": "Effect.fn(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":43,"character":1},"end":{"line":43,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionExpressionWithTypeParamsNoGen\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":36,"character":13},"end":{"line":36,"character":50}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":36,"character":53},"end":{"line":36,"character":75}},
+            "newText": "Effect.fn(\"functionExpressionWithTypeParamsNoGen\")(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":43,"character":1},"end":{"line":43,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":45,"character":16},"end":{"line":45,"character":54}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":45,"character":16},"end":{"line":45,"character":54}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":45,"character":0},"end":{"line":45,"character":68}},
+            "newText": "export const functionDeclarationWithTypeParamsNoGen = Effect.fn(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":52,"character":1},"end":{"line":52,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"functionDeclarationWithTypeParamsNoGen\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":45,"character":16},"end":{"line":45,"character":54}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(function<T>(value) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_typeParams.ts": [
+          {
+            "range": {"start":{"line":45,"character":0},"end":{"line":45,"character":68}},
+            "newText": "export const functionDeclarationWithTypeParamsNoGen = Effect.fn(\"functionDeclarationWithTypeParamsNoGen\")(function<T>(value: T) "
+          },
+          {
+            "range": {"start":{"line":52,"character":1},"end":{"line":52,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  }
+]

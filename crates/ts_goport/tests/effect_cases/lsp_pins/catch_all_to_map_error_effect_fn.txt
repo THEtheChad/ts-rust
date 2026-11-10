@@ -1,0 +1,130 @@
+#### file .src/catchAllToMapError_effectFn.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":11,"character":3},"end":{"line":11,"character":15}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":15,"character":3},"end":{"line":15,"character":15}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+    },
+    {
+      "range": {"start":{"line":19,"character":3},"end":{"line":19,"character":15}},
+      "severity": 4,
+      "code": 377010,
+      "source": "ts",
+      "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+    }
+  ]
+}
+#### quickfix 377010 {"start":{"line":11,"character":3},"end":{"line":11,"character":15}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":3},"end":{"line":11,"character":15}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError_effectFn.ts": [
+          {
+            "range": {"start":{"line":11,"character":10},"end":{"line":11,"character":15}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":11,"character":26},"end":{"line":11,"character":39}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":11,"character":63},"end":{"line":11,"character":64}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":15,"character":3},"end":{"line":15,"character":15}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":15,"character":3},"end":{"line":15,"character":15}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError_effectFn.ts": [
+          {
+            "range": {"start":{"line":15,"character":10},"end":{"line":15,"character":15}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":15,"character":26},"end":{"line":15,"character":39}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":15,"character":63},"end":{"line":15,"character":64}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377010 {"start":{"line":19,"character":3},"end":{"line":19,"character":15}}
+[
+  {
+    "title": "Replace with Effect.mapError",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":19,"character":3},"end":{"line":19,"character":15}},
+        "severity": 4,
+        "code": 377010,
+        "source": "ts",
+        "message": "`Effect.mapError` expresses the same error-type transformation more directly than `Effect.catch` followed by `Effect.fail`. effect(catchAllToMapError)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/catchAllToMapError_effectFn.ts": [
+          {
+            "range": {"start":{"line":19,"character":10},"end":{"line":19,"character":15}},
+            "newText": "mapError"
+          },
+          {
+            "range": {"start":{"line":19,"character":26},"end":{"line":19,"character":39}},
+            "newText": ""
+          },
+          {
+            "range": {"start":{"line":19,"character":63},"end":{"line":19,"character":64}},
+            "newText": ""
+          }
+        ]
+      }
+    }
+  }
+]

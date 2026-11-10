@@ -1,0 +1,280 @@
+#### file .src/effectFnOpportunity_inferredLayerThis.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":7,"character":17},"end":{"line":7,"character":20}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":11,"character":8},"end":{"line":11,"character":11}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":15,"character":17},"end":{"line":15,"character":20}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":7,"character":17},"end":{"line":7,"character":20}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":7,"character":17},"end":{"line":7,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":7,"character":22},"end":{"line":7,"character":40}},
+            "newText": "Effect.fn(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":7,"character":56},"end":{"line":7,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"MyService.log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":7,"character":17},"end":{"line":7,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":7,"character":22},"end":{"line":7,"character":40}},
+            "newText": "Effect.fn(\"MyService.log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":7,"character":56},"end":{"line":7,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":7,"character":17},"end":{"line":7,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":7,"character":22},"end":{"line":7,"character":40}},
+            "newText": "Effect.fn(\"log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":7,"character":56},"end":{"line":7,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":11,"character":8},"end":{"line":11,"character":11}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":8},"end":{"line":11,"character":11}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":11,"character":13},"end":{"line":11,"character":31}},
+            "newText": "Effect.fn(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":11,"character":47},"end":{"line":11,"character":47}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"MyService.log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":8},"end":{"line":11,"character":11}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":11,"character":13},"end":{"line":11,"character":31}},
+            "newText": "Effect.fn(\"MyService.log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":11,"character":47},"end":{"line":11,"character":47}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":11,"character":8},"end":{"line":11,"character":11}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":11,"character":13},"end":{"line":11,"character":31}},
+            "newText": "Effect.fn(\"log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":11,"character":47},"end":{"line":11,"character":47}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":15,"character":17},"end":{"line":15,"character":20}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":15,"character":17},"end":{"line":15,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":15,"character":22},"end":{"line":15,"character":40}},
+            "newText": "Effect.fn(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":15,"character":56},"end":{"line":15,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"MyService.log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":15,"character":17},"end":{"line":15,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":15,"character":22},"end":{"line":15,"character":40}},
+            "newText": "Effect.fn(\"MyService.log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":15,"character":56},"end":{"line":15,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"log\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":15,"character":17},"end":{"line":15,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((what) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_inferredLayerThis.ts": [
+          {
+            "range": {"start":{"line":15,"character":22},"end":{"line":15,"character":40}},
+            "newText": "Effect.fn(\"log\")(function(what: string) { return "
+          },
+          {
+            "range": {"start":{"line":15,"character":56},"end":{"line":15,"character":56}},
+            "newText": " })"
+          }
+        ]
+      }
+    }
+  }
+]

@@ -24,7 +24,14 @@
 //! dir is `<case>` and the unpacked `node_modules` (absolute or relative to the
 //! cwd) is `<modules>`.
 //! A passing test deletes its dir; a failing one keeps it and names it.
+//!
+//! `lsp_pins` (`effect_cases/lsp_pins.rs`) runs the language server on some
+//! of these cases and pins its Effect answers.
 #![cfg(unix)]
+
+mod effect_lsp;
+#[path = "effect_cases/lsp_pins.rs"]
+mod lsp_pins;
 
 use std::collections::HashMap;
 use std::fs;
@@ -273,49 +280,90 @@ fn relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-/// Runs the case `name` of `suite` and compares its outputs.
-fn run(suite: &str, name: &str) {
-    let data = &SUITES[suite];
-    let case = &data.cases[name];
-    let dir = std::env::temp_dir().join(format!(
-        "goport-effect-case-{}-{suite}-{name}",
-        std::process::id()
-    ));
-    if dir.exists() {
-        fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("remove {}: {e}", dir.display()));
-    }
-    for (path, text) in &case.files {
-        write_file(&dir.join(path), text);
-    }
-    let modules = (!case.links.is_empty()).then(|| data.modules.get_or_init(|| unpack(suite)));
-    for package in &case.links {
-        // A package of the case's own files stays.
-        let link = dir.join("node_modules").join(package);
-        if link.exists() {
-            continue;
+/// A case written into a new dir under the system temp dir, with its
+/// `node_modules` links to the unpacked pack of its suite.
+struct CaseDir {
+    dir: PathBuf,
+    /// Where `tsgo` runs.
+    cwd: PathBuf,
+    /// `dir` and `cwd` with links resolved, as `tsgo` prints them.
+    real: PathBuf,
+    real_cwd: PathBuf,
+    modules: Option<&'static PathBuf>,
+}
+
+impl CaseDir {
+    /// Writes `files` (paths relative to the case dir) of the case `name` of
+    /// `suite` into `<temp>/goport-effect-<kind>-<pid>-<suite>-<name>`.
+    fn create(suite: &str, name: &str, kind: &str, files: &[(String, String)]) -> CaseDir {
+        let data = &SUITES[suite];
+        let case = &data.cases[name];
+        let dir = std::env::temp_dir().join(format!(
+            "goport-effect-{kind}-{}-{suite}-{name}",
+            std::process::id()
+        ));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("remove {}: {e}", dir.display()));
         }
-        let parent = link.parent().expect("a parent dir");
-        fs::create_dir_all(parent).unwrap_or_else(|e| panic!("mkdir {}: {e}", parent.display()));
-        let target = modules.expect("the unpacked pack").join(package);
-        std::os::unix::fs::symlink(&target, &link)
-            .unwrap_or_else(|e| panic!("link {}: {e}", link.display()));
+        for (path, text) in files {
+            write_file(&dir.join(path), text);
+        }
+        let modules = (!case.links.is_empty()).then(|| data.modules.get_or_init(|| unpack(suite)));
+        for package in &case.links {
+            // A package of the case's own files stays.
+            let link = dir.join("node_modules").join(package);
+            if link.exists() {
+                continue;
+            }
+            let parent = link.parent().expect("a parent dir");
+            fs::create_dir_all(parent)
+                .unwrap_or_else(|e| panic!("mkdir {}: {e}", parent.display()));
+            let target = modules.expect("the unpacked pack").join(package);
+            std::os::unix::fs::symlink(&target, &link)
+                .unwrap_or_else(|e| panic!("link {}: {e}", link.display()));
+        }
+        let cwd = dir.join(&case.cwd);
+        fs::create_dir_all(&cwd).unwrap_or_else(|e| panic!("mkdir {}: {e}", cwd.display()));
+        let real = fs::canonicalize(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        let real_cwd = fs::canonicalize(&cwd).unwrap_or_else(|e| panic!("{}: {e}", cwd.display()));
+        CaseDir {
+            dir,
+            cwd,
+            real,
+            real_cwd,
+            modules,
+        }
     }
-    let cwd = dir.join(&case.cwd);
-    fs::create_dir_all(&cwd).unwrap_or_else(|e| panic!("mkdir {}: {e}", cwd.display()));
-    let real = fs::canonicalize(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-    let real_cwd = fs::canonicalize(&cwd).unwrap_or_else(|e| panic!("{}: {e}", cwd.display()));
-    let normalize = |text: &str| {
-        let text = match modules {
+
+    /// `text` with the unpacked `node_modules` (absolute or relative to the
+    /// cwd) as `<modules>` and the case dir as `<case>`.
+    fn normalize(&self, text: &str) -> String {
+        let text = match self.modules {
             Some(modules) => text
                 .replace(&*modules.to_string_lossy(), "<modules>")
-                .replace(&format!("{}/", relative(&real_cwd, modules)), "<modules>/"),
+                .replace(
+                    &format!("{}/", relative(&self.real_cwd, modules)),
+                    "<modules>/",
+                ),
             None => text.to_string(),
         };
-        text.replace(&*real.to_string_lossy(), "<case>")
-    };
+        text.replace(&*self.real.to_string_lossy(), "<case>")
+    }
 
+    fn remove(self) {
+        fs::remove_dir_all(&self.dir)
+            .unwrap_or_else(|e| panic!("remove {}: {e}", self.dir.display()));
+    }
+}
+
+/// Runs the case `name` of `suite` and compares its outputs.
+fn run(suite: &str, name: &str) {
+    let case = &SUITES[suite].cases[name];
+    let case_dir = CaseDir::create(suite, name, "case", &case.files);
+    let cwd = &case_dir.cwd;
+    let normalize = |text: &str| case_dir.normalize(text);
     let mut problems = Vec::new();
-    let plain = tsgo(&cwd, &case.config, false);
+    let plain = tsgo(cwd, &case.config, false);
     if plain.fails != case.fails {
         problems.push(format!(
             "tsgo {}, the reference {}",
@@ -331,7 +379,7 @@ fn run(suite: &str, name: &str) {
         ));
     }
     if let Some(expected) = &case.pretty {
-        let pretty = normalize(&strip_ansi(&tsgo(&cwd, &case.config, true).stdout));
+        let pretty = normalize(&strip_ansi(&tsgo(cwd, &case.config, true).stdout));
         if &pretty != expected {
             problems.push(format!(
                 "--pretty true\n--- expected\n{expected}\n--- actual\n{pretty}"
@@ -342,10 +390,10 @@ fn run(suite: &str, name: &str) {
         problems.is_empty(),
         "{suite}::{name} ({}), project kept in {}:\n{}",
         case.origin,
-        dir.display(),
+        case_dir.dir.display(),
         problems.join("\n")
     );
-    fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("remove {}: {e}", dir.display()));
+    case_dir.remove();
 }
 
 /// `names.rs` names every case of each suite file, in order, and every suite

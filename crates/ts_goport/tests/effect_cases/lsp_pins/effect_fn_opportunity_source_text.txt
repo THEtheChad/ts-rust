@@ -1,0 +1,435 @@
+#### file .src/effectFnOpportunity_sourceText.ts
+#### diagnostic
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":22}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn('custom-span')(function*<T>(value, n) { ... }, ...pipeTransformations)`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":20,"character":16},"end":{"line":20,"character":27}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":20}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":37,"character":13},"end":{"line":37,"character":17}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+    },
+    {
+      "range": {"start":{"line":43,"character":13},"end":{"line":43,"character":19}},
+      "severity": 4,
+      "code": 377047,
+      "source": "ts",
+      "message": "This expression can be rewritten in the reusable function form `Effect.fn(// span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`)(function*(n) { ... })`. effect(effectFnOpportunity)"
+    }
+  ]
+}
+#### quickfix 377047 {"start":{"line":2,"character":13},"end":{"line":2,"character":22}}
+[
+  {
+    "title": "Convert to Effect.fn (with span from withSpan)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":22}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn('custom-span')(function*<T>(value, n) { ... }, ...pipeTransformations)`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":2,"character":25},"end":{"line":8,"character":32}},
+            "newText": "Effect.fn('custom-span')(function*<T /* generic */>(\n  value: T,\n  // default parameter\n  n = 1_000 /* units */,\n)\n  // before return\n  "
+          },
+          {
+            "range": {"start":{"line":12,"character":3},"end":{"line":18,"character":1}},
+            "newText": ",\n    // before map\n    Effect.map((n) => n + 2_000) /* after map */\n  // after return\n)"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":22}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn('custom-span')(function*<T>(value, n) { ... }, ...pipeTransformations)`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":2,"character":25},"end":{"line":8,"character":32}},
+            "newText": "Effect.fnUntraced(function*<T /* generic */>(\n  value: T,\n  // default parameter\n  n = 1_000 /* units */,\n)\n  // before return\n  "
+          },
+          {
+            "range": {"start":{"line":12,"character":3},"end":{"line":18,"character":1}},
+            "newText": ",\n    // before map\n    Effect.map((n) => n + 2_000) /* after map */,\n    Effect.withSpan('custom-span')\n  // after return\n)"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":2,"character":13},"end":{"line":2,"character":22}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn('custom-span')(function*<T>(value, n) { ... }, ...pipeTransformations)`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":2,"character":25},"end":{"line":8,"character":32}},
+            "newText": "Effect.fn(function*<T /* generic */>(\n  value: T,\n  // default parameter\n  n = 1_000 /* units */,\n)\n  // before return\n  "
+          },
+          {
+            "range": {"start":{"line":12,"character":3},"end":{"line":18,"character":1}},
+            "newText": ",\n    // before map\n    Effect.map((n) => n + 2_000) /* after map */,\n    Effect.withSpan('custom-span')\n  // after return\n)"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":20,"character":16},"end":{"line":20,"character":27}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":20,"character":16},"end":{"line":20,"character":27}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":21,"character":32}},
+            "newText": "export const declaration = Effect.fnUntraced(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":24,"character":3},"end":{"line":25,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":20,"character":16},"end":{"line":20,"character":27}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":21,"character":32}},
+            "newText": "export const declaration = Effect.fn(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":24,"character":3},"end":{"line":25,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"declaration\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":20,"character":16},"end":{"line":20,"character":27}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":20,"character":0},"end":{"line":21,"character":32}},
+            "newText": "export const declaration = Effect.fn(\"declaration\")(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":24,"character":3},"end":{"line":25,"character":1}},
+            "newText": ");"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":27,"character":13},"end":{"line":27,"character":20}}
+[
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":27,"character":23},"end":{"line":27,"character":38}},
+            "newText": "Effect.fn(function(n: number) "
+          },
+          {
+            "range": {"start":{"line":35,"character":1},"end":{"line":35,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"regular\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":27,"character":13},"end":{"line":27,"character":20}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn((n) => { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":27,"character":23},"end":{"line":27,"character":38}},
+            "newText": "Effect.fn(\"regular\")(function(n: number) "
+          },
+          {
+            "range": {"start":{"line":35,"character":1},"end":{"line":35,"character":1}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":37,"character":13},"end":{"line":37,"character":17}}
+[
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":37,"character":13},"end":{"line":37,"character":17}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":37,"character":58},"end":{"line":37,"character":86}},
+            "newText": "Effect.fnUntraced(function*(n) "
+          },
+          {
+            "range": {"start":{"line":41,"character":1},"end":{"line":41,"character":2}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":37,"character":13},"end":{"line":37,"character":17}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":37,"character":58},"end":{"line":37,"character":86}},
+            "newText": "Effect.fn(function*(n) "
+          },
+          {
+            "range": {"start":{"line":41,"character":1},"end":{"line":41,"character":2}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn(\"bare\")",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":37,"character":13},"end":{"line":37,"character":17}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fnUntraced(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":37,"character":58},"end":{"line":37,"character":86}},
+            "newText": "Effect.fn(\"bare\")(function*(n) "
+          },
+          {
+            "range": {"start":{"line":41,"character":1},"end":{"line":41,"character":2}},
+            "newText": ")"
+          }
+        ]
+      }
+    }
+  }
+]
+#### quickfix 377047 {"start":{"line":43,"character":13},"end":{"line":43,"character":19}}
+[
+  {
+    "title": "Convert to Effect.fn (with span from withSpan)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":43,"character":13},"end":{"line":43,"character":19}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(// span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`)(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":43,"character":22},"end":{"line":43,"character":60}},
+            "newText": "Effect.fn(`span-${\"name\" /* inside span */}-${/[/][*]/.source}`)(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":52,"character":1}},
+            "newText": "\n    // span expression\n    )"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fnUntraced",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":43,"character":13},"end":{"line":43,"character":19}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(// span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`)(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":43,"character":22},"end":{"line":43,"character":60}},
+            "newText": "Effect.fnUntraced(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":52,"character":1}},
+            "newText": ",\n  Effect.withSpan(\n    // span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`,\n    { attributes: { pattern: /[/][/]/.source } },\n  ))"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Convert to Effect.fn (no span)",
+    "kind": "quickfix",
+    "diagnostics": [
+      {
+        "range": {"start":{"line":43,"character":13},"end":{"line":43,"character":19}},
+        "severity": 4,
+        "code": 377047,
+        "source": "ts",
+        "message": "This expression can be rewritten in the reusable function form `Effect.fn(// span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`)(function*(n) { ... })`. effect(effectFnOpportunity)"
+      }
+    ],
+    "edit": {
+      "changes": {
+        "file://<case>/.src/effectFnOpportunity_sourceText.ts": [
+          {
+            "range": {"start":{"line":43,"character":22},"end":{"line":43,"character":60}},
+            "newText": "Effect.fn(function*(n: number) "
+          },
+          {
+            "range": {"start":{"line":46,"character":1},"end":{"line":52,"character":1}},
+            "newText": ",\n  Effect.withSpan(\n    // span expression\n    `span-${\"name\" /* inside span */}-${/[/][*]/.source}`,\n    { attributes: { pattern: /[/][/]/.source } },\n  ))"
+          }
+        ]
+      }
+    }
+  }
+]
