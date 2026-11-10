@@ -1104,13 +1104,11 @@ pub fn get_meaning_from_location(node: Node) -> SemanticMeaning {
         //     import a = |b.c|.d; // Namespace
         let mut name = node;
         if node.kind() != SyntaxKind::QualifiedName {
-            name = if node.parent().kind() == SyntaxKind::QualifiedName
-                && node.parent().right() == node
-            {
-                node.parent()
-            } else {
-                Node::NIL
-            };
+            name = if_else(
+                node.parent().kind() == SyntaxKind::QualifiedName && node.parent().right() == node,
+                node.parent(),
+                Node::NIL,
+            );
         }
         if name.is_some() && name.parent().kind() == SyntaxKind::ImportEqualsDeclaration {
             return SemanticMeaning::ALL;
