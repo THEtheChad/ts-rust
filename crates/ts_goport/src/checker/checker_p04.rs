@@ -957,11 +957,11 @@ impl Checker {
                     // 2. something with the same name was defined before the set of overloads that prevents them from merging
                     // here we'll report error only for the first case since for second we should already report error in binder
                     if report_error {
-                        let diagnostic = if is_static(node) {
-                            diag::Function_overload_must_be_static
-                        } else {
-                            diag::Function_overload_must_not_be_static
-                        };
+                        let diagnostic = if_else(
+                            is_static(node),
+                            diag::Function_overload_must_be_static,
+                            diag::Function_overload_must_not_be_static,
+                        );
                         c.error(error_node, diagnostic, args![]);
                     }
                     return;
