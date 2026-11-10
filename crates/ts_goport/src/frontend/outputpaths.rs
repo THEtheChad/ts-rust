@@ -113,13 +113,10 @@ pub fn get_output_paths_for_file(
     let is_json_file = script_kind == ScriptKind::JSON;
     // If json file emits to the same location skip writing it, if emitDeclarationOnly skip writing it
     let is_json_emitted_to_same_location = is_json_file
-        && compare_paths(
+        && compare_rooted_text(
             file_name,
             &own_output_file_path,
-            &ComparePathsOptions {
-                current_directory: host.get_current_directory(),
-                use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-            },
+            host.use_case_sensitive_file_names(),
         ) == 0;
     let mut paths = OutputPaths::default();
     if !content_mapper.is_empty() {
@@ -214,13 +211,10 @@ pub fn get_output_js_file_name(
     }
     let output_file_name = get_output_js_file_name_worker(input_file_name, options, host);
     if !file_extension_is(&output_file_name, EXTENSION_JSON)
-        || compare_paths(
+        || compare_rooted_text(
             input_file_name,
             &output_file_name,
-            &ComparePathsOptions {
-                current_directory: host.get_current_directory(),
-                use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-            },
+            host.use_case_sensitive_file_names(),
         ) != 0
     {
         return output_file_name;
@@ -389,25 +383,24 @@ pub fn get_source_file_path_in_new_dir(
     )
 }
 
-// Go: outputpaths/outputpaths.go:165 getOutputPathWithoutChangingExtension (at 673a5f17d713;
-// ts#64159 renames it getOutputFileNameWithoutChangingExtension, outputpaths/outputpaths.go:206)
+// Go: outputpaths/outputpaths.go:206 getOutputFileNameWithoutChangingExtension (ts#64159)
+// A file whose root differs from the common source directory's keeps its
+// name (Go `RelativePathFromDirectory` is not ok).
 fn get_output_path_without_changing_extension(
     input_file_name: &str,
     output_directory: &str,
     host: &dyn OutputPathsHost,
 ) -> String {
     if !output_directory.is_empty() {
-        return resolve_path(
-            output_directory,
-            &[&get_relative_path_from_directory(
-                &host.common_source_directory(),
-                input_file_name,
-                &ComparePathsOptions {
-                    use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-                    current_directory: host.get_current_directory(),
-                },
-            )],
-        );
+        let Some(relative_path) = relative_path_from_directory(
+            &host.common_source_directory(),
+            input_file_name,
+            host.use_case_sensitive_file_names(),
+        ) else {
+            return input_file_name.to_string();
+        };
+        // Go: outputDirectory.ResolveRelativeFile(relativePath)
+        return resolve_path(output_directory, &[&relative_path]);
     }
     input_file_name.to_string()
 }
@@ -521,67 +514,7 @@ fn compute_common_source_directory_of_filenames(
         // Can happen when all input files are .d.ts files.
         return current_directory.to_string();
     }
-    common_directory_of_files(file_names, current_directory, use_case_sensitive_file_names)
-}
-
-// Go: tspath/rooted_path.go:627 CaseSensitivity.CommonDirectoryOfFiles
-// PORT: the shape before the pin moved this loop into tspath. It differs
-// from Go at the pin: it normalizes `file_names` against
-// `current_directory` (Go's are rooted), has no case for encoded dynamic
-// file names, and an empty common path is `current_directory` (Go: "").
-fn common_directory_of_files(
-    file_names: &[String],
-    current_directory: &str,
-    use_case_sensitive_file_names: bool,
-) -> String {
-    // PORT: Go nil slice is `None`.
-    let mut common_path_components: Option<Vec<String>> = None;
-    for source_file in file_names {
-        // Each file contributes into common source file path
-        let mut source_path_components =
-            get_normalized_path_components(source_file, current_directory);
-
-        // The base file name is not part of the common directory path
-        source_path_components.pop();
-
-        let Some(common) = common_path_components.as_mut() else {
-            // first file
-            common_path_components = Some(source_path_components);
-            continue;
-        };
-
-        let n = common.len().min(source_path_components.len());
-        for i in 0..n {
-            if get_canonical_file_name(&common[i], use_case_sensitive_file_names)
-                != get_canonical_file_name(
-                    &source_path_components[i],
-                    use_case_sensitive_file_names,
-                )
-            {
-                if i == 0 {
-                    // Failed to find any common path component
-                    return String::new();
-                }
-
-                // New common path found that is 0 -> i-1
-                common.truncate(i);
-                break;
-            }
-        }
-
-        // If the sourcePathComponents was shorter than the commonPathComponents, truncate to the sourcePathComponents
-        if source_path_components.len() < common.len() {
-            common.truncate(source_path_components.len());
-        }
-    }
-
-    let common_path_components = common_path_components.unwrap_or_default();
-    if common_path_components.is_empty() {
-        // Can happen when all input files are .d.ts files
-        return current_directory.to_string();
-    }
-
-    get_path_from_path_components(&common_path_components)
+    common_directory_of_files(file_names, use_case_sensitive_file_names)
 }
 
 // Go: outputpaths/commonsourcedirectory.go:16 GetComputedCommonSourceDirectory

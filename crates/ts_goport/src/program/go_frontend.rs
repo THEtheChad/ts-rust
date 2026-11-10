@@ -1015,7 +1015,10 @@ fn build_program(
     cwd: String,
     previous: Option<&'static GoProgram>,
 ) -> &'static GoProgram {
-    let use_case_sensitive_file_names = osvfs_fs().use_case_sensitive_file_names();
+    // Go: the emit host's `CaseSensitivity()` is the program host's file
+    // system setting (compiler/program.go:265), not the OS's: an API
+    // session sets it (`--useCaseSensitiveFileNames`).
+    let use_case_sensitive_file_names = np.use_case_sensitive_file_names();
     let options = crate::program::intern_compiler_options(np.options());
     let files = np.source_files();
     let previous = previous.and_then(previous_version);
