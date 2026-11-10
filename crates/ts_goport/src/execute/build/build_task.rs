@@ -648,6 +648,57 @@ fn end_time(end: &Mutex<Option<Instant>>) -> Option<Instant> {
     *end.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// PORT: not in Go (perf). Adds the time that the check and the emit that
+/// started with the program (`started_times`) took before the task
+/// finishes: to the program's check time, and to `compile_times`' emit
+/// time. Both times are final: the orchestrator finishes the task after
+/// the values of `notify_when_compiled` dropped, and those of the check's
+/// barrier dropped before them. No barrier value (no checker pool) adds
+/// nothing.
+fn add_started_times(
+    incremental_program: &IncrementalProgram,
+    started_times: Option<&StartedTimes>,
+    compile_times: &RefCell<CompileTimes>,
+) {
+    if let Some(times) = started_times
+        && let Some(check_end) = end_time(&times.check_end)
+    {
+        incremental_program.add_started_check_time(check_end.saturating_duration_since(times.sent));
+        if let Some(emit_end) = end_time(&times.emit_end) {
+            compile_times.borrow_mut().emit_time += emit_end.saturating_duration_since(check_end);
+        }
+    }
+}
+
+/// PORT: perf, as `tsc -p` does: starts the parse of the default lib
+/// files of `resolved` before the build info read and the program load.
+/// Only for a program that loads while the build `host` caches no parse
+/// (the first one of a build cycle): later programs take the lib files
+/// from that cache, and the workers would parse them for nothing. Not
+/// when the load gets no parse workers (`BuildHost::prefetch`): the
+/// workers' parses would stay unused in their AST arenas. And not in a
+/// watch cycle after the first build: a lib parse there is a freeable file
+/// version, which these early workers cannot make (`FilesParser::parse`
+/// drops them), and a cycle with a config change keeps the lib parses
+/// anyway.
+fn start_task_lib_prefetch(
+    sys: &dyn System,
+    host: &BuildHost,
+    resolved: &ParsedCommandLine,
+    testing: bool,
+) {
+    let mut host_has_parses = host
+        .watch_sources
+        .borrow()
+        .as_ref()
+        .is_some_and(|sources| !sources.is_empty());
+    host.source_files
+        .for_each_stored(|_, _| host_has_parses = true);
+    if host.prefetch.get() && !host_has_parses && crate::ast::published_paths().is_empty() {
+        crate::execute::execute_tsc::start_lib_prefetch(sys, resolved, testing, false);
+    }
+}
+
 impl BuildTask {
     // PORT: Go `&BuildTask{config: config, isInitialCycle: ...}` followed by
     // `task.pending.Store(true)` in createBuildTasks (orchestrator.go:139).
@@ -1028,32 +1079,7 @@ impl BuildTask {
             .copied()
             .unwrap_or_default();
         compile_times.borrow_mut().config_time = config_time;
-        // PORT: perf, as `tsc -p` does: the parse of the default lib files
-        // starts before the build info read and the program load. Only for
-        // a program that loads while the build host caches no parse (the
-        // first one of a build cycle): later programs take the lib files
-        // from that cache, and the workers would parse them for nothing.
-        // Not when the load gets no parse workers (`BuildHost::prefetch`):
-        // the workers' parses would stay unused in their AST arenas. And
-        // not in a watch cycle after the first build: a lib parse there is a
-        // freeable file version, which these early workers cannot make
-        // (`FilesParser::parse` drops them), and a cycle with a config
-        // change keeps the lib parses anyway.
-        let mut host_has_parses = host
-            .watch_sources
-            .borrow()
-            .as_ref()
-            .is_some_and(|sources| !sources.is_empty());
-        host.source_files
-            .for_each_stored(|_, _| host_has_parses = true);
-        if host.prefetch.get() && !host_has_parses && crate::ast::published_paths().is_empty() {
-            crate::execute::execute_tsc::start_lib_prefetch(
-                &*sys,
-                &resolved,
-                testing.is_some(),
-                false,
-            );
-        }
+        start_task_lib_prefetch(&*sys, &host, &resolved, testing.is_some());
         let build_info_read_start = sys.now();
         let mut old_program = None;
         let (content_mapper_project, err) = self.get_content_mapper_project(orchestrator);
@@ -1212,20 +1238,7 @@ impl BuildTask {
                     ..EmitOptions::default()
                 });
             }
-            // Both times are final: the orchestrator finishes the task after
-            // the values of `notify_when_compiled` dropped, and those of the
-            // check's barrier dropped before them. No barrier value (no
-            // checker pool) adds nothing.
-            if let Some(times) = &started_times
-                && let Some(check_end) = end_time(&times.check_end)
-            {
-                incremental_program
-                    .add_started_check_time(check_end.saturating_duration_since(times.sent));
-                if let Some(emit_end) = end_time(&times.emit_end) {
-                    compile_times.borrow_mut().emit_time +=
-                        emit_end.saturating_duration_since(check_end);
-                }
-            }
+            add_started_times(&incremental_program, started_times.as_ref(), &compile_times);
             let emit = || {
                 emit_and_report_statistics(&EmitInput {
                     sys: &*sys,
@@ -1240,18 +1253,7 @@ impl BuildTask {
                     testing_m_times_cache: Some(&*host.m_times),
                 })
             };
-            // PORT: when only this thread reaches the file system
-            // (`DeferredWrites`), the emit keeps its writes, early or not,
-            // and this thread makes them (`flush_writes_on_this_thread`), so
-            // a failed write is in its file's result, as in Go.
-            let emitted = if deferred_writes.is_some() {
-                flush_writes_on_this_thread(sys.client_writes(), emit)
-            } else {
-                emit()
-            };
-            if let Some(deferred_writes) = &deferred_writes {
-                write_deferred(deferred_writes, &*sys.fs());
-            }
+            let emitted = emit_with_deferred_writes(&*sys, deferred_writes.as_ref(), emit);
             WRITE_FILE_SYS.with(|write_file_sys| *write_file_sys.borrow_mut() = None);
             emitted
         };
@@ -1272,45 +1274,8 @@ impl BuildTask {
             task_result.has_changed_dts_file = has_changed_dts_file;
             task_result.program = Some(incremental_program);
         }
-        // PORT: see `DeferredWrites`. Go's emitter reports a failed write as
-        // TS5033; here a write that waited fails after the emit. The emit
-        // makes its writes on this thread, so none is known to wait.
-        let failed = deferred_writes.map_or_else(Vec::new, |deferred| {
-            std::mem::take(
-                &mut deferred
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .failed,
-            )
-        });
-        for (file_name, err) in failed {
-            self.report_diagnostic(new_compiler_diagnostic(
-                diag::Could_not_write_file_0_Colon_1,
-                args![file_name, err],
-            ));
-            if result.status == ExitStatus::Success {
-                result.status = ExitStatus::DiagnosticsPresentOutputsGenerated;
-            }
-        }
-        // Go: build/buildtask.go:906 (*BuildTask).writeFile, the build info
-        // part (`onBuildInfoEmit`), with the time of the write.
-        // PORT: it runs when the emit is done (see `new_task_write_file`).
-        // The build info is the last file that the emit writes, so
-        // `HasChangedDtsFile()` has its final value in Go too.
-        let written = written_build_info
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some((build_info_file_name, build_info, m_time)) = written {
-            let build_info = Arc::try_unwrap(build_info).unwrap_or_else(|shared| (*shared).clone());
-            self.on_build_info_emit(
-                orchestrator,
-                &build_info_file_name,
-                Some(Rc::new(build_info)),
-                has_changed_dts_file,
-                m_time,
-            );
-        }
+        self.report_failed_deferred_writes(deferred_writes, &mut result.status);
+        self.on_written_build_info(orchestrator, &written_build_info, has_changed_dts_file);
 
         self.result_mut().exit_status = result.status;
         self.result_mut().statistics = statistics;
@@ -1351,6 +1316,63 @@ impl BuildTask {
                 UpToDateStatusType::UpToDate,
                 UpToDateStatusData::String(oldest_output_file_name),
             ));
+        }
+    }
+
+    /// PORT: see `DeferredWrites`. Go's emitter reports a failed write as
+    /// TS5033; here a write that waited fails after the emit, and this
+    /// reports it, with `status` at least
+    /// `DiagnosticsPresentOutputsGenerated`. The emit makes its writes on
+    /// this thread, so none is known to wait.
+    fn report_failed_deferred_writes(
+        &mut self,
+        deferred_writes: Option<DeferredWrites>,
+        status: &mut ExitStatus,
+    ) {
+        let failed = deferred_writes.map_or_else(Vec::new, |deferred| {
+            std::mem::take(
+                &mut deferred
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .failed,
+            )
+        });
+        for (file_name, err) in failed {
+            self.report_diagnostic(new_compiler_diagnostic(
+                diag::Could_not_write_file_0_Colon_1,
+                args![file_name, err],
+            ));
+            if *status == ExitStatus::Success {
+                *status = ExitStatus::DiagnosticsPresentOutputsGenerated;
+            }
+        }
+    }
+
+    // Go: build/buildtask.go:913 (*BuildTask).writeFile, the build info
+    // part (`onBuildInfoEmit`), with the time of the write.
+    // PORT: it runs when the emit is done (see `new_task_write_file`), on
+    // what the write kept in `written_build_info`. The build info is the
+    // last file that the emit writes, so `HasChangedDtsFile()` has its
+    // final value in Go too.
+    fn on_written_build_info(
+        &mut self,
+        orchestrator: &dyn BuildTaskOrchestrator,
+        written_build_info: &WrittenBuildInfo,
+        has_changed_dts_file: bool,
+    ) {
+        let written = written_build_info
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some((build_info_file_name, build_info, m_time)) = written {
+            let build_info = Arc::try_unwrap(build_info).unwrap_or_else(|shared| (*shared).clone());
+            self.on_build_info_emit(
+                orchestrator,
+                &build_info_file_name,
+                Some(Rc::new(build_info)),
+                has_changed_dts_file,
+                m_time,
+            );
         }
     }
 
@@ -2561,6 +2583,26 @@ fn write_or_defer(deferred: &DeferredWrites, file_name: &str, text: &str) -> Res
 }
 
 /// Makes the waiting writes of `deferred` through `fs`, in order.
+/// PORT: when only this thread reaches the file system (`deferred_writes`),
+/// the emit keeps its writes, early or not, and this thread makes them
+/// (`flush_writes_on_this_thread`, then `write_deferred`), so a failed
+/// write is in its file's result, as in Go. Returns what `emit` returns.
+fn emit_with_deferred_writes<R>(
+    sys: &dyn System,
+    deferred_writes: Option<&DeferredWrites>,
+    emit: impl FnOnce() -> R,
+) -> R {
+    let emitted = if deferred_writes.is_some() {
+        flush_writes_on_this_thread(sys.client_writes(), emit)
+    } else {
+        emit()
+    };
+    if let Some(deferred_writes) = deferred_writes {
+        write_deferred(deferred_writes, &*sys.fs());
+    }
+    emitted
+}
+
 fn write_deferred(deferred: &DeferredWrites, fs: &dyn Fs) {
     let writes = std::mem::take(
         &mut deferred
