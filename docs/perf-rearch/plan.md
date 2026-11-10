@@ -1574,3 +1574,20 @@ once a **reconciliation step** is built and tested.
       - F4: the symlink mapper, with a symlinked-monorepo `-b` project.
       - F5: fold the 285 duplicate ports.
       - F6: marker hygiene.
+- **W2-FE merged** (merge `8162cfd31`). Root then:
+  - repointed FE's 4 `if_else` imports at `crate::core` and dropped the
+    `checker_p01` re-export (`136a3d0d2`);
+  - rewrote the lib blobs from the merged sources (`ed6edf820`). Both sides
+    had rewritten them and the repo-config merge driver was missing on
+    MS-A2, so root set `merge.lib-blob.driver=true` in this repo's config.
+- **Full gate on the merged head** (`runs/head-ed6edf820-full`): PARITY OK.
+  - 187,196 items: 0 lost, 0 not run, 0 new items not good.
+  - GATING OK; CI's clippy on 1.95.0 is clean, plain and with the features.
+  - It is now `base-current`.
+  - One FLAKY: `tsgo_stdio_end/watch_ends_soon_after_sigint_or_sigterm`.
+    It has now shown up in W2-CA, W2-CC, Q8 and here; Q7 fixes it.
+- **Wave 2 is complete:** checker, ls, effect, frontend, execute/build/emit
+  and other are all merged.
+- **Started:**
+  - **B2:** the path case-sensitivity fixes D2, D1 and the call sites.
+  - **Q7:** the leftover gating items, plus the flaky watch test.
