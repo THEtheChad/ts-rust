@@ -68,6 +68,27 @@ Not done on purpose: an `if_else(c, a, b)` helper for Go's `core.IfElse` or `mat
 The flow_skip and flow_p2 splits were written by a helper agent in its own
 worktree from a measured plan (rca on prototypes), then cherry-picked.
 
+## Duplication
+
+`quality.sh report`: 693 → 686 blocks, 16,943 → 16,753 duplicated lines
+(3.55% → 3.51%), no new blocks. Blocks with both sides in this lane's files:
+
+| Block | Done | Commit |
+|---|---|---|
+| relater_p1 `check_type_related_to_ex` ↔ inference_p2 `check_normalized_type_identical_to` (overflow record and depth-limit trace) | `record_complexity_overflow` | d077b7cfe |
+| relater_p4 identity ↔ general indexed-access cases (part extraction) | `indexed_access_pair` | 2de4ce929 |
+| flow_p3 `get_flow_type_in_constructor` ↔ `get_flow_type_in_static_blocks` (two blocks; Go repeats them too) | `this_property_access_name`, `this_property_flow_type_at_return`; node creation order unchanged | 23b796ce1 |
+| flow_p2 `narrow_type_by_switch_on_type_of` ↔ `narrow_type_by_switch_on_true` (clauses, default path) | `switch_clauses_and_default` | bbb7cd121 |
+| relater_p3 string-literal fast path ↔ `infer_from_literal_parts_to_template_literal` (`go_plain` dispatch) | `match_literal_parts_to_template_literal_target` | bdd395ffa |
+| flow_skip: identifier keys, resolved symbols, static flow nodes, class bits | shared helpers (see own-code table) | 845813aff, 280c2ac02 |
+| inference_p1 four `AppendIfUnique` copies | `append_if_unique` | 79582a228 |
+| relater_p1 two `isDeeplyNestedType` scans | one scan | 3c4a25875 |
+| inference_p1 `infer_from_object_types` `[...T, ...rest]` ↔ `[...rest, ...T]` | left: Go's two cases differ in their slices; a shared helper would hide which is which | — |
+| inference_p2 `is_type_identical_in_matching` ↔ relater_p1 `is_type_related_to_kind` | left: the documented identmatch1 second copy (UPSTREAM.md pin-bump check) | — |
+
+Two more blocks pair a file of this lane with another lane's file
+(utilities_p2 ↔ binder_p3, utilities_p2 ↔ checker_p13); left to them.
+
 ## Inlining (`--profile goport`, `nm` sizes, base f59c229c5 against head 552393584)
 
 The hot functions keep their bodies: `is_related_to_ex` 5161 → 5126,
@@ -99,4 +120,33 @@ Base `f59c229c5`, head `552393584` (all commits above).
 
 No single-threaded cell moves more than 0.05%. The multi-threaded cells are
 within their run-to-run spread (they count waits).
+
+Again at head `bdd395ffa` (after the duplication commits; the clippy commit
+after it only drops two `&` and moves a function):
+
+| Cell | Base | Head | Δ | Spread b/h |
+|---|---:|---:|---:|---|
+| query noemit-st | 692,441,218 | 692,179,808 | −0.038% | 0.041/0.014% |
+| query emit-st | 728,542,014 | 728,332,914 | −0.029% | 0.014/0.014% |
+| query emit-mt | 826,142,876 | 825,663,832 | −0.058% | 0.337/0.345% |
+| umami noemit-st | 16,553,616,544 | 16,546,391,692 | −0.044% | 0.005/0.007% |
+| umami emit-st | 19,080,893,749 | 19,074,265,287 | −0.035% | 0.008/0.000% |
+| umami emit-mt | 22,225,331,314 | 22,242,748,785 | +0.078% | 0.436/0.347% |
+| hono noemit-st | 2,166,698,827 | 2,167,132,134 | +0.020% | 0.006/0.010% |
+| hono emit-st | 2,877,583,681 | 2,877,487,070 | −0.003% | 0.007/0.016% |
+| hono emit-mt | 3,731,636,387 | 3,733,388,076 | +0.047% | 0.089/0.139% |
+
+The duplication helpers are cold and out of line at head: `record_complexity_overflow`
+625, `this_property_flow_type_at_return` 854, `switch_clauses_and_default` 557;
+`match_literal_parts_to_template_literal_target` 3971 replaces two copies of
+`match_literal_parts_to_template_literal` (1854 each). `structured_type_related_to_worker`
+stays 16932.
+
+## Clippy
+
+CI's command on 1.95.0 (`clippy --locked -p ts_goport -p goport_core -p goport_util
+-p goport_lsproto --all-targets -- -D warnings`), plain and with
+`ts_goport/diagnostics,ts_goport/test-hooks`: clean at `3c3e43592` (the first run
+found `needless_borrow` ×5 and `items_after_test_module` in the inference splits;
+fixed there).
 
