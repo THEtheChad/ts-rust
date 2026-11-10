@@ -434,36 +434,7 @@ impl DeclarationTransformer {
         // PORT: Go resets the three cjs fields again in a `defer`. The body
         // has one exit; the reset is at the end. A panic does not need it.
         //
-        // PORT: Go calls `tx.cjsExportAssignmentVisitor.VisitNode(file)` and
-        // `tx.expressionVisitor.VisitNode(file)` and drops the results.
-        // `VisitNode` calls the callback, then only lifts a SyntaxList result.
-        // Both callbacks return a SourceFile for a SourceFile, so the callbacks
-        // are called directly.
-        //
-        // PERF: the two walks act only on CommonJS exports, which need a
-        // `common_js_module_indicator`, and on expando assignments that the
-        // binder gave an `ASSIGNMENT` symbol (`transform_expando_assignment`
-        // returns early for any other node). Elsewhere they only walk: an
-        // unchanged tree makes no node, and each diagnostic context is
-        // restored. So a parsed file with neither skips them. A factory
-        // SourceFile always walks.
-        let (cjs_walk, expando_walk) = if is_synthetic_node(node) {
-            (true, true)
-        } else {
-            let cjs = source_file_info(node).common_js_module_indicator.is_some();
-            let expando = node
-                .go_file()
-                .file_bind
-                .get()
-                .is_none_or(|bind| bind.has_expando_assignments);
-            (cjs, cjs || expando)
-        };
-        if cjs_walk {
-            self.visit_cjs_export_assignments(node); // collect nested module.exports= assignments
-        }
-        if expando_walk {
-            self.visit_nested_expression(node); // collect expando members (requires any export assignment be located in advance)
-        }
+        self.collect_cjs_exports_and_expando_members(node);
         let source_statements = node.statement_list();
         let statements = self.with_visitor(|v| v.visit_nodes(source_statements));
         let mut combined_statements =
@@ -531,6 +502,42 @@ impl DeclarationTransformer {
         self.cjs_export_assignment_name = Node::NIL;
         self.cjs_export_members = Vec::new();
         result
+    }
+
+    /// Go's two walks of `transformSourceFile` before its visit: the nested
+    /// `module.exports =` assignments, then the expando members (which need
+    /// any export assignment found first).
+    // PORT: Go calls `tx.cjsExportAssignmentVisitor.VisitNode(file)` and
+    // `tx.expressionVisitor.VisitNode(file)` and drops the results.
+    // `VisitNode` calls the callback, then only lifts a SyntaxList result.
+    // Both callbacks return a SourceFile for a SourceFile, so the callbacks
+    // are called directly.
+    //
+    // PERF: the two walks act only on CommonJS exports, which need a
+    // `common_js_module_indicator`, and on expando assignments that the
+    // binder gave an `ASSIGNMENT` symbol (`transform_expando_assignment`
+    // returns early for any other node). Elsewhere they only walk: an
+    // unchanged tree makes no node, and each diagnostic context is
+    // restored. So a parsed file with neither skips them. A factory
+    // SourceFile always walks.
+    fn collect_cjs_exports_and_expando_members(&mut self, node: Node) {
+        let (cjs_walk, expando_walk) = if is_synthetic_node(node) {
+            (true, true)
+        } else {
+            let cjs = source_file_info(node).common_js_module_indicator.is_some();
+            let expando = node
+                .go_file()
+                .file_bind
+                .get()
+                .is_none_or(|bind| bind.has_expando_assignments);
+            (cjs, cjs || expando)
+        };
+        if cjs_walk {
+            self.visit_cjs_export_assignments(node);
+        }
+        if expando_walk {
+            self.visit_nested_expression(node);
+        }
     }
 
     // Go: transformers/declarations/transform.go:384 DeclarationTransformer.transformAndReplaceLatePaintedStatements
