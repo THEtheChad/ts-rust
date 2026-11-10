@@ -1839,3 +1839,18 @@ once a **reconciliation step** is built and tested.
     the shared absolute lock `/home/agent/.cache/ts-rust-heavy.lock`, in
     `app-batch.slice` with `TasksMax=24000`. Added to `w2-brief.md` and to
     every lane brief from now on.
+- **H8 finished** (`t3/harden-lsp-parity-harness`, `7e873cafd`..`06a4344b9`).
+  - **Shared supervisor:** `parity_sandbox_init.py` is now the init for both
+    the api and lsp tiers.
+  - **All lsp gaps fixed,** each with a control: 39/39 fail on the old
+    harness and pass on the new one.
+  - **Two new items per session:** `initialize` and `session home`. These
+    account for the 26 new MATCH.
+  - **Go evidence:** the refill matches the base. The GO-BROKEN set is the
+    same, and so are the variant records.
+  - **Gate** `runs/h8-head-865385add-full`: PARITY OK.
+  - **Cost:** the lsp tier went from 460 s to 641 s, because of
+    number-preserving JSON parsing and the duplicate-key check in
+    `json.mjs`. Root's plan: fold a faster design into H8 round 2, together
+    with any review fixes, so one lsp refill covers both.
+  - **Astra review:** running.
