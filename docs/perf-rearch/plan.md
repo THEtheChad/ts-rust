@@ -1391,3 +1391,6 @@ once a **reconciliation step** is built and tested.
   - **Continuation lane W2-EF2 after merge:** the 24 rows left (cognitive
     complexity 26–39), including `ls/schemagen.rs` and the shared
     catch/catchAll callee helper.
+- **W2-LS merged** (merge below) after Astra's ACCEPT WITH FIXES. Its one
+  finding (the duplicate `or_else_node`, to be shared in `core.rs`) goes to
+  the idiom follow-up lane.
