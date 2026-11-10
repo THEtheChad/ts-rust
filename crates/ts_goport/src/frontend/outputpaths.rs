@@ -517,6 +517,23 @@ fn compute_common_source_directory_of_filenames(
     current_directory: &str,
     use_case_sensitive_file_names: bool,
 ) -> String {
+    if file_names.is_empty() {
+        // Can happen when all input files are .d.ts files.
+        return current_directory.to_string();
+    }
+    common_directory_of_files(file_names, current_directory, use_case_sensitive_file_names)
+}
+
+// Go: tspath/rooted_path.go:627 CaseSensitivity.CommonDirectoryOfFiles
+// PORT: the shape before the pin moved this loop into tspath. It differs
+// from Go at the pin: it normalizes `file_names` against
+// `current_directory` (Go's are rooted), has no case for encoded dynamic
+// file names, and an empty common path is `current_directory` (Go: "").
+fn common_directory_of_files(
+    file_names: &[String],
+    current_directory: &str,
+    use_case_sensitive_file_names: bool,
+) -> String {
     // PORT: Go nil slice is `None`.
     let mut common_path_components: Option<Vec<String>> = None;
     for source_file in file_names {
