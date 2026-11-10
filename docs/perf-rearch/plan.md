@@ -1681,3 +1681,20 @@ once a **reconciliation step** is built and tested.
     - `set_emit_test_panic` is a shipped test hook.
     - `cargo fmt --check` fails on a go_baselines file at the base.
     - go_baselines has 87 clippy errors that CI doesn't run.
+- **H7 recheck: REJECT** (`reviews/2026-11-10-astra-h7-r2.md`).
+  - **Round 1:** all 9 findings closed.
+  - **Three new findings:**
+    - a crashed reader counts as EOF;
+    - the compiler keeps privileges in its user namespace, so it can
+      remount `/dev/shm` writable or hide `/proc` from the survivor scan;
+    - the home skeleton is skipped unvalidated.
+  - **Round 3 sent, the last under the cap,** with root's design for
+    finding 2: drop every capability, set no_new_privs and run as a
+    non-zero uid before exec; find survivors through a pidfd, cgroup or
+    pre-opened `/proc`.
+  - **H8:** the lsp gap list grows by four high findings (init answer not
+    compared, `1e999` parsing, home writes ignored, exec failure counted as
+    GO-BROKEN).
+  - **Process:** the first recheck brief was refused by the provider's
+    cyber filter. Sandbox reviews are now framed as harness QA (memory
+    `astra-cyber-filter`).
