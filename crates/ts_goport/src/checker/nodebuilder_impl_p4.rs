@@ -339,11 +339,11 @@ impl Checker {
                 );
             }
             nb_add_length(b, 3);
-            return f.new_keyword_type_node(if t == self.intrinsic_marker_type {
-                SyntaxKind::IntrinsicKeyword
-            } else {
-                SyntaxKind::AnyKeyword
-            });
+            return f.new_keyword_type_node(if_else(
+                t == self.intrinsic_marker_type,
+                SyntaxKind::IntrinsicKeyword,
+                SyntaxKind::AnyKeyword,
+            ));
         }
         if t_flags.intersects(TypeFlags::UNKNOWN) {
             return f.new_keyword_type_node(SyntaxKind::UnknownKeyword);
@@ -638,12 +638,7 @@ impl Checker {
                 && self.variance_type_parameter.is_some()
                 && self.ty(self.variance_type_parameter).symbol.is_some()
             {
-                (if t == self.marker_sub_type_for_check {
-                    "sub-"
-                } else {
-                    "super-"
-                })
-                .to_string()
+                if_else(t == self.marker_sub_type_for_check, "sub-", "super-").to_string()
                     + &symbol_name(&self.symbols, self.ty(self.variance_type_parameter).symbol)
             } else {
                 "?".to_string()
