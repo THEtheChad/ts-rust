@@ -672,25 +672,8 @@ impl ApiStabilityAnalysis {
         }
         if self.member_table_resolution_is_safe(tp, t, current) {
             self.note_materializing_read();
-            for member in tp.checker.get_properties_of_type_exported(t) {
-                if member.is_nil()
-                    || tp
-                        .checker
-                        .sym(member)
-                        .flags
-                        .intersects(SymbolFlags::TYPE_PARAMETER)
-                    || api_stability_symbol_is_non_public(tp.checker, member)
-                {
-                    continue;
-                }
-                let boundary = self.inherited_child_boundary_symbol(tp, member, source_symbol);
-                if boundary.is_some() {
-                    self.record_symbol(tp, surface, boundary);
-                    continue;
-                }
-                let child = self.member_surface(tp, member, &empty);
-                surface.merge(child);
-            }
+            let properties = tp.checker.get_properties_of_type_exported(t);
+            self.merge_public_property_surfaces(tp, surface, properties, source_symbol, false);
             return;
         }
         if source_symbol.is_some() && tp.checker.sym(source_symbol).members.is_some() {
@@ -897,7 +880,7 @@ impl ApiStabilityAnalysis {
 
     /// Merges the surface of each of `signatures` that is not a child
     /// boundary of `owner`.
-    fn merge_signature_surfaces(
+    pub(crate) fn merge_signature_surfaces(
         &mut self,
         tp: &mut TypeParser<'_>,
         surface: &mut ApiStabilitySurface,

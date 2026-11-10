@@ -1834,14 +1834,14 @@ impl ApiStabilityAnalysis {
             target = tp.checker.ty(reference).target();
         }
         let owner = tp.checker.ty(reference).symbol();
-        if target.is_some()
+        let declared_target = target.is_some()
             && target != reference
             && tp
                 .checker
                 .ty(target)
                 .object_flags()
-                .intersects(ObjectFlags::CLASS_OR_INTERFACE)
-        {
+                .intersects(ObjectFlags::CLASS_OR_INTERFACE);
+        if declared_target {
             let parameters = self.reference_type_parameters(tp, target);
             let arguments = self.reference_arguments(tp, reference, target);
             reference_subst =
@@ -1852,55 +1852,24 @@ impl ApiStabilityAnalysis {
         );
         if resolved {
             self.collect_resolved_member_table(tp, surface, members, owner, &empty);
+        } else if self.member_table_resolution_is_safe(tp, reference, &reference_subst) {
+            self.note_materializing_read();
+            let properties = tp.checker.get_properties_of_type_exported(reference);
+            self.merge_public_property_surfaces(tp, surface, properties, owner, true);
+        } else if declared_target {
+            // The declaration surface under the reference substitution never
+            // resolves the instantiated member table; each member and index read
+            // is gated on its own.
+            self.collect_declaration_surface(
+                tp,
+                surface,
+                target,
+                ApiStabilityInspection::Expand,
+                &reference_subst,
+            );
+            return;
         } else {
-            let structured_safe =
-                self.member_table_resolution_is_safe(tp, reference, &reference_subst);
-            if structured_safe {
-                self.note_materializing_read();
-                for member in tp.checker.get_properties_of_type_exported(reference) {
-                    if member.is_nil()
-                        || tp
-                            .checker
-                            .sym(member)
-                            .flags
-                            .intersects(SymbolFlags::TYPE_PARAMETER)
-                        || api_stability_symbol_is_non_public(tp.checker, member)
-                    {
-                        continue;
-                    }
-                    if self.optional_tagged_inherited_member(tp, member, owner) {
-                        continue;
-                    }
-                    let boundary = self.inherited_child_boundary_symbol(tp, member, owner);
-                    if boundary.is_some() {
-                        self.record_symbol(tp, surface, boundary);
-                        continue;
-                    }
-                    let child = self.member_surface(tp, member, &empty);
-                    surface.merge(child);
-                }
-            } else if target.is_some()
-                && target != reference
-                && tp
-                    .checker
-                    .ty(target)
-                    .object_flags()
-                    .intersects(ObjectFlags::CLASS_OR_INTERFACE)
-            {
-                // The declaration surface under the reference substitution never
-                // resolves the instantiated member table; each member and index read
-                // is gated on its own.
-                self.collect_declaration_surface(
-                    tp,
-                    surface,
-                    target,
-                    ApiStabilityInspection::Expand,
-                    &reference_subst,
-                );
-                return;
-            } else {
-                surface.block();
-            }
+            surface.block();
         }
         // The resolved member table has already flattened inherited members; the
         // tagged ancestors still expose their independently represented type
@@ -1912,52 +1881,110 @@ impl ApiStabilityAnalysis {
             &reference_subst,
             &mut FxHashMap::default(),
         );
+        self.collect_concrete_reference_signatures(tp, surface, reference, owner, &reference_subst);
+        self.collect_concrete_reference_index_infos(
+            tp,
+            surface,
+            reference,
+            owner,
+            &reference_subst,
+        );
+    }
+
+    /// Merges the member surface of each public, non-type-parameter property
+    /// of `properties` (of the type owned by `owner`): an inherited child
+    /// boundary records its symbol instead, and with `exempt_optional_tagged`
+    /// an optional tagged inherited member is skipped.
+    pub(crate) fn merge_public_property_surfaces(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        properties: Vec<SymbolId>,
+        owner: SymbolId,
+        exempt_optional_tagged: bool,
+    ) {
+        let empty = ApiStabilitySubstitution::default();
+        for member in properties {
+            if member.is_nil()
+                || tp
+                    .checker
+                    .sym(member)
+                    .flags
+                    .intersects(SymbolFlags::TYPE_PARAMETER)
+                || api_stability_symbol_is_non_public(tp.checker, member)
+            {
+                continue;
+            }
+            if exempt_optional_tagged && self.optional_tagged_inherited_member(tp, member, owner) {
+                continue;
+            }
+            let boundary = self.inherited_child_boundary_symbol(tp, member, owner);
+            if boundary.is_some() {
+                self.record_symbol(tp, surface, boundary);
+                continue;
+            }
+            let child = self.member_surface(tp, member, &empty);
+            surface.merge(child);
+        }
+    }
+
+    /// The call and construct signatures of the concrete reference
+    /// `reference`: materialized, or resolved when the guard allows it
+    /// (otherwise the surface is blocked).
+    fn collect_concrete_reference_signatures(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        reference: TypeId,
+        owner: SymbolId,
+        reference_subst: &ApiStabilitySubstitution,
+    ) {
+        let empty = ApiStabilitySubstitution::default();
         for kind in [SignatureKind::CALL, SignatureKind::CONSTRUCT] {
             let (signatures, ok) =
                 checker_integration::get_resolved_signatures_of_type_if_materialized(
                     tp.checker, reference, kind,
                 );
             if ok {
-                for signature in signatures {
-                    if self.child_signature_boundary(tp, surface, signature, owner) {
-                        continue;
-                    }
-                    let child = self.signature_surface(tp, signature, &empty);
-                    surface.merge(child);
-                }
+                self.merge_signature_surfaces(tp, surface, signatures, owner, &empty);
                 continue;
             }
-            if !self.member_table_resolution_is_safe(tp, reference, &reference_subst) {
+            if !self.member_table_resolution_is_safe(tp, reference, reference_subst) {
                 surface.block();
                 continue;
             }
             self.note_materializing_read();
-            for signature in tp.checker.get_signatures_of_type_exported(reference, kind) {
-                if self.child_signature_boundary(tp, surface, signature, owner) {
-                    continue;
-                }
-                let child = self.signature_surface(tp, signature, &empty);
-                surface.merge(child);
-            }
+            let signatures = tp.checker.get_signatures_of_type_exported(reference, kind);
+            self.merge_signature_surfaces(tp, surface, signatures, owner, &empty);
         }
+    }
+
+    /// The index infos of the concrete reference `reference`: materialized,
+    /// or resolved when the guard allows it (otherwise the surface is
+    /// blocked).
+    fn collect_concrete_reference_index_infos(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        reference: TypeId,
+        owner: SymbolId,
+        reference_subst: &ApiStabilitySubstitution,
+    ) {
+        let empty = ApiStabilitySubstitution::default();
         let (infos, ok) = checker_integration::get_resolved_index_infos_of_type_if_materialized(
             tp.checker, reference,
         );
-        if ok {
-            for info in infos {
-                if info.is_nil() {
-                    continue;
-                }
-                self.collect_index_info_surface(tp, surface, info, &empty, owner);
+        let infos = if ok {
+            infos
+        } else {
+            if !self.member_table_resolution_is_safe(tp, reference, reference_subst) {
+                surface.block();
+                return;
             }
-            return;
-        }
-        if !self.member_table_resolution_is_safe(tp, reference, &reference_subst) {
-            surface.block();
-            return;
-        }
-        self.note_materializing_read();
-        for info in tp.checker.get_index_infos_of_type_exported(reference) {
+            self.note_materializing_read();
+            tp.checker.get_index_infos_of_type_exported(reference)
+        };
+        for info in infos {
             if info.is_nil() {
                 continue;
             }
