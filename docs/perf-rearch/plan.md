@@ -1467,3 +1467,16 @@ once a **reconciliation step** is built and tested.
 - **Next, lane Q8 (idioms):** shared `if_else`/`or_else_*` in `core.rs`, and
   apply them to the remaining `core.IfElse`/`OrElse` residue in CA's and
   LS's files.
+- **W2-EF2 finished** (`t3/refactor-effect-complexity`, final code commit
+  `62691936b`).
+  - **Targets:** all 24 rows now ≤ 25 (excess 124 → 0), so Effect has no
+    own code over 25.
+  - **Tests:** 60 LSP pin tests were written from the base binary before
+    the splits (`tests/effect_cases/lsp_pins.rs`). `rules/catch_callback.rs`
+    is shared.
+  - **Parity full** (`runs/20261110-010447-full-22d4d1ada8`): OK.
+  - **icount:** Effect-on +0.001%.
+  - **GATING OK.**
+  - **Open:** `reconstruct_piping_flow` has had no caller since it was
+    ported.
+  - **Astra review:** running.
