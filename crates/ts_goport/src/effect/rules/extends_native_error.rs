@@ -90,37 +90,7 @@ fn check_extends_native_error(
         }
         let expr = elem.expression();
 
-        let expr_symbol = tp.get_symbol_at_location(expr);
-        let mut resolved_symbol = expr_symbol;
-        if resolved_symbol.is_some()
-            && tp
-                .checker
-                .sym(resolved_symbol)
-                .flags
-                .intersects(SymbolFlags::ALIAS)
-        {
-            resolved_symbol = tp.checker.get_aliased_symbol(resolved_symbol);
-        }
-
-        let mut is_native_error = resolved_symbol == error_symbol;
-        if !is_native_error && resolved_symbol.is_some() && resolved_symbol != error_symbol {
-            let expr_type = tp.get_type_at_location(expr);
-            if expr_type.is_some() {
-                let construct_signatures = tp
-                    .checker
-                    .get_signatures_of_type_exported(expr_type, SignatureKind::CONSTRUCT);
-                if !construct_signatures.is_empty() {
-                    let instance_type = tp
-                        .checker
-                        .get_return_type_of_signature_exported(construct_signatures[0]);
-                    if instance_type.is_some()
-                        && tp.checker.ty(instance_type).symbol == error_symbol
-                    {
-                        is_native_error = true;
-                    }
-                }
-            }
-        }
+        let is_native_error = is_native_error_expression(tp, expr, error_symbol);
 
         if is_native_error {
             let mut location_node = node.name();
@@ -135,4 +105,38 @@ fn check_extends_native_error(
     }
 
     None
+}
+
+/// Whether a heritage expression is the global `Error`: it resolves (through
+/// an alias) to the `Error` symbol, or another symbol whose type's first
+/// construct signature returns an `Error` instance.
+fn is_native_error_expression(tp: &mut TypeParser<'_>, expr: Node, error_symbol: SymbolId) -> bool {
+    let mut resolved_symbol = tp.get_symbol_at_location(expr);
+    if resolved_symbol.is_some()
+        && tp
+            .checker
+            .sym(resolved_symbol)
+            .flags
+            .intersects(SymbolFlags::ALIAS)
+    {
+        resolved_symbol = tp.checker.get_aliased_symbol(resolved_symbol);
+    }
+    if resolved_symbol == error_symbol {
+        return true;
+    }
+    if resolved_symbol.is_nil() {
+        return false;
+    }
+    let expr_type = tp.get_type_at_location(expr);
+    if expr_type.is_nil() {
+        return false;
+    }
+    let construct_signatures = tp
+        .checker
+        .get_signatures_of_type_exported(expr_type, SignatureKind::CONSTRUCT);
+    let Some(&first) = construct_signatures.first() else {
+        return false;
+    };
+    let instance_type = tp.checker.get_return_type_of_signature_exported(first);
+    instance_type.is_some() && tp.checker.ty(instance_type).symbol == error_symbol
 }
