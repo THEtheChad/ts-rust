@@ -911,9 +911,12 @@ mod tests {
     }
 
     // PORT: not in Go. A cancel ends a waiting `run_loop` at once, as Go's
-    // select does. The 50 ms wait that the loop had took 25 ms in the
-    // median; the bound on the median of 20 runs leaves room for a busy
-    // host.
+    // select does: the loop waits with no timeout, so only the wake of the
+    // cancel can end the wait. (The loop once waited on the cycle channel
+    // with a 50 ms timeout and ended up to 50 ms after a signal.) On Linux
+    // the canceller checks that the loop's thread waits in a futex wait
+    // with no timeout before it cancels; then the cancel must end the loop.
+    // No step of the test depends on timing.
     #[test]
     fn run_loop_ends_at_once_when_its_context_is_cancelled() {
         use crate::gostd::context;
@@ -922,32 +925,75 @@ mod tests {
             Box::new(|_| false),
             true,
         );
-        let mut took = Vec::new();
-        for _ in 0..20 {
-            let (ctx, cancel) = context::with_cancel(&context::background());
-            let canceller = {
-                let shared = wm.shared.clone();
-                std::thread::spawn(move || {
-                    while !shared.do_cycle_ch.state.lock().unwrap().waiting {
-                        std::thread::yield_now();
-                    }
-                    // Into the wait itself, past the `waiting` flag.
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                    cancel();
-                    std::time::Instant::now()
-                })
-            };
-            let mut cycles = 0;
-            wm.run_loop(&ctx, &mut || cycles += 1);
-            let ended = std::time::Instant::now();
-            took.push(ended.saturating_duration_since(canceller.join().unwrap()));
-            assert_eq!(cycles, 0);
+        let (ctx, cancel) = context::with_cancel(&context::background());
+        #[cfg(target_os = "linux")]
+        let waiter = this_thread();
+        let canceller = {
+            let shared = wm.shared.clone();
+            std::thread::spawn(move || {
+                // `recv` sets `waiting` under the lock, and its wait gives
+                // the lock back. So once this sees the flag, the loop's
+                // thread has left the lock and waits, or is about to.
+                while !shared.do_cycle_ch.state.lock().unwrap().waiting {
+                    std::thread::yield_now();
+                }
+                #[cfg(target_os = "linux")]
+                expect_untimed_wait(&waiter);
+                cancel();
+            })
+        };
+        let mut cycles = 0;
+        wm.run_loop(&ctx, &mut || cycles += 1);
+        canceller.join().unwrap();
+        assert_eq!(cycles, 0);
+    }
+
+    /// The /proc directory of this thread (`/proc/<pid>/task/<tid>`).
+    #[cfg(target_os = "linux")]
+    fn this_thread() -> std::path::PathBuf {
+        let task = std::fs::read_link("/proc/thread-self").expect("/proc/thread-self");
+        std::path::Path::new("/proc").join(task)
+    }
+
+    /// Waits until the thread of `task` (`this_thread`) blocks in a futex
+    /// wait, and checks that the wait has no timeout. While a thread blocks,
+    /// its `syscall` file in /proc gives the call and its arguments:
+    /// `futex(uaddr, op, val, timeout, ..)`, where a wait op (`FUTEX_WAIT`,
+    /// `FUTEX_WAIT_BITSET`) has a null timeout when it waits until a wake
+    /// (std's `Condvar::wait`; `wait_timeout` passes a time). Another futex
+    /// op (the wake of the mutex's unlock) or a running thread is passed
+    /// over. Other architectures skip the check.
+    #[cfg(target_os = "linux")]
+    fn expect_untimed_wait(task: &std::path::Path) {
+        const FUTEX_WAIT: u64 = 0;
+        const FUTEX_WAIT_BITSET: u64 = 9;
+        /// The op without `FUTEX_PRIVATE_FLAG` and `FUTEX_CLOCK_REALTIME`.
+        const FUTEX_CMD_MASK: u64 = 0x7f;
+        let futex = if cfg!(target_arch = "x86_64") {
+            "202"
+        } else if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
+            "98"
+        } else {
+            return;
+        };
+        loop {
+            let call = std::fs::read_to_string(task.join("syscall")).expect("/proc syscall");
+            let fields: Vec<&str> = call.split_whitespace().collect();
+            let op = fields
+                .get(2)
+                .and_then(|op| u64::from_str_radix(op.trim_start_matches("0x"), 16).ok());
+            if fields.first() == Some(&futex)
+                && let Some(op) = op
+                && matches!(op & FUTEX_CMD_MASK, FUTEX_WAIT | FUTEX_WAIT_BITSET)
+            {
+                assert_eq!(
+                    fields.get(4),
+                    Some(&"0x0"),
+                    "run_loop waits with a timeout: {call}"
+                );
+                return;
+            }
+            std::thread::yield_now();
         }
-        crate::gostd::slices::stable_sort_by(&mut took, Ord::cmp);
-        assert!(
-            took[10] < std::time::Duration::from_millis(10),
-            "median {:?} from the cancel to the end of run_loop",
-            took[10]
-        );
     }
 }
