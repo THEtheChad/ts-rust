@@ -2297,50 +2297,7 @@ fn json_append_multiline_pieces(
         m.may_append_delim(&mut b, k);
         json_append_whitespace(&m, &mut b, k, prefix, indent);
         let start = i;
-        match k {
-            b'"' => {
-                i += 1;
-                while i < src.len() && src[i] != b'"' {
-                    if src[i] == b'\\' {
-                        i += 1;
-                    }
-                    i += 1;
-                }
-                if i >= src.len() {
-                    return Err(JsonError::new("unexpected EOF within string"));
-                }
-                i += 1;
-                m.increment();
-            }
-            b'0' => {
-                while i < src.len()
-                    && matches!(src[i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
-                {
-                    i += 1;
-                }
-                m.increment();
-            }
-            b'n' | b't' | b'f' => {
-                while i < src.len() && src[i].is_ascii_lowercase() {
-                    i += 1;
-                }
-                m.increment();
-            }
-            b'{' | b'[' => {
-                i += 1;
-                m.push(k == b'{');
-            }
-            b'}' | b']' => {
-                i += 1;
-                m.pop()?;
-            }
-            _ => {
-                return Err(JsonError::new(format!(
-                    "invalid character {:?} at start of value",
-                    char::from(c)
-                )));
-            }
-        }
+        i = json_multiline_token(src, start, k, &mut m)?;
         if let Some(pieces) = pieces.as_deref_mut() {
             pieces.token(k, &src[start..i]);
         }
@@ -2350,6 +2307,63 @@ fn json_append_multiline_pieces(
         }
     }
     Ok(b)
+}
+
+/// Part of `json_append_multiline_pieces`: the compact token of kind `k`
+/// at `start`, with the state machine update of Go `WriteToken`. Gives the
+/// end of the token.
+#[inline]
+fn json_multiline_token(
+    src: &[u8],
+    start: usize,
+    k: u8,
+    m: &mut JsonMultilineState,
+) -> Result<usize, JsonError> {
+    let mut i = start;
+    match k {
+        b'"' => {
+            i += 1;
+            while i < src.len() && src[i] != b'"' {
+                if src[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i >= src.len() {
+                return Err(JsonError::new("unexpected EOF within string"));
+            }
+            i += 1;
+            m.increment();
+        }
+        b'0' => {
+            while i < src.len() && matches!(src[i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+            {
+                i += 1;
+            }
+            m.increment();
+        }
+        b'n' | b't' | b'f' => {
+            while i < src.len() && src[i].is_ascii_lowercase() {
+                i += 1;
+            }
+            m.increment();
+        }
+        b'{' | b'[' => {
+            i += 1;
+            m.push(k == b'{');
+        }
+        b'}' | b']' => {
+            i += 1;
+            m.pop()?;
+        }
+        _ => {
+            return Err(JsonError::new(format!(
+                "invalid character {:?} at start of value",
+                char::from(src[start])
+            )));
+        }
+    }
+    Ok(i)
 }
 
 // Go: json/json.go:48 MarshalIndentWrite
