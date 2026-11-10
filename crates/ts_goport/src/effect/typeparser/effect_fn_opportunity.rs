@@ -88,40 +88,8 @@ impl TypeParser<'_> {
         &mut self,
         node: Node,
     ) -> Option<Rc<EffectFnOpportunityResult>> {
-        // Step 1: Filter by node kind
-        match node.kind() {
-            SyntaxKind::FunctionExpression
-            | SyntaxKind::ArrowFunction
-            | SyntaxKind::FunctionDeclaration => {
-                // OK
-            }
-            _ => return None,
-        }
-
-        // Step 2: Reject generators
-        if node.kind() == SyntaxKind::FunctionExpression {
-            let fn_ = node;
-            if fn_.asterisk_token().is_some() {
-                return None;
-            }
-        }
-        if node.kind() == SyntaxKind::FunctionDeclaration {
-            let fn_ = node;
-            if fn_.asterisk_token().is_some() {
-                return None;
-            }
-        }
-
-        // Step 3: Reject named function expressions (typically used for recursion)
-        if node.kind() == SyntaxKind::FunctionExpression {
-            let fn_ = node;
-            if fn_.name().is_some() {
-                return None;
-            }
-        }
-
-        // Step 4: Reject functions with return type annotations
-        if has_return_type_annotation(node) {
+        // Steps 1 to 4: a plain function or arrow without a return type annotation
+        if !is_effect_fn_opportunity_shape(node) {
             return None;
         }
 
@@ -130,59 +98,13 @@ impl TypeParser<'_> {
             return None;
         }
 
-        // Step 6: Get function type, require exactly 1 call signature
-        let function_type = self.get_type_at_location(node);
-        if function_type.is_nil() {
+        // Steps 6 and 7: one call signature, returning only strict Effect types
+        if !self.returns_only_strict_effects(node) {
             return None;
-        }
-        let call_signatures = self
-            .checker
-            .get_signatures_of_type_exported(function_type, SignatureKind::CALL);
-        if call_signatures.len() != 1 {
-            return None;
-        }
-
-        // Step 7: Get return type, unroll union members, require all are strict Effect types
-        let return_type = self
-            .checker
-            .get_return_type_of_signature_exported(call_signatures[0]);
-        if return_type.is_nil() {
-            return None;
-        }
-        let union_members = self.unroll_union_members(return_type);
-        if union_members.is_empty() {
-            return None;
-        }
-        for member in union_members {
-            self.strict_effect_type(member)?;
         }
 
         // Step 8: Extract name identifier from context
-        let mut name_identifier = get_name_of_declaration(node);
-        // GetNameOfDeclaration doesn't cover property declaration parents for arrow/function expressions
-        if name_identifier.is_nil()
-            && node.parent().is_some()
-            && node.parent().kind() == SyntaxKind::PropertyDeclaration
-        {
-            let pd = node.parent();
-            name_identifier = pd.name();
-        }
-        // Also check PropertyAssignment parents (e.g., object literal members like { query: (...) => Effect... })
-        if name_identifier.is_nil()
-            && node.parent().is_some()
-            && node.parent().kind() == SyntaxKind::PropertyAssignment
-        {
-            let pa = node.parent();
-            if pa.initializer() == node {
-                name_identifier = pa.name();
-            }
-        }
-        if name_identifier.is_some()
-            && name_identifier.kind() != SyntaxKind::Identifier
-            && name_identifier.kind() != SyntaxKind::StringLiteral
-        {
-            name_identifier = Node::NIL;
-        }
+        let name_identifier = effect_fn_opportunity_name(node);
         if name_identifier.is_nil() {
             return None;
         }
@@ -246,6 +168,33 @@ impl TypeParser<'_> {
         }
 
         None
+    }
+
+    /// Steps 6 and 7 of `parseEffectFnOpportunityInner`: the function's type
+    /// has exactly one call signature, and each union member of its return
+    /// type is a strict Effect type (an empty union is not).
+    fn returns_only_strict_effects(&mut self, node: Node) -> bool {
+        let function_type = self.get_type_at_location(node);
+        if function_type.is_nil() {
+            return false;
+        }
+        let call_signatures = self
+            .checker
+            .get_signatures_of_type_exported(function_type, SignatureKind::CALL);
+        if call_signatures.len() != 1 {
+            return false;
+        }
+        let return_type = self
+            .checker
+            .get_return_type_of_signature_exported(call_signatures[0]);
+        if return_type.is_nil() {
+            return false;
+        }
+        let union_members = self.unroll_union_members(return_type);
+        !union_members.is_empty()
+            && union_members
+                .into_iter()
+                .all(|member| self.strict_effect_type(member).is_some())
     }
 
     /// isFunctionReferencedBeforeDeclaration checks the preceding syntax in the
@@ -1036,4 +985,57 @@ impl TypeParser<'_> {
 
         String::new()
     }
+}
+
+/// Steps 1 to 4 of `parseEffectFnOpportunityInner`: a function expression,
+/// arrow function or function declaration that is no generator, no named
+/// function expression (those are typically recursive) and has no return
+/// type annotation.
+fn is_effect_fn_opportunity_shape(node: Node) -> bool {
+    match node.kind() {
+        SyntaxKind::FunctionExpression => {
+            if node.asterisk_token().is_some() || node.name().is_some() {
+                return false;
+            }
+        }
+        SyntaxKind::FunctionDeclaration => {
+            if node.asterisk_token().is_some() {
+                return false;
+            }
+        }
+        SyntaxKind::ArrowFunction => {}
+        _ => return false,
+    }
+    !has_return_type_annotation(node)
+}
+
+/// Step 8 of `parseEffectFnOpportunityInner`: the name of the function's
+/// declaration, else of the property declaration whose value it is, else of
+/// the property assignment whose initializer it is (an object literal member
+/// such as `{ query: (...) => Effect... }`). Only an identifier or a string
+/// literal counts; else `Node::NIL`.
+fn effect_fn_opportunity_name(node: Node) -> Node {
+    let mut name_identifier = get_name_of_declaration(node);
+    let parent = node.parent();
+    // GetNameOfDeclaration doesn't cover property declaration parents for arrow/function expressions
+    if name_identifier.is_nil()
+        && parent.is_some()
+        && parent.kind() == SyntaxKind::PropertyDeclaration
+    {
+        name_identifier = parent.name();
+    }
+    if name_identifier.is_nil()
+        && parent.is_some()
+        && parent.kind() == SyntaxKind::PropertyAssignment
+        && parent.initializer() == node
+    {
+        name_identifier = parent.name();
+    }
+    if name_identifier.is_some()
+        && name_identifier.kind() != SyntaxKind::Identifier
+        && name_identifier.kind() != SyntaxKind::StringLiteral
+    {
+        return Node::NIL;
+    }
+    name_identifier
 }
