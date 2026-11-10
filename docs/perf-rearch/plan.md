@@ -1698,3 +1698,14 @@ once a **reconciliation step** is built and tested.
   - **Process:** the first recheck brief was refused by the provider's
     cyber filter. Sandbox reviews are now framed as harness QA (memory
     `astra-cyber-filter`).
+- **Q7 review: ACCEPT WITH FIXES** (`reviews/2026-11-10-astra-q7.md`).
+  - **Gating:** correct.
+  - **Round 2** fixes the watch-test replacement:
+    - cancel on every inspection outcome, with bounded loops;
+    - portable in-process coverage from cancel to completion, with
+      injected-fault controls behind `test-hooks`;
+    - correct the attribution and narrow the root-cause claim.
+  - **Also in round 2:** gate the emit panic hook, and fix the go_baselines
+    fmt failure.
+  - **Lane Q9 (later):** the go_baselines clippy (87 errors) and an
+    explicit `--test go_baselines` lint step in CI.
