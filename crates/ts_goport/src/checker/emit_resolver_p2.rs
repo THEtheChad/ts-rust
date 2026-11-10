@@ -702,144 +702,164 @@ impl EmitResolver {
     ) -> Vec<Node> {
         let container = self.emit_context().parse_node(container);
         self.with_checker(|c| {
-            let sym = container.symbol();
-            let sym_type = c.get_type_of_symbol(sym);
-            let static_infos = c.get_index_infos_of_type(sym_type).to_vec();
-            let instance_index_symbol = c.get_index_symbol(sym);
-            let mut instance_infos: Vec<IndexInfoId> = Vec::new();
-            if instance_index_symbol.is_some() {
-                // PORT: Go collects `maps.Values` of a Go map, whose order is random. This
-                // uses the symbol table's own order.
-                let members = c.get_members_of_symbol(sym);
-                let sibling_symbols = c.symbols.values(members);
-                instance_infos =
-                    c.get_index_infos_of_index_symbol(instance_index_symbol, &sibling_symbols);
+            self.create_late_bound_index_signatures_locked(
+                c,
+                container,
+                enclosing_declaration,
+                flags,
+                internal_flags,
+                tracker,
+            )
+        })
+    }
+
+    // Go: checker/emitresolver.go:746 CreateLateBoundIndexSignatures
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn create_late_bound_index_signatures_locked(
+        &self,
+        c: &mut Checker,
+        container: Node,
+        enclosing_declaration: Node,
+        flags: NodeBuilderFlags,
+        internal_flags: InternalNodeBuilderFlags,
+        tracker: EmitSymbolTracker,
+    ) -> Vec<Node> {
+        let sym = container.symbol();
+        let sym_type = c.get_type_of_symbol(sym);
+        let static_infos = c.get_index_infos_of_type(sym_type).to_vec();
+        let instance_index_symbol = c.get_index_symbol(sym);
+        let mut instance_infos: Vec<IndexInfoId> = Vec::new();
+        if instance_index_symbol.is_some() {
+            // PORT: Go collects `maps.Values` of a Go map, whose order is random. This
+            // uses the symbol table's own order.
+            let members = c.get_members_of_symbol(sym);
+            let sibling_symbols = c.symbols.values(members);
+            instance_infos =
+                c.get_index_infos_of_index_symbol(instance_index_symbol, &sibling_symbols);
+        }
+
+        let request_node_builder = self.node_builder(c);
+        let factory = &self.emit_context().factory;
+
+        let mut result: Vec<Node> = Vec::new();
+        for (i, info_list) in [static_infos, instance_infos].into_iter().enumerate() {
+            let mut is_static = true;
+            if i > 0 {
+                is_static = false;
             }
-
-            let request_node_builder = self.node_builder(c);
-            let factory = &self.emit_context().factory;
-
-            let mut result: Vec<Node> = Vec::new();
-            for (i, info_list) in [static_infos, instance_infos].into_iter().enumerate() {
-                let mut is_static = true;
-                if i > 0 {
-                    is_static = false;
-                }
-                if info_list.is_empty() {
+            if info_list.is_empty() {
+                continue;
+            }
+            for info in info_list {
+                if c.index_info(info).declaration.is_some() {
                     continue;
                 }
-                for info in info_list {
-                    if c.index_info(info).declaration.is_some() {
+                if info == c.any_base_type_index_info {
+                    continue; // inherited, but looks like a late-bound signature because it has no declarations
+                }
+                let components = c.index_info(info).components.clone();
+                if !components.is_empty() {
+                    // !!! TODO: Complete late-bound index info support - getObjectLiteralIndexInfo does not yet add late bound components to index signatures
+                    let all_component_computed_names_serializable = enclosing_declaration.is_some()
+                        && components.iter().all(|&comp| {
+                            comp.name().is_some()
+                                && is_computed_property_name(comp.name())
+                                && is_entity_name_expression(comp.name().expression())
+                                && c.is_entity_name_visible(
+                                    comp.name().expression(),
+                                    enclosing_declaration,
+                                    false,
+                                )
+                                .accessibility
+                                    == SymbolAccessibility::ACCESSIBLE
+                        });
+                    if all_component_computed_names_serializable {
+                        for &comp in &components {
+                            if c.has_late_bindable_name(comp) {
+                                // skip late bound props that contribute to the index signature - they'll be preserved via other means
+                                continue;
+                            }
+
+                            let first_identifier = get_first_identifier(comp.name().expression());
+                            let name = c.resolve_name(
+                                first_identifier,
+                                first_identifier.text(),
+                                SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
+                                None,  /*nameNotFoundMessage*/
+                                true,  /*isUse*/
+                                false, /*excludeGlobals*/
+                            );
+                            if name.is_some() {
+                                // PORT: Go calls the interface directly, so a nil tracker panics.
+                                tracker.as_ref().expect("nil SymbolTracker").track_symbol(
+                                    c,
+                                    name,
+                                    enclosing_declaration,
+                                    SymbolFlags::VALUE,
+                                );
+                            }
+
+                            let mut mods: Option<Vec<Node>> = if is_static {
+                                Some(vec![factory.new_modifier(SyntaxKind::StaticKeyword)])
+                            } else {
+                                None
+                            };
+                            if c.index_info(info).is_readonly {
+                                mods.get_or_insert_with(Vec::new)
+                                    .push(factory.new_modifier(SyntaxKind::ReadonlyKeyword));
+                            }
+
+                            let comp_symbol = comp.symbol();
+                            let comp_type = c.get_type_of_symbol(comp_symbol);
+                            let type_node = c.node_builder_type_to_type_node(
+                                &request_node_builder,
+                                comp_type,
+                                enclosing_declaration,
+                                flags,
+                                internal_flags,
+                                tracker.clone(),
+                            );
+                            let decl = factory.new_property_declaration(
+                                match &mods {
+                                    Some(mods) => factory.new_modifier_list(mods),
+                                    None => ModifierList::NIL,
+                                },
+                                comp.name(),
+                                comp.question_token(),
+                                type_node,
+                                Node::NIL,
+                            );
+                            result.push(decl);
+                        }
                         continue;
                     }
-                    if info == c.any_base_type_index_info {
-                        continue; // inherited, but looks like a late-bound signature because it has no declarations
-                    }
-                    let components = c.index_info(info).components.clone();
-                    if !components.is_empty() {
-                        // !!! TODO: Complete late-bound index info support - getObjectLiteralIndexInfo does not yet add late bound components to index signatures
-                        let all_component_computed_names_serializable = enclosing_declaration
-                            .is_some()
-                            && components.iter().all(|&comp| {
-                                comp.name().is_some()
-                                    && is_computed_property_name(comp.name())
-                                    && is_entity_name_expression(comp.name().expression())
-                                    && c.is_entity_name_visible(
-                                        comp.name().expression(),
-                                        enclosing_declaration,
-                                        false,
-                                    )
-                                    .accessibility
-                                        == SymbolAccessibility::ACCESSIBLE
-                            });
-                        if all_component_computed_names_serializable {
-                            for &comp in &components {
-                                if c.has_late_bindable_name(comp) {
-                                    // skip late bound props that contribute to the index signature - they'll be preserved via other means
-                                    continue;
-                                }
-
-                                let first_identifier =
-                                    get_first_identifier(comp.name().expression());
-                                let name = c.resolve_name(
-                                    first_identifier,
-                                    first_identifier.text(),
-                                    SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
-                                    None,  /*nameNotFoundMessage*/
-                                    true,  /*isUse*/
-                                    false, /*excludeGlobals*/
-                                );
-                                if name.is_some() {
-                                    // PORT: Go calls the interface directly, so a nil tracker panics.
-                                    tracker.as_ref().expect("nil SymbolTracker").track_symbol(
-                                        c,
-                                        name,
-                                        enclosing_declaration,
-                                        SymbolFlags::VALUE,
-                                    );
-                                }
-
-                                let mut mods: Option<Vec<Node>> = if is_static {
-                                    Some(vec![factory.new_modifier(SyntaxKind::StaticKeyword)])
-                                } else {
-                                    None
-                                };
-                                if c.index_info(info).is_readonly {
-                                    mods.get_or_insert_with(Vec::new)
-                                        .push(factory.new_modifier(SyntaxKind::ReadonlyKeyword));
-                                }
-
-                                let comp_symbol = comp.symbol();
-                                let comp_type = c.get_type_of_symbol(comp_symbol);
-                                let type_node = c.node_builder_type_to_type_node(
-                                    &request_node_builder,
-                                    comp_type,
-                                    enclosing_declaration,
-                                    flags,
-                                    internal_flags,
-                                    tracker.clone(),
-                                );
-                                let decl = factory.new_property_declaration(
-                                    match &mods {
-                                        Some(mods) => factory.new_modifier_list(mods),
-                                        None => ModifierList::NIL,
-                                    },
-                                    comp.name(),
-                                    comp.question_token(),
-                                    type_node,
-                                    Node::NIL,
-                                );
-                                result.push(decl);
-                            }
-                            continue;
-                        }
-                    }
-                    let mut node = c.node_builder_index_info_to_index_signature_declaration(
-                        &request_node_builder,
-                        info,
-                        enclosing_declaration,
-                        flags,
-                        internal_flags,
-                        tracker.clone(),
+                }
+                let mut node = c.node_builder_index_info_to_index_signature_declaration(
+                    &request_node_builder,
+                    info,
+                    enclosing_declaration,
+                    flags,
+                    internal_flags,
+                    tracker.clone(),
+                );
+                if node.is_some() && is_static {
+                    let mut mod_nodes = vec![factory.new_modifier(SyntaxKind::StaticKeyword)];
+                    mod_nodes.extend(node.modifier_nodes().iter());
+                    let mods = factory.new_modifier_list(&mod_nodes);
+                    node = factory.update_index_signature_declaration(
+                        node,
+                        mods,
+                        node.parameter_list(),
+                        node.type_(),
                     );
-                    if node.is_some() && is_static {
-                        let mut mod_nodes = vec![factory.new_modifier(SyntaxKind::StaticKeyword)];
-                        mod_nodes.extend(node.modifier_nodes().iter());
-                        let mods = factory.new_modifier_list(&mod_nodes);
-                        node = factory.update_index_signature_declaration(
-                            node,
-                            mods,
-                            node.parameter_list(),
-                            node.type_(),
-                        );
-                    }
-                    if node.is_some() {
-                        result.push(node);
-                    }
+                }
+                if node.is_some() {
+                    result.push(node);
                 }
             }
-            result
-        })
+        }
+        result
     }
 
     // Go: checker/emitresolver.go:836 GetEffectiveDeclarationFlags
