@@ -90,95 +90,86 @@ fn analyze_schema_struct_with_tag_node(
     sf: Node,
     node: Node,
 ) -> (SchemaStructWithTagMatch, bool) {
+    match schema_struct_with_tag_match(tp, sf, node) {
+        Some(m) => (m, true),
+        None => (SchemaStructWithTagMatch::default(), false),
+    }
+}
+
+/// The match of a `Schema.Struct({ _tag: Schema.Literal("..."), ... })`
+/// call `node`: the first `_tag` property decides.
+fn schema_struct_with_tag_match(
+    tp: &mut TypeParser<'_>,
+    sf: Node,
+    node: Node,
+) -> Option<SchemaStructWithTagMatch> {
     if node.kind() != SyntaxKind::CallExpression {
-        return (SchemaStructWithTagMatch::default(), false);
+        return None;
     }
     let call = node;
 
     // Check if this is Schema.Struct
     if !tp.is_node_reference_to_effect_schema_module_api(call.expression(), member!("Struct")) {
-        return (SchemaStructWithTagMatch::default(), false);
+        return None;
     }
 
     // Must have exactly 1 argument
     if call.argument_list().is_nil() || call.arguments().len() != 1 {
-        return (SchemaStructWithTagMatch::default(), false);
+        return None;
     }
 
-    let arg = call.arguments().get(0);
-    if arg.is_nil() || arg.kind() != SyntaxKind::ObjectLiteralExpression {
-        return (SchemaStructWithTagMatch::default(), false);
-    }
-
-    let obj_lit = arg;
-    if obj_lit.is_nil() || obj_lit.property_list().is_nil() {
-        return (SchemaStructWithTagMatch::default(), false);
+    let obj_lit = call.arguments().get(0);
+    if obj_lit.is_nil()
+        || obj_lit.kind() != SyntaxKind::ObjectLiteralExpression
+        || obj_lit.property_list().is_nil()
+    {
+        return None;
     }
 
     // Look for a _tag property assignment
-    for prop in obj_lit.properties() {
-        if prop.is_nil() || prop.kind() != SyntaxKind::PropertyAssignment {
-            continue;
-        }
-        let pa = prop;
-        if pa.is_nil() || pa.name().is_nil() {
-            continue;
-        }
-        if pa.name().kind() != SyntaxKind::Identifier || get_text_of_node(pa.name()) != "_tag" {
-            continue;
-        }
+    let prop = obj_lit.properties().iter().find(|&prop| {
+        prop.is_some()
+            && prop.kind() == SyntaxKind::PropertyAssignment
+            && prop.name().is_some()
+            && prop.name().kind() == SyntaxKind::Identifier
+            && get_text_of_node(prop.name()) == "_tag"
+    })?;
 
-        // Found _tag property — check if its initializer is Schema.Literal("...")
-        let init = pa.initializer();
-        if init.is_nil() || init.kind() != SyntaxKind::CallExpression {
-            return (SchemaStructWithTagMatch::default(), false);
-        }
+    // Found _tag property — check if its initializer is Schema.Literal("...")
+    let tag_value = schema_literal_string(tp, prop.initializer())?;
 
-        let literal_call = init;
-        if !tp.is_node_reference_to_effect_schema_module_api(
-            literal_call.expression(),
-            member!("Literal"),
-        ) {
-            return (SchemaStructWithTagMatch::default(), false);
-        }
+    // Collect all properties except _tag
+    let other_props: Vec<Node> = obj_lit.properties().iter().filter(|&p| p != prop).collect();
 
-        // Schema.Literal must have exactly 1 argument that is a string literal
-        if literal_call.argument_list().is_nil() || literal_call.arguments().len() != 1 {
-            return (SchemaStructWithTagMatch::default(), false);
-        }
-        if literal_call.arguments().get(0).kind() != SyntaxKind::StringLiteral {
-            return (SchemaStructWithTagMatch::default(), false);
-        }
-
-        let tag_value = literal_call.arguments().get(0).text().to_string();
-
-        // Collect all properties except _tag
-        let mut other_props: Vec<Node> = Vec::new();
-        for p in obj_lit.properties() {
-            if p == prop {
-                continue;
-            }
-            other_props.push(p);
-        }
-
-        // Extract the Schema expression from Schema.Struct (the left side of the property access)
-        let mut schema_expr = Node::NIL;
-        if call.expression().kind() == SyntaxKind::PropertyAccessExpression {
-            schema_expr = call.expression().expression();
-        }
-
-        return (
-            SchemaStructWithTagMatch {
-                source_file: sf,
-                location: get_error_range_for_node(sf, node),
-                call_node: node,
-                tag_value,
-                other_properties: other_props,
-                schema_expr,
-            },
-            true,
-        );
+    // Extract the Schema expression from Schema.Struct (the left side of the property access)
+    let mut schema_expr = Node::NIL;
+    if call.expression().kind() == SyntaxKind::PropertyAccessExpression {
+        schema_expr = call.expression().expression();
     }
 
-    (SchemaStructWithTagMatch::default(), false)
+    Some(SchemaStructWithTagMatch {
+        source_file: sf,
+        location: get_error_range_for_node(sf, node),
+        call_node: node,
+        tag_value,
+        other_properties: other_props,
+        schema_expr,
+    })
+}
+
+/// The string of `init` when it is `Schema.Literal("...")` with exactly one
+/// string literal argument.
+fn schema_literal_string(tp: &mut TypeParser<'_>, init: Node) -> Option<String> {
+    if init.is_nil() || init.kind() != SyntaxKind::CallExpression {
+        return None;
+    }
+    if !tp.is_node_reference_to_effect_schema_module_api(init.expression(), member!("Literal")) {
+        return None;
+    }
+    // Schema.Literal must have exactly 1 argument that is a string literal
+    if init.argument_list().is_nil() || init.arguments().len() != 1 {
+        return None;
+    }
+    let literal = init.arguments().get(0);
+    (literal.kind() == SyntaxKind::StringLiteral).then(|| literal.text().to_string())
 }
