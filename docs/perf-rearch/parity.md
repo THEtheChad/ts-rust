@@ -2539,6 +2539,29 @@ referee self-test had failed since lane H5 (its proxy, `#!/usr/bin/env node`, fo
 server's PATH, and its settings came through an environment the servers no longer get: 15 checks
 failed on `c788830c4`); its proxy now takes a settings file and runs as a command.
 
+### Round 2: Astra's review of `06a4344b9` (`reviews/2026-11-10-astra-h8.md`, REJECT)
+
+Her reproductions are in `~/.cache/perf-rearch/scratch/review-h8-astra/`. Root's design point: the storage
+is listed and recorded in one place for both tiers (her finding 1 was the api tier's `_walk` bug again,
+in lspdiff's own JS lister), so the lister, the home skeleton and the write record are the init's
+(`parity_sandbox_storage.py`), and the api tier uses them too. Each control is in `parity_h8_test.py`
+(her probes as `parity_h8_fake.py` modes, through `parity_lsp.py` on ts-pattern-f12-p6 or, as she ran
+them, lspdiff alone): "before" is `--e2e-only --harness <git archive 06a4344b9>`.
+
+| # | finding | fix | control | before (`06a4344b9`) | now |
+|---|---|---|---|---|---|
+| 1 | unreadable input storage gives MATCH: listing failures ignored, the overlay root's metadata not listed (`sandbox.mjs:83`) | the init lists the storage with the one lister (H7's `_walk`): the roots as `.`, an unlistable dir said so; the init has every capability over its tmpfs | `input-root-hide`, `input-root-mode` (lspdiff alone, as she ran them, and through the tier) | 59 MATCH, 59 MATCH | session end DIFF rsFailure input, session storage DIFF |
+| 2 | `$HOME/__proto__` invisible (`sandbox.mjs:105`: a `{}`) | the lister is Python; the referee's `refValue` and tsserver.mjs's rename `changes` no longer assign server-given names into a `{}` | `home-proto`; unit: the lister lists `__proto__`, the record records it | MATCH | session storage DIFF |
+| 3 | the home history misses writes inside one request (sampled) | the write record (fanotify on the storage's tmpfs, set before the server starts; complete, no per-dir race) | `within-request` (create and unlink before each answer); unit: a file made and removed in a new dir is recorded | MATCH | session writes DIFF |
+| 4 | server messages dropped: standard sessions all of them (`session.mjs:150`), watch sessions those after the last checkpoint (`scenario.mjs:675`) | item `session messages`: every server-to-client message after the last checkpoint through EOF | `request` (applyEdit during initialize), `late-request`, `late-diag` (while shutdown is answered); her watch-session cases | MATCH ×3 | session messages DIFF ×3 |
+| 5 | the shutdown result is not checked (`client.mjs:219`) | it must be null | `shutdown-result` (12345) | MATCH | session end DIFF |
+| 6 | the server controls ATA's evidence: the stand-in trusts `ATA_NPM_LOG`, `ATA_STORE` and the delay from the environment, its log dir is writable | the stand-in reads a fixed read-only config, checks every store file against its sha256, ignores the environment; the evidence is the write record | `ata-unlogged` on ata-overlay (her fake-extra.py: an npm call of its own with `ATA_NPM_LOG=/dev/null`); JS: the environment ignored, a store file with other bytes fails | 47 MATCH | the npm item and session writes DIFF |
+| 7 | a timing variation exempts unrelated home damage forever: storage and history were one answer, and a Go variant exempted all of it (`lspdiff.mjs:388`, `:491`) | two items, judged path by path: storage strict to this fill's Go runs; writes exempt only on the paths where Go varies, recorded per path | her synthetic case: a Go that writes P in about half of its runs, a tsc-rs that writes P and Q, now and in a later fill through the record; control: P alone | GO-BROKEN (her `home-variants`, `home-prior-variants`); the controls MATCH or fail | DIFF on Q only; P alone GO-BROKEN; storage P DIFF against a fill without it |
+| cost | the lsp tier 460 s → 641 s (round 1) | `scan` plus plain `JSON.parse`; `rawNumbers` marks | (below) | | |
+
+The round 1 controls pass on this head (`H8 SELFTEST OK`: 21 unit, 38 end to end); the ones on the home
+read the new items (`session storage` for a persistent write, `session writes` for a transient one).
+
 ### Go and JS evidence
 
 Every lsp key changed (the sources, `CACHE_VERSION` 4), so every Go fill and Go-variant record started
