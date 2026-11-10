@@ -114,3 +114,47 @@ The rows still at Δ 8–9 in these files (`check_identifier`,
 `choose_overload`, ...) are under the Δ ≥ 10 bar. Most of what is left is
 Go's `switch` statements written as `if`/`else if` chains. Go counts a
 `switch` once; Rust counts each arm.
+
+## Evidence (head c07e169c4 code; base f59c229c5)
+
+- **Lane files, Go-relative** (`quality.sh ranking`): 39 port targets with
+  Σ Δ 615 → 0 targets; Σ positive Δ 1,225 → 679; own code over 25: 2
+  (excess 15) → 0.
+- **Parity full:** `runs/20261109-190643-full-3d2c1c7cba` (release bin of
+  this code), PARITY OK. 0 lost, 0 not run, 0 new not good, 0 newly good by
+  a referee. cli 170 MATCH, tests 139,910 PASS, lsp 2,629 MATCH + 29
+  GO-BROKEN, fuzz 29,955 MATCH + 8 GO-BROKEN + 1 JS-AGREES + 36 DIFF (all
+  grandfathered, as in the base), corpus 12,727 MATCH. An earlier full run
+  (`20261109-183811-full-3d2c1c7cba`, same bin) had one ERROR:
+  `lsp/umami-f12-p6`, "a process of the session touched an unkeyed path:
+  ~/.config (close-nowrite)", so its 689 items were not run. The session run
+  alone (`runs/w2cb-lsp-umami-f12-p6-rerun`) gave the base status on all 689
+  (684 MATCH, 5 GO-BROKEN). The full rerun above was clean.
+- **Parity quick** at an earlier head found a regression from this lane:
+  `spelling_memo_sees_merge_during_its_scan` (LOST). The first spell1 memo
+  split read `merge_version` after the scan, not before. That made an entry
+  fresh that a merge during the scan had to leave old. It was fixed inside
+  commit 0be2ea0cb and is a PASS in the full run.
+- **Tests:** `test --release --workspace`: 2,121 passed, 0 failed. With
+  `--features ts_goport/diagnostics,ts_goport/test-hooks`: 2,143 passed, 0
+  failed. TS_GO_REPO was the pin checkout.
+- **Clippy:** CI's command on 1.95.0 with `-D warnings`, plain and with the
+  features: clean. It caught one `obfuscated_if_else` in
+  `check_alias_symbol`, which went back to Go's `if`.
+- **icount** (`icount_ab.sh`, `--profile goport` builds of f59c229c5 and
+  c07e169c4, 3 runs, medians):
+
+  | project | cell | base | head | Δ |
+  |---|---|---:|---:|---:|
+  | query | noemit-st | 692,377,683 | 692,373,083 | −0.001% |
+  | query | emit-st | 728,514,325 | 728,507,033 | −0.001% |
+  | query | emit-mt | 825,751,425 | 827,757,816 | +0.243% (5-run recheck: +0.100%, spread 0.12–0.15%) |
+  | umami | noemit-st | 16,553,769,826 | 16,552,214,023 | −0.009% |
+  | umami | emit-st | 19,081,682,667 | 19,079,400,953 | −0.012% |
+  | umami | emit-mt | 22,249,809,758 | 22,227,432,714 | −0.101% (spread 0.5–0.9%) |
+  | hono | noemit-st | 2,166,284,305 | 2,166,371,739 | +0.004% |
+  | hono | emit-st | 2,876,933,224 | 2,876,878,296 | −0.002% |
+  | hono | emit-mt | 3,733,884,805 | 3,734,444,150 | +0.015% |
+
+  Every single-threaded cell is within ±0.012%. The multi-threaded cells
+  move with the load (25 to 30 while measured).
