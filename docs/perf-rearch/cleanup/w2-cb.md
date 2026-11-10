@@ -165,3 +165,20 @@ reverted: rows 27 and 36. The branch is rebased onto perf/first-principles
 
   Every single-threaded cell is within ±0.012%. The multi-threaded cells
   move with the load (25 to 30 while measured).
+
+## Evidence, round 2 (head 018bedc54 code, on perf/first-principles 3d4c5edb1)
+
+- **Parity quick:** `runs/20261109-210955-quick-46db56d4cf`, PARITY OK. 0
+  lost, 0 not run, 0 new not good, 0 newly good by a referee. cli 24 MATCH,
+  lsp 1,761 MATCH + 5 GO-BROKEN, fuzz 1,498 MATCH + 2 DIFF (both
+  grandfathered), tests 137,774 PASS.
+- **Tests:** workspace release, plain 2,121 passed, 0 failed; with
+  `diagnostics,test-hooks` 2,143 passed, 0 failed.
+- **Clippy:** CI's command on 1.95.0 with `-D warnings`, plain and with the
+  features: clean.
+- **Gating:** `quality.sh gating HEAD` prints GATING FAIL with 11 findings
+  not allowed. All 11 are outside this lane's files (`ast/synthetic.rs`,
+  `program/ls_program.rs`, `program/reuse_verify.rs`,
+  `emitter/program_emit.rs`, and the `checker_call_log` functions of
+  `program.rs`). `quality.sh gating perf/first-principles` (3d4c5edb1) gives
+  the same 11, so they are pre-existing and Q6's to fix. This lane adds none.
