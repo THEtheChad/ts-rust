@@ -76,7 +76,8 @@ const t = (s) => { try { return JSON.stringify(parseStrict(s).value); } catch (e
 console.log(JSON.stringify({
   overflow: t('{"r":1e999}'), minus: t('{"r":-0}'), float: t('{"r":1.0}'), exp: t('{"r":1e0}'), big: t('{"r":9007199254740993}'),
   plain: t('{"r":[1,2.5,-3,null,true,"x"]}'), dup: t('{"a":1,"a":1}'), deepDup: t('[{"b":{"c":1,"c":1}}]'),
-  keyInString: t('{"a":"{\\\\"a\\\\":1}","b":{"a":1}}'), bom: t('\\ufeff{}'), nan: t('{"r":NaN}'), trailing: t('{} x'),
+  keyInString: t('{"a":"{\\\\"a\\\\":1}","b":{"a":1}}'),
+  escapedDup: t('{"a":1,"\\\\u0061":2}'), exactFlags: [parseStrict('{"r":[1,2.5,"1.0"]}').exact, parseStrict('{"r":1.0}').exact], bom: t('\\ufeff{}'), nan: t('{"r":NaN}'), trailing: t('{} x'),
 }));''')
     check('json: 1e999 keeps its text (Astra: it parsed to Infinity and was written as null)', got['overflow'] == '{"r":1e999}', got)
     check('json: -0, 1.0, 1e0 and 2^53+1 keep their text', [got[k] for k in ('minus', 'float', 'exp', 'big')] ==
@@ -84,6 +85,9 @@ console.log(JSON.stringify({
     check('json: canonical numbers and other types are unchanged', got['plain'] == '{"r":[1,2.5,-3,null,true,"x"]}', got)
     check('json: a duplicate key is refused, nested too', got['dup'].startswith('error') and got['deepDup'].startswith('error'), got)
     check('json: a key-like text in a string is no key', not got['keyInString'].startswith('error'), got)
+    check('json: a duplicate spelled with an escape is a duplicate (keys compared decoded)', got['escapedDup'].startswith('error'), got)
+    check('json: plain JSON.parse only where every number is canonical (a fraction is, 1.0 is not; a number in a string is no number)',
+          got['exactFlags'] == [True, False], got)
     check('json: a BOM, NaN and trailing bytes are refused', all(got[k].startswith('error') for k in ('bom', 'nan', 'trailing')), got)
     env = node('''
 const { envelopeError } = await import("./client.mjs");
@@ -102,16 +106,47 @@ console.log(JSON.stringify({
     bad = ('version', 'both', 'extra', 'unknown', 'floatId', 'badError', 'noResult', 'badParams', 'array')
     check('envelope: every malformed envelope is refused (version, result and error, an extra key, no pending id, '
           'id 7.0, a bad error object, no result, params 3, not an object)', all(env[k] for k in bad), env)
+    # The one storage lister (parity_sandbox_storage.py walk; the api tier's _walk until round 2).
+    import parity_sandbox_storage as storage
     d = Path(tempfile.mkdtemp(prefix='home-', dir=SCRATCH))
     (d / 'tmp').mkdir()
     (d / 'tmp' / 'f').write_text('x')
+    (d / '__proto__').write_text('y')
     os.symlink('nowhere', d / 'l')
     os.chmod(d, 0o750)
-    home = node(f'const {{ listHome }} = await import("./sandbox.mjs"); console.log(JSON.stringify(listHome({json.dumps(str(d))})));')
-    check('home listing: the dir itself with its mode, each entry with type, mode and content hash, links by target',
+    home = storage.walk(str(d))
+    check('storage listing: the dir itself with its mode, each entry with type, mode and content hash, links by target',
           home.get('.') == 'dir 750' and home.get('tmp') == 'dir 775' and home.get('l') == 'link nowhere'
           and home.get('tmp/f', '').endswith(' 664') and len(home['tmp/f'].split()[0]) == 16, home)
+    check('storage listing: finding 2: an entry named __proto__ is listed', home.get('__proto__', '').endswith(' 664'), home)
+    (d / 'tmp').chmod(0)
+    hidden_dir = storage.walk(str(d))
+    (d / 'tmp').chmod(0o755)
+    check('storage listing: finding 1: a dir that cannot be listed is said so, never skipped (as an unprivileged lister)',
+          'unlistable' in hidden_dir.get('tmp', ''), hidden_dir)
     shutil.rmtree(d)
+    # The write record: a fanotify filesystem mark on a tmpfs of the namespace's own (as the init sets it).
+    rec = subprocess.run(['unshare', '-rm', sys.executable, '-I', '-c', f"""
+import json, os, sys, ctypes, time
+sys.path.insert(0, {str(HERE)!r})
+import parity_sandbox_storage as storage
+t = {str(SCRATCH / 'rec')!r}; os.makedirs(t, exist_ok=True)
+assert ctypes.CDLL(None).mount(b'tmpfs', t.encode(), b'tmpfs', 0, None) == 0
+storage.make_home(t + '/home', 0); os.makedirs(t + '/ovl0/upper'); os.makedirs(t + '/ovl0/work')
+r = storage.Recorder(t, 1); r.start()
+os.makedirs(t + '/home/new/deep'); open(t + '/home/new/deep/f', 'w').write('x'); os.unlink(t + '/home/new/deep/f')
+open(t + '/home/__proto__', 'w').write('y'); open(t + '/ovl0/work/tmp', 'w').write('z'); open(t + '/ovl0/upper/in', 'w').write('w')
+os.rename(t + '/home/new', t + '/home/moved'); open(t + '/home/moved/deep/g', 'w').write('g')
+time.sleep(0.3); print(json.dumps(r.finish()))
+"""], capture_output=True, text=True)
+    try:
+        got = json.loads(rec.stdout)['writes']
+    except ValueError:
+        got = {'error': rec.stderr[-400:]}
+    check('write record: finding 3: a file made and removed in a dir made a moment before is recorded',
+          'create' in got.get('home/new/deep/f', []) and 'delete' in got.get('home/new/deep/f', []), got)
+    check('write record: __proto__, a write into an input (disk0), a moved dir\'s new path; the overlay work dir left out',
+          'home/__proto__' in got and 'disk0/in' in got and 'home/moved/deep/g' in got and not any('work' in k for k in got), got)
     # The stand-in npm, as a user without privileges, from a read-only store (dirs 555, as the frozen store's
     # snapshot is): it installs with npm's modes, and a failure is logged as `error` (a harness error).
     t = Path(tempfile.mkdtemp(prefix='npm-', dir=SCRATCH))
@@ -125,16 +160,28 @@ console.log(JSON.stringify({
     subprocess.run(['chmod', '-R', 'a-w', str(store)], check=True)
     loc = t / 'cache/typescript/7.1'
     loc.mkdir(parents=True)
-    npm_env = {'PATH': '/usr/bin:/bin', 'XDG_CACHE_HOME': str(t / 'cache'), 'ATA_STORE': str(store), 'ATA_NPM_LOG': str(t / 'npm.log'),
-               'ATA_NPM_DELAY_MS': '0', 'ATA_NODE': shutil.which('node')}
-    rcs = [subprocess.run([str(LSPDIFF / 'ata-npm/npm'), 'install', a, '--save-dev'], cwd=loc, env=npm_env).returncode
-           for a in ('types-registry@latest', '@types/x@latest')]
+    import hashlib
+    files = {str(f.relative_to(store)): hashlib.sha256(f.read_bytes()).hexdigest() for f in store.rglob('*') if f.is_file()}
+    (t / 'log').mkdir()
+    (t / 'config.json').write_text(json.dumps({'store': str(store), 'files': files, 'log': '/run/lspdiff-ata/log/npm.log', 'delayMs': 0,
+                                                'cache': str(t / 'cache')}))
+    bind = ('mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node && '
+            'mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && mount --bind "$3" /run/lspdiff-ata/log && '
+            'cd "$4" && shift 4 && exec "$@"')
+
+    def npm(*a):  # the stand-in as the sandbox runs it: its config, node and log dir at /run/lspdiff-ata
+        return subprocess.run(['unshare', '-rm', 'sh', '-c', bind, 'sh', str(t / 'config.json'), os.path.realpath(shutil.which('node')),
+                               str(t / 'log'), str(loc), str(LSPDIFF / 'ata-npm/npm'), *a],
+                              env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True).returncode
+    rcs = [npm('install', a, '--save-dev') for a in ('types-registry@latest', '@types/x@latest')]
     modes = {p: oct(os.stat(loc / p).st_mode & 0o777) for p in ('node_modules/@types/x', 'node_modules/@types/x/index.d.ts')}
     check('stand-in npm: installs from a read-only store with npm\'s modes (dirs 755, files 644)',
           rcs == [0, 0] and modes == {'node_modules/@types/x': '0o755', 'node_modules/@types/x/index.d.ts': '0o644'}, (rcs, modes))
-    (store / 'node_modules/@types/x').chmod(0)  # a store it cannot read: a logged failure
-    subprocess.run([str(LSPDIFF / 'ata-npm/npm'), 'install', '@types/x@latest', '--save-dev'], cwd=loc, env=npm_env)
-    last = json.loads((t / 'npm.log').read_text().splitlines()[-1])
+    bad = {**files, 'node_modules/@types/x/index.d.ts': '0' * 64}  # a store file that fails its sha256: a logged failure
+    (t / 'config.json').write_text(json.dumps({'store': str(store), 'files': bad, 'log': '/run/lspdiff-ata/log/npm.log', 'delayMs': 0,
+                                                'cache': str(t / 'cache')}))
+    npm('install', '@types/x@latest', '--save-dev')
+    last = json.loads((t / 'log/npm.log').read_text().splitlines()[-1])
     check('stand-in npm: a failure of its own is a done line with `error` (scenario.mjs: a harness error, not a hang)',
           last.get('done') and last.get('code') == 1 and 'error' in last, last)
     subprocess.run(['chmod', '-R', 'u+rwx', str(t)])
@@ -172,10 +219,10 @@ def fake(mode):
     return str(w)
 
 
-def tier(rs, go=GO):
+def tier(rs, go=GO, session=SESSION):
     out = Path(tempfile.mkdtemp(prefix='run-', dir=SCRATCH))
     r = subprocess.run([sys.executable, '-I', str(HARNESS / 'parity_lsp.py'), '--rs', rs, '--go', go, '--out', str(out), '--tier', 'quick',
-                        '--only', f'^{SESSION}$', '--no-js'], capture_output=True, text=True)
+                        '--only', f'^{session}$', '--no-js'], capture_output=True, text=True)
     try:
         return json.loads((out / 'results.json').read_text())['items'], r.stdout + r.stderr
     except OSError:
@@ -191,13 +238,18 @@ def short(items, log=''):
     return f'{len(items)} items, {len(b)} not good: {json.dumps(dict(list(b.items())[:2]))[:400]} {log[-300:]}'
 
 
+def item(step, status='DIFF', **more):
+    """A test that some item of a session is `step` with that status (and the fields in `more`)."""
+    return lambda i: any(k.endswith(' ' + step) and v['status'] == status and all(v.get(f) == x for f, x in more.items()) for k, v in i.items())
+
+
 EXPECT = {  # mode -> (what a good harness shows, a test on the items)
-    'detached': ('session end DIFF (a survivor)', lambda i: any(k.endswith('session end') and v['status'] == 'DIFF' for k, v in i.items())),
+    'detached': ('session end DIFF (a survivor)', item('session end')),
     'hide-proc-survivor': ('a DIFF (it cannot mount over /proc)', lambda i: bool(bad(i))),
-    'child-stderr': ('session end DIFF (stderr held open)', lambda i: any(k.endswith('session end') and v['status'] == 'DIFF' for k, v in i.items())),
+    'child-stderr': ('session end DIFF (stderr held open)', item('session end')),
     'shm-remount': ('a DIFF (the remount fails)', lambda i: bool(bad(i))),
     'stat-bait': ('a DIFF (the guarded dir does not exist)', lambda i: bool(bad(i))),
-    'init-null': ('initialize DIFF', lambda i: any(k.endswith(' initialize') and v['status'] == 'DIFF' for k, v in i.items())),
+    'init-null': ('initialize DIFF', item('initialize')),
     'overflow': ('a DIFF (1e999 is not null)', lambda i: bool(bad(i))),
     'minus-zero': ('a DIFF (-0 is not 0)', lambda i: bool(bad(i))),
     'float': ('a DIFF (1.0 is not 1)', lambda i: bool(bad(i))),
@@ -206,12 +258,70 @@ EXPECT = {  # mode -> (what a good harness shows, a test on the items)
     'bad-rpc': ('a protocol DIFF', lambda i: any(v.get('rsFailure') == 'crash' for v in bad(i).values())),
     'extra-key': ('a protocol DIFF', lambda i: any(v.get('rsFailure') == 'crash' for v in bad(i).values())),
     'stray-answer': ('a protocol DIFF', lambda i: any(v.get('rsFailure') == 'crash' for v in bad(i).values())),
-    'home-write': ('session home DIFF', lambda i: any(k.endswith('session home') and v['status'] == 'DIFF' for k, v in i.items())),
-    'home-transient': ('session home DIFF', lambda i: any(k.endswith('session home') and v['status'] == 'DIFF' for k, v in i.items())),
-    'home-skeleton': ('session home DIFF', lambda i: any(k.endswith('session home') and v['status'] == 'DIFF' for k, v in i.items())),
-    'home-root-hide': ('session home DIFF', lambda i: any(k.endswith('session home') and v['status'] == 'DIFF' for k, v in i.items())),
-    'home-root-mode': ('session home DIFF', lambda i: any(k.endswith('session home') and v['status'] == 'DIFF' for k, v in i.items())),
+    'home-write': ('session storage DIFF', item('session storage')),
+    'home-transient': ('session writes DIFF (written and removed between two answers)', item('session writes')),
+    'home-skeleton': ('session storage DIFF', item('session storage')),
+    'home-root-hide': ('session storage DIFF', item('session storage')),
+    'home-root-mode': ('session storage DIFF', item('session storage')),
+    # round 2: Astra's H8 review, one per finding
+    'input-root-hide': ('finding 1: session end DIFF rsFailure input, and session storage DIFF', lambda i: item('session end', rsFailure='input')(i) and item('session storage')(i)),
+    'input-root-mode': ('finding 1: session end DIFF rsFailure input', item('session end', rsFailure='input')),
+    'home-proto': ('finding 2: session storage DIFF ($HOME/__proto__)', item('session storage')),
+    'within-request': ('finding 3: session writes DIFF (written and removed inside one request)', item('session writes')),
+    'late-diag': ('finding 4: session messages DIFF (a notification while shutdown is answered)', item('session messages')),
+    'late-request': ('finding 4: session messages DIFF (a request while shutdown is answered)', item('session messages')),
+    'request': ('finding 4: session messages DIFF (a request in a standard session)', item('session messages')),
+    'shutdown-result': ('finding 5: session end DIFF (shutdown answered 12345)', item('session end')),
 }
+
+
+def lspdiff(tag, go, rs, extra=()):
+    """The harness's lspdiff alone (sandboxed, as parity_lsp.py runs it) on a one-file project: its items."""
+    proj = SCRATCH / 'project'
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / 'a.ts').write_text('export const foo = 1;\nfoo;\n')
+    out = SCRATCH / f'lspdiff-{tag}'
+    shutil.rmtree(out, ignore_errors=True)
+    (SCRATCH / 'home').mkdir(exist_ok=True)
+    env = {**os.environ, 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
+                                                         'mounts': [{'lower': str(proj), 'target': str(proj)}]})}
+    r = subprocess.run(['node', str(HARNESS / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(proj), '--file', 'a.ts', '--positions', '1',
+                        '--go', go, '--rs', rs, '--out', str(out), '--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1', *extra],
+                       env=env, capture_output=True, text=True, timeout=600)
+    files = list(out.glob('*/items.json'))
+    return {f'{x["i"]:04d} {x["step"]}': x for x in json.loads(files[0].read_text())} if files else {}, r.stdout + r.stderr
+
+
+def finding7():
+    """Astra's finding 7: a Go that varies on one path (P, in about half of its runs) must not exempt a
+    path no Go run gives (Q), now or through a recorded variant later; the final storage is judged against
+    this fill's Go runs only."""
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    fake('pass')  # writes fake_lsp.py
+    record = SCRATCH / 'f7-variants.json'
+    record.unlink(missing_ok=True)
+    flags = ['--go-runs', '8', '--go-variants-material', 'h8-finding7', '--go-variants-out', str(record)]
+    for attempt in range(4):  # until Go's 8 runs differ on P (each writes it with probability 1/2)
+        items, log = lspdiff('f7-extra', sh('vary'), sh('vary-extra'), flags)
+        try:
+            varied = any(len(v) > 1 for v in json.loads(record.read_text())['variants'].values())
+        except (OSError, ValueError, KeyError):
+            varied = False
+        if varied:
+            break
+        record.unlink(missing_ok=True)
+    detail = lambda i, s: next((v.get('detail', '') for k, v in i.items() if k.endswith(' ' + s)), '')  # noqa: E731
+    check('finding 7: Go varies on P, tsc-rs also writes Q: session storage and session writes are DIFF, on Q only',
+          item('session storage')(items) and item('session writes')(items) and 'tmp/Q' in detail(items, 'session writes')
+          and 'tmp/P' not in detail(items, 'session writes'), short(items, log))
+    only, log2 = lspdiff('f7-only', sh('vary'), sh('vary-only'), ['--go-runs', '8'])
+    check('finding 7: control: tsc-rs writes only P, where Go varies: GO-BROKEN, P alone exempt',
+          item('session writes', 'GO-BROKEN')(only) and 'tmp/P' in detail(only, 'session writes'), short(only, log2))
+    later, log3 = lspdiff('f7-prior', sh('none'), sh('vary-extra'), ['--go-runs', '1', '--go-variants-material', 'h8-finding7', '--go-variants', str(record)])
+    check('finding 7: a later fill with the record: Q is still a DIFF (a recorded variant of P exempts P alone)',
+          item('session writes')(later) and 'tmp/Q' in detail(later, 'session writes') and 'tmp/P' not in detail(later, 'session writes'), short(later, log3))
+    check('finding 7: and the storage is judged against this fill\'s Go runs only: P is a DIFF there', item('session storage')(later)
+          and 'tmp/P' in detail(later, 'session storage'), short(later, log3))
 
 
 def e2e():
@@ -238,6 +348,12 @@ def e2e():
         items, log = tier(fake(mode))
         check(f'e2e {mode}: {want}', items and ok(items), short(items, log))
     Path('/dev/shm/h8-review-private-marker').unlink(missing_ok=True)
+    if not only or 'ata-unlogged' in only:  # finding 6, on a scenario with ATA on
+        items, log = tier(fake('ata-unlogged'), session='ata-overlay')
+        check('e2e finding 6: an npm call of the server\'s own, its log pointed nowhere: logged anyway, and session writes DIFF',
+              items and item('session writes')(items), short(items, log))
+    if not only or 'finding7' in only:
+        finding7()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
     # dir is new: ERROR, and nothing of it cached.
     unexec = SCRATCH / f'unexec-go-{"new" if NEW else "old"}'

@@ -3,8 +3,13 @@
 # recheck (~/.cache/perf-rearch/scratch/review-h7r2-astra/lsp/: init.py, overflow.py, home.py; unexec is
 # the test's own non-executable Go), her api probes of rounds 2 and 3 (detached, shm-remount,
 # hide-proc-survivor, home-skeleton, root-mode/root-hide on the storage root: here the private home), and
-# one per gap of the lsp tier that parity.md listed ("The lsp tier: the same gaps").
+# one per gap of the lsp tier that parity.md listed ("The lsp tier: the same gaps"). Round 2: her probes of
+# the H8 review (~/.cache/perf-rearch/scratch/review-h8-astra/: proxy-root.py's home-proto,
+# within-request, late-diag, shutdown-result, input-root-hide and input-root-mode; fake-extra.py's request,
+# late-request and ata-unlogged), and the synthetic case of her finding 7 (vary, vary-extra, none).
 # usage: python3 parity_h8_fake.py MODE GO TYPINGS [server args]; OUTSIDE_LIST is replaced by the self-test.
+# GO `-`: no Go behind it; the fake answers itself (initialize with no capabilities, every other request
+# with null), as Astra's fake-extra.py does.
 import json
 import os
 import re
@@ -22,6 +27,24 @@ if mode == 'fds':
     fds = sorted(int(x) for x in os.listdir('/proc/self/fd'))
     if [fd for fd in fds if fd > 3]:  # 3: the listing's own fd
         sys.stderr.write('panic: inherited fds %r\n' % fds); sys.exit(2)
+if mode == 'home-proto':  # Astra's H8 review: a name a {} dictionary loses
+    open(HOME + '/__proto__', 'w').write('persistent unexpected output')
+# Her finding 7, synthetic: `vary` writes P in about half of its runs (as Go varies on one path), `vary-extra`
+# always writes P and also Q (a path no Go run writes), `none` writes nothing.
+if mode == 'vary' and time.time_ns() // 1000 % 2:
+    open(HOME + '/tmp/P', 'w').write('legitimate, timing-dependent')
+if mode == 'vary-extra':
+    open(HOME + '/tmp/P', 'w').write('legitimate, timing-dependent')
+    open(HOME + '/tmp/Q', 'w').write('unrelated damage')
+if mode == 'vary-only':
+    open(HOME + '/tmp/P', 'w').write('legitimate, timing-dependent')
+if mode == 'ata-unlogged':  # Astra's fake-extra.py: its own npm call, with the log pointed nowhere
+    loc = os.environ['HOME'] + '/.cache/extra-install'
+    os.makedirs(loc)
+    subprocess.run(['npm', 'install', '--ignore-scripts', 'types-registry@latest'], cwd=loc, stdout=subprocess.DEVNULL,
+                   env={**os.environ, 'ATA_NPM_LOG': '/dev/null', 'ATA_NPM_DELAY_MS': '0'})
+    import shutil
+    shutil.rmtree(loc, ignore_errors=True)
 if mode == 'home-write':  # Astra's home.py
     open(HOME + '/tmp/unexpected', 'w').write('not a Go write')
 if mode == 'home-skeleton':
@@ -65,7 +88,24 @@ if mode == 'privs':  # every way to change the sandbox must fail, and no capabil
         sys.stderr.write('panic: the server can still: %r\n' % left); sys.exit(2)
 
 # ---- the proxy ----
-p = subprocess.Popen([go, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+# GO `-`: the server the proxy talks to is this minimal one (Astra's fake-extra.py without its modes).
+SELF_CODE = """
+import json, sys
+f, o = sys.stdin.buffer, sys.stdout.buffer
+while True:
+    h = f.readline()
+    if not h:
+        break
+    n = int(h.split(b':')[1]); f.readline(); m = json.loads(f.read(n))
+    if m.get('method') == 'exit':
+        break
+    if 'id' not in m or 'method' not in m:
+        continue
+    b = json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': {'capabilities': {}} if m['method'] == 'initialize' else None},
+                   separators=(',', ':')).encode()
+    o.write(b'Content-Length: %d\\r\\n\\r\\n' % len(b) + b); o.flush()
+"""
+p = subprocess.Popen([go, *args] if go != '-' else ['/usr/bin/python3', '-c', SELF_CODE], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 methods = {}  # request id -> method (the client's requests)
 
 
@@ -122,9 +162,27 @@ for body in frames(p.stdout):
             open(HOME + '/tmp/transient', 'w').write('written and removed between two answers')
         if mode == 'home-transient' and answers == 6:
             os.remove(HOME + '/tmp/transient')
+    # Astra's H8 review (proxy-root.py, fake-extra.py)
+    if method and mode == 'within-request':  # written and removed before the answer goes out
+        open(HOME + '/tmp/ephemeral', 'w').write('not a Go write')
+        os.unlink(HOME + '/tmp/ephemeral')
+    if method == 'shutdown' and mode == 'shutdown-result':
+        body = body.replace(b'"result":null', b'"result":12345')
+    extra = None
+    if method == 'shutdown' and mode == 'late-diag':
+        extra = b'{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///bogus.ts","diagnostics":[{"message":"late bogus error"}]}}'
+    if (method == 'shutdown' and mode == 'late-request') or (method == 'initialize' and mode == 'request'):
+        extra = b'{"jsonrpc":"2.0","id":"server-1","method":"workspace/applyEdit","params":{"edit":{"changes":{}}}}'
+    if extra:
+        out.write(b'Content-Length: %d\r\n\r\n' % len(extra) + extra)
     out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
     out.flush()
 code = p.wait()
+if mode == 'input-root-hide':  # Astra's: output into the project, then its root unreadable
+    open(os.getcwd() + '/unexpected.ts', 'w').write('unexpected compiler output')
+    os.chmod(os.getcwd(), 0)
+if mode == 'input-root-mode':
+    os.chmod(os.getcwd(), 0o700)
 
 # ---- after the server: what it leaves behind ----
 if mode in ('home-root-hide', 'home-root-mode'):  # Astra's root-hide and root-mode, on the private home
