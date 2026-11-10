@@ -2434,7 +2434,12 @@ to the lsp tier, sharing its code, and fixes each gap at the level of the design
   log's dir is the one `rw` bind outside the home, and must hold the log and nothing else after the run.
   The stand-in npm runs in the server's PID namespace, so the ATA barrier's liveness check reads the
   init's descendants from the host's `/proc` (NSpid). The stand-in now writes `package.json` and the
-  lock with their maps sorted, as npm does, so the home does not depend on the order of ATA's calls.
+  lock with their maps sorted, as npm does, so the home does not depend on the order of ATA's calls; it
+  lays packages out with npm's modes (dirs 755, files 644) instead of the frozen store's (its snapshot
+  has dirs 555, which only a server that was root in its namespace could write into: the first fill
+  after the privilege drop timed out in ATA on watch-ts-pattern-f12 and watch-hono-f12, Go and tsc-rs
+  alike); and a failure of its own is logged as `error`, a harness error of the scenario, not a wait
+  that runs into its deadline.
 - **The wire** (`client.mjs`, `json.mjs`), as the api tier reads its server: a header is only
   `Content-Length` (and `Content-Type`), at most 4 lines of 256 bytes, a length of at most 10 digits and
   256 MB; a body is UTF-8 without a BOM and one JSON text with no duplicate key; every message is exactly
@@ -2465,7 +2470,7 @@ to the lsp tier, sharing its code, and fixes each gap at the level of the design
 
 ### The gaps, their fixes and their controls
 
-`parity_h8_test.py` (`--unit`: 13 checks, seconds; end to end: 23 checks through `parity_lsp.py --tier
+`parity_h8_test.py` (`--unit`: 15 checks, seconds; end to end: 24 checks through `parity_lsp.py --tier
 quick --no-js` on ts-pattern-f12-p6, about 10 minutes, under the gate lock) with `parity_h8_fake.py`, an
 LSP proxy in front of the Go oracle: Astra's lsp probes (`scratch/review-h7r2-astra/lsp/`: init.py,
 overflow.py, home.py, the non-executable Go) and the api tier's round 2 and 3 probes as modes. The
@@ -2494,7 +2499,32 @@ referee self-test had failed since lane H5 (its proxy, `#!/usr/bin/env node`, fo
 server's PATH, and its settings came through an environment the servers no longer get: 15 checks
 failed on `c788830c4`); its proxy now takes a settings file and runs as a command.
 
-@@GOEVIDENCE@@
+### Go and JS evidence
+
+Every lsp key changed (the sources, `CACHE_VERSION` 4), so every Go fill and Go-variant record started
+empty. The refill, on `tsgo-head-865385add-rel` (the rebuilt head; B2's crates), ran under the gate
+lock (`scratch/h8/fill.sh`): a full fill (`runs/h8b-lsp-fill-1`, 805 s, Go 4 runs per session, 8 on
+hono and query), then two `--go-refill` fills of each session where Go races (hono-f12-p6,
+umami-f12-p6, second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12;
+`runs/h8b-lsp-refill-<session>-<k>`), then a full run judged with all of it (`runs/h8b-lsp-fill-2`,
+592 s; the end of it overlapped the machine's task-cap incident of 13:01 to 13:21 CST, and root checked
+it against the runs before: no fork error, the same results).
+
+- **fill-2 against `base-current`** (`runs/b2-29e23ede3-full`, 2,629 MATCH and 29 GO-BROKEN): 2,655
+  MATCH and 29 GO-BROKEN. Every base item has the same status, and the GO-BROKEN set is the base's (hono
+  23, umami 5, watch-hono 1). The 26 more MATCH are the new items, all MATCH: `initialize` and `session
+  home` of each of the 13 sessions (tsc-rs's initialize answer and home equal Go's everywhere).
+- **The first fill alone** had `hono-f12-p6/0295` references MATCH (GO-BROKEN in the base: one Go run
+  in 8 gave another order); with the refills it is GO-BROKEN again. No other item moved.
+- **Go-variant records:** in every session the requests with more than one recorded Go answer are the
+  same as in the base's records (hono-f12-p6 23, umami-f12-p6 5, watch-hono-f12 1, all others 0). Each
+  record has two more requests (the initialize answer and the home); neither varied in any fill. No
+  session's Go answers vary in a new way, and none stopped varying.
+- **JS:** the JS keys changed too. No session had a DIFF of a refereed kind, so no JS replay was needed.
+  `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly the
+  calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
+
+@@GATE@@
 
 ## Files
 
