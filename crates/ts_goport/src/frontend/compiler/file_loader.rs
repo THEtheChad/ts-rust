@@ -626,87 +626,7 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
             data.package_id.string()
         );
         for (name, task) in &data.tasks {
-            let task = task.borrow();
-            let _ = writeln!(
-                out,
-                "  task {name} loaded={} started={} lib={} auto_types={} failed_lookup={} redirected={} file={} pkg={:?}",
-                task.loaded,
-                task.started_sub_tasks,
-                task.lib_file.is_some(),
-                task.is_for_automatic_type_directive,
-                task.failed_lookup,
-                task.redirected_parse_task.is_some(),
-                task.file.is_some(),
-                task.package_id.string(),
-            );
-            for diagnostic in &task.resolution_diagnostics {
-                let _ = writeln!(
-                    out,
-                    "    resolution_diagnostic {}",
-                    super::load_dump::describe_diagnostic(diagnostic)
-                );
-            }
-            for diagnostic in &task.processing_diagnostics {
-                let _ = writeln!(
-                    out,
-                    "    processing_diagnostic {}",
-                    describe_processing_diagnostic(diagnostic)
-                );
-            }
-            let _ = writeln!(out, "    include_reason {:?}", task.include_reason);
-            for reason in &task.all_include_reasons {
-                let _ = writeln!(out, "    all_include_reason {reason:?}");
-            }
-            for trace in task
-                .resolutions_trace
-                .iter()
-                .chain(&task.type_resolutions_trace)
-            {
-                let _ = writeln!(out, "    trace {:?} {:?}", trace.message.key(), trace.args);
-            }
-            let _ = writeln!(out, "    meta {:?}", task.metadata);
-            let mut resolutions: Vec<String> = task
-                .resolutions_in_file
-                .iter()
-                .map(|(key, module)| {
-                    format!(
-                        "    module {:?} {:?} {}",
-                        key.name,
-                        key.mode,
-                        super::load_dump::describe_module(module)
-                    )
-                })
-                .collect();
-            resolutions.sort_unstable();
-            for line in resolutions {
-                out.push_str(&line);
-                out.push('\n');
-            }
-            let mut types: Vec<String> = task
-                .type_resolutions_in_file
-                .iter()
-                .map(|(key, resolved)| {
-                    format!(
-                        "    type {:?} {:?} {}",
-                        key.name,
-                        key.mode,
-                        describe_type_reference(resolved)
-                    )
-                })
-                .collect();
-            types.sort_unstable();
-            for line in types {
-                out.push_str(&line);
-                out.push('\n');
-            }
-            for sub in &task.sub_tasks {
-                let sub = sub.borrow();
-                let _ = writeln!(
-                    out,
-                    "    sub {} depth+={} elide={}",
-                    sub.normalized_file_path, sub.increase_depth, sub.elide_on_depth
-                );
-            }
+            dump_parse_task(name, &task.borrow(), out);
         }
     }
     if let Some(resolver) = loader
@@ -714,72 +634,163 @@ fn dump_loader_state(loader: &FileLoader, files_parser: &FilesParser, out: &mut 
         .as_ref()
         .and_then(|resolver| resolver.as_default_resolver())
     {
-        // The resolver's own caches: module and type reference answers,
-        // and the package.json cache as `get` gives it (its pending reads
-        // parsed).
-        let mut modules: Vec<String> = resolver
-            .caches
-            .module_resolution_cache
-            .cache
-            .borrow()
-            .iter()
-            .map(|(key, module)| {
-                format!(
-                    "resolver_module {:?} {:?} {:?} redirect={:?} {}",
-                    key.containing_directory,
-                    key.module_name,
-                    key.resolution_mode,
-                    key.redirect_config_name,
-                    super::load_dump::describe_module(module)
-                )
-            })
-            .collect();
-        modules.sort_unstable();
-        let mut types: Vec<String> = resolver
-            .caches
-            .type_ref_directive_resolution_cache
-            .cache
-            .borrow()
-            .iter()
-            .map(|(key, resolved)| {
-                format!(
-                    "resolver_type {:?} {:?} {:?} redirect={:?} inferred={} {}",
-                    key.containing_directory,
-                    key.type_reference_name,
-                    key.resolution_mode,
-                    key.redirect_config_name,
-                    key.from_inferred_types_containing_file,
-                    describe_type_reference(resolved)
-                )
-            })
-            .collect();
-        types.sort_unstable();
-        for line in modules.into_iter().chain(types).chain(
-            resolver
-                .package_json_info_cache
-                .dump_lines()
-                .into_iter()
-                .map(|line| format!("info_cache_{line}")),
-        ) {
-            out.push_str(&line);
-            out.push('\n');
-        }
-        let mut entries = Vec::new();
-        resolver.package_json_cache_entries(|path, entry| {
-            entries.push(format!(
-                "package_json {} dir={:?} dir_exists={} exists={}",
-                path.as_str(),
-                entry.package_directory,
-                entry.directory_exists,
-                entry.exists
-            ));
-            true
-        });
-        entries.sort_unstable();
-        for line in entries {
-            out.push_str(&line);
-            out.push('\n');
-        }
+        dump_resolver_caches(resolver, out);
+    }
+}
+
+/// One task of `dump_loader_state`: its flags, diagnostics, include
+/// reasons, traces, metadata, resolutions (sorted) and subtasks.
+#[cfg(feature = "diagnostics")]
+fn dump_parse_task(name: &str, task: &ParseTask, out: &mut String) {
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        out,
+        "  task {name} loaded={} started={} lib={} auto_types={} failed_lookup={} redirected={} file={} pkg={:?}",
+        task.loaded,
+        task.started_sub_tasks,
+        task.lib_file.is_some(),
+        task.is_for_automatic_type_directive,
+        task.failed_lookup,
+        task.redirected_parse_task.is_some(),
+        task.file.is_some(),
+        task.package_id.string(),
+    );
+    for diagnostic in &task.resolution_diagnostics {
+        let _ = writeln!(
+            out,
+            "    resolution_diagnostic {}",
+            super::load_dump::describe_diagnostic(diagnostic)
+        );
+    }
+    for diagnostic in &task.processing_diagnostics {
+        let _ = writeln!(
+            out,
+            "    processing_diagnostic {}",
+            describe_processing_diagnostic(diagnostic)
+        );
+    }
+    let _ = writeln!(out, "    include_reason {:?}", task.include_reason);
+    for reason in &task.all_include_reasons {
+        let _ = writeln!(out, "    all_include_reason {reason:?}");
+    }
+    for trace in task
+        .resolutions_trace
+        .iter()
+        .chain(&task.type_resolutions_trace)
+    {
+        let _ = writeln!(out, "    trace {:?} {:?}", trace.message.key(), trace.args);
+    }
+    let _ = writeln!(out, "    meta {:?}", task.metadata);
+    let mut resolutions: Vec<String> = task
+        .resolutions_in_file
+        .iter()
+        .map(|(key, module)| {
+            format!(
+                "    module {:?} {:?} {}",
+                key.name,
+                key.mode,
+                super::load_dump::describe_module(module)
+            )
+        })
+        .collect();
+    push_sorted_lines(out, resolutions);
+    let mut types: Vec<String> = task
+        .type_resolutions_in_file
+        .iter()
+        .map(|(key, resolved)| {
+            format!(
+                "    type {:?} {:?} {}",
+                key.name,
+                key.mode,
+                describe_type_reference(resolved)
+            )
+        })
+        .collect();
+    push_sorted_lines(out, types);
+    for sub in &task.sub_tasks {
+        let sub = sub.borrow();
+        let _ = writeln!(
+            out,
+            "    sub {} depth+={} elide={}",
+            sub.normalized_file_path, sub.increase_depth, sub.elide_on_depth
+        );
+    }
+}
+
+/// The resolver's caches for `dump_loader_state`.
+#[cfg(feature = "diagnostics")]
+fn dump_resolver_caches(resolver: &DefaultResolver, out: &mut String) {
+    // The resolver's own caches: module and type reference answers,
+    // and the package.json cache as `get` gives it (its pending reads
+    // parsed).
+    let mut modules: Vec<String> = resolver
+        .caches
+        .module_resolution_cache
+        .cache
+        .borrow()
+        .iter()
+        .map(|(key, module)| {
+            format!(
+                "resolver_module {:?} {:?} {:?} redirect={:?} {}",
+                key.containing_directory,
+                key.module_name,
+                key.resolution_mode,
+                key.redirect_config_name,
+                super::load_dump::describe_module(module)
+            )
+        })
+        .collect();
+    modules.sort_unstable();
+    let mut types: Vec<String> = resolver
+        .caches
+        .type_ref_directive_resolution_cache
+        .cache
+        .borrow()
+        .iter()
+        .map(|(key, resolved)| {
+            format!(
+                "resolver_type {:?} {:?} {:?} redirect={:?} inferred={} {}",
+                key.containing_directory,
+                key.type_reference_name,
+                key.resolution_mode,
+                key.redirect_config_name,
+                key.from_inferred_types_containing_file,
+                describe_type_reference(resolved)
+            )
+        })
+        .collect();
+    types.sort_unstable();
+    for line in modules.into_iter().chain(types).chain(
+        resolver
+            .package_json_info_cache
+            .dump_lines()
+            .into_iter()
+            .map(|line| format!("info_cache_{line}")),
+    ) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let mut entries = Vec::new();
+    resolver.package_json_cache_entries(|path, entry| {
+        entries.push(format!(
+            "package_json {} dir={:?} dir_exists={} exists={}",
+            path.as_str(),
+            entry.package_directory,
+            entry.directory_exists,
+            entry.exists
+        ));
+        true
+    });
+    push_sorted_lines(out, entries);
+}
+
+/// Sorts `lines` and writes each as a line of `out`.
+#[cfg(feature = "diagnostics")]
+fn push_sorted_lines(out: &mut String, mut lines: Vec<String>) {
+    lines.sort_unstable();
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
     }
 }
 
