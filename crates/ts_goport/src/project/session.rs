@@ -724,14 +724,8 @@ impl Session {
     // scheduleDiagnosticsRefresh schedules a coalesced workspace diagnostics refresh after delay. A delay of
     // 0 refreshes as soon as the background queue runs the task; it is used for interactive edits (e.g. a
     // content-mapped file) where the debounce would make dependent-file diagnostics feel sluggish.
-    // PORT: Go sleeps inside the background task with
-    // `select { case <-time.After(delay): case <-ctx.Done(): }`. Here the
-    // rest of the task runs after the delay or as soon as the context is
-    // done, whichever comes first (`after_delay_or_done`). The task keeps a
-    // `background::TaskHold` until then, so `Queue::wait` (Go
-    // `WaitForBackgroundTasks`) waits for the refresh, as Go's does, and a
-    // cancelled refresh does not hold Close. A zero delay runs the rest of
-    // the task at once, as Go does.
+    // PORT: the debounced task is `enqueue_debounced`; a zero delay runs the
+    // rest of the task at once, as Go does.
     pub fn schedule_diagnostics_refresh(self: &Rc<Self>, delay: Duration) {
         // Cancel any existing scheduled diagnostics refresh
         let existing_cancel = self.diagnostics_refresh_cancel.borrow().clone();
@@ -751,51 +745,35 @@ impl Session {
 
         // Enqueue the (optionally debounced) diagnostics refresh
         let s = self.clone();
-        self.background_queue.enqueue(&debounce_ctx, move |ctx| {
-            let ctx = ctx.clone();
-            let wait_ctx = ctx.clone();
-            let hold = s.background_queue.hold();
-            let task = move || {
-                let run = || {
-                    // Wait out the debounce window; a newer event cancels this one.
-                    if ctx.err().is_some() {
-                        // Context was cancelled, newer events arrived
-                        return;
-                    }
-                    // Delay completed, proceed with refresh
+        // Wait out the debounce window; a newer event cancels this one.
+        let wait = (delay > Duration::ZERO).then_some(delay);
+        enqueue_debounced(
+            &self.background_queue,
+            &debounce_ctx,
+            wait,
+            cancel,
+            move |_| {
+                // Clear the cancel function since we're about to execute the refresh
+                if s.diagnostics_refresh_generation.get() != generation {
+                    return;
+                }
+                *s.diagnostics_refresh_cancel.borrow_mut() = None;
 
-                    // Clear the cancel function since we're about to execute the refresh
-                    if s.diagnostics_refresh_generation.get() != generation {
-                        return;
-                    }
-                    *s.diagnostics_refresh_cancel.borrow_mut() = None;
-
-                    if s.options.logging_enabled {
-                        s.logger.log("Running scheduled diagnostics refresh");
-                    }
-                    if let Err(err) = s
-                        .client
-                        .as_ref()
-                        .unwrap_or_else(|| crate::core::go_nil_dereference())
-                        .refresh_diagnostics(&s.background_context())
-                        && s.options.logging_enabled
-                    {
-                        s.logger
-                            .logf(&format!("Error refreshing diagnostics: {}", err.error()));
-                    }
-                };
-                // Go: the rest of the same wg.Go goroutine (`TaskHold`).
-                crate::core::go_wait_group_task(run);
-                // Go: defer cancel()
-                cancel();
-                drop(hold);
-            };
-            if delay > Duration::ZERO {
-                after_delay_or_done(&wait_ctx, delay, task);
-            } else {
-                task();
-            }
-        });
+                if s.options.logging_enabled {
+                    s.logger.log("Running scheduled diagnostics refresh");
+                }
+                if let Err(err) = s
+                    .client
+                    .as_ref()
+                    .unwrap_or_else(|| crate::core::go_nil_dereference())
+                    .refresh_diagnostics(&s.background_context())
+                    && s.options.logging_enabled
+                {
+                    s.logger
+                        .logf(&format!("Error refreshing diagnostics: {}", err.error()));
+                }
+            },
+        );
     }
 
     // Go: project/session.go:564 cancelDiagnosticsRefresh
@@ -811,9 +789,8 @@ impl Session {
     }
 
     // Go: project/session.go:575 ScheduleSnapshotUpdate
-    // PORT: the debounce sleep ends after the delay or when the context is
-    // done (`after_delay_or_done`), and the task keeps a
-    // `background::TaskHold` until then, as in `schedule_diagnostics_refresh`.
+    // PORT: the debounced task is `enqueue_debounced`, as in
+    // `schedule_diagnostics_refresh`.
     pub fn schedule_snapshot_update(self: &Rc<Self>, reason: UpdateReason) {
         // Cancel any existing scheduled snapshot update
         let existing_cancel = self.scheduled_snapshot_update_cancel.borrow().clone();
@@ -835,55 +812,42 @@ impl Session {
 
         // Enqueue the debounced snapshot update
         let s = self.clone();
-        self.background_queue.enqueue(&debounce_ctx, move |ctx| {
-            let ctx = ctx.clone();
-            let wait_ctx = ctx.clone();
-            let delay = s.options.debounce_delay;
-            let hold = s.background_queue.hold();
-            let task = move || {
-                let run = || {
-                    // Sleep for the debounce delay
-                    if ctx.err().is_some() {
-                        // Context was cancelled, newer events arrived or another snapshot update ran
-                        return;
-                    }
-                    // Delay completed, proceed with update
+        // Sleep for the debounce delay
+        let wait = Some(self.options.debounce_delay);
+        enqueue_debounced(
+            &self.background_queue,
+            &debounce_ctx,
+            wait,
+            cancel,
+            move |ctx| {
+                // Clear the cancel function since we're about to execute the update
+                if s.scheduled_snapshot_update_generation.get() != generation {
+                    return;
+                }
+                *s.scheduled_snapshot_update_cancel.borrow_mut() = None;
 
-                    // Clear the cancel function since we're about to execute the update
-                    if s.scheduled_snapshot_update_generation.get() != generation {
-                        return;
-                    }
-                    *s.scheduled_snapshot_update_cancel.borrow_mut() = None;
+                if s.options.logging_enabled {
+                    s.logger.log("Running scheduled snapshot update");
+                }
 
-                    if s.options.logging_enabled {
-                        s.logger.log("Running scheduled snapshot update");
-                    }
+                let (file_changes, overlays, ata_changes, new_config) = s.flush_changes(ctx);
+                if file_changes.is_empty() && ata_changes.is_empty() && new_config.is_none() {
+                    return;
+                }
 
-                    let (file_changes, overlays, ata_changes, new_config) = s.flush_changes(&ctx);
-                    if file_changes.is_empty() && ata_changes.is_empty() && new_config.is_none() {
-                        return;
-                    }
-
-                    s.update_snapshot_exported(
-                        &ctx,
-                        overlays,
-                        SnapshotChange {
-                            reason,
-                            file_changes,
-                            ata_changes,
-                            new_config,
-                            ..Default::default()
-                        },
-                    );
-                };
-                // Go: the rest of the same wg.Go goroutine (`TaskHold`).
-                crate::core::go_wait_group_task(run);
-                // Go: defer cancel()
-                cancel();
-                drop(hold);
-            };
-            after_delay_or_done(&wait_ctx, delay, task);
-        });
+                s.update_snapshot_exported(
+                    ctx,
+                    overlays,
+                    SnapshotChange {
+                        reason,
+                        file_changes,
+                        ata_changes,
+                        new_config,
+                        ..Default::default()
+                    },
+                );
+            },
+        );
     }
 
     // Go: project/session.go:637 cancelScheduledSnapshotUpdate
@@ -915,6 +879,57 @@ impl Session {
             pending => *self.warm_auto_import_pending.borrow_mut() = pending,
         }
     }
+}
+
+/// PORT: the debounced background task of Go `ScheduleSnapshotUpdate` and
+/// `scheduleDiagnosticsRefresh`:
+///
+/// ```go
+/// s.backgroundQueue.Enqueue(debounceCtx, func(ctx context.Context) {
+///     defer cancel()
+///     select {
+///     case <-time.After(delay):
+///     case <-ctx.Done():
+///         return
+///     }
+///     run(ctx)
+/// })
+/// ```
+///
+/// The wait is `after_delay_or_done`; `wait` `None` runs at once (Go's
+/// zero-delay refresh, which only tests `ctx.Err()`). The task keeps a
+/// `background::TaskHold` until it ends, so `Queue::wait` (Go
+/// `WaitForBackgroundTasks`) waits for it and a cancelled task does not hold
+/// Close. `run` is the rest of the Go task: it runs in the task's wait group
+/// (the same `wg.Go` goroutine), and not at all when the context was
+/// cancelled (newer events arrived, or another update ran).
+fn enqueue_debounced(
+    queue: &Rc<background::Queue>,
+    debounce_ctx: &Context,
+    wait: Option<Duration>,
+    cancel: gostd::context::CancelFunc,
+    run: impl FnOnce(&Context) + 'static,
+) {
+    let queue_for_hold = queue.clone();
+    queue.enqueue(debounce_ctx, move |ctx| {
+        let ctx = ctx.clone();
+        let wait_ctx = ctx.clone();
+        let hold = queue_for_hold.hold();
+        let task = move || {
+            crate::core::go_wait_group_task(|| {
+                if ctx.err().is_none() {
+                    run(&ctx);
+                }
+            });
+            // Go: defer cancel()
+            cancel();
+            drop(hold);
+        };
+        match wait {
+            Some(delay) => after_delay_or_done(&wait_ctx, delay, task),
+            None => task(),
+        }
+    });
 }
 
 /// PORT: Go `select { case <-time.After(delay): case <-ctx.Done(): }` in a
