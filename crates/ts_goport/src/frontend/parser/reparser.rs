@@ -158,6 +158,100 @@ fn set_function_full_signature(fun: Node, t: Node) {
     );
 }
 
+/// Go `node.AsX().TypeParameters = list` on a type alias or a class.
+fn set_type_parameters(n: Node, list: NodeList) {
+    let v = node_list_value(n, list);
+    mutate(n, |data| match data {
+        D::TypeAliasDeclaration(d) => d.type_parameters = v,
+        D::ClassDeclaration(d) => d.type_parameters = v,
+        D::ClassExpression(d) => d.type_parameters = v,
+        other => panic!(
+            "node data has no type parameters to set: {}",
+            other.view().schema_name()
+        ),
+    });
+}
+
+/// Go `typeAlias.AsTypeAliasDeclaration().Type = t`.
+fn set_type_alias_type(type_alias: Node, t: Node) {
+    let id = node_child_id(type_alias, t);
+    mutate(type_alias, |data| {
+        if let D::TypeAliasDeclaration(d) = data {
+            d.type_ = id;
+        }
+    });
+}
+
+/// Go `importClause.AsImportClause().PhaseModifier = kind`.
+fn set_phase_modifier(import_clause: Node, kind: SyntaxKind) {
+    mutate(import_clause, |data| {
+        if let D::ImportClause(d) = data {
+            d.phase_modifier = Some(kind);
+        }
+    });
+}
+
+/// Go `shorthand.ObjectAssignmentInitializer = initializer`.
+fn set_object_assignment_initializer(shorthand: Node, initializer: Node) {
+    let id = node_opt_child_id(shorthand, initializer);
+    mutate(shorthand, |data| {
+        if let D::ShorthandPropertyAssignment(d) = data {
+            d.object_assignment_initializer = id;
+        }
+    });
+}
+
+/// Go `bin.Right = right`.
+fn set_binary_right(bin: Node, right: Node) {
+    let id = node_child_id(bin, right);
+    mutate(bin, |data| {
+        if let D::BinaryExpression(d) = data {
+            d.right = id;
+        }
+    });
+}
+
+/// Go's writes of a `@param` tag to its parameter (`param.Type = ..`,
+/// `param.QuestionToken = ..`, each `None` when Go does not write it), as
+/// one change of the parameter's data. The ids are made by the caller, in
+/// Go's order of the writes.
+fn set_parameter_type_and_question(
+    param: Node,
+    t: Option<Option<crate::astdata::NodeId>>,
+    question: Option<Option<crate::astdata::NodeId>>,
+) {
+    mutate(param, |data| {
+        if let D::ParameterDeclaration(d) = data {
+            if let Some(t) = t {
+                d.type_ = t;
+            }
+            if let Some(question) = question {
+                d.question_token = question;
+            }
+        }
+    });
+}
+
+/// Go `heritageClause.Types.Nodes = append(..)`: the new types list.
+fn set_heritage_clause_types(clause: Node, list: NodeList) {
+    let v = node_req_list_value(clause, list);
+    mutate(clause, |data| {
+        if let D::HeritageClause(d) = data {
+            d.types = v;
+        }
+    });
+}
+
+/// Go `class.HeritageClauses = list` on a class declaration or expression.
+fn set_heritage_clauses(class: Node, list: NodeList) {
+    let v = node_list_value(class, list);
+    mutate(class, |data| match data {
+        D::ClassDeclaration(d) => d.heritage_clauses = v,
+        D::ClassExpression(d) => d.heritage_clauses = v,
+        _ => unreachable!(),
+    });
+}
+
 impl<'a> Parser<'a> {
     // Go: parser/reparser.go:13 finishReparsedNode
     fn finish_reparsed_node(&mut self, node: Node, location_node: Node) {
@@ -261,12 +355,7 @@ impl<'a> Parser<'a> {
                 );
                 let type_parameters =
                     self.gather_type_parameters(js_doc, true /*typedefOrCallback*/);
-                let tp = node_list_value(type_alias, type_parameters);
-                mutate(type_alias, |data| {
-                    if let D::TypeAliasDeclaration(d) = data {
-                        d.type_parameters = tp;
-                    }
-                });
+                set_type_parameters(type_alias, type_parameters);
                 let t = match type_expression.kind() {
                     SyntaxKind::JsDocTypeExpression => {
                         self.add_deep_clone_reparse(type_expression.type_())
@@ -278,12 +367,7 @@ impl<'a> Parser<'a> {
                         "typedef tag type expression should be a name reference or a type expression{kind:?}"
                     ),
                 };
-                let t = node_child_id(type_alias, t);
-                mutate(type_alias, |data| {
-                    if let D::TypeAliasDeclaration(d) = data {
-                        d.type_ = t;
-                    }
-                });
+                set_type_alias_type(type_alias, t);
                 self.finish_reparsed_node(type_alias, tag);
                 self.jsdoc_infos.push(JsDocInfo {
                     parent: type_alias,
@@ -323,12 +407,7 @@ impl<'a> Parser<'a> {
                 );
                 let type_parameters =
                     self.gather_type_parameters(js_doc, true /*typedefOrCallback*/);
-                let tp = node_list_value(type_alias, type_parameters);
-                mutate(type_alias, |data| {
-                    if let D::TypeAliasDeclaration(d) = data {
-                        d.type_parameters = tp;
-                    }
-                });
+                set_type_parameters(type_alias, type_parameters);
                 self.finish_reparsed_node(type_alias, tag);
                 self.jsdoc_infos.push(JsDocInfo {
                     parent: type_alias,
@@ -344,11 +423,7 @@ impl<'a> Parser<'a> {
                     return;
                 }
                 let import_clause = self.add_deep_clone_reparse(tag.import_clause());
-                mutate(import_clause, |data| {
-                    if let D::ImportClause(d) = data {
-                        d.phase_modifier = Some(SyntaxKind::TypeKeyword);
-                    }
-                });
+                set_phase_modifier(import_clause, SyntaxKind::TypeKeyword);
                 let modifiers = self.factory.deep_clone_reparse_modifiers(tag.modifiers());
                 let module_specifier = self.add_deep_clone_reparse(tag.module_specifier());
                 let attributes = self.add_deep_clone_reparse(tag.attributes());
@@ -798,12 +873,7 @@ impl<'a> Parser<'a> {
                     if initializer.is_some() && tag.type_expression().is_some() {
                         let t = self.add_deep_clone_reparse(tag.type_expression().type_());
                         let cast = self.make_new_cast(t, initializer, false /*isAssertion*/);
-                        let id = node_opt_child_id(parent, cast);
-                        mutate(parent, |data| {
-                            if let D::ShorthandPropertyAssignment(d) = data {
-                                d.object_assignment_initializer = id;
-                            }
-                        });
+                        set_object_assignment_initializer(parent, cast);
                         self.finish_mutated_node(parent);
                     }
                 }
@@ -826,12 +896,7 @@ impl<'a> Parser<'a> {
                             let t = self.add_deep_clone_reparse(tag.type_expression().type_());
                             let cast =
                                 self.make_new_cast(t, bin.right(), false /*isAssertion*/);
-                            let id = node_child_id(bin, cast);
-                            mutate(bin, |data| {
-                                if let D::BinaryExpression(d) = data {
-                                    d.right = id;
-                                }
-                            });
+                            set_binary_right(bin, cast);
                             self.finish_mutated_node(bin);
                         }
                     }
@@ -854,12 +919,7 @@ impl<'a> Parser<'a> {
                     if parent.type_parameter_list().is_nil() {
                         let type_parameters =
                             self.gather_type_parameters(js_doc, false /*typedefOrCallback*/);
-                        let v = node_list_value(parent, type_parameters);
-                        mutate(parent, |data| match data {
-                            D::ClassDeclaration(d) => d.type_parameters = v,
-                            D::ClassExpression(d) => d.type_parameters = v,
-                            _ => unreachable!(),
-                        });
+                        set_type_parameters(parent, type_parameters);
                         self.finish_mutated_node(parent);
                     }
                 }
@@ -884,16 +944,7 @@ impl<'a> Parser<'a> {
                                 new_question = Some(node_opt_child_id(param, question));
                             }
                         }
-                        mutate(param, |data| {
-                            if let D::ParameterDeclaration(d) = data {
-                                if let Some(t) = new_type {
-                                    d.type_ = t;
-                                }
-                                if let Some(q) = new_question {
-                                    d.question_token = q;
-                                }
-                            }
-                        });
+                        set_parameter_type_and_question(param, new_type, new_question);
                         self.finish_mutated_node(param);
                     }
                 }
@@ -1018,12 +1069,7 @@ impl<'a> Parser<'a> {
                             let mut types = old_types.nodes().to_vec();
                             types.push(self.add_deep_clone_reparse(class_name));
                             let list = self.factory.new_node_list_with_loc(&types, old_types.loc());
-                            let v = node_req_list_value(implements_clause, list);
-                            mutate(implements_clause, |data| {
-                                if let D::HeritageClause(d) = data {
-                                    d.types = v;
-                                }
-                            });
+                            set_heritage_clause_types(implements_clause, list);
                             self.finish_mutated_node(implements_clause);
                             return;
                         }
@@ -1045,12 +1091,7 @@ impl<'a> Parser<'a> {
                         self.factory
                             .new_node_list_with_loc(&clauses, heritage_clauses.loc())
                     };
-                    let v = node_list_value(class, new_heritage_clauses);
-                    mutate(class, |data| match data {
-                        D::ClassDeclaration(d) => d.heritage_clauses = v,
-                        D::ClassExpression(d) => d.heritage_clauses = v,
-                        _ => unreachable!(),
-                    });
+                    set_heritage_clauses(class, new_heritage_clauses);
                     self.finish_mutated_node(parent);
                 }
             }
