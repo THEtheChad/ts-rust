@@ -89,23 +89,9 @@ pub fn analyze_flat_map_conditional_to_filter_or_fail(
             }
 
             let parameter = parsed.params[0];
-            if parameter.is_nil()
-                || parameter.name().is_nil()
-                || parameter.name().kind() != SyntaxKind::Identifier
-            {
+            let Some(parameter_symbol) = unassigned_simple_parameter_symbol(tp, parameter) else {
                 continue;
-            }
-            let declaration = parameter;
-            if declaration.is_nil()
-                || declaration.dot_dot_dot_token().is_some()
-                || declaration.initializer().is_some()
-            {
-                continue;
-            }
-            let parameter_symbol = tp.get_symbol_at_location(parameter.name());
-            if parameter_symbol.is_nil() || tp.checker.is_symbol_assigned(parameter_symbol) {
-                continue;
-            }
+            };
 
             let branch = parsed.dispatch.branches[0];
             let branch_identity = is_identity_succeed(tp, branch.result, parameter_symbol);
@@ -151,6 +137,27 @@ pub fn analyze_flat_map_conditional_to_filter_or_fail(
         }
     }
     matches
+}
+
+/// The symbol of `parameter` when it is a plain identifier parameter (no
+/// rest, no initializer) that is never assigned.
+fn unassigned_simple_parameter_symbol(
+    tp: &mut TypeParser<'_>,
+    parameter: Node,
+) -> Option<SymbolId> {
+    if parameter.is_nil()
+        || parameter.name().is_nil()
+        || parameter.name().kind() != SyntaxKind::Identifier
+        || parameter.dot_dot_dot_token().is_some()
+        || parameter.initializer().is_some()
+    {
+        return None;
+    }
+    let parameter_symbol = tp.get_symbol_at_location(parameter.name());
+    if parameter_symbol.is_nil() || tp.checker.is_symbol_assigned(parameter_symbol) {
+        return None;
+    }
+    Some(parameter_symbol)
 }
 
 // Go: rules/flat_map_conditional_to_filter_or_fail.go isIdentitySucceed
