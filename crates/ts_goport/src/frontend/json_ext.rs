@@ -23,6 +23,7 @@
 //! PORT: integer arshalers do not port the stringified form that v2 uses
 //! for integer map keys (no LSP type has integer keys).
 
+use crate::frontend::json::{is_ws, normalize_kind, skip_ws};
 use crate::frontend::prelude::*;
 
 use std::any::Any;
@@ -157,25 +158,6 @@ impl IsZero for JsonValue {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-// Go jsontext `Kind.normalize`.
-fn normalize_kind(c: u8) -> u8 {
-    match c {
-        b'-' | b'0'..=b'9' => b'0',
-        _ => c,
-    }
-}
-
-fn is_ws(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\r' | b'\n')
-}
-
-fn skip_ws(data: &[u8], mut p: usize) -> usize {
-    while p < data.len() && is_ws(data[p]) {
-        p += 1;
-    }
-    p
-}
 
 fn skip_ws_back(data: &[u8], mut p: usize) -> usize {
     while p > 0 && is_ws(data[p - 1]) {

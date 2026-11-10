@@ -183,12 +183,25 @@ pub struct JsonDecoder<'a> {
     spare_names: Vec<FxHashSet<Cow<'a, str>>>,
 }
 
-fn is_ws(c: u8) -> bool {
+// JSON whitespace.
+#[inline]
+pub(crate) fn is_ws(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\r' | b'\n')
 }
 
+// Go `jsonwire.ConsumeWhitespace` from `p`: the offset of the first byte of
+// `data` at or after `p` that is not whitespace.
+#[inline]
+pub(crate) fn skip_ws(data: &[u8], mut p: usize) -> usize {
+    while p < data.len() && is_ws(data[p]) {
+        p += 1;
+    }
+    p
+}
+
 // Go `jsontext.Kind.normalize`.
-fn normalize_kind(c: u8) -> u8 {
+#[inline]
+pub(crate) fn normalize_kind(c: u8) -> u8 {
     match c {
         b'-' | b'0'..=b'9' => b'0',
         _ => c,
@@ -230,11 +243,8 @@ impl<'a> JsonDecoder<'a> {
         }
     }
 
-    fn skip_ws(&self, mut p: usize) -> usize {
-        while p < self.buf.len() && is_ws(self.buf[p]) {
-            p += 1;
-        }
-        p
+    fn skip_ws(&self, p: usize) -> usize {
+        skip_ws(self.buf, p)
     }
 
     fn last_len(&self) -> usize {
