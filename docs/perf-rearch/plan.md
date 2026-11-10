@@ -1649,3 +1649,18 @@ once a **reconciliation step** is built and tested.
   - **Unconfirmed suspect:** `WORKER_FS` (`go_frontend.rs:168`) reads the
     OS disk on checker threads. A probe matched Go, so it goes to the
     backlog.
+- **H7 round 2 finished** (head `5c6b0c8d5`).
+  - **All 9 findings fixed,** each with a negative control. The new design
+    runs every session under an init that is PID 1 of a PID namespace, on a
+    read-only tree with tmpfs `/home`, `/tmp` and `/run`, compares raw
+    answer bytes, validates the envelope strictly, reports infrastructure
+    failures as ERROR (never cached), reads storage after every request, and
+    keeps the guarded dirs out of the sandbox entirely.
+  - **Pins:** 14 api pins for B2 (3 new D2 cases).
+  - **Gate** `runs/h7r2-head-ed6edf820-full`: PARITY OK.
+  - **Cost:** the api tier takes 3.1 s full.
+  - **Astra recheck:** running.
+  - **Same gaps in the lsp tier:** no PID namespace, a writable host, `stat`
+    not seen, no envelope validation. These are documented. Fixing them
+    resets every lsp Go fill, so lane **H8** will port `parity_api_init.py`
+    to `sandbox.mjs`/`client.mjs`.
