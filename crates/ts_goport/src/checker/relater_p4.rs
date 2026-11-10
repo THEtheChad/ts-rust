@@ -1482,11 +1482,11 @@ impl Checker {
                     && !self.is_generic_index_type(base_index_type)
                 {
                     let access_flags = AccessFlags::WRITING
-                        | if base_object_type != object_type {
-                            AccessFlags::NO_INDEX_SIGNATURES
-                        } else {
-                            AccessFlags::NONE
-                        };
+                        | if_else(
+                            base_object_type != object_type,
+                            AccessFlags::NO_INDEX_SIGNATURES,
+                            AccessFlags::NONE,
+                        );
                     let constraint = self.get_indexed_access_type_or_undefined(
                         base_object_type,
                         base_index_type,
