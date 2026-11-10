@@ -127,7 +127,7 @@ def unit():
     api.session_sha = lambda: 'another-source'
     check('key: the session driver\'s and init\'s source (harness sources)', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     api.session_sha = saved[0]
-    check('key: both sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_sandbox_init.py'])
+    check('key: the sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_sandbox_init.py', 'parity_sandbox_storage.py'])
     session.PROTOCOL = 'another protocol'
     check('key: the API protocol', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     session.PROTOCOL = saved[1]
@@ -198,24 +198,26 @@ def unit():
         except session.Malformed:
             check(f'frame: {what} is malformed', True)
 
-    # round 3 finding 3: the home skeleton is checked against its exact structure
+    # round 3 finding 3: the home skeleton is checked against its exact structure (the sandbox's storage
+    # code since lane H8 round 2: parity_sandbox_storage.py, shared with the lsp tier)
+    import parity_sandbox_storage as storage
     h = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH)) / 'home'
-    session.make_home(h)
-    check('round 3 finding 3: a fresh skeleton has no deviation', session.skeleton_errors(h) == [], session.skeleton_errors(h))
+    storage.make_home(str(h), 0)
+    check('round 3 finding 3: a fresh skeleton has no deviation', storage.skeleton_errors(str(h)) == [], storage.skeleton_errors(str(h)))
     (h / 'tmp').rmdir()
     (h / 'tmp').write_text('x')
-    check('round 3 finding 3: tmp replaced by a file is a deviation', any(e.startswith('tmp:') for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: tmp replaced by a file is a deviation', any(e.startswith('tmp:') for e in storage.skeleton_errors(str(h))))
     (h / 'tmp').unlink()
     (h / 'tmp').mkdir(mode=0o700)
     os.chmod(h / 'tmp', 0o700)
-    check('round 3 finding 3: tmp of another mode is a deviation', any('mode 700' in e for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: tmp of another mode is a deviation', any('mode 700' in e for e in storage.skeleton_errors(str(h))))
     os.chmod(h / '.cache', 0o755)
     (h / '.cache').rmdir()
-    check('round 3 finding 3: a skeleton dir gone is a deviation', any(e == '.cache: gone' for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: a skeleton dir gone is a deviation', any(e == '.cache: gone' for e in storage.skeleton_errors(str(h))))
     inputs.remove_tree(h.parent)
     w = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH))
-    session.make_home(w / 'home')
-    listing = session.storage(w)[0]
+    storage.make_home(str(w / 'home'), 0)
+    listing = storage.listing(str(w), 0)
     check('round 3 finding 3: the skeleton is in the storage listing, with its modes, not skipped',
           listing['home'].get('tmp') == 'dir 755' and listing['skeleton'] == [], listing)
     inputs.remove_tree(w)

@@ -2425,13 +2425,32 @@ to the lsp tier, sharing its code, and fixes each gap at the level of the design
   overlay, the command's files exposed): its 49 scenarios, its pins (before B2 removed them: Go's result
   and every attempt fingerprint of the 14 entries unchanged, only their keys) and `parity_h7_test.py`'s
   108 checks are the same on it.
+- **The storage, made, recorded and listed in one place** (round 2; `parity_sandbox_storage.py`, which
+  the init imports): the init mounts one tmpfs per session in its own user namespace for the private home
+  (`home/`, with its skeleton) and each overlay's upper and work dirs (`ovl<k>/`), binds the home at the
+  home path, mounts the overlays on it, and detaches it (keeping an fd: the server reaches it only through
+  the home and the overlays). Before the server starts it marks the tmpfs with fanotify (a filesystem
+  mark, which a user namespace may set on a filesystem it mounted): every create, write, attribute
+  change, delete and rename anywhere in the storage is recorded, in a dir made a moment before too (no
+  watch per dir, so no race), as the order-free record `writes` (for every path ever touched, what
+  happened to it; the overlays' work dirs left out). After the end (survivors killed) it lists the
+  storage with the one lister both tiers use (`walk`, the api tier's `_walk` of H7's final fix: every
+  entry, the roots as `.`, an unlistable dir or unreadable file said so, never skipped; the init has
+  every capability over the tmpfs, so a mode the server sets hides nothing), and reports both. The api
+  tier asks the init for a listing after every request (a control pipe) and compares the write record as
+  part of its storage; lspdiff judges them as items (below).
 - **lspdiff's servers** (`sandbox.mjs` `ServerProcess`; Go, tsc-rs and JS tsserver) run under it when
-  `LSPDIFF_SANDBOX` is set (parity_lsp.py always sets it): the private home bound `rw` at the fixed home
-  path, an overlay per project snapshot at its own path, and as read-only binds the files the command
+  `LSPDIFF_SANDBOX` is set (parity_lsp.py always sets it): the private home at the fixed home path, an
+  overlay per project snapshot at its own path, and as read-only binds the files the command
   names (each word that names a file, by its realpath: `--go` and `--rs` are commands, split at
   spaces, as the api tier's), a fixture scenario's dir (the script writes it from outside; the server
-  can only read it), tsserver's package, and with ATA on the stand-in npm, node and its store; the npm
-  log's dir is the one `rw` bind outside the home, and must hold the log and nothing else after the run.
+  can only read it), tsserver's package, and with ATA on the stand-in npm, its store and, at the fixed
+  dir `/run/lspdiff-ata`, its config (read-only), node (read-only) and its log's dir (`rw`, the one
+  writable place outside the storage; it must hold the log and nothing else after the run). The
+  stand-in reads only that config (round 2: nothing of the environment, which the server controls), and
+  checks every store file it installs against the store's sha256 list (the frozen store's manifest,
+  `ata-typings.json`; the fixture store's own); the log is the ATA barrier's and a report, not evidence:
+  what was installed is in the write record and the storage.
   The stand-in npm runs in the server's PID namespace, so the ATA barrier's liveness check reads the
   init's descendants from the host's `/proc` (NSpid). The stand-in now writes `package.json` and the
   lock with their maps sorted, as npm does, so the home does not depend on the order of ATA's calls; it
@@ -2449,14 +2468,34 @@ to the lsp tier, sharing its code, and fixes each gap at the level of the design
   compared as canonical JSON (the server's key order, strings re-escaped, no insignificant whitespace);
   `json.mjs` `parseKeep` keeps every number whose text JSON.stringify would not give back (`1e999`,
   `-0`, `1.0`, `1e0`, integers past 2^53) as that text (`JSON.rawJSON`), so the comparison never maps two
-  texts of a number to one value. The referee's normalizer reads answers the same way.
-- **Two new items per session, after the last answer** (so every earlier item keeps its index):
-  `<n> initialize`, the initialize answer, and `<n+1> session home`, the server's private home: its final
-  listing (every entry with type, mode and content hash, the home itself as `.`, the skeleton included;
-  `sandbox.mjs` `listHome`, as the api tier's `_walk`) and its history (each listing that differs from the
-  one before, with where it was taken: after every answer when ATA is off; at every wait, where ATA is
-  idle, when it is on). Both are answers like any other: tsc-rs's determinism, GO-BROKEN when Go's runs
-  differ, accumulated Go evidence, then MATCH or DIFF.
+  texts of a number to one value. The referee's normalizer reads answers the same way. Round 2 (cost):
+  `scan` is one tokenizer pass (escape-aware strings, brackets, the commas before keys, and only the
+  number tokens that can be non-canonical: a fraction, an exponent, `-0`, 16 or more digits), which finds
+  a duplicate decoded key and checks each such number's text; a body whose numbers are all canonical is
+  parsed with plain `JSON.parse`, the others with the reviver. An entry that holds a kept number is
+  marked `rawNumbers`, and lspdiff and the referee read and normalize with the reviver only what is
+  marked. No plain object is a map keyed by names a server gives (round 2, finding 2: a key `__proto__`
+  in a `{}` set its prototype instead; the lister is Python now, and the referee and tsserver.mjs build
+  such objects with `Object.fromEntries` or a `Map`).
+- **Four new items per session, after the last answer** (so every earlier item keeps its index):
+  - `<n> initialize`, the initialize answer, and `<n+1> session messages`, every server-to-client
+    request and notification after the last checkpoint (a standard session: all of them) through the
+    end of the server's output, `window/logMessage` left out and watcher ids masked (round 2, finding 4:
+    a message sent while shutdown is answered, or in a session without checkpoints, was dropped). Both
+    are answers like any other: tsc-rs's determinism, GO-BROKEN when Go's runs differ, accumulated Go
+    evidence, then MATCH or DIFF.
+  - `<n> session storage` and `<n> session writes` (round 2, finding 7: two items, judged path by path):
+    the storage after the end (every path of the home and of each overlay's upper dir, and the home
+    skeleton's deviations) and the write record. On each path, tsc-rs's value (absent counts as one)
+    must be a Go value. The storage is judged against this fill's Go runs only, never a recorded or prior
+    variant: where they agree on a path tsc-rs must equal it; where they differ on a path (the final
+    storage itself varies across Go's runs), tsc-rs must equal one of them, and only that path is
+    exempt. The writes count this fill's Go runs, the clean prior runs and the per-path variants recorded
+    by earlier fills (one record key per path); only a path whose Go value varies is exempt, and a path
+    tsc-rs touched that no Go run ever did is a DIFF. The item is MATCH when every path is equal,
+    GO-BROKEN when tsc-rs differs only on paths where Go varies, else DIFF; tsc-rs's runs (and the
+    confirming run) must agree on every path.
+- **Shutdown** (round 2, finding 5): its result must be `null`; any other is a broken shutdown.
 - **Session result:** a survivor, an output stream held open 10 s after the end (both streams; stderr's
   EOF used to be waited on for 2 s and not enforced), the exit, stderr crash lines, changed inputs and
   the shutdown, as before. `infra` (the init's setup report, a spawn failure, or no report from an init
@@ -2465,8 +2504,9 @@ to the lsp tier, sharing its code, and fixes each gap at the level of the design
 - **Gone:** the tripwires (`GUARDED`, the bait dirs and their inotify watch): the dirs they guarded do not
   exist for a server, not even for `stat`. The ancestor dirs keyed are the ones a server sees (none in a
   hidden dir; on MS-A2 only `/`).
-- **Keys:** the init and `json.mjs` are session sources, and `CACHE_VERSION` is 4, so every lsp Go and JS
-  key changed and every variant record started empty.
+- **Keys:** the init, its storage module and `json.mjs` are session sources, and `CACHE_VERSION` is 5
+  (round 2), so every lsp Go and JS key changed and every variant record started empty. The api tier's
+  key holds the init and the storage module too.
 
 ### The gaps, their fixes and their controls
 

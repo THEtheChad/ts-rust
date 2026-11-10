@@ -292,6 +292,16 @@ def lspdiff(tag, go, rs, extra=()):
     return {f'{x["i"]:04d} {x["step"]}': x for x in json.loads(files[0].read_text())} if files else {}, r.stdout + r.stderr
 
 
+def finding1():
+    """Astra's finding 1 as she ran it: lspdiff alone, as an ordinary user, on her one-file project; the server
+    writes into its project after Go exits, then makes the project's root unreadable (or of another mode)."""
+    fake('pass')
+    for mode in ('input-root-hide', 'input-root-mode'):
+        items, log = lspdiff(f'f1-{mode}', GO, f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {mode} {GO} -')
+        check(f'finding 1 ({mode}, lspdiff as an ordinary user): session end DIFF rsFailure input, session storage DIFF',
+              item('session end', rsFailure='input')(items) and item('session storage')(items), short(items, log))
+
+
 def finding7():
     """Astra's finding 7: a Go that varies on one path (P, in about half of its runs) must not exempt a
     path no Go run gives (Q), now or through a recorded variant later; the final storage is judged against
@@ -352,6 +362,8 @@ def e2e():
         items, log = tier(fake('ata-unlogged'), session='ata-overlay')
         check('e2e finding 6: an npm call of the server\'s own, its log pointed nowhere: logged anyway, and session writes DIFF',
               items and item('session writes')(items), short(items, log))
+    if not only or 'finding1' in only:
+        finding1()
     if not only or 'finding7' in only:
         finding7()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
