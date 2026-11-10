@@ -219,23 +219,22 @@ impl Checker {
                     if self.ty(result).object_flags.intersects(
                         ObjectFlags::MAPPED | ObjectFlags::ANONYMOUS | ObjectFlags::REFERENCE,
                     ) {
-                        let extra = if result_could_contain_object_flags {
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
-                        } else {
-                            ObjectFlags::NONE
-                        };
                         self.ty_mut(result).object_flags |=
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED | extra;
+                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED
+                                | if_else(
+                                    result_could_contain_object_flags,
+                                    ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
+                                    ObjectFlags::NONE,
+                                );
                     } else {
                         // If none of the type arguments for the outer type parameters contain type variables, it follows
                         // that the instantiated type doesn't reference type variables.
                         // Intrinsics have `CouldContainTypeVariablesComputed` pre-set, so this should only cover unions and intersections resulting from `instantiateMappedType`
-                        let extra = if !result_could_contain_object_flags {
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED
-                        } else {
-                            ObjectFlags::NONE
-                        };
-                        self.ty_mut(result).object_flags |= extra;
+                        self.ty_mut(result).object_flags |= if_else(
+                            !result_could_contain_object_flags,
+                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED,
+                            ObjectFlags::NONE,
+                        );
                     }
                 }
             }
