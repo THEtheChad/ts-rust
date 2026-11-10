@@ -1258,114 +1258,149 @@ impl ApiStabilityAnalysis {
         // same concrete alias object in the same concrete carrier exposes nothing
         // new, which terminates recursive aliases such as `Deep<T>` without
         // evaluating them.
-        let mut deferred_alias_key = None;
-        if let Some(alias) = tp.checker.ty(t).alias() {
-            self.record_symbol(tp, &mut surface, alias.symbol());
-            if !self.alias_arguments_are_self(tp, Some(&alias))
-                && api_stability_represented_surface_accepts_arguments(tp.checker, t)
-            {
-                for &argument in alias.type_arguments() {
-                    let child =
-                        self.type_surface(tp, argument, ApiStabilityInspection::Shallow, subst);
-                    surface.merge(child);
-                }
-            }
-            let alias_key = ApiStabilityAliasKey {
-                t,
-                carrier: subst.carrier(),
-            };
-            if self
-                .active_aliases
-                .get(&alias_key)
-                .copied()
-                .unwrap_or(false)
-            {
+        let deferred_alias_key = match self.enter_alias_surface(tp, &mut surface, t, subst) {
+            AliasEntry::Cycle => {
                 surface.cut_by_cycle();
                 return surface;
             }
-            self.active_aliases.insert(alias_key, true);
-            deferred_alias_key = Some(alias_key);
-        }
-
-        let flags = tp.checker.ty(t).flags();
-        'switch: {
-            if flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                let symbol = tp.checker.ty(t).symbol();
-                self.record_symbol(tp, &mut surface, symbol);
-                let (mapped, parent, ok) = self.substitute(tp, subst, t);
-                if ok {
-                    if mapped.is_nil() {
-                        // The parameter was replaced by a represented argument the
-                        // checker has not materialized. The component is unknown, so
-                        // the result is incomplete and never promoted.
-                        surface.block();
-                        break 'switch;
-                    }
-                    let child =
-                        self.type_surface(tp, mapped, ApiStabilityInspection::Shallow, &parent);
-                    surface.merge(child);
-                    break 'switch;
-                }
-                self.collect_type_parameter_components(tp, &mut surface, t, subst);
-            } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-                let members = tp.checker.ty(t).types().to_vec();
-                for member in members {
-                    let child =
-                        self.type_surface(tp, member, ApiStabilityInspection::Shallow, subst);
-                    surface.merge(child);
-                }
-            } else if flags.intersects(TypeFlags::CONDITIONAL) {
-                self.collect_conditional_surface(tp, &mut surface, t, subst);
-            } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                // PORT: Go `indexed != nil` always holds for an indexed access type.
-                let indexed = tp.checker.ty(t).as_indexed_access_type();
-                let (object_type, index_type) = (indexed.object_type, indexed.index_type);
-                let child =
-                    self.type_surface(tp, object_type, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-                let child =
-                    self.type_surface(tp, index_type, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-                // The projected result of an indexed access is a compiler outcome that
-                // the represented operands do not establish; inspecting the operands
-                // alone can never complete the surface.
-                surface.block();
-            } else if flags.intersects(TypeFlags::INDEX) {
-                let target = tp.checker.ty(t).as_index_type().target;
-                let child = self.type_surface(tp, target, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-            } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
-                for part in parts {
-                    let child = self.type_surface(tp, part, ApiStabilityInspection::Shallow, subst);
-                    surface.merge(child);
-                }
-            } else if flags.intersects(TypeFlags::STRING_MAPPING) {
-                let symbol = tp.checker.ty(t).symbol();
-                self.record_symbol(tp, &mut surface, symbol);
-                let target = tp.checker.ty(t).as_string_mapping_type().target;
-                let child = self.type_surface(tp, target, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-            } else if flags.intersects(TypeFlags::SUBSTITUTION) {
-                let substitution = tp.checker.ty(t).as_substitution_type();
-                let (base_type, constraint) = (substitution.base_type, substitution.constraint);
-                let child =
-                    self.type_surface(tp, base_type, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-                let child =
-                    self.type_surface(tp, constraint, ApiStabilityInspection::Shallow, subst);
-                surface.merge(child);
-            } else if flags.intersects(TypeFlags::OBJECT) {
-                self.collect_object_surface(tp, &mut surface, t, inspect, subst);
-            } else if flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL | TypeFlags::ENUM) {
-                let symbol = tp.checker.ty(t).symbol();
-                self.record_symbol(tp, &mut surface, symbol);
-            }
-        }
+            AliasEntry::Entered(alias_key) => Some(alias_key),
+            AliasEntry::NotAlias => None,
+        };
+        self.collect_type_kind_surface(tp, &mut surface, t, inspect, subst);
         if let Some(alias_key) = deferred_alias_key {
             self.active_aliases.remove(&alias_key);
         }
         surface
+    }
+
+    /// The alias part of [`Self::collect_type_surface`]. An alias keeps its
+    /// symbol and represented type arguments. The underlying representation is
+    /// still inspected after it; the alias is recorded first so an erased or
+    /// shallow alias can still be named. A repeated application of the same
+    /// concrete alias object in the same concrete carrier exposes nothing new,
+    /// which terminates recursive aliases such as `Deep<T>` without evaluating
+    /// them.
+    fn enter_alias_surface(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        t: TypeId,
+        subst: &ApiStabilitySubstitution,
+    ) -> AliasEntry {
+        let Some(alias) = tp.checker.ty(t).alias() else {
+            return AliasEntry::NotAlias;
+        };
+        self.record_symbol(tp, surface, alias.symbol());
+        if !self.alias_arguments_are_self(tp, Some(&alias))
+            && api_stability_represented_surface_accepts_arguments(tp.checker, t)
+        {
+            let arguments = alias.type_arguments().to_vec();
+            self.merge_shallow_surfaces(tp, surface, &arguments, subst);
+        }
+        let alias_key = ApiStabilityAliasKey {
+            t,
+            carrier: subst.carrier(),
+        };
+        if self
+            .active_aliases
+            .get(&alias_key)
+            .copied()
+            .unwrap_or(false)
+        {
+            return AliasEntry::Cycle;
+        }
+        self.active_aliases.insert(alias_key, true);
+        AliasEntry::Entered(alias_key)
+    }
+
+    /// The per-kind part of [`Self::collect_type_surface`].
+    fn collect_type_kind_surface(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        t: TypeId,
+        inspect: ApiStabilityInspection,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        let flags = tp.checker.ty(t).flags();
+        if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            self.collect_type_parameter_surface(tp, surface, t, subst);
+        } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
+            let members = tp.checker.ty(t).types().to_vec();
+            self.merge_shallow_surfaces(tp, surface, &members, subst);
+        } else if flags.intersects(TypeFlags::CONDITIONAL) {
+            self.collect_conditional_surface(tp, surface, t, subst);
+        } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+            // PORT: Go `indexed != nil` always holds for an indexed access type.
+            let indexed = tp.checker.ty(t).as_indexed_access_type();
+            let operands = [indexed.object_type, indexed.index_type];
+            self.merge_shallow_surfaces(tp, surface, &operands, subst);
+            // The projected result of an indexed access is a compiler outcome that
+            // the represented operands do not establish; inspecting the operands
+            // alone can never complete the surface.
+            surface.block();
+        } else if flags.intersects(TypeFlags::INDEX) {
+            let target = tp.checker.ty(t).as_index_type().target;
+            self.merge_shallow_surfaces(tp, surface, &[target], subst);
+        } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+            let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
+            self.merge_shallow_surfaces(tp, surface, &parts, subst);
+        } else if flags.intersects(TypeFlags::STRING_MAPPING) {
+            let symbol = tp.checker.ty(t).symbol();
+            self.record_symbol(tp, surface, symbol);
+            let target = tp.checker.ty(t).as_string_mapping_type().target;
+            self.merge_shallow_surfaces(tp, surface, &[target], subst);
+        } else if flags.intersects(TypeFlags::SUBSTITUTION) {
+            let substitution = tp.checker.ty(t).as_substitution_type();
+            let operands = [substitution.base_type, substitution.constraint];
+            self.merge_shallow_surfaces(tp, surface, &operands, subst);
+        } else if flags.intersects(TypeFlags::OBJECT) {
+            self.collect_object_surface(tp, surface, t, inspect, subst);
+        } else if flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL | TypeFlags::ENUM) {
+            let symbol = tp.checker.ty(t).symbol();
+            self.record_symbol(tp, surface, symbol);
+        }
+    }
+
+    /// The type parameter `t` of [`Self::collect_type_surface`]: the
+    /// surface of its substituted value, or else of its own components.
+    fn collect_type_parameter_surface(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        t: TypeId,
+        subst: &ApiStabilitySubstitution,
+    ) {
+        let symbol = tp.checker.ty(t).symbol();
+        self.record_symbol(tp, surface, symbol);
+        let (mapped, parent, ok) = self.substitute(tp, subst, t);
+        if !ok {
+            self.collect_type_parameter_components(tp, surface, t, subst);
+            return;
+        }
+        if mapped.is_nil() {
+            // The parameter was replaced by a represented argument the
+            // checker has not materialized. The component is unknown, so
+            // the result is incomplete and never promoted.
+            surface.block();
+            return;
+        }
+        let child = self.type_surface(tp, mapped, ApiStabilityInspection::Shallow, &parent);
+        surface.merge(child);
+    }
+
+    /// Merges the shallow surface of each of `types`, in order.
+    fn merge_shallow_surfaces(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        types: &[TypeId],
+        subst: &ApiStabilitySubstitution,
+    ) {
+        for &t in types {
+            let child = self.type_surface(tp, t, ApiStabilityInspection::Shallow, subst);
+            surface.merge(child);
+        }
     }
 
     // Go: typeparser/api_stability.go apiStabilityAnalysis.collectTypeParameterComponents
@@ -1501,53 +1536,14 @@ impl ApiStabilityAnalysis {
             return false;
         }
         active.insert(t, true);
-        let result = 'body: {
-            let flags = tp.checker.ty(t).flags();
-            if flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                let (_, _, ok) = self.substitute(tp, subst, t);
-                break 'body ok;
-            }
-            if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-                let members = tp.checker.ty(t).types().to_vec();
-                for member in members {
-                    if self.contains_substituted_parameter(tp, subst, member, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::OBJECT)
-                && tp
-                    .checker
-                    .ty(t)
-                    .object_flags()
-                    .intersects(ObjectFlags::REFERENCE)
-            {
-                for argument in checker_integration::get_resolved_type_arguments(tp.checker, t) {
-                    if self.contains_substituted_parameter(tp, subst, argument, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let indexed = tp.checker.ty(t).as_indexed_access_type();
-                let (object_type, index_type) = (indexed.object_type, indexed.index_type);
-                break 'body self.contains_substituted_parameter(tp, subst, object_type, active)
-                    || self.contains_substituted_parameter(tp, subst, index_type, active);
-            } else if flags.intersects(TypeFlags::INDEX) {
-                let target = tp.checker.ty(t).as_index_type().target;
-                break 'body self.contains_substituted_parameter(tp, subst, target, active);
-            } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
-                for part in parts {
-                    if self.contains_substituted_parameter(tp, subst, part, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::CONDITIONAL) {
-                let conditional = tp.checker.ty(t).as_conditional_type();
-                let (check, extends) = (conditional.check_type, conditional.extends_type);
-                break 'body self.contains_substituted_parameter(tp, subst, check, active)
-                    || self.contains_substituted_parameter(tp, subst, extends, active);
-            }
-            false
+        let flags = tp.checker.ty(t).flags();
+        let result = if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            let (_, _, ok) = self.substitute(tp, subst, t);
+            ok
+        } else {
+            type_containment_operands(tp.checker, t, flags)
+                .into_iter()
+                .any(|operand| self.contains_substituted_parameter(tp, subst, operand, active))
         };
         active.remove(&t);
         result
@@ -1567,58 +1563,11 @@ impl ApiStabilityAnalysis {
             return false;
         }
         active.insert(t, true);
-        let result = 'body: {
-            let flags = tp.checker.ty(t).flags();
-            if flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                break 'body true;
-            }
-            if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-                let members = tp.checker.ty(t).types().to_vec();
-                for member in members {
-                    if self.represented_contains_type_parameter(tp, member, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::OBJECT)
-                && tp
-                    .checker
-                    .ty(t)
-                    .object_flags()
-                    .intersects(ObjectFlags::REFERENCE)
-            {
-                for argument in checker_integration::get_resolved_type_arguments(tp.checker, t) {
-                    if self.represented_contains_type_parameter(tp, argument, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::INDEXED_ACCESS) {
-                let indexed = tp.checker.ty(t).as_indexed_access_type();
-                let (object_type, index_type) = (indexed.object_type, indexed.index_type);
-                break 'body self.represented_contains_type_parameter(tp, object_type, active)
-                    || self.represented_contains_type_parameter(tp, index_type, active);
-            } else if flags.intersects(TypeFlags::INDEX) {
-                let target = tp.checker.ty(t).as_index_type().target;
-                break 'body self.represented_contains_type_parameter(tp, target, active);
-            } else if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
-                let parts = tp.checker.ty(t).as_template_literal_type().types.to_vec();
-                for part in parts {
-                    if self.represented_contains_type_parameter(tp, part, active) {
-                        break 'body true;
-                    }
-                }
-            } else if flags.intersects(TypeFlags::CONDITIONAL) {
-                let conditional = tp.checker.ty(t).as_conditional_type();
-                let (check, extends) = (conditional.check_type, conditional.extends_type);
-                break 'body self.represented_contains_type_parameter(tp, check, active)
-                    || self.represented_contains_type_parameter(tp, extends, active);
-            } else if flags.intersects(TypeFlags::SUBSTITUTION) {
-                let substitution = tp.checker.ty(t).as_substitution_type();
-                let (base_type, constraint) = (substitution.base_type, substitution.constraint);
-                break 'body self.represented_contains_type_parameter(tp, base_type, active)
-                    || self.represented_contains_type_parameter(tp, constraint, active);
-            }
-            false
-        };
+        let flags = tp.checker.ty(t).flags();
+        let result = flags.intersects(TypeFlags::TYPE_PARAMETER)
+            || type_containment_operands_with_substitution(tp.checker, t, flags)
+                .into_iter()
+                .any(|operand| self.represented_contains_type_parameter(tp, operand, active));
         active.remove(&t);
         result
     }
@@ -2103,4 +2052,16 @@ impl ApiStabilityAnalysis {
             .type_parameters()
             .to_vec()
     }
+}
+
+/// How [`ApiStabilityAnalysis::collect_type_surface`] enters the alias of a
+/// type.
+enum AliasEntry {
+    /// The type has no alias.
+    NotAlias,
+    /// The alias application is active now; its key is removed after the
+    /// walk.
+    Entered(ApiStabilityAliasKey),
+    /// The same alias application is already active: a cycle.
+    Cycle,
 }

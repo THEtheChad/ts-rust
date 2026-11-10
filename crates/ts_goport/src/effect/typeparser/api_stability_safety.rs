@@ -1882,13 +1882,7 @@ impl ApiStabilitySafetyScan<'_> {
             let symbol = tp.checker.ty(t).symbol();
             return self.raw_declarations_mention_replaced_parameter(tp, symbol, subst, bindings);
         }
-        let operands: SmallVec<[TypeId; 4]> = if flags.intersects(TypeFlags::SUBSTITUTION) {
-            let substitution = tp.checker.ty(t).as_substitution_type();
-            smallvec![substitution.base_type, substitution.constraint]
-        } else {
-            type_containment_operands(tp.checker, t, flags)
-        };
-        operands
+        type_containment_operands_with_substitution(tp.checker, t, flags)
             .into_iter()
             .any(|operand| self.contains_replaced_parameter(tp, operand, subst, bindings, active))
     }
@@ -3387,7 +3381,11 @@ pub fn mapped_type_operands(node: Node) -> [Node; 3] {
 /// resolved arguments of a type reference, the check and extends types of a
 /// conditional, the object and index of an indexed access, the target of an
 /// index type and the parts of a template literal. Empty for other types.
-fn type_containment_operands(c: &Checker, t: TypeId, flags: TypeFlags) -> SmallVec<[TypeId; 4]> {
+pub(crate) fn type_containment_operands(
+    c: &Checker,
+    t: TypeId,
+    flags: TypeFlags,
+) -> SmallVec<[TypeId; 4]> {
     let ty = c.ty(t);
     if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
         ty.types().iter().copied().collect()
@@ -3412,4 +3410,19 @@ fn type_containment_operands(c: &Checker, t: TypeId, flags: TypeFlags) -> SmallV
     } else {
         SmallVec::new()
     }
+}
+
+/// [`type_containment_operands`], plus the base type and constraint of a
+/// substitution type (the scans that follow substitutions:
+/// `containsReplacedParameter`, `representedContainsTypeParameter`).
+pub(crate) fn type_containment_operands_with_substitution(
+    c: &Checker,
+    t: TypeId,
+    flags: TypeFlags,
+) -> SmallVec<[TypeId; 4]> {
+    if flags.intersects(TypeFlags::SUBSTITUTION) {
+        let substitution = c.ty(t).as_substitution_type();
+        return smallvec![substitution.base_type, substitution.constraint];
+    }
+    type_containment_operands(c, t, flags)
 }
