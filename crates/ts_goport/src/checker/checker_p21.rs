@@ -537,7 +537,8 @@ impl Checker {
         }
     }
 
-    /// The body of `get_property_of_type_ex`, for a `&Name` or a `&str`.
+    // Go: checker/checker.go:19335 getPropertyOfTypeEx
+    /// The body of Go `getPropertyOfTypeEx`, for a `&Name` or a `&str`.
     fn get_property_of_type_ex_body<'a>(
         &mut self,
         t: TypeId,
