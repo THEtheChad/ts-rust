@@ -1518,3 +1518,12 @@ once a **reconciliation step** is built and tested.
     - fold the `runtime_syntax.rs` `coalesce` copy and the
       `frontend/core_ls_ext.rs` core helpers into `core.rs`;
     - move the `ElementOrNil` copies to a `NodeSlice` method.
+- **W2-EF2 merged** (`t3/refactor-effect-complexity` at `ef0ce4dea`).
+  - **Round 2:**
+    - 67 LSP pins, all written from the base source. They cover Astra's
+      gaps except the duplicate-member skip, which neither base nor head can
+      reach.
+    - The dead `typeparser/reconstruct.rs` is deleted.
+    - The CI clippy fix: `Duration::from_mins(2)` in the shared test client.
+  - **Checks:** `effect_cases` 1,127/1,127, GATING OK, parity quick OK.
+  - **Effect:** no own code is over 25 any more (85 → 0 across both lanes).
