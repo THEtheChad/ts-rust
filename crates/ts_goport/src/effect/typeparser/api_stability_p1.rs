@@ -710,25 +710,31 @@ pub fn stability_of_declaration_tag(declaration: Node) -> String {
             if tags.is_nil() {
                 continue;
             }
-            for tag in tags.nodes() {
-                if tag.kind() != SyntaxKind::JsDocUnknownTag || tag.tag_name().text() != "stability"
-                {
-                    continue;
-                }
-                let comment = tag.comment();
-                if comment.is_some() && !comment.nodes().is_empty() {
-                    let first = comment.nodes().get(0);
-                    if first.kind() == SyntaxKind::JsDocText {
-                        let value = first.text().trim();
-                        if value == "stable" || value == "unstable" || value == "experimental" {
-                            return value.to_string();
-                        }
-                    }
-                }
+            if let Some(value) = tags.nodes().iter().find_map(stability_tag_value) {
+                return value.to_string();
             }
         }
     }
     String::new()
+}
+
+/// The value of the JSDoc tag `tag` when it is `@stability stable`,
+/// `unstable` or `experimental` (its first comment part, trimmed).
+fn stability_tag_value(tag: Node) -> Option<&'static str> {
+    if tag.kind() != SyntaxKind::JsDocUnknownTag || tag.tag_name().text() != "stability" {
+        return None;
+    }
+    let comment = tag.comment();
+    if comment.is_nil() || comment.nodes().is_empty() {
+        return None;
+    }
+    let first = comment.nodes().get(0);
+    if first.kind() != SyntaxKind::JsDocText {
+        return None;
+    }
+    ["stable", "unstable", "experimental"]
+        .into_iter()
+        .find(|&level| first.text().trim() == level)
 }
 
 // Go: typeparser/api_stability.go StabilityTagOfDeclaration
