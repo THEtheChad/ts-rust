@@ -955,58 +955,46 @@ impl ApiStabilityAnalysis {
         {
             return;
         }
-        let mut constraint_node = Node::NIL;
-        let mut name_node = Node::NIL;
-        let mut template_node = Node::NIL;
-        let source_symbol = tp.checker.ty(source).symbol();
-        if source_symbol.is_some() {
-            for &declaration in &tp.checker.sym(source_symbol).declarations {
-                if declaration.is_nil() || declaration.kind() != SyntaxKind::MappedType {
-                    continue;
-                }
-                let type_parameter = declaration.type_parameter();
-                if type_parameter.is_some() && type_parameter.kind() == SyntaxKind::TypeParameter {
-                    constraint_node = type_parameter.constraint();
-                }
-                name_node = declaration.name_type();
-                template_node = declaration.type_();
-                break;
-            }
-        }
-        let mut constraint =
-            checker_integration::get_mapped_type_constraint_type(tp.checker, source);
-        if constraint.is_nil() {
-            constraint = self.type_from_node_safely(tp, constraint_node, &current);
-        }
-        if constraint.is_some() {
-            let child =
-                self.type_surface(tp, constraint, ApiStabilityInspection::Shallow, &current);
-            surface.merge(child);
-        } else {
+        let [constraint_node, name_node, template_node] =
+            mapped_type_declaration_nodes(tp.checker, tp.checker.ty(source).symbol());
+        let constraint = checker_integration::get_mapped_type_constraint_type(tp.checker, source);
+        if !self.merge_mapped_component(tp, surface, constraint, constraint_node, &current) {
             surface.block();
         }
-        let mut name = checker_integration::get_mapped_type_name_type(tp.checker, source);
-        if name.is_nil() {
-            name = self.type_from_node_safely(tp, name_node, &current);
-        }
-        if name.is_some() {
-            let child = self.type_surface(tp, name, ApiStabilityInspection::Shallow, &current);
-            surface.merge(child);
-        } else if name_node.is_some()
-            || api_stability_mapped_declaration_has_name(tp.checker, source)
+        let name = checker_integration::get_mapped_type_name_type(tp.checker, source);
+        if !self.merge_mapped_component(tp, surface, name, name_node, &current)
+            && (name_node.is_some()
+                || api_stability_mapped_declaration_has_name(tp.checker, source))
         {
             surface.block();
         }
-        let mut template = checker_integration::get_mapped_type_template_type(tp.checker, source);
-        if template.is_nil() {
-            template = self.type_from_node_safely(tp, template_node, &current);
-        }
-        if template.is_some() {
-            let child = self.type_surface(tp, template, ApiStabilityInspection::Shallow, &current);
-            surface.merge(child);
-        } else {
+        let template = checker_integration::get_mapped_type_template_type(tp.checker, source);
+        if !self.merge_mapped_component(tp, surface, template, template_node, &current) {
             surface.block();
         }
+    }
+
+    /// Merges the shallow surface of a mapped type component: `resolved`,
+    /// or else the type of its declaration node `node` read safely. False
+    /// when neither gives a type.
+    fn merge_mapped_component(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        surface: &mut ApiStabilitySurface,
+        resolved: TypeId,
+        node: Node,
+        current: &ApiStabilitySubstitution,
+    ) -> bool {
+        let mut component = resolved;
+        if component.is_nil() {
+            component = self.type_from_node_safely(tp, node, current);
+        }
+        if component.is_nil() {
+            return false;
+        }
+        let child = self.type_surface(tp, component, ApiStabilityInspection::Shallow, current);
+        surface.merge(child);
+        true
     }
 
     // Go: typeparser/api_stability.go apiStabilityAnalysis.componentSurface
@@ -1474,39 +1462,55 @@ impl ApiStabilityAnalysis {
         }
         let mut frame = subst.frame.clone();
         while let Some(current) = frame {
-            let parent = ApiStabilitySubstitution {
-                frame: current.parent.clone(),
-            };
-            if current.mapper.is_some() {
-                let mapped = tp.checker.mapper_map(current.mapper, t);
-                if mapped.is_some() && mapped != t {
-                    return (mapped, parent, true);
-                }
-            }
-            if current.signature.is_some() {
-                let (mapped, ok) = self.signature_type_parameter(tp, current.signature, t);
-                if ok && mapped != t {
-                    return (mapped, parent, true);
-                }
-            }
-            for (index, &parameter) in current.parameters.iter().enumerate() {
-                if parameter != t || index >= current.arguments.len() {
-                    continue;
-                }
-                let mapped = current.arguments[index];
-                if mapped.is_nil() {
-                    // The argument was not represented. The parameter is replaced,
-                    // but its value is unknown, so the component is unknown.
-                    return (TypeId::NIL, parent, true);
-                }
-                if mapped == t {
-                    continue;
-                }
+            if let Some(mapped) = self.frame_replacement(tp, &current, t) {
+                let parent = ApiStabilitySubstitution {
+                    frame: current.parent.clone(),
+                };
                 return (mapped, parent, true);
             }
             frame = current.parent.clone();
         }
         (TypeId::NIL, subst.clone(), false)
+    }
+
+    /// The value that the substitution frame `current` gives the type
+    /// parameter `t` (through its mapper, its signature, or its parameter and
+    /// argument lists), when it replaces it with another type. A parameter
+    /// whose argument was not represented is replaced by nil: its value is
+    /// unknown.
+    fn frame_replacement(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        current: &ApiStabilitySubstFrame,
+        t: TypeId,
+    ) -> Option<TypeId> {
+        if current.mapper.is_some() {
+            let mapped = tp.checker.mapper_map(current.mapper, t);
+            if mapped.is_some() && mapped != t {
+                return Some(mapped);
+            }
+        }
+        if current.signature.is_some() {
+            let (mapped, ok) = self.signature_type_parameter(tp, current.signature, t);
+            if ok && mapped != t {
+                return Some(mapped);
+            }
+        }
+        for (index, &parameter) in current.parameters.iter().enumerate() {
+            if parameter != t || index >= current.arguments.len() {
+                continue;
+            }
+            let mapped = current.arguments[index];
+            if mapped.is_nil() {
+                // The argument was not represented. The parameter is replaced,
+                // but its value is unknown, so the component is unknown.
+                return Some(TypeId::NIL);
+            }
+            if mapped != t {
+                return Some(mapped);
+            }
+        }
+        None
     }
 
     // Go: typeparser/api_stability.go apiStabilityAnalysis.signatureTypeParameter
@@ -3528,4 +3532,28 @@ fn declared_signature_member(c: &Checker, symbol: SymbolId, kind: SignatureKind)
         return symbol;
     }
     member
+}
+
+/// The constraint, name type and template nodes of the first mapped type
+/// declaration of `symbol` (nil where there is none).
+fn mapped_type_declaration_nodes(c: &Checker, symbol: SymbolId) -> [Node; 3] {
+    if symbol.is_nil() {
+        return [Node::NIL; 3];
+    }
+    for &declaration in &c.sym(symbol).declarations {
+        if declaration.is_nil() || declaration.kind() != SyntaxKind::MappedType {
+            continue;
+        }
+        let type_parameter = declaration.type_parameter();
+        let mut constraint_node = Node::NIL;
+        if type_parameter.is_some() && type_parameter.kind() == SyntaxKind::TypeParameter {
+            constraint_node = type_parameter.constraint();
+        }
+        return [
+            constraint_node,
+            declaration.name_type(),
+            declaration.type_(),
+        ];
+    }
+    [Node::NIL; 3]
 }
