@@ -1199,21 +1199,19 @@ impl Checker {
                 return t;
             }
             let facts = if double_equals {
-                if assume_true {
-                    TypeFacts::EQ_UNDEFINED_OR_NULL
-                } else {
-                    TypeFacts::NE_UNDEFINED_OR_NULL
-                }
+                if_else(
+                    assume_true,
+                    TypeFacts::EQ_UNDEFINED_OR_NULL,
+                    TypeFacts::NE_UNDEFINED_OR_NULL,
+                )
             } else if value_flags.intersects(TypeFlags::NULL) {
-                if assume_true {
-                    TypeFacts::EQ_NULL
-                } else {
-                    TypeFacts::NE_NULL
-                }
-            } else if assume_true {
-                TypeFacts::EQ_UNDEFINED
+                if_else(assume_true, TypeFacts::EQ_NULL, TypeFacts::NE_NULL)
             } else {
-                TypeFacts::NE_UNDEFINED
+                if_else(
+                    assume_true,
+                    TypeFacts::EQ_UNDEFINED,
+                    TypeFacts::NE_UNDEFINED,
+                )
             };
             return self.get_adjusted_type_with_facts(t, facts);
         }
