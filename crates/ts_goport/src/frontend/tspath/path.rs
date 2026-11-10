@@ -740,28 +740,22 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
         // CombinePaths normalizes slashes, so not necessary in other branch
         normalize_slashes_cow(file_name)
     };
-    let root_length = get_root_length(&file_name);
+    get_normalized_absolute_path_from_normalized_slashes(file_name)
+}
 
-    // The `simpleNormalizePath` result, with the trailing separator fixed.
-    let finish = |mut simple_normalized: String| {
-        let length = simple_normalized.len();
-        if length > root_length {
-            let trimmed = remove_trailing_directory_separator(&simple_normalized).len();
-            simple_normalized.truncate(trimmed);
-            return simple_normalized;
-        }
-        if length == root_length && root_length != 0 {
-            return ensure_trailing_directory_separator(&simple_normalized);
-        }
-        simple_normalized
-    };
+// Go: tspath/path.go:424 getNormalizedAbsolutePathFromNormalizedSlashes
+// PERF (modpath1): takes the path by `Cow`, so a path with no relative
+// segment is copied only when it is the result.
+#[inline]
+fn get_normalized_absolute_path_from_normalized_slashes(file_name: Cow<'_, str>) -> String {
+    let root_length = get_root_length(&file_name);
     // PORT: `simpleNormalizePath` returns the path itself when it has no
     // relative segment. Reuse `file_name` then instead of copying it.
     if !has_relative_path_segment(&file_name) {
-        return finish(file_name.into_owned());
+        return fix_simple_normalized_trailing_separator(file_name.into_owned(), root_length);
     }
     if let Some(simple_normalized) = simple_normalize_path(&file_name) {
-        return finish(simple_normalized);
+        return fix_simple_normalized_trailing_separator(simple_normalized, root_length);
     }
 
     let fb = file_name.as_bytes();
@@ -872,6 +866,27 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
         return ensure_trailing_directory_separator(&file_name);
     }
     file_name.into_owned()
+}
+
+/// Part of Go `getNormalizedAbsolutePathFromNormalizedSlashes`: its
+/// `simpleNormalizePath` branch, which drops a trailing separator past the
+/// root and adds one to a bare root. A helper because the port reaches it
+/// from two places (the no-relative-segment reuse and `simple_normalize_path`).
+#[inline]
+fn fix_simple_normalized_trailing_separator(
+    mut simple_normalized: String,
+    root_length: usize,
+) -> String {
+    let length = simple_normalized.len();
+    if length > root_length {
+        let trimmed = remove_trailing_directory_separator(&simple_normalized).len();
+        simple_normalized.truncate(trimmed);
+        return simple_normalized;
+    }
+    if length == root_length && root_length != 0 {
+        return ensure_trailing_directory_separator(&simple_normalized);
+    }
+    simple_normalized
 }
 
 // Go: tspath/path.go:537 simpleNormalizePath
