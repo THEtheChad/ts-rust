@@ -106,12 +106,23 @@ context budget, not for a risk.
 
 ## Notes
 
-- No behaviour change was intended anywhere. Two edge cases moved from a
-  panic to Go's answer: `unquoted_module_specifier` (module_identifier.rs)
-  slices bytes lossily like Go and `find_layer_module_name` did, where
-  `find_module_identifier*` sliced a `str` (a panic on a module specifier
-  whose last byte is inside a multi-byte character, which a parsed string
-  literal cannot produce).
+- **One intended behaviour change** (Effect extension only; found by
+  Astra's round-1 review). `unquoted_module_specifier`
+  (typeparser/module_identifier.rs) slices the specifier's bytes lossily,
+  as the Go reference and the old `find_layer_module_name` did. The old
+  `find_effect_module_identifier`, `find_module_identifier` and
+  `find_module_identifier_for_package` sliced a `str`, which panicked when
+  the specifier text ends inside a multi-byte character. A parsed string
+  literal does produce that: an unterminated specifier
+  (`import { X } from "é`, `import * as E from "é`, `import "é`), also
+  when it comes from a UTF-16 file or from invalid UTF-8 (decoded to a
+  multi-byte character). With `TSC_RS_EFFECT=1`, `textDocument/codeAction`
+  on such a file answered `-32603` (a panic) and now answers the Effect
+  refactors. Plain tsgo never runs these lookups. The 1,060 diagnostic
+  cases don't reach this path; `tests/effect_lsp_module_specifier.rs` pins
+  the five cases (it fails 5 of 6 with the old slicing).
+- Apart from that, no behaviour change was intended. Astra's round-1 probes
+  (31 CLI probes, 27 code-action requests) matched base.
 - Every split keeps the order of checker calls (type reads, signature
   resolution) of the original, including short-circuits: lazy `any` over
   signatures and operands, never an eager collect of resolved types.
