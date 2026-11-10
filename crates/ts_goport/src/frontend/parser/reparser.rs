@@ -368,15 +368,7 @@ impl<'a> Parser<'a> {
                     ),
                 };
                 set_type_alias_type(type_alias, t);
-                self.finish_reparsed_node(type_alias, tag);
-                self.jsdoc_infos.push(JsDocInfo {
-                    parent: type_alias,
-                    js_docs: vec![js_doc],
-                });
-                set_node_flags(type_alias, type_alias.flags() | NodeFlags::HAS_JS_DOC);
-                let result =
-                    self.wrap_in_js_doc_namespace(full_name, type_alias, false /*nested*/);
-                self.reparse_list.push(result);
+                self.push_reparsed_js_doc_type_alias(type_alias, tag, js_doc, full_name);
             }
             SyntaxKind::JsDocCallbackTag => {
                 let type_expression = tag.type_expression();
@@ -408,15 +400,7 @@ impl<'a> Parser<'a> {
                 let type_parameters =
                     self.gather_type_parameters(js_doc, true /*typedefOrCallback*/);
                 set_type_parameters(type_alias, type_parameters);
-                self.finish_reparsed_node(type_alias, tag);
-                self.jsdoc_infos.push(JsDocInfo {
-                    parent: type_alias,
-                    js_docs: vec![js_doc],
-                });
-                set_node_flags(type_alias, type_alias.flags() | NodeFlags::HAS_JS_DOC);
-                let result =
-                    self.wrap_in_js_doc_namespace(full_name, type_alias, false /*nested*/);
-                self.reparse_list.push(result);
+                self.push_reparsed_js_doc_type_alias(type_alias, tag, js_doc, full_name);
             }
             SyntaxKind::JsDocImportTag => {
                 if tag.import_clause().is_nil() {
@@ -456,6 +440,26 @@ impl<'a> Parser<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Part of Go `reparseUnhosted`: the end of its typedef and callback
+    /// cases, which Go writes out in both. The type alias is finished,
+    /// keeps its JSDoc, and goes to the reparse list in its namespace.
+    fn push_reparsed_js_doc_type_alias(
+        &mut self,
+        type_alias: Node,
+        tag: Node,
+        js_doc: Node,
+        full_name: Node,
+    ) {
+        self.finish_reparsed_node(type_alias, tag);
+        self.jsdoc_infos.push(JsDocInfo {
+            parent: type_alias,
+            js_docs: vec![js_doc],
+        });
+        set_node_flags(type_alias, type_alias.flags() | NodeFlags::HAS_JS_DOC);
+        let result = self.wrap_in_js_doc_namespace(full_name, type_alias, false /*nested*/);
+        self.reparse_list.push(result);
     }
 
     // Go: parser/reparser.go:146 reparseJSDocSignature
