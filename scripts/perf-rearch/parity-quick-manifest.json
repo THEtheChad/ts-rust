@@ -50,7 +50,7 @@
   "dyn-commondir-insensitive",
   "dyn-config-include-insensitive",
   "dyn-json-case-insensitive",
-  "dyn-json-outdir-commondir-insensitive",
+  "dyn-json-config-outdir-case-insensitive",
   "dyn-reference-ext-insensitive",
   "dyn-resolve",
   "js-overwrite",

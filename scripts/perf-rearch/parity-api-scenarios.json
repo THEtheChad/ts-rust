@@ -152,7 +152,7 @@
   },
   {
    "name": "dyn-json-case-insensitive",
-   "about": "B3 risk 5 (outputpaths get_output_js_file_name overwrite check): c1 on an insensitive host; Go compares dynamic names case-sensitively, so SRC/data.json is no overwrite of src/data.json. D2 hides it on Linux",
+   "about": "B3 risks 3, 4 (rootDir branch) and 5 (get_output_js_file_name): c1 on an insensitive host; Go compares dynamic names case-sensitively, so SRC/data.json is no overwrite of src/data.json and is emitted. D2 hides it on Linux",
    "caseSensitive": false,
    "fs": {
     "kind": "full",
@@ -182,62 +182,38 @@
    ]
   },
   {
-   "name": "dyn-json-outdir-commondir-insensitive",
-   "about": "B3 risks 3 and 4 (source_file_may_be_emitted, json_file_may_be_emitted): no rootDir, outDir equal to the common directory except in case, dynamic JSON, insensitive host: Go emits the JSON",
+   "name": "dyn-json-config-outdir-case-insensitive",
+   "about": "B3 risks 3 and 4, config branch (source_file_may_be_emitted, json_file_may_be_emitted): a config project in a dynamic src/ with outDir ../SRC, so the common directory is the config dir and the JSON output differs from its input only in case; insensitive host: Go emits it. D2 hides it on Linux",
    "caseSensitive": false,
    "fs": {
     "kind": "full",
     "files": {
+     "^/~ts-uri~/mem/auth/src/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"../SRC\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"resolveJsonModule\": true, \"allowSyntheticDefaultImports\": true}, \"files\": [\"a.ts\", \"data.json\", \"g.d.ts\"]}",
      "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
      "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "^/~ts-uri~/mem/auth/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
      "@ROOT@/globals.d.ts": "@GLOBALS@"
     }
    },
-   "createPrograms": [
-    {
-     "rootFiles": [
-      "^/~ts-uri~/mem/auth/src/a.ts",
-      "^/~ts-uri~/mem/auth/src/data.json",
-      "@ROOT@/globals.d.ts"
-     ],
-     "compilerOptions": {
-      "noLib": true,
-      "outDir": "^/~ts-uri~/mem/auth/SRC",
-      "module": 99,
-      "moduleResolution": 100,
-      "resolveJsonModule": true,
-      "allowSyntheticDefaultImports": true
-     }
-    }
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/src/tsconfig.json"
    ]
   },
   {
-   "name": "dyn-json-outdir-commondir",
-   "about": "risks 3 and 4 on a case-sensitive host (control)",
+   "name": "dyn-json-config-outdir-case",
+   "about": "the config branch of risks 3 and 4 on a case-sensitive host (control)",
    "fs": {
     "kind": "full",
     "files": {
+     "^/~ts-uri~/mem/auth/src/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"../SRC\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"resolveJsonModule\": true, \"allowSyntheticDefaultImports\": true}, \"files\": [\"a.ts\", \"data.json\", \"g.d.ts\"]}",
      "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
      "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "^/~ts-uri~/mem/auth/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
      "@ROOT@/globals.d.ts": "@GLOBALS@"
     }
    },
-   "createPrograms": [
-    {
-     "rootFiles": [
-      "^/~ts-uri~/mem/auth/src/a.ts",
-      "^/~ts-uri~/mem/auth/src/data.json",
-      "@ROOT@/globals.d.ts"
-     ],
-     "compilerOptions": {
-      "noLib": true,
-      "outDir": "^/~ts-uri~/mem/auth/SRC",
-      "module": 99,
-      "moduleResolution": 100,
-      "resolveJsonModule": true,
-      "allowSyntheticDefaultImports": true
-     }
-    }
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/src/tsconfig.json"
    ]
   },
   {
