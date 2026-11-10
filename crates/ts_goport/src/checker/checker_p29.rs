@@ -757,32 +757,21 @@ impl Checker {
     pub fn is_empty_object_type(&mut self, t: TypeId) -> bool {
         let flags = self.ty(t).flags;
         if flags.intersects(TypeFlags::OBJECT) {
-            if self.is_generic_mapped_type(t) {
-                return false;
-            }
-            self.resolve_structured_type_members(t);
-            return self.is_empty_resolved_type(t);
+            return !self.is_generic_mapped_type(t) && {
+                self.resolve_structured_type_members(t);
+                self.is_empty_resolved_type(t)
+            };
         }
         if flags.intersects(TypeFlags::NON_PRIMITIVE) {
             return true;
         }
         if flags.intersects(TypeFlags::UNION) {
             let types = self.ty(t).types_list();
-            for u in types {
-                if self.is_empty_object_type(u) {
-                    return true;
-                }
-            }
-            return false;
+            return types.into_iter().any(|u| self.is_empty_object_type(u));
         }
         if flags.intersects(TypeFlags::INTERSECTION) {
-            for i in 0..self.ty(t).types().len() {
-                let u = self.type_at(t, i);
-                if !self.is_empty_object_type(u) {
-                    return false;
-                }
-            }
-            return true;
+            let types = self.ty(t).types_list();
+            return types.into_iter().all(|u| self.is_empty_object_type(u));
         }
         false
     }
