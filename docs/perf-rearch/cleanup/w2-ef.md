@@ -118,3 +118,17 @@ context budget, not for a risk.
 - New file: `rules/module_references.rs` (and its `pub mod` line in
   `rules/mod.rs`). No other file outside `effect/` changed.
 - No switch added or removed.
+
+## Evidence (head a3fd… see the final report for the exact hash)
+
+- Effect area by `quality.sh` (own code > 25): 85 rows / Σ excess 1,312 at
+  `f59c229c5` → 24 rows / 124.
+- Tests: workspace `test --release` plain 2,121 passed, with
+  `diagnostics,test-hooks` 2,143 passed, 0 failed; `effect_cases`
+  1,060/1,060 (also at the final commit).
+- Clippy 1.95.0 `-D warnings` (CI command), plain and with the features: ok.
+- Parity full: PARITY OK, 0 lost
+  (`~/.cache/perf-rearch/parity/runs/20261109-191432-full-c8b54ec71b`).
+- icount `--profile goport`, base `f59c229c5`: all 9 cells within ±0.07%.
+  Effect on (`TSC_RS_EFFECT=1`, projects/effect `packages/effect`,
+  `--singleThreaded --noEmit`): 26.601 G → 26.601 G (−0.002%), same stdout.
