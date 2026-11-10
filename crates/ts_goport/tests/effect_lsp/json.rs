@@ -2,6 +2,8 @@
 //! Effect tests: they read diagnostics back out of an answer and print
 //! answers indented, one value per line, so a pinned answer diffs by line.
 
+use std::fmt::Write as _;
+
 /// The longest array or object that `Json::pretty` keeps on one line.
 const PRETTY_INLINE: usize = 72;
 
@@ -144,7 +146,9 @@ fn write_string(out: &mut String, text: &str) {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
             c => out.push(c),
         }
     }

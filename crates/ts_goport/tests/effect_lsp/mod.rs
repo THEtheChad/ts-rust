@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 /// How long one answer may take.
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
+const ANSWER_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// A running `tsgo --lsp --stdio`, killed on drop.
 pub struct Server {
