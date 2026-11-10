@@ -551,7 +551,7 @@ impl<'a> MissingMemberFixer<'a> {
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 
@@ -565,7 +565,7 @@ impl<'a> MissingMemberFixer<'a> {
                     type_node,
                     fn_.full_signature(),
                     fn_.equals_greater_than_token(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 
@@ -610,7 +610,7 @@ impl<'a> MissingMemberFixer<'a> {
                     parameters,
                     type_node,
                     fn_.full_signature(),
-                    if body.is_some() { body } else { fn_.body() },
+                    or_else_node(body, fn_.body()),
                 )
             }
 
@@ -1007,4 +1007,9 @@ fn create_property_name(
             .new_computed_property_name(factory.new_string_literal(node.text(), token_flags));
     }
     factory.deep_clone_node(node)
+}
+
+/// Go `core.OrElse(value, fallback)` on nodes: `value` unless it is nil.
+fn or_else_node(value: Node, fallback: Node) -> Node {
+    if value.is_some() { value } else { fallback }
 }
