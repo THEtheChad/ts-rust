@@ -1616,7 +1616,10 @@ impl CursorLevel {
 }
 
 impl NodeAtPositionCursor {
-    // Go: ast/utilities.go:2785 GetNodeAtPosition
+    /// The node that `get_node_at_position` gives for `position`, by the
+    /// cursor's descent (see the type).
+    // PORT: not in Go (loadcrit1). The descent follows Go's
+    // `GetNodeAtPosition` (ast/utilities.go:2785) level by level.
     fn node_at(&mut self, file: Node, position: i32, include_js_doc: bool) -> Node {
         if position < self.last_position {
             // The skips may pass the node of a smaller position. Go has no
