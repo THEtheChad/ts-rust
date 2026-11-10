@@ -608,6 +608,17 @@ struct StackEntry {
     name: String,
 }
 
+impl StackEntry {
+    /// The string `quoted` (with its quotes) read in this entry: an object
+    /// name when the entry is an object that needs one, else a value.
+    fn read_string(&mut self, quoted: &[u8]) {
+        if self.is_object && self.len.is_multiple_of(2) {
+            self.name = crate::frontend::json::unquote_pointer_name(quoted);
+        }
+        self.len += 1;
+    }
+}
+
 // The open objects and arrays below the top level after the tokens in
 // `data[..end]`.
 fn stack_at(data: &[u8], end: usize) -> Vec<StackEntry> {
@@ -617,9 +628,7 @@ fn stack_at(data: &[u8], end: usize) -> Vec<StackEntry> {
         let c = data[i];
         match c {
             b'{' | b'[' => {
-                if let Some(e) = stack.last_mut() {
-                    e.len += 1;
-                }
+                count_value(&mut stack);
                 stack.push(StackEntry {
                     is_object: c == b'{',
                     len: 0,
@@ -633,35 +642,48 @@ fn stack_at(data: &[u8], end: usize) -> Vec<StackEntry> {
             }
             b'"' => {
                 let start = i;
-                i += 1;
-                while i < data.len() && data[i] != b'"' {
-                    i += if data[i] == b'\\' { 2 } else { 1 };
-                }
-                i = (i + 1).min(data.len());
+                i = string_end(data, i);
                 if let Some(e) = stack.last_mut() {
-                    if e.is_object && e.len.is_multiple_of(2) {
-                        e.name = crate::frontend::json::unquote_pointer_name(&data[start..i]);
-                    }
-                    e.len += 1;
+                    e.read_string(&data[start..i]);
                 }
             }
             b',' | b':' => i += 1,
             c if is_ws(c) => i += 1,
             _ => {
                 // A number or a literal.
-                if let Some(e) = stack.last_mut() {
-                    e.len += 1;
-                }
-                while i < data.len()
-                    && !is_ws(data[i])
-                    && !matches!(data[i], b',' | b':' | b'}' | b']')
-                {
-                    i += 1;
-                }
+                count_value(&mut stack);
+                i = scalar_end(data, i);
             }
         }
     }
     stack
+}
+
+/// Counts a value read in the innermost entry of `stack`, if any.
+fn count_value(stack: &mut [StackEntry]) {
+    if let Some(e) = stack.last_mut() {
+        e.len += 1;
+    }
+}
+
+/// The end of the JSON string that starts at `start` (its opening quote),
+/// or the end of `data` when it is cut.
+fn string_end(data: &[u8], start: usize) -> usize {
+    let mut i = start + 1;
+    while i < data.len() && data[i] != b'"' {
+        i += if data[i] == b'\\' { 2 } else { 1 };
+    }
+    (i + 1).min(data.len())
+}
+
+/// The end of the number or literal that starts at `start`: the next
+/// whitespace or delimiter.
+fn scalar_end(data: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < data.len() && !is_ws(data[i]) && !matches!(data[i], b',' | b':' | b'}' | b']') {
+        i += 1;
+    }
+    i
 }
 
 // Go `state.appendStackPointer` of `stack` (`append_stack_pointer`), with
