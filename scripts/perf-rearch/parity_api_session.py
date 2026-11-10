@@ -59,8 +59,10 @@ for the server, not even for stat; the whole tree is read-only; the only writabl
 home (new and empty for every process, at SANDBOX_HOME) and the fixture's overlay, both read by the caller
 after every request. The command's files under a hidden dir are bound back read-only at their real paths.
 The server gets the environment of sandbox.mjs (PATH=/usr/bin:/bin, HOME, XDG dirs and TMPDIR in its home,
-LANG=C.UTF-8, nothing else), cwd /, no fd but 0, 1 and 2, and no network. When it ends, every process left
-in the namespace is a survivor (a failure) and is killed before anything is collected.
+LANG=C.UTF-8, nothing else), cwd /, no fd but 0, 1 and 2, no network, and no privileges (parity_api_init.py
+drop(): a nested user namespace that owns nothing, no capability, uid and gid 1000, no_new_privs). When it
+ends, every process left in the namespace is a survivor (a failure) and is killed before anything is
+collected. The home's skeleton (HOME_DIRS) is listed like everything else and checked exactly.
 """
 import hashlib
 import json

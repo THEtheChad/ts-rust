@@ -335,8 +335,10 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   within 10 s, and both its output streams must reach EOF.
 - **Filesystems.** A request filesystem is `kind: "full"` (Go's `requestfilesystem` makes it canonical
   and total; with it `emit` returns the contents instead of writing), rooted at `/parity-api/<scenario>`,
-  which exists nowhere. A **disk fixture** (written once to a content-addressed read-only copy,
-  `snapshots/api/<hash>/tree`, files and symlinks with a fixed 2001 mtime) is mounted as an overlay at
+  which exists nowhere. A **disk fixture** (written once to a content-addressed copy,
+  `snapshots/api/<hash>-m755644/tree`, with a checkout's modes, dirs 755 and files 644, since the server
+  writes as a user, and a fixed 2001 mtime; checked byte for byte and mode for mode before and after the
+  tier and watched while it runs) is mounted as an overlay at
   `scratch/api/<scenario>/root` for the requests that use the host filesystem: the build orchestrator,
   and `kind: "layer"` filesystems, which are allowed only over a fixture (they fall back to the host,
   which in the sandbox is the fixture and nothing else). `host` symlinks are refused.
@@ -352,16 +354,37 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
     overlay's upper and work dirs are reachable only through the overlay.
   - The server gets the environment of `sandbox.mjs` (`PATH=/usr/bin:/bin`, HOME, the XDG dirs and
     TMPDIR in the home, `LANG=C.UTF-8`, nothing else), cwd `/`, no network, and no fd but 0, 1 and 2.
-  - When the server ends, every other process in the namespace is a **survivor**: listed, killed, and a
+  - **No privileges** (round 3): the init is root of the namespaces it built; the server is not. Before
+    exec it enters a user namespace of its own, nested in the init's, which owns none of the sandbox's
+    namespaces and may make no other (`user.max_user_namespaces` 0 there: a new user namespace would
+    give it a full capability set again); its bounding, ambient, inheritable, permitted and effective
+    sets are emptied; it runs as uid and gid 1000 (the host sees the same user, so it owns its home and
+    overlay) with `no_new_privs`; all of that is checked in `/proc/self/status` before exec, and anything
+    else is a setup failure. So `mount`, `umount`, `mount_setattr`, `pivot_root`, `unshare` of a mount or
+    user namespace and `setns` all fail for the server, and it cannot reach the init's `/proc/1/fd`.
+    `/proc` itself stays writable for the server's id maps; without capabilities nothing there is the
+    server's to change but its own process files.
+  - When the server ends, every other process in the namespace is a **survivor**: listed through an fd
+    on `/proc` that the init opened before the server started, then killed, and counted as the init
+    reaps it (whatever `/proc` shows, a process reaped after the server ended outlived it). Either is a
     failure. Nothing is collected before the namespace is empty and both streams are at EOF.
-  - A mount, namespace or exec failure is reported on a private pipe (never a server result).
+  - A mount, namespace, privilege-drop or exec failure, or a failure of the init itself, is reported on
+    a private pipe (never a server result).
+  - Nothing of this needs more than an unprivileged user namespace: no setuid helper, no subuid range,
+    no cgroup. WSL2's kernel (6.18) allows all of it.
 - **Compared** (canonical strings, so `false` is never `0`): every request as sent and its answer's raw
   bytes, the JSON-RPC envelope included, after a strict check (exactly `jsonrpc` `"2.0"`, the request's
   integer `id`, and `result` or an `error` with an integer `code` and a string `message`; no duplicate
-  key, no NaN); after every request, the state of the session's storage (every file of the overlay's
-  upper dir and of the home: sha256, `deleted`, `dir` or the link target), so a file written and removed
-  between two requests is seen; the exit, survivors, whether the server exited by itself, the sha256 of
-  stderr, and the storage at the end. Go and tsc-rs answer with the same bytes wherever they agree.
+  key, no NaN); after every request, the state of the session's storage (every entry of the overlay's
+  upper dir and of the home, none skipped: a file's sha256 and mode, `dir <mode>`, `deleted` or the link
+  target; and the home skeleton's deviations from its exact structure: each of its dirs a real dir of
+  mode 755), so a file written and removed between two requests is seen; the exit, survivors, whether the
+  server exited by itself, the sha256 of stderr, and the storage at the end. Go and tsc-rs answer with
+  the same bytes wherever they agree.
+- **The readers** (round 3): any exception of the stdout or stderr reader fails the session as
+  malformed; EOF counts only when a read returned it (a flag each reader sets), never because a thread
+  ended. Headers are bounded: lines of at most 256 bytes, at most 4 of them, a `Content-Length` of at
+  most 10 digits and 256 MiB.
 - **Items:** `api/<scenario>`, one per scenario; the detail names the first difference (`emitToString
   /steps/11/answer/result/outputFiles/0/fileName: Go "...", tsc-rs "..."`, or `the raw bytes differ (the
   same JSON value)`). `api/<scenario>/` in the run dir holds `go.json` and `rs.json` (the transcripts,
@@ -2158,12 +2181,42 @@ and passes now. The "on 6e97777e6" column is that run; for 7 and 8 it is Astra's
 | 8 | the pins left Go's stderr out | Go's `stdout` fingerprint holds its stderr sha | unit: another Go stderr is other evidence | matched | other evidence |
 | 9 | no scenario for dynamic directories that differ only in case | `dyn-config-include-dirs-insensitive` and its control | unit: the scenario exists, quick runs it, B2's pin tracks it | absent | DIFF, pinned for B2 |
 
-### The lsp tier: the same gaps (reported, not fixed)
+### Round 3: Astra's recheck of `5c6b0c8d5`
+
+Astra's cases (`scratch/review-h7r2-astra/probe.py`) are the self-test's fake as they are
+(`parity_h7_fake.py`, plus a `privs` mode). Run on round 2's harness (`--e2e-only --harness <git archive
+5c6b0c8d5>`), each finding's control fails; on this head, all pass.
+
+| # | finding | fix | control | on 5c6b0c8d5 | now |
+|---|---|---|---|---|---|
+| 1 | a reader that died of an exception counted as a clean EOF (`Content-Length: ` and 5,000 digits after the last answer: `int()` raised, MATCH) | any reader exception fails the session as malformed; EOF is a flag set on `b''`; header lines, count, digits and frame size bounded | `trailing-length` (and `trailing-deep`, caught before too) | MATCH | DIFF rsFailure crash |
+| 2 | the server was root in its user namespace: it cleared read-only on `/dev/shm` and wrote there, and mounted a tmpfs over `/proc` to hide a survivor | the server drops every privilege before exec (nested user namespace owning nothing, no further user namespaces, all five capability sets empty, uid and gid 1000, `no_new_privs`, checked); survivors from a `/proc` fd opened before the server and from what PID 1 reaps after the kill | `shm-remount`, `hide-proc-survivor`; `privs` (no capability; `mount`, `umount`, `mount_setattr` of `/dev/shm` and of `/` recursively, `pivot_root`, `unshare(CLONE_NEWNS)`, `unshare(CLONE_NEWUSER)`, `setns` into PID 1's mount namespace: every one fails); `detached`, `report-access` (caught before too) | MATCH, MATCH; ERROR | DIFF (each operation fails, so the probe fails); MATCH |
+| 3 | the home skeleton's paths were skipped unchecked (`$HOME/tmp` replaced by a file: MATCH) | every home entry listed with its type and mode; the skeleton checked against its exact structure (each dir real, mode 755) | `home-skeleton`; unit: a file for a dir, another mode, a dir gone | MATCH | DIFF |
+
+Astra's other round 2 cases (a large integer, `-0`, a `\u` escape in a key, a BOM, trailing whitespace,
+`1e999`) stay not MATCH. One consequence of the drop: the server writes as a user, so a fixture's dirs
+have a checkout's modes (755) instead of the snapshot's 555; with 555 the reference builds could not
+create `lib/out` and `app/out`, and Go's emitter then crashes with a nil dereference (and tsc-rs, which
+reproduces Go's panics, does too). The 14 api pins were regenerated for the new keys
+(`h7r3-gf-evidence-ed6edf820-{full,quick}`, `regen --only '^api/'`); their reasons, and the 36 fuzz
+entries, are unchanged.
+
+### The lsp tier: the same gaps (reported, not fixed; for lane H8)
 
 `vendor/lspdiff/sandbox.mjs` runs each server under `unshare -rmn` with overlays of its inputs and its
-home bound, and `client.mjs` kills only that process:
-- **survivors (finding 1):** no PID namespace; a server's child can outlive it, and the session result
-  waits at most 2 s for stderr to close (`stderr.complete`), then goes on;
+home bound, and `client.mjs` kills only that process. With Astra's corrections from her recheck:
+- **survivors (finding 1):** no PID namespace; a server's child can outlive it. Stdout's EOF is enforced
+  (the client reads to the end); stderr's is not: the session result waits at most 2 s for stderr to
+  close and records `stderr.complete: false`, which does not change the verdict;
+- **privileges (round 3 finding 2):** the server is root in its user namespace, which owns its mount
+  namespace: it can remount, unmount or mount over anything there, `/proc` included;
+- **the initialize answer is not compared** (high; `session.mjs:21`): only an `error` in it is checked;
+- **number parsing** (high; `client.mjs:56`): `JSON.parse` reads `1e999` as `Infinity`, which
+  `JSON.stringify` writes as `null`, so a server that answers `1e999` where Go answers `null` matches;
+- **private-home writes** (medium; `sandbox.mjs:162`): what a server writes into its private home is
+  counted (`homeWrites`) but changes no verdict;
+- **sandbox exec failures** (high; `lspdiff.mjs:305`): a server that cannot be started (a namespace or
+  exec failure) is a crash of that run, so on the Go side it is GO-BROKEN, not ERROR;
 - **host writes (finding 2):** everything but the overlays and the home stays writable with the user's
   permissions; a server can write outside its session unseen;
 - **metadata reads (finding 6):** the tripwires see reads and listings of the guarded dirs, not `stat`,
@@ -2172,11 +2225,11 @@ home bound, and `client.mjs` kills only that process:
   envelope's keys (an answer with both `result` and `error`, or extra keys, passes; an answer to an
   unknown id is dropped; `JSON.parse` takes the last of duplicate keys). The answers themselves are
   normalized with `JSON.stringify`, which keeps types (`false` is not `0`).
-Fixing them changes `sandbox.mjs` and `client.mjs`, which are session sources: every lsp Go fill and
-variant record would start empty, and the Go-race sessions need refills (H5's "Go fills"). That is a
-lane of its own; `parity_api_init.py` is the design to port.
+Fixing them changes `sandbox.mjs`, `client.mjs` and `session.mjs`, which are session sources: every lsp Go
+fill and variant record would start empty, and the Go-race sessions need refills (H5's "Go fills"). That
+is lane H8; `parity_api_init.py` and `parity_api_session.py`'s readers are the design to port.
 
-### Negative controls (`parity_h7_test.py`, 89 checks, `H7 SELFTEST OK`, about 2.5 min)
+### Negative controls (`parity_h7_test.py`, 109 checks, `H7 SELFTEST OK`, about 30 s to 2.5 min)
 
 Besides the table above, the round 1 controls (fakes in front of the Go oracle, through the real tier
 and `parity_compare.py compare`): a transparent proxy MATCHes; a wrong output path is a DIFF and PARITY
@@ -2284,8 +2337,9 @@ gate first): **PARITY OK**.
 - `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
   (the protocol client, the requests, the storage reads); `parity_api_init.py`: the session's sandbox,
   PID 1 of its namespaces (both keyed: their sha is in every api key); `parity-api-scenarios.json`: the
-  scenarios; `parity_h7_test.py`: lane H7's negative controls (about 2.5 minutes; `--unit` about 14 s;
-  `--e2e-only --harness DIR` against another harness).
+  scenarios; `parity_h7_test.py`: lane H7's negative controls (30 s to 2.5 minutes; `--unit` about 14 s;
+  `--e2e-only --harness DIR` against another harness); `parity_h7_fake.py`: its fake server, Astra's
+  review probe.
 - `ata_typings.py`: builds and checks the frozen typings store (`build`, `check`, `path`);
   `ata-typings.json`: its manifest (hash, versions, every file's sha256; the store itself is in
   `~/.cache/perf-rearch/ata-typings/<sha>/`); `parity_h5_test.py`: lane H5's negative controls (unit
