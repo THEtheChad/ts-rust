@@ -1551,3 +1551,26 @@ once a **reconciliation step** is built and tested.
   - check the blobs;
   - run a full gate on the merged head;
   - then start B2 and Q7.
+- **B3 merged** (tooling and a report; `audits/b3-prepin.md`). Two output
+  differences from pinned Go are confirmed, both on API emit paths:
+  - **D1:** the common source dir folds case on dynamic names (Astra's
+    finding, rediscovered independently).
+  - **D2, new:** emit takes case sensitivity from the OS instead of the
+    program's filesystem (`program/go_frontend.rs:1018`, `:735`). API
+    sessions with `--useCaseSensitiveFileNames` set differently from the OS
+    emit to the wrong place.
+  - **Seven more suspect call sites** (old `compare_paths` and
+    `get_canonical_file_name` where Go uses the dynamic-aware path key).
+    D2 masks them on Linux, so they can't be confirmed yet.
+  - **Why the gate missed them:** it has no API tier.
+  - **Plan:**
+    - **B2:** after W2-FE merges. Fix D2 first, then D1, then the seven
+      call sites, each with regression tests whose expected output comes
+      from the Go oracle.
+    - **H7:** an API emit tier in the parity gate, built on
+      `b3_api_probe.py`.
+    - **Backlog:**
+      - F3: the LSP preferences parser against Go's generated code.
+      - F4: the symlink mapper, with a symlinked-monorepo `-b` project.
+      - F5: fold the 285 duplicate ports.
+      - F6: marker hygiene.
