@@ -1378,3 +1378,16 @@ once a **reconciliation step** is built and tested.
   - Tiers: cli 170 MATCH, lsp 2,629 + 29 GO-BROKEN, tests 139,910 PASS,
     corpus 12,727 MATCH.
   - It is now `base-current`.
+- **W2-EF finished part 1** (`t3/73d8b169`, head `9eabfd63f`, 45 commits).
+  - **Targets:** 61 of 85 now ≤ 25, area excess 1,312 → 124. Structure was
+    factored first: annotation walks, type containment scans, module
+    identifiers, an import walk (`rules/module_references.rs`), surface
+    merges.
+  - **Parity full OK.** `effect_cases` 1,060/1,060.
+  - **icount:** Effect-on is −0.002% with identical stdout; normal cells are
+    within ±0.07%.
+  - **Duplication:** 3.55% → 3.46%.
+  - **Astra review:** running.
+  - **Continuation lane W2-EF2 after merge:** the 24 rows left (cognitive
+    complexity 26–39), including `ls/schemagen.rs` and the shared
+    catch/catchAll callee helper.
