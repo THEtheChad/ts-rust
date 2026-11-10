@@ -1540,3 +1540,14 @@ once a **reconciliation step** is built and tested.
     - **Audit lane B3:** Q0 found 2,099 `// Go:` markers that name nothing
       at the pin. Some may be functions still in their pre-pin shape, like
       this one. B3 is a read-only audit that ranks them by risk.
+- **Q8 merged** (`3cd1c91f2`) after Astra ACCEPT, with no findings
+  (`reviews/2026-11-10-astra-q8.md`).
+  - Lib blobs: HEAD has Q8's blobs, written after its `core.rs` change. No
+    other blob key changed since Q8's base, and `lib-blobs.sh stale` is
+    clean.
+- **After W2-FE merges** (root):
+  - point FE's four `crate::checker::if_else` imports at `crate::core`;
+  - drop the `checker_p01` re-export;
+  - check the blobs;
+  - run a full gate on the merged head;
+  - then start B2 and Q7.
