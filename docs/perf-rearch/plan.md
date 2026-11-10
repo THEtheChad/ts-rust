@@ -1709,3 +1709,23 @@ once a **reconciliation step** is built and tested.
     fmt failure.
   - **Lane Q9 (later):** the go_baselines clippy (87 errors) and an
     explicit `--test go_baselines` lint step in CI.
+- **H7 round 3 finished** (head `a08c934d6`).
+  - **Astra's three findings fixed,** each with a control:
+    - a reader exception now means malformed, EOF has to be real, and
+      headers are bounded;
+    - the privilege drop: the server enters a nested user namespace with
+      `max_user_namespaces` 0, runs with every capability set empty, as uid
+      and gid 1000 with `no_new_privs`, and the init checks that before
+      exec. Survivors are counted through a `/proc` handle opened before
+      the server starts;
+    - the home skeleton is checked exactly.
+  - **Side effects:**
+    - fixtures are now mode 755/644, and their content is checked instead;
+    - Go's emitter crashes with a nil dereference when it can't write its
+      outputs, and tsc-rs reproduces that.
+  - **Checks:** gate `runs/h7r3-head-ed6edf820-full` PARITY OK; 108 H7
+    self-tests.
+  - **Rounds:** the review cap's 3 lane rounds are used up. Root asked
+    Astra for a final recheck that includes merge readiness. Root then
+    decides: merge, with any remaining findings fixed by root or by H8.
+    The tier only adds coverage.
