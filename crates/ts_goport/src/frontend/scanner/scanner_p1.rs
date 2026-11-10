@@ -1291,64 +1291,68 @@ impl<'a> Scanner<'a> {
                             self.scanner_state.token = SyntaxKind::SlashToken;
                         }
                     }
-                    Some(b'0')
-                        if self.char_at(1) == i32::from(b'X')
-                            || self.char_at(1) == i32::from(b'x') =>
-                    {
-                        let start = self.scanner_state.pos;
-                        self.scanner_state.pos += 2;
-                        let mut digits = self.scan_hex_digits(1, true, true);
-                        if digits.is_empty() {
-                            self.error(diag::Hexadecimal_digit_expected);
-                            digits = "0";
-                        }
-                        if let Some(&cached_value) = self.hex_number_cache.get(digits) {
-                            self.scanner_state.token_value = cached_value;
-                        } else {
-                            let (start, end) = (start as usize, self.scanner_state.pos as usize);
-                            let raw_text = &self.text[start..end];
-                            let value = if raw_text.starts_with("0x") && &raw_text[2..] == digits {
-                                // Go `s.tokenValue = rawText` shares the text.
-                                self.text_token_value(start, end)
-                            } else {
-                                intern_token_value(&format!("0x{digits}"))
-                            };
-                            self.scanner_state.token_value = value;
-                            self.hex_number_cache.insert(digits, value);
-                        }
-                        self.scanner_state.token_flags |= TokenFlags::HEX_SPECIFIER;
-                        self.scanner_state.token = self.scan_big_int_suffix();
-                    }
-                    Some(b'0')
-                        if self.char_at(1) == i32::from(b'B')
-                            || self.char_at(1) == i32::from(b'b') =>
-                    {
-                        self.scanner_state.pos += 2;
-                        let mut digits = self.scan_binary_or_octal_digits(2);
-                        if digits.is_empty() {
-                            self.error(diag::Binary_digit_expected);
-                            digits = "0".to_string();
-                        }
-                        self.set_token_value(&format!("0b{digits}"));
-                        self.scanner_state.token_flags |= TokenFlags::BINARY_SPECIFIER;
-                        self.scanner_state.token = self.scan_big_int_suffix();
-                    }
-                    Some(b'0')
-                        if self.char_at(1) == i32::from(b'O')
-                            || self.char_at(1) == i32::from(b'o') =>
-                    {
-                        self.scanner_state.pos += 2;
-                        let mut digits = self.scan_binary_or_octal_digits(8);
-                        if digits.is_empty() {
-                            self.error(diag::Octal_digit_expected);
-                            digits = "0".to_string();
-                        }
-                        self.set_token_value(&format!("0o{digits}"));
-                        self.scanner_state.token_flags |= TokenFlags::OCTAL_SPECIFIER;
-                        self.scanner_state.token = self.scan_big_int_suffix();
-                    }
-                    // Go: `case '0'` falls through to `case '1', ..., '9'`.
                     Some(b'0'..=b'9') => {
+                        if ch == i32::from(b'0') {
+                            if self.char_at(1) == i32::from(b'X')
+                                || self.char_at(1) == i32::from(b'x')
+                            {
+                                let start = self.scanner_state.pos;
+                                self.scanner_state.pos += 2;
+                                let mut digits = self.scan_hex_digits(1, true, true);
+                                if digits.is_empty() {
+                                    self.error(diag::Hexadecimal_digit_expected);
+                                    digits = "0";
+                                }
+                                if let Some(&cached_value) = self.hex_number_cache.get(digits) {
+                                    self.scanner_state.token_value = cached_value;
+                                } else {
+                                    let (start, end) =
+                                        (start as usize, self.scanner_state.pos as usize);
+                                    let raw_text = &self.text[start..end];
+                                    let value =
+                                        if raw_text.starts_with("0x") && &raw_text[2..] == digits {
+                                            // Go `s.tokenValue = rawText` shares the text.
+                                            self.text_token_value(start, end)
+                                        } else {
+                                            intern_token_value(&format!("0x{digits}"))
+                                        };
+                                    self.scanner_state.token_value = value;
+                                    self.hex_number_cache.insert(digits, value);
+                                }
+                                self.scanner_state.token_flags |= TokenFlags::HEX_SPECIFIER;
+                                self.scanner_state.token = self.scan_big_int_suffix();
+                                break 'sw;
+                            }
+                            if self.char_at(1) == i32::from(b'B')
+                                || self.char_at(1) == i32::from(b'b')
+                            {
+                                self.scanner_state.pos += 2;
+                                let mut digits = self.scan_binary_or_octal_digits(2);
+                                if digits.is_empty() {
+                                    self.error(diag::Binary_digit_expected);
+                                    digits = "0".to_string();
+                                }
+                                self.set_token_value(&format!("0b{digits}"));
+                                self.scanner_state.token_flags |= TokenFlags::BINARY_SPECIFIER;
+                                self.scanner_state.token = self.scan_big_int_suffix();
+                                break 'sw;
+                            }
+                            if self.char_at(1) == i32::from(b'O')
+                                || self.char_at(1) == i32::from(b'o')
+                            {
+                                self.scanner_state.pos += 2;
+                                let mut digits = self.scan_binary_or_octal_digits(8);
+                                if digits.is_empty() {
+                                    self.error(diag::Octal_digit_expected);
+                                    digits = "0".to_string();
+                                }
+                                self.set_token_value(&format!("0o{digits}"));
+                                self.scanner_state.token_flags |= TokenFlags::OCTAL_SPECIFIER;
+                                self.scanner_state.token = self.scan_big_int_suffix();
+                                break 'sw;
+                            }
+                            // Go: fallthrough
+                        }
                         self.scanner_state.token = self.scan_number();
                     }
                     Some(b':') => {
