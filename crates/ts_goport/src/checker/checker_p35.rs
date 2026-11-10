@@ -74,11 +74,7 @@ impl Checker {
             if possible_import_node.is_some() {
                 self.get_type_from_type_node(possible_import_node);
                 let sym = self.get_resolved_symbol_or_nil(name);
-                return if sym == self.unknown_symbol {
-                    SymbolId::NIL
-                } else {
-                    sym
-                };
+                return if_else(sym == self.unknown_symbol, SymbolId::NIL, sym);
             }
         }
 
@@ -99,11 +95,11 @@ impl Checker {
             ) {
                 // A heritage element name may appear in type space, value space, or both;
                 // ensure the meaning matches its context.
-                meaning = if is_part_of_type_node(name) {
-                    SymbolFlags::TYPE
-                } else {
-                    SymbolFlags::VALUE
-                };
+                meaning = if_else(
+                    is_part_of_type_node(name),
+                    SymbolFlags::TYPE,
+                    SymbolFlags::VALUE,
+                );
 
                 // In a class 'extends' clause we are also looking for a value.
                 if is_expression_with_type_arguments_in_class_extends_clause(name.parent()) {
@@ -138,17 +134,13 @@ impl Checker {
             if name_ref.kind() == SyntaxKind::Identifier {
                 if is_jsx_tag_name_of(name, name_ref.parent()) && is_jsx_intrinsic_tag_name(name) {
                     let symbol = self.get_intrinsic_tag_symbol(name.parent());
-                    return if symbol == self.unknown_symbol {
-                        SymbolId::NIL
-                    } else {
-                        symbol
-                    };
+                    return if_else(symbol == self.unknown_symbol, SymbolId::NIL, symbol);
                 }
-                let meaning = if is_js_doc {
-                    SymbolFlags::VALUE | SymbolFlags::TYPE | SymbolFlags::NAMESPACE
-                } else {
-                    SymbolFlags::VALUE
-                };
+                let meaning = if_else(
+                    is_js_doc,
+                    SymbolFlags::VALUE | SymbolFlags::TYPE | SymbolFlags::NAMESPACE,
+                    SymbolFlags::VALUE,
+                );
                 let mut location = Node::NIL;
                 if is_js_doc {
                     location = get_host_signature_from_js_doc(name);
@@ -206,11 +198,11 @@ impl Checker {
                 return self.symbol_node_links.get(name).resolved_symbol;
             }
         } else if is_entity_name(name) && is_type_reference_identifier(name) {
-            let meaning = if name.parent().kind() == SyntaxKind::TypeReference {
-                SymbolFlags::TYPE
-            } else {
-                SymbolFlags::NAMESPACE
-            };
+            let meaning = if_else(
+                name.parent().kind() == SyntaxKind::TypeReference,
+                SymbolFlags::TYPE,
+                SymbolFlags::NAMESPACE,
+            );
             let symbol = self.resolve_entity_name(
                 name,
                 meaning,

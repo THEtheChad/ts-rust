@@ -31,11 +31,11 @@ impl Checker {
             parent_type = self.get_type_with_facts(parent_type, TypeFacts::NE_UNDEFINED);
         }
         let access_flags = AccessFlags::EXPRESSION_POSITION
-            | if no_tuple_bounds_check || self.has_default_value(declaration) {
-                AccessFlags::ALLOW_MISSING
-            } else {
-                AccessFlags::NONE
-            };
+            | if_else(
+                no_tuple_bounds_check || self.has_default_value(declaration),
+                AccessFlags::ALLOW_MISSING,
+                AccessFlags::NONE,
+            );
         let t: TypeId;
         match pattern.kind() {
             SyntaxKind::ObjectBindingPattern => {
@@ -79,11 +79,11 @@ impl Checker {
                 // present (aka the tuple element property). This call also checks that the parentType is in
                 // fact an iterable or array (depending on target language).
                 let use_ = IterationUse::DESTRUCTURING
-                    | if has_dot_dot_dot_token(declaration) {
-                        IterationUse(0)
-                    } else {
-                        IterationUse::POSSIBLY_OUT_OF_BOUNDS
-                    };
+                    | if_else(
+                        has_dot_dot_dot_token(declaration),
+                        IterationUse(0),
+                        IterationUse::POSSIBLY_OUT_OF_BOUNDS,
+                    );
                 let undefined_type = self.undefined_type;
                 let element_type = self.check_iterated_type_or_element_type(
                     use_,
@@ -123,16 +123,16 @@ impl Checker {
                 } else if self.is_array_like_type(parent_type) {
                     let index_type =
                         self.get_number_literal_type(crate::jsnum::Number(f64::from(index)));
-                    let mut declared_type = self.get_indexed_access_type_or_undefined(
-                        parent_type,
-                        index_type,
-                        access_flags,
-                        declaration.name(),
-                        None,
-                    );
-                    if declared_type.is_nil() {
-                        declared_type = self.error_type;
-                    }
+                    let declared_type = self
+                        .get_indexed_access_type_or_undefined(
+                            parent_type,
+                            index_type,
+                            access_flags,
+                            declaration.name(),
+                            None,
+                        )
+                        .get()
+                        .unwrap_or(self.error_type);
                     t = self.get_flow_type_of_destructuring(declaration, declared_type);
                 } else {
                     t = element_type;
@@ -880,11 +880,11 @@ impl Checker {
             SyntaxKind::BinaryExpression
             | SyntaxKind::PropertyDeclaration
             | SyntaxKind::PropertySignature => {
-                diagnostic = if self.no_implicit_any {
-                    diag::Member_0_implicitly_has_an_1_type
-                } else {
-                    diag::Member_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage
-                };
+                diagnostic = if_else(
+                    self.no_implicit_any,
+                    diag::Member_0_implicitly_has_an_1_type,
+                    diag::Member_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage,
+                );
             }
             SyntaxKind::Parameter => {
                 let param = declaration;
@@ -916,11 +916,7 @@ impl Checker {
                             .map_or(-1, |i| i as i32);
                         let new_name = format!("arg{index}");
                         let type_name = declaration_name_to_string(param.name())
-                            + if param.dot_dot_dot_token().is_some() {
-                                "[]"
-                            } else {
-                                ""
-                            };
+                            + if_else(param.dot_dot_dot_token().is_some(), "[]", "");
                         let no_implicit_any = self.no_implicit_any;
                         self.error_or_suggestion(
                             no_implicit_any,
@@ -1063,34 +1059,25 @@ impl Checker {
                 result = self.get_widened_type_of_object_literal(t, context.clone());
             } else if flags.intersects(TypeFlags::UNION) {
                 let types = self.ty(t).types_list();
-                let union_context = match &context {
-                    Some(ctx) => ctx.clone(),
-                    None => Rc::new(RefCell::new(WideningContext {
+                let union_context = context.clone().unwrap_or_else(|| {
+                    Rc::new(RefCell::new(WideningContext {
                         siblings: types.to_vec(),
                         ..Default::default()
-                    })),
-                };
-                let mut widened_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for &member in &types {
-                    if self.ty(member).flags.intersects(TypeFlags::NULLABLE) {
-                        widened_types.push(member);
-                    } else {
-                        widened_types.push(
-                            self.get_widened_type_with_context(member, Some(union_context.clone())),
-                        );
-                    }
-                }
+                    }))
+                });
+                let widened_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&member| {
+                        if self.ty(member).flags.intersects(TypeFlags::NULLABLE) {
+                            return member;
+                        }
+                        self.get_widened_type_with_context(member, Some(union_context.clone()))
+                    })
+                    .collect();
                 // Widening an empty object literal transitions from a highly restrictive type to
                 // a highly inclusive one. For that reason we perform subtype reduction here if the
                 // union includes empty object types (e.g. reducing {} | string to just {}).
-                let mut some_empty = false;
-                for &w in &widened_types {
-                    if self.is_empty_object_type(w) {
-                        some_empty = true;
-                        break;
-                    }
-                }
-                let reduction = if some_empty {
+                let reduction = if widened_types.iter().any(|&w| self.is_empty_object_type(w)) {
                     UnionReduction::SUBTYPE
                 } else {
                     UnionReduction::LITERAL
@@ -1098,24 +1085,24 @@ impl Checker {
                 result = self.get_union_type_ex(&widened_types, reduction, None, TypeId::NIL);
             } else if flags.intersects(TypeFlags::INTERSECTION) {
                 let types = self.ty(t).types_list();
-                let mut widened_types: Vec<TypeId> = Vec::with_capacity(types.len());
-                for member in types {
-                    widened_types.push(self.get_widened_type(member));
-                }
+                let widened_types: Vec<TypeId> = types
+                    .iter()
+                    .map(|&member| self.get_widened_type(member))
+                    .collect();
                 result = self.get_intersection_type(&widened_types);
             } else if self.is_array_or_tuple_type(t) {
                 let target = self.ty(t).target();
                 let type_arguments = self.get_type_arguments(t);
-                let mut widened_arguments: Vec<TypeId> = Vec::with_capacity(type_arguments.len());
-                for arg in type_arguments {
-                    widened_arguments.push(self.get_widened_type(arg));
-                }
+                let widened_arguments: Vec<TypeId> = type_arguments
+                    .iter()
+                    .map(|&arg| self.get_widened_type(arg))
+                    .collect();
                 result = self.create_type_reference(target, &widened_arguments);
             }
             if result.is_some() && context.is_none() {
                 self.cached_types.insert(key, result);
             }
-            return if result.is_some() { result } else { t };
+            return result.get().unwrap_or(t);
         }
         t
     }

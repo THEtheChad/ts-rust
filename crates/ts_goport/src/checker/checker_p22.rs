@@ -13,11 +13,6 @@ fn append_if_unique_p22(list: &mut Vec<TypeId>, t: TypeId) {
     }
 }
 
-// PORT: Go `core.OrElse` for types.
-fn or_else_type_p22(t: TypeId, fallback: TypeId) -> TypeId {
-    if t.is_some() { t } else { fallback }
-}
-
 impl Checker {
     // Go: checker/checker.go:19973 isValidBaseType
     pub fn is_valid_base_type(&mut self, t: TypeId) -> bool {
@@ -45,52 +40,7 @@ impl Checker {
     // TODO: GH#18217 If `checkBase` is undefined, we should not call this because this will always return false.
     // Go: checker/checker.go:19987 hasBaseType
     pub fn has_base_type(&mut self, t: TypeId, check_base: TypeId) -> bool {
-        // PORT: the Go recursive closure `check` is a nested fn.
-        // PERF: Go has no memo here, so a chain of classes that each list
-        // all the classes before it makes an exponential walk (corpus case
-        // intersectionConstructorReductionCrash.ts). Each step reads the
-        // arena once for `t` (once more for a reference to another type),
-        // inlines `getTargetType`, and reads resolved base types in place
-        // with no list copy.
-        fn check(c: &mut Checker, t: TypeId, check_base: TypeId) -> bool {
-            let ty = c.ty(t);
-            let object_flags = ty.object_flags;
-            if object_flags.intersects(ObjectFlags::CLASS_OR_INTERFACE | ObjectFlags::REFERENCE) {
-                // Go: checker/checker.go:20002 getTargetType
-                let (target, target_ty) = if object_flags.intersects(ObjectFlags::REFERENCE) {
-                    // A class or interface with `Reference` is its own
-                    // target: a generic one, and also a non-generic class or
-                    // an interface that is not thisless (Go
-                    // `getDeclaredTypeOfClassOrInterface`, checker.go:17719).
-                    // PERF: its target without the `Type::target` dispatch.
-                    let target = match &ty.data {
-                        TypeData::Interface(data) => data.reference.object.target,
-                        _ => ty.target(),
-                    };
-                    (target, if target == t { ty } else { c.ty(target) })
-                } else {
-                    (t, ty)
-                };
-                if target == check_base {
-                    return true;
-                }
-                let mut buf: SharedListBuf<TypeId> = Default::default();
-                if let Some(base_types) = target_ty
-                    .resolved_base_types()
-                    .and_then(|base_types| base_types.detach(&mut buf))
-                {
-                    return base_types.iter().any(|&b| check(c, b, check_base));
-                }
-                let base_types = c.get_base_types_shared(target);
-                return base_types.iter().any(|&b| check(c, b, check_base));
-            }
-            if ty.flags.intersects(TypeFlags::INTERSECTION) {
-                let types = ty.types_list();
-                return types.iter().any(|&t| check(c, t, check_base));
-            }
-            false
-        }
-        check(self, t, check_base)
+        has_base_type_check(self, t, check_base)
     }
 
     // Go: checker/checker.go:20002 getTargetType
@@ -1065,7 +1015,7 @@ impl Checker {
                 if contextual_return_type.is_some() {
                     let unwrapped = self.unwrap_return_type(contextual_return_type, function_flags);
                     let void_type = self.void_type;
-                    let t = or_else_type_p22(unwrapped, void_type);
+                    let t = or_else_type(unwrapped, void_type);
                     has_undefined = self.some_type(t, &mut |c: &mut Checker, t: TypeId| {
                         c.ty(t).flags.intersects(TypeFlags::UNDEFINED)
                     });
@@ -1337,7 +1287,7 @@ impl Checker {
             // Unwrap an `Awaited<T>` to `T` to improve inference.
             let unwrapped = self.unwrap_awaited_type(promised_type);
             let awaited = self.get_awaited_type_no_alias(unwrapped);
-            let promised_type = or_else_type_p22(awaited, self.unknown_type);
+            let promised_type = or_else_type(awaited, self.unknown_type);
             return self.create_type_reference(global_promise_type, &[promised_type]);
         }
         self.unknown_type
@@ -1353,7 +1303,7 @@ impl Checker {
             // Unwrap an `Awaited<T>` to `T` to improve inference.
             let unwrapped = self.unwrap_awaited_type(promised_type);
             let awaited = self.get_awaited_type_no_alias(unwrapped);
-            let promised_type = or_else_type_p22(awaited, self.unknown_type);
+            let promised_type = or_else_type(awaited, self.unknown_type);
             return self.create_type_reference(global_promise_like_type, &[promised_type]);
         }
         self.unknown_type
@@ -1409,7 +1359,7 @@ impl Checker {
         }
         if is_async {
             let awaited = self.get_awaited_type_no_alias(return_type);
-            return or_else_type_p22(awaited, self.error_type);
+            return or_else_type(awaited, self.error_type);
         }
         return_type
     }
@@ -1476,10 +1426,10 @@ impl Checker {
         let global_generator_type = (resolver.get_global_generator_type)(self);
         let resolved_yield =
             (resolver.resolve_iteration_type)(self, yield_type, Node::NIL /*errorNode*/);
-        let yield_type = or_else_type_p22(resolved_yield, self.unknown_type);
+        let yield_type = or_else_type(resolved_yield, self.unknown_type);
         let resolved_return =
             (resolver.resolve_iteration_type)(self, return_type, Node::NIL /*errorNode*/);
-        let return_type = or_else_type_p22(resolved_return, self.unknown_type);
+        let return_type = or_else_type(resolved_return, self.unknown_type);
         if global_generator_type == self.empty_generic_type {
             // Fall back to the global IterableIterator type.
             let global_iterable_iterator_type = (resolver.get_global_iterable_iterator_type)(self);
@@ -1498,4 +1448,75 @@ impl Checker {
             &[yield_type, return_type, next_type],
         )
     }
+}
+
+// Go: checker/checker.go:19989 check
+// The recursive closure `check` of Go `hasBaseType`.
+// PERF: Go has no memo here, so a chain of classes that each list all the
+// classes before it makes an exponential walk (corpus case
+// intersectionConstructorReductionCrash.ts). Each step reads the arena once
+// for `t` (once more for a reference to another type) and reads resolved base
+// types in place with no list copy.
+fn has_base_type_check(c: &mut Checker, t: TypeId, check_base: TypeId) -> bool {
+    let ty = c.ty(t);
+    if ty
+        .object_flags
+        .intersects(ObjectFlags::CLASS_OR_INTERFACE | ObjectFlags::REFERENCE)
+    {
+        let (target, target_ty) = target_type_in_place(c, t, ty);
+        if target == check_base {
+            return true;
+        }
+        let mut buf: SharedListBuf<TypeId> = Default::default();
+        let resolved = target_ty
+            .resolved_base_types()
+            .and_then(|base_types| base_types.detach(&mut buf));
+        return some_base_type_has_base(c, target, resolved, check_base);
+    }
+    if ty.flags.intersects(TypeFlags::INTERSECTION) {
+        let types = ty.types_list();
+        return types.iter().any(|&t| has_base_type_check(c, t, check_base));
+    }
+    false
+}
+
+// Go: checker/checker.go:20002 getTargetType
+// PERF: for `has_base_type_check`, with the target's arena entry, so the
+// walk reads the arena once for `t` (once more for a reference to another
+// type).
+#[inline]
+fn target_type_in_place<'a>(c: &'a Checker, t: TypeId, ty: &'a Type) -> (TypeId, &'a Type) {
+    if !ty.object_flags.intersects(ObjectFlags::REFERENCE) {
+        return (t, ty);
+    }
+    // A class or interface with `Reference` is its own target: a generic one,
+    // and also a non-generic class or an interface that is not thisless (Go
+    // `getDeclaredTypeOfClassOrInterface`, checker.go:17719).
+    // PERF: its target without the `Type::target` dispatch.
+    let target = match &ty.data {
+        TypeData::Interface(data) => data.reference.object.target,
+        _ => ty.target(),
+    };
+    (target, if target == t { ty } else { c.ty(target) })
+}
+
+/// `core.Some(c.getBaseTypes(target), check)` of Go `hasBaseType`.
+/// PERF: `resolved` is the target's resolved base types, read in place
+/// without a list copy; `getBaseTypes` runs only when they are not resolved.
+#[inline]
+fn some_base_type_has_base(
+    c: &mut Checker,
+    target: TypeId,
+    resolved: Option<&[TypeId]>,
+    check_base: TypeId,
+) -> bool {
+    if let Some(base_types) = resolved {
+        return base_types
+            .iter()
+            .any(|&b| has_base_type_check(c, b, check_base));
+    }
+    let base_types = c.get_base_types_shared(target);
+    base_types
+        .iter()
+        .any(|&b| has_base_type_check(c, b, check_base))
 }

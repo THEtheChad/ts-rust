@@ -92,39 +92,12 @@ impl Checker {
                 }
             },
             None => {
-                let target = self.object_instantiation_target(t, t_object_flags, resolved_type);
-                // The first time an anonymous type is instantiated we compute and store a list of the type
-                // parameters that are in scope (and therefore potentially referenced). For type literals that
-                // aren't the right hand side of a generic type alias declaration we optimize by reducing the
-                // set of type parameters to those that are possibly referenced in the literal.
-                let mut type_parameters =
-                    self.get_outer_type_parameters(declaration, true /*includeThisTypes*/);
-                if self.ty(target).alias.type_arguments().is_empty() {
-                    if t_object_flags.intersects(
-                        ObjectFlags::REFERENCE | ObjectFlags::INSTANTIATION_EXPRESSION_TYPE,
-                    ) {
-                        type_parameters.retain(|&tp| {
-                            self.is_type_parameter_possibly_referenced(tp, declaration)
-                        });
-                    } else {
-                        let target_symbol = self.ty(target).symbol;
-                        if self
-                            .sym(target_symbol)
-                            .flags
-                            .intersects(SymbolFlags::METHOD | SymbolFlags::TYPE_LITERAL)
-                        {
-                            let t_symbol = self.ty(t).symbol;
-                            let declarations = self.sym(t_symbol).declarations.clone();
-                            type_parameters.retain(|&tp| {
-                                declarations
-                                    .iter()
-                                    .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
-                            });
-                        }
-                    }
-                }
-                let list: SharedList<TypeId> = type_parameters.into();
-                self.type_node_links.get(declaration).outer_type_parameters = Some(list.clone());
+                let list = self.compute_outer_type_parameters_of_instantiation(
+                    t,
+                    t_object_flags,
+                    declaration,
+                    resolved_type,
+                );
                 if list.is_empty() {
                     return t;
                 }
@@ -203,15 +176,12 @@ impl Checker {
             let type_arguments = SharedList::from(&type_arguments[..]);
             // The mapper keeps the cached list itself (no copy), as Go keeps
             // the slice. A detached list is read again from the links.
-            let sources = match self
+            let sources = self
                 .type_node_links
                 .get(declaration)
                 .outer_type_parameters
                 .clone()
-            {
-                Some(list) => list,
-                None => unreachable!("outer type parameters are cached above"),
-            };
+                .expect("outer type parameters are cached above");
             let mut new_mapper = self.new_type_mapper_shared(sources, type_arguments.clone());
             let target_object_flags = self.ty(target).object_flags;
             if target_object_flags.intersects(ObjectFlags::SINGLE_SIGNATURE_TYPE) && m.is_some() {
@@ -249,28 +219,71 @@ impl Checker {
                     if self.ty(result).object_flags.intersects(
                         ObjectFlags::MAPPED | ObjectFlags::ANONYMOUS | ObjectFlags::REFERENCE,
                     ) {
-                        let extra = if result_could_contain_object_flags {
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
-                        } else {
-                            ObjectFlags::NONE
-                        };
                         self.ty_mut(result).object_flags |=
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED | extra;
+                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED
+                                | if_else(
+                                    result_could_contain_object_flags,
+                                    ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
+                                    ObjectFlags::NONE,
+                                );
                     } else {
                         // If none of the type arguments for the outer type parameters contain type variables, it follows
                         // that the instantiated type doesn't reference type variables.
                         // Intrinsics have `CouldContainTypeVariablesComputed` pre-set, so this should only cover unions and intersections resulting from `instantiateMappedType`
-                        let extra = if !result_could_contain_object_flags {
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED
-                        } else {
-                            ObjectFlags::NONE
-                        };
-                        self.ty_mut(result).object_flags |= extra;
+                        self.ty_mut(result).object_flags |= if_else(
+                            !result_could_contain_object_flags,
+                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED,
+                            ObjectFlags::NONE,
+                        );
                     }
                 }
             }
         }
         result
+    }
+
+    // Go: checker/checker.go:22830 getObjectTypeInstantiation
+    /// The `typeParameters == nil` branch of Go `getObjectTypeInstantiation`:
+    /// the outer type parameters of the declaration of `t` that its
+    /// instantiations can reference, computed on the first instantiation and
+    /// cached in the declaration's links.
+    fn compute_outer_type_parameters_of_instantiation(
+        &mut self,
+        t: TypeId,
+        t_object_flags: ObjectFlags,
+        declaration: Node,
+        resolved_type: TypeId,
+    ) -> SharedList<TypeId> {
+        let target = self.object_instantiation_target(t, t_object_flags, resolved_type);
+        // The first time an anonymous type is instantiated we compute and store a list of the type
+        // parameters that are in scope (and therefore potentially referenced). For type literals that
+        // aren't the right hand side of a generic type alias declaration we optimize by reducing the
+        // set of type parameters to those that are possibly referenced in the literal.
+        let mut type_parameters =
+            self.get_outer_type_parameters(declaration, true /*includeThisTypes*/);
+        if self.ty(target).alias.type_arguments().is_empty() {
+            if t_object_flags
+                .intersects(ObjectFlags::REFERENCE | ObjectFlags::INSTANTIATION_EXPRESSION_TYPE)
+            {
+                type_parameters
+                    .retain(|&tp| self.is_type_parameter_possibly_referenced(tp, declaration));
+            } else if self
+                .sym(self.ty(target).symbol)
+                .flags
+                .intersects(SymbolFlags::METHOD | SymbolFlags::TYPE_LITERAL)
+            {
+                let t_symbol = self.ty(t).symbol;
+                let declarations = self.sym(t_symbol).declarations.clone();
+                type_parameters.retain(|&tp| {
+                    declarations
+                        .iter()
+                        .any(|&d| self.is_type_parameter_possibly_referenced(tp, d))
+                });
+            }
+        }
+        let list: SharedList<TypeId> = type_parameters.into();
+        self.type_node_links.get(declaration).outer_type_parameters = Some(list.clone());
+        list
     }
 
     /// The `target` of Go `getObjectTypeInstantiation`: the resolved type

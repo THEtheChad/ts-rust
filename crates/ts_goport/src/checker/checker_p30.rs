@@ -153,12 +153,11 @@ impl Checker {
                         object_type,
                         access_expression,
                     );
-                    let undefined_like_type =
-                        if access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED) {
-                            self.missing_type
-                        } else {
-                            TypeId::NIL
-                        };
+                    let undefined_like_type = if_else(
+                        access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED),
+                        self.missing_type,
+                        TypeId::NIL,
+                    );
                     return self.get_tuple_element_type_out_of_start_count(
                         object_type,
                         index,
@@ -238,10 +237,10 @@ impl Checker {
                 // When accessing an enum object with its own type,
                 // e.g. E[E.A] for enum E { A }, undefined shouldn't
                 // be included in the result type
-                if access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED) {
-                    let object_symbol = self.ty(object_type).symbol;
-                    let index_symbol = self.ty(index_type).symbol;
-                    let is_own_enum_access = object_symbol.is_some()
+                let object_symbol = self.ty(object_type).symbol;
+                let index_symbol = self.ty(index_type).symbol;
+                if access_flags.intersects(AccessFlags::INCLUDE_UNDEFINED)
+                    && !(object_symbol.is_some()
                         && self
                             .sym(object_symbol)
                             .flags
@@ -251,11 +250,10 @@ impl Checker {
                                 .ty(index_type)
                                 .flags
                                 .intersects(TypeFlags::ENUM_LITERAL)
-                            && self.get_parent_of_symbol(index_symbol) == object_symbol);
-                    if !is_own_enum_access {
-                        let missing_type = self.missing_type;
-                        return self.get_union_type(&[info_value_type, missing_type]);
-                    }
+                            && self.get_parent_of_symbol(index_symbol) == object_symbol))
+                {
+                    let missing_type = self.missing_type;
+                    return self.get_union_type(&[info_value_type, missing_type]);
                 }
                 return info_value_type;
             }
@@ -284,9 +282,11 @@ impl Checker {
                         let properties =
                             self.ty(object_type).as_structured_type().properties.clone();
                         let mut types: Vec<TypeId> = Vec::with_capacity(properties.len() + 1);
-                        for prop in properties {
-                            types.push(self.get_type_of_symbol(prop));
-                        }
+                        types.extend(
+                            properties
+                                .into_iter()
+                                .map(|prop| self.get_type_of_symbol(prop)),
+                        );
                         types.push(self.undefined_type);
                         return self.get_union_type(&types);
                     }

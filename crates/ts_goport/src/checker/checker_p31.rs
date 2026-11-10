@@ -442,8 +442,8 @@ impl Checker {
                 self.mark_decorator_alias_referenced(location);
             }
             ReferenceHint::UNSPECIFIED => {
-                // PERF: emitscan2. One view of `location`: one kind read and, for names, one
-                // parent read. They replace the separate kind predicates that Go calls
+                // PERF: emitscan2. One view of `location`: one kind read and, for names, parent
+                // reads through the view. They replace the separate kind predicates that Go calls
                 // (IsJsxTagName, IsIdentifier, IsShorthandPropertyAssignment,
                 // IsPropertyAccessOrQualifiedName, IsExportAssignment, IsJsxOpeningLikeElement,
                 // IsJsxOpeningFragment, IsImportEqualsDeclaration, IsExportSpecifier,
@@ -455,146 +455,120 @@ impl Checker {
                     return;
                 }
                 let kind = loc.kind();
-                if kind == SyntaxKind::Identifier || kind == SyntaxKind::JsxNamespacedName {
-                    // Go 28843. isJsxIntrinsicTagName (checker/utilities.go:1238) is false for every
-                    // other kind, and IsJsxTagName (ast/utilities.go:1391) only reads.
+                // Go 28843. isJsxIntrinsicTagName (checker/utilities.go:1238) is false for every
+                // other kind, and IsJsxTagName (ast/utilities.go:1391) only reads.
+                if matches!(kind, SyntaxKind::Identifier | SyntaxKind::JsxNamespacedName)
+                    && is_jsx_tag_name_of(location, loc.parent())
+                    && is_jsx_intrinsic_tag_name(location)
+                {
+                    return; // builtin JSX tag names aren't real type refs by most metrics, but are expressions, so must be filtered
+                }
+                if kind == SyntaxKind::Identifier {
                     let parent = loc.parent();
-                    if is_jsx_tag_name_of(location, parent) && is_jsx_intrinsic_tag_name(location) {
-                        return; // builtin JSX tag names aren't real type refs by most metrics, but are expressions, so must be filtered
+                    let parent_kind = parent.kind();
+                    let parent_node = parent.node();
+                    // A shorthand property with an object-assignment-initializer (e.g. `{ s = 5 }`) is only valid inside a
+                    // destructuring assignment target. When it appears in an ordinary object literal expression, the checker
+                    // checks the initializer and never resolves the property name, so resolving it here would report a spurious
+                    // "No value exists in scope for the shorthand property" diagnostic. Skip such names to match checking.
+                    if parent_kind == SyntaxKind::ShorthandPropertyAssignment
+                        && parent_node.name() == location
+                        && parent_node.object_assignment_initializer().is_some()
+                        && !is_assignment_target(parent_node.parent())
+                    {
+                        return;
                     }
-                    if kind == SyntaxKind::Identifier {
-                        let parent_kind = parent.kind();
-                        let parent_node = parent.node();
-                        // A shorthand property with an object-assignment-initializer (e.g. `{ s = 5 }`) is only valid inside a
-                        // destructuring assignment target. When it appears in an ordinary object literal expression, the checker
-                        // checks the initializer and never resolves the property name, so resolving it here would report a spurious
-                        // "No value exists in scope for the shorthand property" diagnostic. Skip such names to match checking.
-                        if parent_kind == SyntaxKind::ShorthandPropertyAssignment
-                            && parent_node.name() == location
-                            && parent_node.object_assignment_initializer().is_some()
-                            && !is_assignment_target(parent_node.parent())
+                    // Go: checker.go:28857 ast.FindManyAncestors (PERF: emitscan1).
+                    let [
+                        meta_property,
+                        decorator,
+                        for_node,
+                        computed_name,
+                        heritage_clause,
+                    ] = find_mark_linked_references_ancestors(location);
+                    if meta_property.is_some() {
+                        return; // identifiers in meta properties shouldn't be resolved, but are expressions, so must be filtered
+                    }
+                    if decorator.is_some() {
+                        // Decorators on nodes that cannot be decorated (e.g. class expressions, static blocks,
+                        // `this` parameters) are never resolved during normal checking, so resolving them here would
+                        // report spurious diagnostics. Only bail out for such invalid-position decorators; valid
+                        // decorator expressions must still be resolved and marked for emit.
+                        let decorated = decorator.parent();
+                        if decorated.is_some()
+                            && !node_can_be_decorated(
+                                self.legacy_decorators,
+                                decorated,
+                                decorated.parent(),
+                                decorated.parent().parent(),
+                            )
                         {
                             return;
                         }
-                        // Go: checker.go:28857 ast.FindManyAncestors(location, ast.IsMetaProperty,
-                        // ast.IsDecorator, ast.IsForInOrOfStatement, ast.IsComputedPropertyName,
-                        // ast.IsHeritageClause) (ast/utilities.go:970).
-                        // PERF: emitscan1. Each Go callback is a test of one kind, and no two
-                        // callbacks match the same kind (ast_generated.go:4455, 837, 798, 2247;
-                        // utilities.go:219). One kind read per ancestor selects the slot. The walk
-                        // reads kinds and parents from the published store
-                        // (`find_ancestor_with_kind`), not 5 registry reads per step. The slots,
-                        // the fill order (nearest first) and the stop when all 5 are found are Go's.
-                        let mut res = [Node::NIL; 5];
-                        let mut found = 0;
-                        find_ancestor_with_kind(location, |n, kind| {
-                            let i = match kind {
-                                SyntaxKind::MetaProperty => 0,
-                                SyntaxKind::Decorator => 1,
-                                SyntaxKind::ForInStatement | SyntaxKind::ForOfStatement => 2,
-                                SyntaxKind::ComputedPropertyName => 3,
-                                SyntaxKind::HeritageClause => 4,
-                                _ => return false,
+                    }
+                    // The right-hand side of a 'for-in'/'for-of' statement whose initializer is an empty variable
+                    // declaration list (a grammar error, e.g. `for (var of X)`) is never checked, because the RHS
+                    // is only checked while inferring the type of a variable declaration and there is none here.
+                    // Resolving identifiers in the RHS here would report spurious diagnostics.
+                    if for_node.is_some() {
+                        let initializer = for_node.initializer();
+                        let expression = for_node.expression();
+                        if is_variable_declaration_list(initializer)
+                            && initializer.declarations().nodes().is_empty()
+                            && expression.is_some()
+                            && (location == expression
+                                || is_node_descendant_of(location, expression))
+                        {
+                            return;
+                        }
+                    }
+                    // ts#64674, Go N' checker.go:28798: enum member names are checked now (checkEnumMember).
+                    if computed_name.is_some() && is_invalid_computed_property_name(computed_name) {
+                        return;
+                    }
+                    if heritage_clause.is_some() {
+                        // extends heritage clauses on interfaces are not expressions and are unchecked if they are
+                        if is_interface_declaration(heritage_clause.parent()) {
+                            return;
+                        }
+                        // On a class, only the first `extends` type is resolved as a value (the base class); any
+                        // additional `extends` types are grammar errors (e.g. `class C extends A extends B` or
+                        // `class C extends A, B`) and are never resolved during checking.
+                        if is_class_like(heritage_clause.parent())
+                            && heritage_clause.token() == SyntaxKind::ExtendsKeyword
+                        {
+                            let first_extends =
+                                get_class_extends_heritage_element(heritage_clause.parent());
+                            if first_extends.is_some()
+                                && location != first_extends
+                                && !is_node_descendant_of(location, first_extends)
+                            {
+                                return;
+                            }
+                        }
+                    }
+                    // Identifiers in expression contexts are emitted, so we need to follow their referenced aliases and mark them as used
+                    // Some non-expression identifiers are also treated as expression identifiers for this purpose, eg, `a` in `b = {a}` or `q` in `import r = q`
+                    // This is the exception, rather than the rule - most non-expression identifiers are declaration names.
+                    if (is_expression_node_ref(loc)
+                        || parent_kind == SyntaxKind::ShorthandPropertyAssignment)
+                        && should_mark_identifier_alias_referenced(location)
+                    {
+                        if matches!(
+                            parent_kind,
+                            SyntaxKind::PropertyAccessExpression | SyntaxKind::QualifiedName
+                        ) {
+                            let left = if parent_kind == SyntaxKind::PropertyAccessExpression {
+                                parent_node.expression()
+                            } else {
+                                parent_node.left()
                             };
-                            if res[i].is_nil() {
-                                res[i] = n;
-                                found += 1;
-                            }
-                            found == res.len()
-                        });
-                        let [
-                            meta_property,
-                            decorator,
-                            for_node,
-                            computed_name,
-                            heritage_clause,
-                        ] = res;
-                        if meta_property.is_some() {
-                            return; // identifiers in meta properties shouldn't be resolved, but are expressions, so must be filtered
-                        }
-                        if decorator.is_some() {
-                            // Decorators on nodes that cannot be decorated (e.g. class expressions, static blocks,
-                            // `this` parameters) are never resolved during normal checking, so resolving them here would
-                            // report spurious diagnostics. Only bail out for such invalid-position decorators; valid
-                            // decorator expressions must still be resolved and marked for emit.
-                            let decorated = decorator.parent();
-                            if decorated.is_some()
-                                && !node_can_be_decorated(
-                                    self.legacy_decorators,
-                                    decorated,
-                                    decorated.parent(),
-                                    decorated.parent().parent(),
-                                )
-                            {
-                                return;
+                            if left != location {
+                                return; // Only mark the LHS (the RHS is a property lookup)
                             }
                         }
-                        // The right-hand side of a 'for-in'/'for-of' statement whose initializer is an empty variable
-                        // declaration list (a grammar error, e.g. `for (var of X)`) is never checked, because the RHS
-                        // is only checked while inferring the type of a variable declaration and there is none here.
-                        // Resolving identifiers in the RHS here would report spurious diagnostics.
-                        if for_node.is_some() {
-                            let initializer = for_node.initializer();
-                            let expression = for_node.expression();
-                            if is_variable_declaration_list(initializer)
-                                && initializer.declarations().nodes().is_empty()
-                                && expression.is_some()
-                                && (location == expression
-                                    || is_node_descendant_of(location, expression))
-                            {
-                                return;
-                            }
-                        }
-                        // ts#64674, Go N' checker.go:28798: enum member names are checked now (checkEnumMember).
-                        if computed_name.is_some()
-                            && is_invalid_computed_property_name(computed_name)
-                        {
-                            return;
-                        }
-                        if heritage_clause.is_some() {
-                            // extends heritage clauses on interfaces are not expressions and are unchecked if they are
-                            if is_interface_declaration(heritage_clause.parent()) {
-                                return;
-                            }
-                            // On a class, only the first `extends` type is resolved as a value (the base class); any
-                            // additional `extends` types are grammar errors (e.g. `class C extends A extends B` or
-                            // `class C extends A, B`) and are never resolved during checking.
-                            if is_class_like(heritage_clause.parent())
-                                && heritage_clause.token() == SyntaxKind::ExtendsKeyword
-                            {
-                                let first_extends =
-                                    get_class_extends_heritage_element(heritage_clause.parent());
-                                if first_extends.is_some()
-                                    && location != first_extends
-                                    && !is_node_descendant_of(location, first_extends)
-                                {
-                                    return;
-                                }
-                            }
-                        }
-                        // Identifiers in expression contexts are emitted, so we need to follow their referenced aliases and mark them as used
-                        // Some non-expression identifiers are also treated as expression identifiers for this purpose, eg, `a` in `b = {a}` or `q` in `import r = q`
-                        // This is the exception, rather than the rule - most non-expression identifiers are declaration names.
-                        if (is_expression_node_ref(loc)
-                            || parent_kind == SyntaxKind::ShorthandPropertyAssignment)
-                            && should_mark_identifier_alias_referenced(location)
-                        {
-                            if matches!(
-                                parent_kind,
-                                SyntaxKind::PropertyAccessExpression | SyntaxKind::QualifiedName
-                            ) {
-                                let left = if parent_kind == SyntaxKind::PropertyAccessExpression {
-                                    parent_node.expression()
-                                } else {
-                                    parent_node.left()
-                                };
-                                if left != location {
-                                    return; // Only mark the LHS (the RHS is a property lookup)
-                                }
-                            }
-                            self.mark_identifier_alias_referenced(location);
-                            return;
-                        }
+                        self.mark_identifier_alias_referenced(location);
+                        return;
                     }
                 }
                 match kind {
@@ -670,6 +644,37 @@ impl Checker {
             _ => panic!("Unhandled reference hint"),
         }
     }
+}
+
+// Go: ast/utilities.go:970 FindManyAncestors
+// markLinkedReferences' call: `FindManyAncestors(location, IsMetaProperty,
+// IsDecorator, IsForInOrOfStatement, IsComputedPropertyName, IsHeritageClause)`.
+// PERF: emitscan1. Each Go callback is a test of one kind, and no two
+// callbacks match the same kind (ast_generated.go:4455, 837, 798, 2247;
+// utilities.go:219). One kind read per ancestor selects the slot. The walk
+// reads kinds and parents from the published store (`find_ancestor_with_kind`),
+// not 5 registry reads per step. The slots, the fill order (nearest first) and
+// the stop when all 5 are found are Go's.
+#[inline]
+fn find_mark_linked_references_ancestors(location: Node) -> [Node; 5] {
+    let mut res = [Node::NIL; 5];
+    let mut found = 0;
+    find_ancestor_with_kind(location, |n, kind| {
+        let i = match kind {
+            SyntaxKind::MetaProperty => 0,
+            SyntaxKind::Decorator => 1,
+            SyntaxKind::ForInStatement | SyntaxKind::ForOfStatement => 2,
+            SyntaxKind::ComputedPropertyName => 3,
+            SyntaxKind::HeritageClause => 4,
+            _ => return false,
+        };
+        if res[i].is_nil() {
+            res[i] = n;
+            found += 1;
+        }
+        found == res.len()
+    });
+    res
 }
 
 // Go: checker/checker.go:28976 isExportOrExportExpression

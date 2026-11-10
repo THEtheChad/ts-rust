@@ -403,20 +403,21 @@ impl Checker {
                 } else if is_union {
                     let mut index_info = IndexInfoId::NIL;
                     if !late_bound_name {
-                        if name_literal_type.is_nil() {
-                            name_literal_type = self.get_string_literal_type(name.text());
-                        }
-                        index_info = self.get_applicable_index_info(t, name_literal_type);
+                        index_info = self.get_applicable_index_info_for_name_literal(
+                            t,
+                            name,
+                            &mut name_literal_type,
+                        );
                     }
                     if index_info.is_some() {
                         prop_flags =
                             prop_flags.without(SymbolFlags::ACCESSOR) | SymbolFlags::PROPERTY;
-                        let readonly = if self.index_info(index_info).is_readonly {
-                            CheckFlags::READONLY
-                        } else {
-                            CheckFlags::NONE
-                        };
-                        check_flags |= CheckFlags::WRITE_PARTIAL | readonly;
+                        check_flags |= CheckFlags::WRITE_PARTIAL
+                            | if_else(
+                                self.index_info(index_info).is_readonly,
+                                CheckFlags::READONLY,
+                                CheckFlags::NONE,
+                            );
                         if self.is_tuple_type(t) {
                             let mut index_type = self.get_rest_type_of_tuple_type(t);
                             if index_type.is_nil() {
@@ -521,9 +522,8 @@ impl Checker {
             .iter()
             .map(|&prop| self.sym(prop).declarations.len())
             .sum();
-        // PERF: the declarations are collected on the stack. A list of 0 or 1
-        // declarations is stored with no heap list (no malloc). A longer list
-        // moves into one `Vec` for `Declarations::from`, as before.
+        // PERF: the declarations are collected on the stack
+        // (`declarations_from_stack`).
         let mut declarations: SmallVec<[Node; 4]> = SmallVec::with_capacity(declaration_count);
         // PERF: Go `core.AppendIfUnique` scans the list for each declaration,
         // which is quadratic in a long list (blueprint: 43k calls with 181
@@ -562,10 +562,9 @@ impl Checker {
             }
             let write_type = self.get_write_type_of_symbol(prop);
             if write_types.is_some() || write_type != t {
-                if write_types.is_none() {
-                    write_types = Some(prop_types.to_vec());
-                }
-                write_types.as_mut().unwrap().push(write_type);
+                write_types
+                    .get_or_insert_with(|| prop_types.to_vec())
+                    .push(write_type);
             }
             if t != first_type {
                 check_flags |= CheckFlags::HAS_NON_UNIFORM_TYPE;
@@ -584,16 +583,7 @@ impl Checker {
             table_key_name(name),
             check_flags | synthetic_flag,
         );
-        let declarations = if declarations.len() < 2 {
-            let mut list = Declarations::default();
-            if let Some(&node) = declarations.first() {
-                list.push(node);
-            }
-            list
-        } else {
-            Declarations::from(declarations.into_vec())
-        };
-        self.sym_mut(result).declarations = declarations;
+        self.sym_mut(result).declarations = declarations_from_stack(declarations);
         if !has_non_uniform_value_declaration && first_value_declaration.is_some() {
             self.sym_mut(result).value_declaration = first_value_declaration;
             // Inherit information about parent type.
@@ -633,6 +623,24 @@ impl Checker {
                 .write_type = write_type;
         }
         result
+    }
+
+    /// Go `getApplicableIndexInfoForName(t, name)` for a name that is not
+    /// late bound, in `create_union_or_intersection_property`. PERF: the
+    /// string literal type of `name` is made at the first constituent that
+    /// needs it, where Go first makes it, and kept in `name_literal_type`
+    /// for the later ones.
+    #[inline]
+    fn get_applicable_index_info_for_name_literal(
+        &mut self,
+        t: TypeId,
+        name: TableKey<'_>,
+        name_literal_type: &mut TypeId,
+    ) -> IndexInfoId {
+        if name_literal_type.is_nil() {
+            *name_literal_type = self.get_string_literal_type(name.text());
+        }
+        self.get_applicable_index_info(t, *name_literal_type)
     }
 
     // Go: checker/checker.go:22124 getTargetSymbol
@@ -756,13 +764,7 @@ impl Checker {
         let flags = self.ty(t).flags;
         let object_flags = self.ty(t).object_flags;
         if object_flags.intersects(ObjectFlags::MAPPED) {
-            // PERF: the cached apparent type of a mapped type returns here,
-            // without the call that would read it.
-            let cached = self.ty(t).as_mapped_type().resolved_apparent_type;
-            if cached.is_some() {
-                return cached;
-            }
-            return self.get_apparent_type_of_mapped_type(t);
+            return self.get_apparent_type_of_mapped_type_cached(t);
         } else if object_flags.intersects(ObjectFlags::REFERENCE) && t != original_type {
             return self.get_type_with_this_argument(
                 t,
@@ -791,6 +793,17 @@ impl Checker {
             return self.empty_object_type;
         }
         t
+    }
+
+    /// `getApparentTypeOfMappedType` for the hot callers: the cached apparent
+    /// type of a mapped type returns here, without the call that would read it.
+    #[inline(always)]
+    fn get_apparent_type_of_mapped_type_cached(&mut self, t: TypeId) -> TypeId {
+        let cached = self.ty(t).as_mapped_type().resolved_apparent_type;
+        if cached.is_some() {
+            return cached;
+        }
+        self.get_apparent_type_of_mapped_type(t)
     }
 
     // Go: checker/checker.go:22226 getApparentTypeOfMappedType
@@ -1090,6 +1103,24 @@ impl Checker {
 
     // Go: checker/checker.go:22357 getReducedApparentType
     pub fn get_reduced_apparent_type(&mut self, t: TypeId) -> TypeId {
+        if let Some(reduced) = self.get_reduced_apparent_type_cached(t) {
+            return reduced;
+        }
+        // Since getApparentType may return a non-reduced union or intersection type, we need to perform
+        // type reduction both before and after obtaining the apparent type. For example, given a type parameter
+        // 'T extends A | B', the type 'T & X' becomes 'A & X | B & X' after obtaining the apparent type, and
+        // that type may need further reduction to remove empty intersections.
+        let reduced = self.get_reduced_type(t);
+        let apparent = self.get_apparent_type(reduced);
+        self.get_reduced_type(apparent)
+    }
+
+    /// The reduced apparent type of `t` when it is known without the calls of
+    /// `getReducedApparentType`, which then return the same type and change no
+    /// state; `None` when the calls must run. Property lookups in the
+    /// constituents of large unions reach this for every constituent.
+    #[inline(always)]
+    fn get_reduced_apparent_type_cached(&mut self, t: TypeId) -> Option<TypeId> {
         // PERF: an object type is its own reduced type. Its apparent type is
         // itself, or for a mapped type the cached apparent type, read with no
         // effect (`get_apparent_type`). So these return without the calls
@@ -1097,11 +1128,11 @@ impl Checker {
         let ty = self.ty(t);
         if ty.flags.intersects(TypeFlags::OBJECT) {
             if !ty.object_flags.intersects(ObjectFlags::MAPPED) {
-                return t;
+                return Some(t);
             }
             let cached = ty.as_mapped_type().resolved_apparent_type;
             if cached.is_some() {
-                return self.get_reduced_type(cached);
+                return Some(self.get_reduced_type(cached));
             }
         }
         // PERF (sentdisc1): an intersection whose never test is done and
@@ -1119,19 +1150,13 @@ impl Checker {
         {
             let cached = ty.as_intersection_type().resolved_apparent_type;
             if cached == t {
-                return t;
+                return Some(t);
             }
             if cached.is_some() {
-                return self.get_reduced_type(cached);
+                return Some(self.get_reduced_type(cached));
             }
         }
-        // Since getApparentType may return a non-reduced union or intersection type, we need to perform
-        // type reduction both before and after obtaining the apparent type. For example, given a type parameter
-        // 'T extends A | B', the type 'T & X' becomes 'A & X | B & X' after obtaining the apparent type, and
-        // that type may need further reduction to remove empty intersections.
-        let reduced = self.get_reduced_type(t);
-        let apparent = self.get_apparent_type(reduced);
-        self.get_reduced_type(apparent)
+        None
     }
 
     // Go: checker/checker.go:22365 elaborateNeverIntersection
@@ -1150,14 +1175,11 @@ impl Checker {
             let props = self
                 .get_properties_of_union_or_intersection_type(t)
                 .to_vec();
-            let mut never_prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_discriminant_with_never_type(p) {
-                    never_prop = p;
-                    break;
-                }
-            }
-            if never_prop.is_some() {
+            if let Some(never_prop) = props
+                .iter()
+                .copied()
+                .find(|&p| self.is_discriminant_with_never_type(p))
+            {
                 let type_string =
                     self.type_to_string_ex(t, Node::NIL, TypeFormatFlags::NO_TYPE_REDUCTION, None);
                 let prop_string = self.symbol_to_string(never_prop);
@@ -1171,14 +1193,11 @@ impl Checker {
             let props = self
                 .get_properties_of_union_or_intersection_type(t)
                 .to_vec();
-            let mut private_prop = SymbolId::NIL;
-            for &p in &props {
-                if self.is_conflicting_private_property(p) {
-                    private_prop = p;
-                    break;
-                }
-            }
-            if private_prop.is_some() {
+            if let Some(private_prop) = props
+                .iter()
+                .copied()
+                .find(|&p| self.is_conflicting_private_property(p))
+            {
                 let type_string =
                     self.type_to_string_ex(t, Node::NIL, TypeFormatFlags::NO_TYPE_REDUCTION, None);
                 let prop_string = self.symbol_to_string(private_prop);
@@ -1371,10 +1390,11 @@ impl Checker {
                         type_arguments = vec![self.get_type_from_type_node(node.element_type())];
                     }
                     SyntaxKind::TupleType => {
-                        for e in node.elements() {
-                            let et = self.get_type_from_type_node(e);
-                            type_arguments.push(et);
-                        }
+                        type_arguments = node
+                            .elements()
+                            .into_iter()
+                            .map(|e| self.get_type_from_type_node(e))
+                            .collect();
                     }
                     _ => panic!("Unhandled case in getTypeArguments"),
                 }
@@ -1388,13 +1408,7 @@ impl Checker {
                 {
                     let mapper = self.ty(t).as_type_reference().object.mapper;
                     let resolved = self.instantiate_types(&type_arguments, mapper);
-                    // constvar1: the instantiation can write the list first.
-                    let old = &self.ty(t).as_type_reference().resolved_type_arguments;
-                    let changed = !old.is_nil() && old[..] != resolved[..];
-                    self.const_type_variable_memo.overwrite(changed);
-                    self.ty_mut(t)
-                        .as_type_reference_mut()
-                        .resolved_type_arguments = SharedList::non_nil(&resolved);
+                    self.store_resolved_type_arguments(t, &resolved);
                 }
             } else {
                 if self
@@ -1409,11 +1423,7 @@ impl Checker {
                         .resolved_type_arguments =
                         SharedList::non_nil(&vec![error_type; type_parameter_count]);
                 }
-                let error_node = if node.is_some() {
-                    node
-                } else {
-                    self.current_node
-                };
+                let error_node = if_else(node.is_some(), node, self.current_node);
                 let target_symbol = self.ty(target).symbol;
                 if target_symbol.is_some() {
                     let symbol_string = self.symbol_to_string(target_symbol);
@@ -1432,6 +1442,20 @@ impl Checker {
             }
         }
         None
+    }
+
+    /// Go's `d.resolvedTypeArguments = c.instantiateTypes(...)`, with the
+    /// constvar1 record: the instantiation can write the list first, and an
+    /// overwrite with a different list is reported to the const type variable
+    /// memo.
+    #[inline]
+    fn store_resolved_type_arguments(&mut self, t: TypeId, resolved: &[TypeId]) {
+        let old = &self.ty(t).as_type_reference().resolved_type_arguments;
+        let changed = !old.is_nil() && old[..] != resolved[..];
+        self.const_type_variable_memo.overwrite(changed);
+        self.ty_mut(t)
+            .as_type_reference_mut()
+            .resolved_type_arguments = SharedList::non_nil(resolved);
     }
 
     // Go: checker/checker.go:22430 getEffectiveTypeArguments
@@ -1581,17 +1605,19 @@ impl Checker {
                 let mut default_type = self.no_constraint_type;
                 let symbol = self.ty(t).symbol;
                 if symbol.is_some() {
-                    let mut default_declaration = Node::NIL;
-                    for &decl in &self.sym(symbol).declarations {
-                        if is_type_parameter_declaration(decl) {
-                            let d = decl.default_type();
-                            if d.is_some() {
-                                default_declaration = d;
-                                break;
+                    let default_declaration = self
+                        .sym(symbol)
+                        .declarations
+                        .iter()
+                        .map(|&decl| {
+                            if is_type_parameter_declaration(decl) {
+                                decl.default_type()
+                            } else {
+                                Node::NIL
                             }
-                        }
-                    }
-                    if default_declaration.is_some() {
+                        })
+                        .find(|d| d.is_some());
+                    if let Some(default_declaration) = default_declaration {
                         default_type = self.get_type_from_type_node(default_declaration);
                     }
                 }
@@ -2232,6 +2258,33 @@ impl Checker {
         false
     }
 
+    /// Go `c.instantiateTypes(list, m)` followed by `core.Same`, for a list
+    /// stored on `owner` that never changes once set (resolved type
+    /// arguments, constituents); `None` means no element changed.
+    /// PERF (instfast1): the caller detaches the list once, and
+    /// `instantiate_types_if_changed` reads it directly. An owned list (a
+    /// multi-program process) is not detached: it is read in place through
+    /// `len` and `read`.
+    #[inline]
+    fn instantiate_stored_types_if_changed(
+        &mut self,
+        owner: TypeId,
+        detached: Option<&[TypeId]>,
+        len: fn(&Checker, TypeId) -> usize,
+        read: fn(&Checker, TypeId, usize) -> TypeId,
+        m: MapperId,
+    ) -> Option<SmallVec<[TypeId; 8]>> {
+        match detached {
+            Some(list) => self.instantiate_types_if_changed(list, m),
+            None => {
+                let count = len(self, owner);
+                self.map_stored_types_if_changed(owner, count, read, &mut |c, a| {
+                    c.instantiate_type(a, m)
+                })
+            }
+        }
+    }
+
     // Go: checker/checker.go:22746 instantiateTypeWorker
     pub fn instantiate_type_worker(
         &mut self,
@@ -2253,28 +2306,19 @@ impl Checker {
                 {
                     // PORT: Go `core.Same` on the `instantiateTypes` result
                     // is "no element changed" (`None`) here.
-                    // PERF (instfast1): the stored list never changes, so it
-                    // is detached once (`instantiate_types_if_changed`). An
-                    // owned list (a multi-program process) is read in place.
                     let mut buf = SharedListBuf::<TypeId>::default();
-                    let changed = match self
+                    let detached = self
                         .ty(t)
                         .as_type_reference()
                         .resolved_type_arguments
-                        .detach(&mut buf)
-                    {
-                        Some(list) => self.instantiate_types_if_changed(list, m),
-                        None => {
-                            let count =
-                                self.ty(t).as_type_reference().resolved_type_arguments.len();
-                            self.map_stored_types_if_changed(
-                                t,
-                                count,
-                                |c, t, i| c.ty(t).as_type_reference().resolved_type_arguments[i],
-                                &mut |c, a| c.instantiate_type(a, m),
-                            )
-                        }
-                    };
+                        .detach(&mut buf);
+                    let changed = self.instantiate_stored_types_if_changed(
+                        t,
+                        detached,
+                        |c, t| c.ty(t).as_type_reference().resolved_type_arguments.len(),
+                        |c, t, i| c.ty(t).as_type_reference().resolved_type_arguments[i],
+                        m,
+                    );
                     let Some(new_type_arguments) = changed else {
                         return t;
                     };
@@ -2300,38 +2344,29 @@ impl Checker {
                     source = origin;
                 }
             }
-            // PERF (instfast1): the constituents never change, so the list
-            // is detached once (`instantiate_types_if_changed`). An owned
-            // list (a multi-program process) is read in place.
             let mut buf = SharedListBuf::<TypeId>::default();
             let detached = self
                 .ty(source)
                 .as_union_or_intersection_type()
                 .types
                 .detach(&mut buf);
-            let changed = match detached {
-                Some(list) => self.instantiate_types_if_changed(list, m),
-                None => {
-                    let count = self.ty(source).types().len();
-                    self.map_stored_types_if_changed(
-                        source,
-                        count,
-                        Checker::type_at,
-                        &mut |c, u| c.instantiate_type(u, m),
-                    )
-                }
-            };
+            let changed = self.instantiate_stored_types_if_changed(
+                source,
+                detached,
+                |c, t| c.ty(t).types().len(),
+                Checker::type_at,
+                m,
+            );
             if changed.is_none() && alias.symbol() == self.ty(t).alias.symbol() {
                 return t;
             }
             let unchanged;
-            let new_types: &[TypeId] = if let Some(types) = &changed {
-                types
-            } else if let Some(list) = detached {
-                list
-            } else {
-                unchanged = self.ty(source).types_list();
-                &unchanged
+            let new_types: &[TypeId] = match changed.as_deref().or(detached) {
+                Some(types) => types,
+                None => {
+                    unchanged = self.ty(source).types_list();
+                    &unchanged
+                }
             };
             if alias.is_none() {
                 let t_alias = self.ty(t).alias.clone();
@@ -2433,6 +2468,22 @@ impl Checker {
         }
         t
     }
+}
+
+/// The declarations of a synthetic union or intersection property, collected
+/// on the stack (`create_union_or_intersection_property`). PERF: a list of 0
+/// or 1 declarations is stored with no heap list (no malloc); a longer list
+/// moves into one `Vec` for `Declarations::from`.
+#[inline]
+fn declarations_from_stack(declarations: SmallVec<[Node; 4]>) -> Declarations {
+    if declarations.len() >= 2 {
+        return Declarations::from(declarations.into_vec());
+    }
+    let mut list = Declarations::default();
+    if let Some(&node) = declarations.first() {
+        list.push(node);
+    }
+    list
 }
 
 /// The `Name` of a table key: a `Name` key is copied, a text key is

@@ -856,17 +856,19 @@ impl Checker {
         is_private: bool,
         is_static: bool,
     ) -> TypeId {
-        let kind = if is_private {
-            if is_static {
-                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC
-            } else {
-                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE
-            }
-        } else if is_static {
-            CachedTypeKind::DECORATOR_CONTEXT_STATIC
-        } else {
-            CachedTypeKind::DECORATOR_CONTEXT
-        };
+        let kind = if_else(
+            is_private,
+            if_else(
+                is_static,
+                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE_STATIC,
+                CachedTypeKind::DECORATOR_CONTEXT_PRIVATE,
+            ),
+            if_else(
+                is_static,
+                CachedTypeKind::DECORATOR_CONTEXT_STATIC,
+                CachedTypeKind::DECORATOR_CONTEXT,
+            ),
+        );
         let key = CachedTypeKey {
             kind,
             type_id: name_type,
@@ -879,19 +881,15 @@ impl Checker {
         let members = self.symbols.new_table();
         let name_prop = self.new_property("name", name_type);
         self.symbols.set(members, "name", name_prop);
-        let private_type = if is_private {
-            self.true_type
-        } else {
-            self.false_type
-        };
-        let private_prop = self.new_property("private", private_type);
+        let private_prop = self.new_property(
+            "private",
+            if_else(is_private, self.true_type, self.false_type),
+        );
         self.symbols.set(members, "private", private_prop);
-        let static_type = if is_static {
-            self.true_type
-        } else {
-            self.false_type
-        };
-        let static_prop = self.new_property("static", static_type);
+        let static_prop = self.new_property(
+            "static",
+            if_else(is_static, self.true_type, self.false_type),
+        );
         self.symbols.set(members, "static", static_prop);
         let override_type = self.new_anonymous_type(SymbolId::NIL, members, &[], &[], &[]);
         self.cached_types.insert(key, override_type);
@@ -1563,26 +1561,17 @@ impl Checker {
             // specify default types, nothing is gained from instantiating as type parameters would just be
             // replaced with their constraints similar to the apparent type.
             if inference_context.is_some() {
-                if context_flags.intersects(ContextFlags::SIGNATURE) {
-                    let inference_count =
-                        self.inference_context(inference_context).inferences.len();
-                    let mut has_candidates_or_default = false;
-                    for i in 0..inference_count {
-                        if self.has_inference_candidates_or_default(inference_context, i) {
-                            has_candidates_or_default = true;
-                            break;
-                        }
-                    }
-                    if has_candidates_or_default {
-                        // For contextual signatures we incorporate all inferences made so far, e.g. from return
-                        // types as well as arguments to the left in a function call.
-                        let non_fixing_mapper =
-                            self.inference_context(inference_context).non_fixing_mapper;
-                        let t =
-                            self.instantiate_instantiable_types(contextual_type, non_fixing_mapper);
-                        if !self.ty(t).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
-                            return t;
-                        }
+                if context_flags.intersects(ContextFlags::SIGNATURE)
+                    && (0..self.inference_context(inference_context).inferences.len())
+                        .any(|i| self.has_inference_candidates_or_default(inference_context, i))
+                {
+                    // For contextual signatures we incorporate all inferences made so far, e.g. from return
+                    // types as well as arguments to the left in a function call.
+                    let non_fixing_mapper =
+                        self.inference_context(inference_context).non_fixing_mapper;
+                    let t = self.instantiate_instantiable_types(contextual_type, non_fixing_mapper);
+                    if !self.ty(t).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
+                        return t;
                     }
                 }
                 let return_mapper = self.inference_context(inference_context).return_mapper();
@@ -1593,17 +1582,13 @@ impl Checker {
                     // literals actually end up widening to 'boolean' (see #48363).
                     let t = self.instantiate_instantiable_types(contextual_type, return_mapper);
                     if !self.ty(t).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
-                        if self.ty(t).flags.intersects(TypeFlags::UNION) {
-                            let types = self.ty(t).types_list();
-                            let (regular_false_type, regular_true_type) =
-                                (self.regular_false_type, self.regular_true_type);
-                            if self.contains_type(&types, regular_false_type)
-                                && self.contains_type(&types, regular_true_type)
-                            {
-                                return self.filter_type(t, &mut |c: &mut Checker, t: TypeId| {
-                                    t != c.regular_false_type && t != c.regular_true_type
-                                });
-                            }
+                        if self.ty(t).flags.intersects(TypeFlags::UNION)
+                            && self.contains_type(self.ty(t).types(), self.regular_false_type)
+                            && self.contains_type(self.ty(t).types(), self.regular_true_type)
+                        {
+                            return self.filter_type(t, &mut |c: &mut Checker, t: TypeId| {
+                                t != c.regular_false_type && t != c.regular_true_type
+                            });
                         }
                         return t;
                     }

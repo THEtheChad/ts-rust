@@ -757,32 +757,21 @@ impl Checker {
     pub fn is_empty_object_type(&mut self, t: TypeId) -> bool {
         let flags = self.ty(t).flags;
         if flags.intersects(TypeFlags::OBJECT) {
-            if self.is_generic_mapped_type(t) {
-                return false;
-            }
-            self.resolve_structured_type_members(t);
-            return self.is_empty_resolved_type(t);
+            return !self.is_generic_mapped_type(t) && {
+                self.resolve_structured_type_members(t);
+                self.is_empty_resolved_type(t)
+            };
         }
         if flags.intersects(TypeFlags::NON_PRIMITIVE) {
             return true;
         }
         if flags.intersects(TypeFlags::UNION) {
             let types = self.ty(t).types_list();
-            for u in types {
-                if self.is_empty_object_type(u) {
-                    return true;
-                }
-            }
-            return false;
+            return types.into_iter().any(|u| self.is_empty_object_type(u));
         }
         if flags.intersects(TypeFlags::INTERSECTION) {
-            for i in 0..self.ty(t).types().len() {
-                let u = self.type_at(t, i);
-                if !self.is_empty_object_type(u) {
-                    return false;
-                }
-            }
-            return true;
+            let types = self.ty(t).types_list();
+            return types.into_iter().all(|u| self.is_empty_object_type(u));
         }
         false
     }
@@ -907,6 +896,34 @@ impl Checker {
         f(self, t)
     }
 
+    /// Go `core.Filter(t.Types(), f)` and its `core.Same` test in
+    /// `filterType`: `None` when `f` keeps every constituent of the union
+    /// `t`. PORT: the filtered list is built only once the first type is
+    /// dropped, so a type that keeps every constituent costs no copy.
+    #[inline]
+    fn filter_union_types_if_any_dropped(
+        &mut self,
+        t: TypeId,
+        f: &mut dyn FnMut(&mut Checker, TypeId) -> bool,
+    ) -> Option<Vec<TypeId>> {
+        let types_len = self.ty(t).types().len();
+        let mut filtered: Option<Vec<TypeId>> = None;
+        for i in 0..types_len {
+            let u = self.type_at(t, i);
+            let keep = f(self, u);
+            if let Some(list) = &mut filtered {
+                if keep {
+                    list.push(u);
+                }
+            } else if !keep {
+                let mut list = Vec::with_capacity(types_len - 1);
+                list.extend_from_slice(&self.ty(t).types()[..i]);
+                filtered = Some(list);
+            }
+        }
+        filtered
+    }
+
     // Go: checker/checker.go:27159 filterType
     pub fn filter_type(
         &mut self,
@@ -914,26 +931,8 @@ impl Checker {
         f: &mut dyn FnMut(&mut Checker, TypeId) -> bool,
     ) -> TypeId {
         if self.ty(t).flags.intersects(TypeFlags::UNION) {
-            // PORT: Go `core.Same(types, core.Filter(types, f))` is true exactly
-            // when nothing was filtered out. The filtered list is built only
-            // once the first type is dropped, so a type that keeps every
-            // constituent costs no copy.
             let types_len = self.ty(t).types().len();
-            let mut filtered: Option<Vec<TypeId>> = None;
-            for i in 0..types_len {
-                let u = self.type_at(t, i);
-                let keep = f(self, u);
-                if let Some(list) = &mut filtered {
-                    if keep {
-                        list.push(u);
-                    }
-                } else if !keep {
-                    let mut list = Vec::with_capacity(types_len - 1);
-                    list.extend_from_slice(&self.ty(t).types()[..i]);
-                    filtered = Some(list);
-                }
-            }
-            let Some(filtered) = filtered else {
+            let Some(filtered) = self.filter_union_types_if_any_dropped(t, f) else {
                 return t;
             };
             let origin = self.ty(t).as_union_type().origin;
@@ -946,11 +945,12 @@ impl Checker {
                 // Otherwise, construct a new filtered origin type.
                 let origin_types = self.ty(origin).types_list();
                 let mut origin_filtered: Vec<TypeId> = Vec::with_capacity(origin_types.len());
-                for &u in &origin_types {
-                    if self.ty(u).flags.intersects(TypeFlags::UNION) || f(self, u) {
-                        origin_filtered.push(u);
-                    }
-                }
+                origin_filtered.extend(
+                    origin_types
+                        .iter()
+                        .copied()
+                        .filter(|&u| self.ty(u).flags.intersects(TypeFlags::UNION) || f(self, u)),
+                );
                 if origin_types.len() - origin_filtered.len() == types_len - filtered.len() {
                     if origin_filtered.len() == 1 {
                         return origin_filtered[0];
@@ -1151,15 +1151,15 @@ impl Checker {
         {
             return self.string_number_symbol_type;
         }
-        let include = (if index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES) {
-            TypeFlags::STRING_LITERAL
-        } else {
-            TypeFlags::STRING_LIKE
-        }) | (if index_flags.intersects(IndexFlags::STRINGS_ONLY) {
-            TypeFlags::NONE
-        } else {
-            TypeFlags::NUMBER_LIKE | TypeFlags::ES_SYMBOL_LIKE
-        });
+        let include = if_else(
+            index_flags.intersects(IndexFlags::NO_INDEX_SIGNATURES),
+            TypeFlags::STRING_LITERAL,
+            TypeFlags::STRING_LIKE,
+        ) | if_else(
+            index_flags.intersects(IndexFlags::STRINGS_ONLY),
+            TypeFlags::NONE,
+            TypeFlags::NUMBER_LIKE | TypeFlags::ES_SYMBOL_LIKE,
+        );
         self.get_literal_type_from_properties(t, include, index_flags == IndexFlags::NONE)
     }
 

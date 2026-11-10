@@ -887,10 +887,7 @@ impl Checker {
         // and T as the template type.
         let type_parameter = self.get_type_parameter_from_mapped_type(t);
         let constraint_type = self.get_constraint_type_from_mapped_type(t);
-        let mapped_type = {
-            let target = self.ty(t).as_mapped_type().object.target;
-            if target.is_some() { target } else { t }
-        };
+        let mapped_type = self.ty(t).as_mapped_type().object.target.get().unwrap_or(t);
         let name_type = self.get_name_type_from_mapped_type(mapped_type);
         let should_link_prop_declarations =
             self.get_mapped_type_name_type_kind(mapped_type) != MappedTypeNameTypeKind::REMAPPING;
@@ -962,27 +959,23 @@ impl Checker {
                             }
                             let prop = c.new_symbol(
                                 SymbolFlags::PROPERTY
-                                    | if is_optional {
-                                        SymbolFlags::OPTIONAL
-                                    } else {
-                                        SymbolFlags::NONE
-                                    },
+                                    | if_else(
+                                        is_optional,
+                                        SymbolFlags::OPTIONAL,
+                                        SymbolFlags::NONE,
+                                    ),
                                 // PERF: the `Name`, not its text, so the name
                                 // is not interned a second time.
                                 prop_name.clone(),
                             );
                             c.sym_mut(prop).check_flags = late_flag
                                 | CheckFlags::MAPPED
-                                | if is_readonly {
-                                    CheckFlags::READONLY
-                                } else {
-                                    CheckFlags::NONE
-                                }
-                                | if strip_optional {
-                                    CheckFlags::STRIP_OPTIONAL
-                                } else {
-                                    CheckFlags::NONE
-                                };
+                                | if_else(is_readonly, CheckFlags::READONLY, CheckFlags::NONE)
+                                | if_else(
+                                    strip_optional,
+                                    CheckFlags::STRIP_OPTIONAL,
+                                    CheckFlags::NONE,
+                                );
                             // PERF: Go `Get` and then sets the fields. `prop`
                             // is new, so each record is added once with its
                             // fields set. A nil `modifiers_prop` is the
@@ -1360,16 +1353,18 @@ impl Checker {
                                 .find(|p| p.is_some())
                                 .unwrap_or(SymbolId::NIL);
                             if first_this_parameter_of_union_signatures.is_some() {
-                                let mut this_types: Vec<TypeId> = Vec::new();
-                                for &sig in &union_signatures {
-                                    let sig_this_parameter = self.sig(sig).this_parameter;
-                                    if sig_this_parameter.is_some() {
-                                        let this_type = self.get_type_of_symbol(sig_this_parameter);
-                                        if this_type.is_some() {
-                                            this_types.push(this_type);
+                                let this_types: Vec<TypeId> = union_signatures
+                                    .iter()
+                                    .filter_map(|&sig| {
+                                        let sig_this_parameter = self.sig(sig).this_parameter;
+                                        if sig_this_parameter.is_some() {
+                                            return self
+                                                .get_type_of_symbol(sig_this_parameter)
+                                                .get();
                                         }
-                                    }
-                                }
+                                        None
+                                    })
+                                    .collect();
                                 let this_type = self.get_intersection_type(&this_types);
                                 this_parameter = self.create_symbol_with_type(
                                     first_this_parameter_of_union_signatures,
@@ -1547,20 +1542,17 @@ impl Checker {
             self.has_effective_rest_parameter(left) || self.has_effective_rest_parameter(right);
         let needs_extra_rest_element =
             either_has_effective_rest && !self.has_effective_rest_parameter(longest);
-        let mut params: Vec<SymbolId> = vec![
-            SymbolId::NIL;
-            (longest_count + if needs_extra_rest_element { 1 } else { 0 })
-                as usize
-        ];
+        let mut params: Vec<SymbolId> =
+            vec![SymbolId::NIL; (longest_count + i32::from(needs_extra_rest_element)) as usize];
         for i in 0..longest_count {
             let mut longest_param_type = self.try_get_type_at_position(longest, i);
             if longest == right {
                 longest_param_type = self.instantiate_type(longest_param_type, mapper);
             }
-            let mut shorter_param_type = {
-                let pt = self.try_get_type_at_position(shorter, i);
-                if pt.is_some() { pt } else { self.unknown_type }
-            };
+            let mut shorter_param_type = self
+                .try_get_type_at_position(shorter, i)
+                .get()
+                .unwrap_or(self.unknown_type);
             if shorter == right {
                 shorter_param_type = self.instantiate_type(shorter_param_type, mapper);
             }
@@ -1594,19 +1586,21 @@ impl Checker {
             }
             let param_symbol = self.new_symbol_ex(
                 SymbolFlags::FUNCTION_SCOPED_VARIABLE
-                    | if is_optional && !is_rest_param {
-                        SymbolFlags::OPTIONAL
-                    } else {
-                        SymbolFlags::NONE
-                    },
+                    | if_else(
+                        is_optional && !is_rest_param,
+                        SymbolFlags::OPTIONAL,
+                        SymbolFlags::NONE,
+                    ),
                 param_name.as_str(),
-                if is_rest_param {
-                    CheckFlags::REST_PARAMETER
-                } else if is_optional {
-                    CheckFlags::OPTIONAL_PARAMETER
-                } else {
-                    CheckFlags::NONE
-                },
+                if_else(
+                    is_rest_param,
+                    CheckFlags::REST_PARAMETER,
+                    if_else(
+                        is_optional,
+                        CheckFlags::OPTIONAL_PARAMETER,
+                        CheckFlags::NONE,
+                    ),
+                ),
             );
             let resolved_type = if is_rest_param {
                 self.create_array_type(combined_param_type)

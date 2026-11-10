@@ -253,34 +253,7 @@ impl Checker {
         // new type. The texts, the key and the created type are the same.
         let mut new_types: SmallVec<[TypeId; 4]> = SmallVec::new();
         let mut ends: SmallVec<[usize; 5]> = SmallVec::new();
-        // PERF (tcsplit1): reserve the texts and the direct string literal
-        // spans once, so a long joined text is not copied as it grows. The
-        // reserve stops at the length limit: past it the type is an error.
-        // PERF (perffu1): a span type with one of these flags is not a
-        // literal, a template, a generic index type or a placeholder, so
-        // `add_spans` returns `string` there. Then only the first text,
-        // which is written before the spans, is reserved.
-        const STRING_SPAN: TypeFlags = TypeFlags(
-            TypeFlags::OBJECT.bits()
-                | TypeFlags::UNKNOWN.bits()
-                | TypeFlags::ES_SYMBOL_LIKE.bits()
-                | TypeFlags::VOID.bits()
-                | TypeFlags::NON_PRIMITIVE.bits(),
-        );
-        let mut capacity: usize = texts.iter().map(String::len).sum();
-        for &t in types {
-            let ty = self.ty(t);
-            if ty.flags.intersects(STRING_SPAN) {
-                capacity = texts[0].len();
-                break;
-            }
-            if ty.flags.intersects(TypeFlags::STRING_LITERAL)
-                && let Some(LiteralValue::String(s)) = &ty.as_literal_type().value
-            {
-                capacity += s.len();
-            }
-        }
-        let mut buf = String::with_capacity(capacity.min(MAX_TEMPLATE_LITERAL_TYPE_LENGTH + 1));
+        let mut buf = String::with_capacity(self.template_literal_text_capacity(texts, types));
         buf.push_str(&texts[0]);
         let mut text_length = 0usize; // combined length of the segments already moved into newTexts
         let mut too_large = false;
@@ -402,20 +375,45 @@ impl Checker {
             .copied()
             .unwrap_or_default();
         if t.is_nil() {
-            let mut start = 0;
-            let new_texts: Vec<String> = ends
-                .iter()
-                .map(|&end| {
-                    let text = buf[start..end].to_string();
-                    start = end;
-                    text
-                })
-                .collect();
+            let new_texts = template_texts_of_buffer(&buf, &ends);
             debug_assert_eq!(key, get_template_type_key(&new_texts, &new_types));
             t = self.new_template_literal_type(&new_texts, &new_types);
             self.template_literal_types.insert(key, t);
         }
         t
+    }
+
+    /// PERF (tcsplit1): the bytes `get_template_literal_type` reserves for its
+    /// text buffer: the texts and the direct string literal spans, so a long
+    /// joined text is not copied as it grows. The reserve stops at the length
+    /// limit: past it the type is an error.
+    /// PERF (perffu1): a span type with one of the `STRING_SPAN` flags is not
+    /// a literal, a template, a generic index type or a placeholder, so
+    /// `add_spans` returns `string` there. Then only the first text, which is
+    /// written before the spans, is reserved.
+    #[inline]
+    fn template_literal_text_capacity(&self, texts: &[String], types: &[TypeId]) -> usize {
+        const STRING_SPAN: TypeFlags = TypeFlags(
+            TypeFlags::OBJECT.bits()
+                | TypeFlags::UNKNOWN.bits()
+                | TypeFlags::ES_SYMBOL_LIKE.bits()
+                | TypeFlags::VOID.bits()
+                | TypeFlags::NON_PRIMITIVE.bits(),
+        );
+        let mut capacity: usize = texts.iter().map(String::len).sum();
+        for &t in types {
+            let ty = self.ty(t);
+            if ty.flags.intersects(STRING_SPAN) {
+                capacity = texts[0].len();
+                break;
+            }
+            if ty.flags.intersects(TypeFlags::STRING_LITERAL)
+                && let Some(LiteralValue::String(s)) = &ty.as_literal_type().value
+            {
+                capacity += s.len();
+            }
+        }
+        capacity.min(MAX_TEMPLATE_LITERAL_TYPE_LENGTH + 1)
     }
 
     // Go: checker/checker.go:29856 getTemplateStringForType
@@ -1374,20 +1372,15 @@ impl Checker {
                             contextual_return_type,
                             is_async_generator,
                         );
-                    let yield_type = if iteration_types.yield_type.is_some() {
-                        iteration_types.yield_type
-                    } else {
-                        self.silent_never_type
-                    };
-                    let mut return_type = self.get_contextual_type(node, context_flags);
-                    if return_type.is_nil() {
-                        return_type = self.silent_never_type;
-                    }
-                    let next_type = if iteration_types.next_type.is_some() {
-                        iteration_types.next_type
-                    } else {
-                        self.unknown_type
-                    };
+                    let yield_type = iteration_types
+                        .yield_type
+                        .get()
+                        .unwrap_or(self.silent_never_type);
+                    let return_type = self
+                        .get_contextual_type(node, context_flags)
+                        .get()
+                        .unwrap_or(self.silent_never_type);
+                    let next_type = iteration_types.next_type.get().unwrap_or(self.unknown_type);
                     let generator_type = self.create_generator_type(
                         yield_type,
                         return_type,
@@ -1690,6 +1683,19 @@ fn end_template_text(buf: &mut String, ends: &mut SmallVec<[usize; 5]>) {
         buf.push_str(&text);
     }
     ends.push(buf.len());
+}
+
+/// The texts of `get_template_literal_type` kept back to back in `buf` (text
+/// `k` ends at `ends[k]`) as Go's `newTexts`, for a new type.
+fn template_texts_of_buffer(buf: &str, ends: &[usize]) -> Vec<String> {
+    let mut start = 0;
+    ends.iter()
+        .map(|&end| {
+            let text = buf[start..end].to_string();
+            start = end;
+            text
+        })
+        .collect()
 }
 
 /// `get_template_type_key` for texts kept back to back in `buf`, where text

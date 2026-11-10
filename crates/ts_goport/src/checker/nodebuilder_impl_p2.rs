@@ -1864,20 +1864,21 @@ impl Checker {
             // Go keys the map by `ast.GetSymbolId(symbol)`, which gives the
             // symbol its global id (`get_symbol_id`).
             get_symbol_id(&self.symbols, symbol);
+            // A missing entry reads as nil, as Go's `!ok` case does.
             let cached = b
                 .borrow()
                 .ctx
                 .borrow()
                 .enclosing_symbol_types
                 .get(&symbol)
-                .copied();
-            match cached {
-                Some(t) if t.is_some() => return_type = t,
-                _ => {
-                    let signature_return_type = self.get_return_type_of_signature(signature);
-                    let mapper = nb_mapper(b);
-                    return_type = self.instantiate_type(signature_return_type, mapper);
-                }
+                .copied()
+                .unwrap_or(TypeId::NIL);
+            if cached.is_some() {
+                return_type = cached;
+            } else {
+                let signature_return_type = self.get_return_type_of_signature(signature);
+                let mapper = nb_mapper(b);
+                return_type = self.instantiate_type(signature_return_type, mapper);
             }
         } else {
             return_type = self.get_return_type_of_signature(signature);
@@ -1892,37 +1893,25 @@ impl Checker {
                 let declaration_symbol = self.get_symbol_of_declaration(declaration);
                 let restore = self.add_symbol_type_to_context(b, declaration_symbol, return_type);
                 let pc = b.borrow().pc;
-                let mut pt = Some(pc.get_return_type_of_signature(&self.symbols, declaration));
+                let pt = pc.get_return_type_of_signature(&self.symbols, declaration);
                 let report_fallback = !b.borrow().ctx.borrow().suppress_report_inference_fallback;
-                let equivalent = match &pt {
-                    Some(p) => self.pseudo_type_equivalent_to_type(
-                        b,
-                        p,
-                        return_type,
-                        false,
-                        report_fallback,
-                    ),
-                    None => false,
-                };
-                if equivalent {
+                if self.pseudo_type_equivalent_to_type(b, &pt, return_type, false, report_fallback)
+                {
                     // Also verify the pseudo type captures any inferred type predicate, not just the boolean return type.
                     // The pseudochecker is unaware of inferred type predicates, so it produces boolean where
                     // the checker infers e.g. `x is string`.
                     let type_predicate = self.get_type_predicate_of_signature(signature);
-                    if type_predicate.is_some() {
-                        let matches = match &pt {
-                            Some(p) => {
-                                self.pseudo_return_type_matches_predicate(b, p, type_predicate)
-                            }
-                            None => false,
-                        };
-                        if !matches {
-                            if !b.borrow().ctx.borrow().suppress_report_inference_fallback {
-                                nb_tracker(b).report_inference_fallback(self, declaration);
-                            }
-                            pt = None;
+                    // Go sets `pt = nil` here.
+                    let pt = if type_predicate.is_some()
+                        && !self.pseudo_return_type_matches_predicate(b, &pt, type_predicate)
+                    {
+                        if !b.borrow().ctx.borrow().suppress_report_inference_fallback {
+                            nb_tracker(b).report_inference_fallback(self, declaration);
                         }
-                    }
+                        None
+                    } else {
+                        Some(pt)
+                    };
                     if let Some(p) = &pt {
                         // !!! TODO: If annotated type node is a reference with insufficient type arguments, we should still fall back to type serialization
                         // see: canReuseTypeNodeAnnotation in strada for context
@@ -1976,65 +1965,58 @@ impl Checker {
         };
         if !components.is_empty() {
             // Index info is derived from object or class computed property names (plus explicit named members) - we can clone those instead of writing out the result computed index signature
-            let mut all_component_computed_names_serializable =
-                nb_enclosing_declaration(b).is_some();
-            if all_component_computed_names_serializable {
-                for &c in &components {
-                    if !self.is_trivially_serializable_computed_name(b, c) {
-                        all_component_computed_names_serializable = false;
-                        break;
-                    }
-                }
-            }
+            let all_component_computed_names_serializable = nb_enclosing_declaration(b).is_some()
+                && components
+                    .iter()
+                    .all(|&c| self.is_trivially_serializable_computed_name(b, c));
             if all_component_computed_names_serializable {
                 // Only use computed name serialization form if all components are visible and take the `a.b.c` form
-                let mut new_components: Vec<Node> = Vec::new();
-                for c in components {
+                let new_components: Vec<Node> = components
+                    .into_iter()
                     // skip late bound props that contribute to the index signature - they'll be created by property creation anyway
-                    if !self.has_late_bindable_name(c) {
-                        new_components.push(c);
-                    }
-                }
+                    .filter(|&c| !self.has_late_bindable_name(c))
+                    .collect();
                 let e_ctx = nb_e(b);
                 let mut bailed = false;
-                // PORT: Go `core.Map` visits every component even after a bail, so this loop does too.
-                let mut results: Vec<Node> = Vec::with_capacity(new_components.len());
-                for e in new_components {
-                    let name = self.reuse_node(b, e.name());
-                    if name.is_some() {
-                        // Still need to track visibility even if we've already checked it to paint references as used
-                        let enclosing = nb_enclosing_declaration(b);
-                        self.track_computed_name(b, e.name().expression(), enclosing);
-                        let mut mods = ModifierList::NIL;
-                        if is_readonly {
-                            mods = e_ctx.factory.new_modifier_list(&[e_ctx
-                                .factory
-                                .new_modifier(SyntaxKind::ReadonlyKeyword)]);
+                // PORT: Go `core.Map` visits every component even after a bail, so this map does too.
+                let results: Vec<Node> = new_components
+                    .into_iter()
+                    .map(|e| {
+                        let name = self.reuse_node(b, e.name());
+                        if name.is_some() {
+                            // Still need to track visibility even if we've already checked it to paint references as used
+                            let enclosing = nb_enclosing_declaration(b);
+                            self.track_computed_name(b, e.name().expression(), enclosing);
+                            let mut mods = ModifierList::NIL;
+                            if is_readonly {
+                                mods = e_ctx.factory.new_modifier_list(&[e_ctx
+                                    .factory
+                                    .new_modifier(SyntaxKind::ReadonlyKeyword)]);
+                            }
+                            let mut postfix_token = Node::NIL;
+                            if e.postfix_token().is_some() {
+                                postfix_token = e_ctx.factory.clone_node(e.postfix_token());
+                            }
+                            let current_type_node = if type_node.is_some() {
+                                e_ctx.factory.deep_clone_node(type_node)
+                            } else {
+                                let t = self.get_type_of_symbol(e.symbol());
+                                self.type_to_type_node(b, t)
+                            };
+                            let sig = e_ctx.factory.new_property_signature_declaration(
+                                mods,
+                                name,
+                                postfix_token,
+                                current_type_node,
+                                Node::NIL,
+                            );
+                            set_node_loc(sig, e.loc());
+                            return sig;
                         }
-                        let mut postfix_token = Node::NIL;
-                        if e.postfix_token().is_some() {
-                            postfix_token = e_ctx.factory.clone_node(e.postfix_token());
-                        }
-                        let current_type_node = if type_node.is_some() {
-                            e_ctx.factory.deep_clone_node(type_node)
-                        } else {
-                            let t = self.get_type_of_symbol(e.symbol());
-                            self.type_to_type_node(b, t)
-                        };
-                        let sig = e_ctx.factory.new_property_signature_declaration(
-                            mods,
-                            name,
-                            postfix_token,
-                            current_type_node,
-                            Node::NIL,
-                        );
-                        set_node_loc(sig, e.loc());
-                        results.push(sig);
-                        continue;
-                    }
-                    bailed = true;
-                    results.push(Node::NIL);
-                }
+                        bailed = true;
+                        Node::NIL
+                    })
+                    .collect();
                 if !bailed {
                     return results;
                 }

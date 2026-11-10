@@ -1339,26 +1339,9 @@ impl Checker {
         if origin.is_nil() && includes.intersects(TypeFlags::UNION) {
             let named_unions = self.add_named_unions(Vec::new(), types);
             let mut reduced_types: Vec<TypeId> = Vec::new();
-            // Go: checker/checker.go:26311 `containsType(u.Types(), t)` for
-            // each `t` and named union `u`, until one contains `t`.
-            // PERF: unionsort1. The keys of each named union's types are read
-            // once, when it is first searched, and the key of each `t` once.
-            // The keyed searches make Go's comparisons (`search_keyed_types`).
-            // Before, these searches made most of the union comparisons.
             let mut named_keys: Vec<Vec<(u128, TypeId)>> = vec![Vec::new(); named_unions.len()];
             for &t in &type_set {
-                let key = self.union_sort_key(t);
-                let mut in_named = false;
-                for (i, &u) in named_unions.iter().enumerate() {
-                    if named_keys[i].is_empty() {
-                        named_keys[i] = self.union_sort_keys(self.ty(u).types());
-                    }
-                    if self.search_keyed_types(&named_keys[i], key, t).1 {
-                        in_named = true;
-                        break;
-                    }
-                }
-                if !in_named {
+                if !self.some_named_union_contains_type(&named_unions, &mut named_keys, t) {
                     reduced_types.push(t);
                 }
             }
@@ -1380,16 +1363,40 @@ impl Checker {
                 origin = self.new_union_type(ObjectFlags::NONE, &reduced_types);
             }
         }
-        let object_flags = (if includes.intersects(TypeFlags::NOT_PRIMITIVE_UNION) {
-            ObjectFlags::NONE
-        } else {
-            ObjectFlags::PRIMITIVE_UNION
-        }) | (if includes.intersects(TypeFlags::INTERSECTION) {
-            ObjectFlags::CONTAINS_INTERSECTIONS
-        } else {
-            ObjectFlags::NONE
-        });
+        let object_flags = if_else(
+            includes.intersects(TypeFlags::NOT_PRIMITIVE_UNION),
+            ObjectFlags::NONE,
+            ObjectFlags::PRIMITIVE_UNION,
+        ) | if_else(
+            includes.intersects(TypeFlags::INTERSECTION),
+            ObjectFlags::CONTAINS_INTERSECTIONS,
+            ObjectFlags::NONE,
+        );
         self.get_union_type_from_sorted_list(&type_set, object_flags, alias, origin)
+    }
+
+    /// The named-union test, part of Go `getUnionTypeWorker`: its
+    /// `core.Some(namedUnions, func(u) { return containsType(u.Types(), t) })`
+    /// (checker.go:26311).
+    /// PERF: unionsort1. The keys of each named union's types are read once,
+    /// when it is first searched (`named_keys[i]` stays empty until then), and
+    /// the key of `t` once. The keyed searches make Go's comparisons
+    /// (`search_keyed_types`). Before, these searches made most of the union
+    /// comparisons.
+    #[inline]
+    fn some_named_union_contains_type(
+        &mut self,
+        named_unions: &[TypeId],
+        named_keys: &mut [Vec<(u128, TypeId)>],
+        t: TypeId,
+    ) -> bool {
+        let key = self.union_sort_key(t);
+        named_unions.iter().zip(named_keys).any(|(&u, keys)| {
+            if keys.is_empty() {
+                *keys = self.union_sort_keys(self.ty(u).types());
+            }
+            self.search_keyed_types(keys, key, t).1
+        })
     }
 
     // This function assumes the constituent type list is sorted and deduplicated.
@@ -1718,19 +1725,15 @@ impl Checker {
         // We assume that redundant primitive types have already been removed from the types array and that there
         // are no any and unknown types in the array. Thus, the only possible supertypes for primitive types are empty
         // object types, and if none of those are present we can exclude primitive types from the subtype check.
-        let mut has_empty_object = false;
-        if has_object_types {
-            for &t in types.iter() {
-                if self.ty(t).flags.intersects(TypeFlags::OBJECT) && !self.is_generic_mapped_type(t)
-                {
-                    self.resolve_structured_type_members(t);
-                    if self.is_empty_resolved_type(t) {
-                        has_empty_object = true;
-                        break;
+        let has_empty_object = has_object_types
+            && types.iter().any(|&t| {
+                self.ty(t).flags.intersects(TypeFlags::OBJECT)
+                    && !self.is_generic_mapped_type(t)
+                    && {
+                        self.resolve_structured_type_members(t);
+                        self.is_empty_resolved_type(t)
                     }
-                }
-            }
-        }
+            });
         let length = types.len();
         let mut i = length;
         let mut count: usize = 0;
@@ -1743,21 +1746,21 @@ impl Checker {
                 // individual constituents of that union. For example, `T extends A | B` is a subtype of `A | B`, but not
                 // a subtype of just `A` or just `B`. When we encounter such a type parameter, we therefore check if the
                 // type parameter is a subtype of a union of all the other types.
-                if source_flags.intersects(TypeFlags::TYPE_PARAMETER) {
-                    let base = self.get_base_constraint_or_type(source);
-                    if self.ty(base).flags.intersects(TypeFlags::UNION) {
-                        let never = self.never_type;
-                        let others: Vec<TypeId> = types
-                            .iter()
-                            .map(|&t| if t == source { never } else { t })
-                            .collect();
-                        let others_union = self.get_union_type(&others);
-                        let relation = self.strict_subtype_relation.clone();
-                        if self.is_type_related_to(source, others_union, &relation) {
-                            types.remove(i);
-                        }
-                        continue;
+                if source_flags.intersects(TypeFlags::TYPE_PARAMETER)
+                    && let base = self.get_base_constraint_or_type(source)
+                    && self.ty(base).flags.intersects(TypeFlags::UNION)
+                {
+                    let never = self.never_type;
+                    let others: Vec<TypeId> = types
+                        .iter()
+                        .map(|&t| if t == source { never } else { t })
+                        .collect();
+                    let others_union = self.get_union_type(&others);
+                    let relation = self.strict_subtype_relation.clone();
+                    if self.is_type_related_to(source, others_union, &relation) {
+                        types.remove(i);
                     }
+                    continue;
                 }
                 // Find the first property with a unit type, if any. When constituents have a property by the same name
                 // but of a different unit type, we can quickly disqualify them from subtype checks. This helps subtype
@@ -1769,13 +1772,14 @@ impl Checker {
                         | TypeFlags::INTERSECTION
                         | TypeFlags::INSTANTIABLE_NON_PRIMITIVE,
                 ) {
-                    for p in self.get_properties_of_type(source) {
-                        let prop_type = self.get_type_of_symbol(p);
-                        if self.is_unit_type(prop_type) {
-                            key_property = p;
-                            break;
-                        }
-                    }
+                    key_property = self
+                        .get_properties_of_type(source)
+                        .into_iter()
+                        .find(|&p| {
+                            let prop_type = self.get_type_of_symbol(p);
+                            self.is_unit_type(prop_type)
+                        })
+                        .unwrap_or(SymbolId::NIL);
                 }
                 if key_property.is_some() {
                     let prop_type = self.get_type_of_symbol(key_property);

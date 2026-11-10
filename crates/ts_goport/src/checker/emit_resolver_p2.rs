@@ -702,144 +702,164 @@ impl EmitResolver {
     ) -> Vec<Node> {
         let container = self.emit_context().parse_node(container);
         self.with_checker(|c| {
-            let sym = container.symbol();
-            let sym_type = c.get_type_of_symbol(sym);
-            let static_infos = c.get_index_infos_of_type(sym_type).to_vec();
-            let instance_index_symbol = c.get_index_symbol(sym);
-            let mut instance_infos: Vec<IndexInfoId> = Vec::new();
-            if instance_index_symbol.is_some() {
-                // PORT: Go collects `maps.Values` of a Go map, whose order is random. This
-                // uses the symbol table's own order.
-                let members = c.get_members_of_symbol(sym);
-                let sibling_symbols = c.symbols.values(members);
-                instance_infos =
-                    c.get_index_infos_of_index_symbol(instance_index_symbol, &sibling_symbols);
+            self.create_late_bound_index_signatures_locked(
+                c,
+                container,
+                enclosing_declaration,
+                flags,
+                internal_flags,
+                tracker,
+            )
+        })
+    }
+
+    // Go: checker/emitresolver.go:746 CreateLateBoundIndexSignatures
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn create_late_bound_index_signatures_locked(
+        &self,
+        c: &mut Checker,
+        container: Node,
+        enclosing_declaration: Node,
+        flags: NodeBuilderFlags,
+        internal_flags: InternalNodeBuilderFlags,
+        tracker: EmitSymbolTracker,
+    ) -> Vec<Node> {
+        let sym = container.symbol();
+        let sym_type = c.get_type_of_symbol(sym);
+        let static_infos = c.get_index_infos_of_type(sym_type).to_vec();
+        let instance_index_symbol = c.get_index_symbol(sym);
+        let mut instance_infos: Vec<IndexInfoId> = Vec::new();
+        if instance_index_symbol.is_some() {
+            // PORT: Go collects `maps.Values` of a Go map, whose order is random. This
+            // uses the symbol table's own order.
+            let members = c.get_members_of_symbol(sym);
+            let sibling_symbols = c.symbols.values(members);
+            instance_infos =
+                c.get_index_infos_of_index_symbol(instance_index_symbol, &sibling_symbols);
+        }
+
+        let request_node_builder = self.node_builder(c);
+        let factory = &self.emit_context().factory;
+
+        let mut result: Vec<Node> = Vec::new();
+        for (i, info_list) in [static_infos, instance_infos].into_iter().enumerate() {
+            let mut is_static = true;
+            if i > 0 {
+                is_static = false;
             }
-
-            let request_node_builder = self.node_builder(c);
-            let factory = &self.emit_context().factory;
-
-            let mut result: Vec<Node> = Vec::new();
-            for (i, info_list) in [static_infos, instance_infos].into_iter().enumerate() {
-                let mut is_static = true;
-                if i > 0 {
-                    is_static = false;
-                }
-                if info_list.is_empty() {
+            if info_list.is_empty() {
+                continue;
+            }
+            for info in info_list {
+                if c.index_info(info).declaration.is_some() {
                     continue;
                 }
-                for info in info_list {
-                    if c.index_info(info).declaration.is_some() {
+                if info == c.any_base_type_index_info {
+                    continue; // inherited, but looks like a late-bound signature because it has no declarations
+                }
+                let components = c.index_info(info).components.clone();
+                if !components.is_empty() {
+                    // !!! TODO: Complete late-bound index info support - getObjectLiteralIndexInfo does not yet add late bound components to index signatures
+                    let all_component_computed_names_serializable = enclosing_declaration.is_some()
+                        && components.iter().all(|&comp| {
+                            comp.name().is_some()
+                                && is_computed_property_name(comp.name())
+                                && is_entity_name_expression(comp.name().expression())
+                                && c.is_entity_name_visible(
+                                    comp.name().expression(),
+                                    enclosing_declaration,
+                                    false,
+                                )
+                                .accessibility
+                                    == SymbolAccessibility::ACCESSIBLE
+                        });
+                    if all_component_computed_names_serializable {
+                        for &comp in &components {
+                            if c.has_late_bindable_name(comp) {
+                                // skip late bound props that contribute to the index signature - they'll be preserved via other means
+                                continue;
+                            }
+
+                            let first_identifier = get_first_identifier(comp.name().expression());
+                            let name = c.resolve_name(
+                                first_identifier,
+                                first_identifier.text(),
+                                SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
+                                None,  /*nameNotFoundMessage*/
+                                true,  /*isUse*/
+                                false, /*excludeGlobals*/
+                            );
+                            if name.is_some() {
+                                // PORT: Go calls the interface directly, so a nil tracker panics.
+                                tracker.as_ref().expect("nil SymbolTracker").track_symbol(
+                                    c,
+                                    name,
+                                    enclosing_declaration,
+                                    SymbolFlags::VALUE,
+                                );
+                            }
+
+                            let mut mods: Option<Vec<Node>> = if is_static {
+                                Some(vec![factory.new_modifier(SyntaxKind::StaticKeyword)])
+                            } else {
+                                None
+                            };
+                            if c.index_info(info).is_readonly {
+                                mods.get_or_insert_with(Vec::new)
+                                    .push(factory.new_modifier(SyntaxKind::ReadonlyKeyword));
+                            }
+
+                            let comp_symbol = comp.symbol();
+                            let comp_type = c.get_type_of_symbol(comp_symbol);
+                            let type_node = c.node_builder_type_to_type_node(
+                                &request_node_builder,
+                                comp_type,
+                                enclosing_declaration,
+                                flags,
+                                internal_flags,
+                                tracker.clone(),
+                            );
+                            let decl = factory.new_property_declaration(
+                                match &mods {
+                                    Some(mods) => factory.new_modifier_list(mods),
+                                    None => ModifierList::NIL,
+                                },
+                                comp.name(),
+                                comp.question_token(),
+                                type_node,
+                                Node::NIL,
+                            );
+                            result.push(decl);
+                        }
                         continue;
                     }
-                    if info == c.any_base_type_index_info {
-                        continue; // inherited, but looks like a late-bound signature because it has no declarations
-                    }
-                    let components = c.index_info(info).components.clone();
-                    if !components.is_empty() {
-                        // !!! TODO: Complete late-bound index info support - getObjectLiteralIndexInfo does not yet add late bound components to index signatures
-                        let all_component_computed_names_serializable = enclosing_declaration
-                            .is_some()
-                            && components.iter().all(|&comp| {
-                                comp.name().is_some()
-                                    && is_computed_property_name(comp.name())
-                                    && is_entity_name_expression(comp.name().expression())
-                                    && c.is_entity_name_visible(
-                                        comp.name().expression(),
-                                        enclosing_declaration,
-                                        false,
-                                    )
-                                    .accessibility
-                                        == SymbolAccessibility::ACCESSIBLE
-                            });
-                        if all_component_computed_names_serializable {
-                            for &comp in &components {
-                                if c.has_late_bindable_name(comp) {
-                                    // skip late bound props that contribute to the index signature - they'll be preserved via other means
-                                    continue;
-                                }
-
-                                let first_identifier =
-                                    get_first_identifier(comp.name().expression());
-                                let name = c.resolve_name(
-                                    first_identifier,
-                                    first_identifier.text(),
-                                    SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
-                                    None,  /*nameNotFoundMessage*/
-                                    true,  /*isUse*/
-                                    false, /*excludeGlobals*/
-                                );
-                                if name.is_some() {
-                                    // PORT: Go calls the interface directly, so a nil tracker panics.
-                                    tracker.as_ref().expect("nil SymbolTracker").track_symbol(
-                                        c,
-                                        name,
-                                        enclosing_declaration,
-                                        SymbolFlags::VALUE,
-                                    );
-                                }
-
-                                let mut mods: Option<Vec<Node>> = if is_static {
-                                    Some(vec![factory.new_modifier(SyntaxKind::StaticKeyword)])
-                                } else {
-                                    None
-                                };
-                                if c.index_info(info).is_readonly {
-                                    mods.get_or_insert_with(Vec::new)
-                                        .push(factory.new_modifier(SyntaxKind::ReadonlyKeyword));
-                                }
-
-                                let comp_symbol = comp.symbol();
-                                let comp_type = c.get_type_of_symbol(comp_symbol);
-                                let type_node = c.node_builder_type_to_type_node(
-                                    &request_node_builder,
-                                    comp_type,
-                                    enclosing_declaration,
-                                    flags,
-                                    internal_flags,
-                                    tracker.clone(),
-                                );
-                                let decl = factory.new_property_declaration(
-                                    match &mods {
-                                        Some(mods) => factory.new_modifier_list(mods),
-                                        None => ModifierList::NIL,
-                                    },
-                                    comp.name(),
-                                    comp.question_token(),
-                                    type_node,
-                                    Node::NIL,
-                                );
-                                result.push(decl);
-                            }
-                            continue;
-                        }
-                    }
-                    let mut node = c.node_builder_index_info_to_index_signature_declaration(
-                        &request_node_builder,
-                        info,
-                        enclosing_declaration,
-                        flags,
-                        internal_flags,
-                        tracker.clone(),
+                }
+                let mut node = c.node_builder_index_info_to_index_signature_declaration(
+                    &request_node_builder,
+                    info,
+                    enclosing_declaration,
+                    flags,
+                    internal_flags,
+                    tracker.clone(),
+                );
+                if node.is_some() && is_static {
+                    let mut mod_nodes = vec![factory.new_modifier(SyntaxKind::StaticKeyword)];
+                    mod_nodes.extend(node.modifier_nodes().iter());
+                    let mods = factory.new_modifier_list(&mod_nodes);
+                    node = factory.update_index_signature_declaration(
+                        node,
+                        mods,
+                        node.parameter_list(),
+                        node.type_(),
                     );
-                    if node.is_some() && is_static {
-                        let mut mod_nodes = vec![factory.new_modifier(SyntaxKind::StaticKeyword)];
-                        mod_nodes.extend(node.modifier_nodes().iter());
-                        let mods = factory.new_modifier_list(&mod_nodes);
-                        node = factory.update_index_signature_declaration(
-                            node,
-                            mods,
-                            node.parameter_list(),
-                            node.type_(),
-                        );
-                    }
-                    if node.is_some() {
-                        result.push(node);
-                    }
+                }
+                if node.is_some() {
+                    result.push(node);
                 }
             }
-            result
-        })
+        }
+        result
     }
 
     // Go: checker/emitresolver.go:836 GetEffectiveDeclarationFlags
@@ -867,114 +887,123 @@ impl EmitResolver {
         // typeName = emitContext.ParseNode(typeName)
         // location = emitContext.ParseNode(location)
         self.with_checker(|c| {
-            if type_name.is_nil() || location.is_nil() {
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            // Resolve the symbol as a value to ensure the type can be reached at runtime during emit.
-            let mut is_type_only = false;
-            if is_qualified_name(type_name) {
-                let root_value_symbol = c.resolve_entity_name(
-                    get_first_identifier(type_name),
-                    SymbolFlags::VALUE,
-                    true,
-                    true,
-                    location,
-                );
-
-                if root_value_symbol.is_some() && !c.sym(root_value_symbol).declarations.is_empty()
-                {
-                    is_type_only = c
-                        .sym(root_value_symbol)
-                        .declarations
-                        .iter()
-                        .all(|&d| is_type_only_import_or_export_declaration(d));
-                }
-            }
-            let value_symbol =
-                c.resolve_entity_name(type_name, SymbolFlags::VALUE, true, true, location);
-            let mut resolved_value_symbol = value_symbol;
-            if value_symbol.is_some() && c.sym(value_symbol).flags.intersects(SymbolFlags::ALIAS) {
-                resolved_value_symbol = c.resolve_alias(value_symbol);
-            }
-
-            is_type_only = is_type_only
-                || (value_symbol.is_some()
-                    && c.get_type_only_alias_declaration_ex(value_symbol, SymbolFlags::VALUE)
-                        .is_some());
-
-            // Resolve the symbol as a type so that we can provide a more useful hint for the type serializer.
-            let type_symbol =
-                c.resolve_entity_name(type_name, SymbolFlags::TYPE, true, true, location);
-            let mut resolved_type_symbol = type_symbol;
-            if type_symbol.is_some() && c.sym(type_symbol).flags.intersects(SymbolFlags::ALIAS) {
-                resolved_type_symbol = c.resolve_alias(type_symbol);
-            }
-            // In case the value symbol can't be resolved (e.g. because of missing declarations), use type symbol for reachability check.
-            is_type_only = is_type_only
-                || (type_symbol.is_some()
-                    && c.get_type_only_alias_declaration_ex(type_symbol, SymbolFlags::TYPE)
-                        .is_some());
-
-            if resolved_value_symbol.is_some() && resolved_value_symbol == resolved_type_symbol {
-                let global_promise_symbol = c.get_global_promise_constructor_symbol();
-                if global_promise_symbol.is_some() && resolved_value_symbol == global_promise_symbol
-                {
-                    return TypeReferenceSerializationKind::PROMISE;
-                }
-
-                let constructor_type = c.get_type_of_symbol(resolved_value_symbol);
-                if constructor_type.is_some() && c.is_constructor_type(constructor_type) {
-                    if is_type_only {
-                        return TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE;
-                    }
-                    return TypeReferenceSerializationKind::TYPE_WITH_CONSTRUCT_SIGNATURE_AND_VALUE;
-                }
-            }
-
-            // We might not be able to resolve type symbol so use unknown type in that case (eg error case)
-            if resolved_type_symbol.is_nil() {
-                if is_type_only {
-                    return TypeReferenceSerializationKind::OBJECT_TYPE;
-                }
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            let type_ = c.get_declared_type_of_symbol(resolved_type_symbol);
-            if c.is_error_type(type_) {
-                if is_type_only {
-                    return TypeReferenceSerializationKind::OBJECT_TYPE;
-                }
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            if c.ty(type_).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
-                TypeReferenceSerializationKind::OBJECT_TYPE
-            } else if c.is_type_assignable_to_kind(
-                type_,
-                TypeFlags::VOID | TypeFlags::NULLABLE | TypeFlags::NEVER,
-            ) {
-                TypeReferenceSerializationKind::VOID_NULLABLE_OR_NEVER_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::BOOLEAN_LIKE) {
-                TypeReferenceSerializationKind::BOOLEAN_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::NUMBER_LIKE) {
-                TypeReferenceSerializationKind::NUMBER_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::BIG_INT_LIKE) {
-                TypeReferenceSerializationKind::BIG_INT_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::STRING_LIKE) {
-                TypeReferenceSerializationKind::STRING_LIKE_TYPE
-            } else if c.is_tuple_type(type_) {
-                TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::ES_SYMBOL_LIKE) {
-                TypeReferenceSerializationKind::ES_SYMBOL_TYPE
-            } else if c.is_function_type(type_) {
-                TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE
-            } else if c.is_array_type(type_) {
-                TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
-            } else {
-                TypeReferenceSerializationKind::OBJECT_TYPE
-            }
+            self.get_type_reference_serialization_kind_locked(c, type_name, location)
         })
+    }
+
+    // Go: checker/emitresolver.go:850 GetTypeReferenceSerializationKind
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn get_type_reference_serialization_kind_locked(
+        &self,
+        c: &mut Checker,
+        type_name: Node,
+        location: Node,
+    ) -> TypeReferenceSerializationKind {
+        if type_name.is_nil() || location.is_nil() {
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        // Resolve the symbol as a value to ensure the type can be reached at runtime during emit.
+        let mut is_type_only = false;
+        if is_qualified_name(type_name) {
+            let root_value_symbol = c.resolve_entity_name(
+                get_first_identifier(type_name),
+                SymbolFlags::VALUE,
+                true,
+                true,
+                location,
+            );
+
+            if root_value_symbol.is_some() && !c.sym(root_value_symbol).declarations.is_empty() {
+                is_type_only = c
+                    .sym(root_value_symbol)
+                    .declarations
+                    .iter()
+                    .all(|&d| is_type_only_import_or_export_declaration(d));
+            }
+        }
+        let value_symbol =
+            c.resolve_entity_name(type_name, SymbolFlags::VALUE, true, true, location);
+        let mut resolved_value_symbol = value_symbol;
+        if value_symbol.is_some() && c.sym(value_symbol).flags.intersects(SymbolFlags::ALIAS) {
+            resolved_value_symbol = c.resolve_alias(value_symbol);
+        }
+
+        is_type_only = is_type_only
+            || (value_symbol.is_some()
+                && c.get_type_only_alias_declaration_ex(value_symbol, SymbolFlags::VALUE)
+                    .is_some());
+
+        // Resolve the symbol as a type so that we can provide a more useful hint for the type serializer.
+        let type_symbol = c.resolve_entity_name(type_name, SymbolFlags::TYPE, true, true, location);
+        let mut resolved_type_symbol = type_symbol;
+        if type_symbol.is_some() && c.sym(type_symbol).flags.intersects(SymbolFlags::ALIAS) {
+            resolved_type_symbol = c.resolve_alias(type_symbol);
+        }
+        // In case the value symbol can't be resolved (e.g. because of missing declarations), use type symbol for reachability check.
+        is_type_only = is_type_only
+            || (type_symbol.is_some()
+                && c.get_type_only_alias_declaration_ex(type_symbol, SymbolFlags::TYPE)
+                    .is_some());
+
+        if resolved_value_symbol.is_some() && resolved_value_symbol == resolved_type_symbol {
+            let global_promise_symbol = c.get_global_promise_constructor_symbol();
+            if global_promise_symbol.is_some() && resolved_value_symbol == global_promise_symbol {
+                return TypeReferenceSerializationKind::PROMISE;
+            }
+
+            let constructor_type = c.get_type_of_symbol(resolved_value_symbol);
+            if constructor_type.is_some() && c.is_constructor_type(constructor_type) {
+                if is_type_only {
+                    return TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE;
+                }
+                return TypeReferenceSerializationKind::TYPE_WITH_CONSTRUCT_SIGNATURE_AND_VALUE;
+            }
+        }
+
+        // We might not be able to resolve type symbol so use unknown type in that case (eg error case)
+        if resolved_type_symbol.is_nil() {
+            if is_type_only {
+                return TypeReferenceSerializationKind::OBJECT_TYPE;
+            }
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        let type_ = c.get_declared_type_of_symbol(resolved_type_symbol);
+        if c.is_error_type(type_) {
+            if is_type_only {
+                return TypeReferenceSerializationKind::OBJECT_TYPE;
+            }
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        if c.ty(type_).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
+            TypeReferenceSerializationKind::OBJECT_TYPE
+        } else if c.is_type_assignable_to_kind(
+            type_,
+            TypeFlags::VOID | TypeFlags::NULLABLE | TypeFlags::NEVER,
+        ) {
+            TypeReferenceSerializationKind::VOID_NULLABLE_OR_NEVER_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::BOOLEAN_LIKE) {
+            TypeReferenceSerializationKind::BOOLEAN_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::NUMBER_LIKE) {
+            TypeReferenceSerializationKind::NUMBER_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::BIG_INT_LIKE) {
+            TypeReferenceSerializationKind::BIG_INT_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::STRING_LIKE) {
+            TypeReferenceSerializationKind::STRING_LIKE_TYPE
+        } else if c.is_tuple_type(type_) {
+            TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::ES_SYMBOL_LIKE) {
+            TypeReferenceSerializationKind::ES_SYMBOL_TYPE
+        } else if c.is_function_type(type_) {
+            TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE
+        } else if c.is_array_type(type_) {
+            TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
+        } else {
+            TypeReferenceSerializationKind::OBJECT_TYPE
+        }
     }
 
     // Go: checker/emitresolver.go:942 GetPropertiesOfContainerFunction
@@ -1046,40 +1075,51 @@ impl EmitResolver {
         }
 
         self.with_checker(|c| {
-            let s = c.get_symbol_of_declaration(node);
-            if s.is_nil() || c.sym(s).parent.is_nil() {
-                return false;
+            self.is_this_property_assignment_declaration_redundant_locked(c, node)
+        })
+    }
+
+    // Go: checker/emitresolver.go:976 IsThisPropertyAssignmentDeclarationRedundant
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn is_this_property_assignment_declaration_redundant_locked(
+        &self,
+        c: &mut Checker,
+        node: Node,
+    ) -> bool {
+        let s = c.get_symbol_of_declaration(node);
+        if s.is_nil() || c.sym(s).parent.is_nil() {
+            return false;
+        }
+        let parent = c.sym(s).parent;
+        let parent_type = c.get_declared_type_of_symbol(parent);
+        if parent_type.is_nil() {
+            return false;
+        }
+        let name = c.sym(s).name.clone();
+        for base in c.get_base_types(parent_type) {
+            let base_prop = c.get_property_of_type(base, &name);
+            if base_prop.is_nil() {
+                continue;
             }
-            let parent = c.sym(s).parent;
-            let parent_type = c.get_declared_type_of_symbol(parent);
-            if parent_type.is_nil() {
-                return false;
+            if c.sym(base_prop)
+                .flags
+                .intersects(SymbolFlags::ACCESSOR | SymbolFlags::METHOD | SymbolFlags::FUNCTION)
+            {
+                return true;
             }
-            let name = c.sym(s).name.clone();
-            for base in c.get_base_types(parent_type) {
-                let base_prop = c.get_property_of_type(base, &name);
-                if base_prop.is_nil() {
-                    continue;
-                }
-                if c.sym(base_prop)
-                    .flags
-                    .intersects(SymbolFlags::ACCESSOR | SymbolFlags::METHOD | SymbolFlags::FUNCTION)
-                {
+            if c.is_readonly_symbol(base_prop) == c.is_readonly_symbol(s)
+                && (c.sym(s).flags & SymbolFlags::OPTIONAL)
+                    == (c.sym(base_prop).flags & SymbolFlags::OPTIONAL)
+            {
+                let s_type = c.get_type_of_symbol(s);
+                let base_type = c.get_type_of_symbol(base_prop);
+                if c.is_type_identical_to(s_type, base_type) {
                     return true;
                 }
-                if c.is_readonly_symbol(base_prop) == c.is_readonly_symbol(s)
-                    && (c.sym(s).flags & SymbolFlags::OPTIONAL)
-                        == (c.sym(base_prop).flags & SymbolFlags::OPTIONAL)
-                {
-                    let s_type = c.get_type_of_symbol(s);
-                    let base_type = c.get_type_of_symbol(base_prop);
-                    if c.is_type_identical_to(s_type, base_type) {
-                        return true;
-                    }
-                }
             }
-            false
-        })
+        }
+        false
     }
 }
 

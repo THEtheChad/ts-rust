@@ -1761,11 +1761,7 @@ impl Checker {
                     .intersects(NodeBuilderFlags::WRITE_ARRAY_AS_GENERIC_TYPE)
             }) {
                 let type_argument_node = self.type_to_type_node(b, type_arguments[0]);
-                let name = if target == self.global_array_type {
-                    "Array"
-                } else {
-                    "ReadonlyArray"
-                };
+                let name = if_else(target == self.global_array_type, "Array", "ReadonlyArray");
                 let target_symbol = self.ty(target).symbol;
                 let type_name = self.nb_new_identifier(b, name, target_symbol);
                 return f
@@ -1804,14 +1800,13 @@ impl Checker {
                         let labeled_element_declaration = element_infos[i].labeled_declaration;
 
                         if labeled_element_declaration.is_some() {
-                            // PORT: Go `core.IfElse` evaluates both arguments, so each
-                            // token and array node is created before the choice.
-                            let dot_dot_dot = f.new_token(SyntaxKind::DotDotDotToken);
-                            let dot_dot_dot = if flags.intersects(ElementFlags::VARIABLE) {
-                                dot_dot_dot
-                            } else {
-                                Node::NIL
-                            };
+                            // Go `core.IfElse` evaluates both arguments, so each token
+                            // and array node is created before the choice, in Go's order.
+                            let dot_dot_dot = if_else(
+                                flags.intersects(ElementFlags::VARIABLE),
+                                f.new_token(SyntaxKind::DotDotDotToken),
+                                Node::NIL,
+                            );
                             let label = self.get_tuple_element_label(
                                 element_infos[i],
                                 SymbolId::NIL,
@@ -1819,28 +1814,24 @@ impl Checker {
                             );
                             let name =
                                 self.nb_new_identifier(b, &label, SymbolId::NIL /*symbol*/);
-                            let question = f.new_token(SyntaxKind::QuestionToken);
-                            let question = if flags.intersects(ElementFlags::OPTIONAL) {
-                                question
-                            } else {
-                                Node::NIL
-                            };
-                            let array_type = f.new_array_type_node(nodes[i]);
-                            let type_node = if flags.intersects(ElementFlags::REST) {
-                                array_type
-                            } else {
-                                nodes[i]
-                            };
+                            let question = if_else(
+                                flags.intersects(ElementFlags::OPTIONAL),
+                                f.new_token(SyntaxKind::QuestionToken),
+                                Node::NIL,
+                            );
+                            let type_node = if_else(
+                                flags.intersects(ElementFlags::REST),
+                                f.new_array_type_node(nodes[i]),
+                                nodes[i],
+                            );
                             nodes[i] =
                                 f.new_named_tuple_member(dot_dot_dot, name, question, type_node);
                         } else if flags.intersects(ElementFlags::VARIABLE) {
-                            let array_type = f.new_array_type_node(nodes[i]);
-                            let type_node = if flags.intersects(ElementFlags::REST) {
-                                array_type
-                            } else {
-                                nodes[i]
-                            };
-                            nodes[i] = f.new_rest_type_node(type_node);
+                            nodes[i] = f.new_rest_type_node(if_else(
+                                flags.intersects(ElementFlags::REST),
+                                f.new_array_type_node(nodes[i]),
+                                nodes[i],
+                            ));
                         } else if flags.intersects(ElementFlags::OPTIONAL) {
                             nodes[i] = f.new_optional_type_node(nodes[i]);
                         }

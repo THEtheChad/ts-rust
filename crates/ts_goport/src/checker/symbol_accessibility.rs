@@ -1271,13 +1271,15 @@ impl Checker {
 
             // This could be a symbol that is not exported in the external module
             // or it could be a symbol from different external module that is not aliased and hence cannot be named
-            let mut symbol_external_module = SymbolId::NIL;
-            for d in self.sym(symbol).declarations.clone() {
-                symbol_external_module = self.get_external_module_container(d);
-                if symbol_external_module.is_some() {
-                    break;
-                }
-            }
+            // core.FirstNonNil
+            let symbol_external_module = self
+                .sym(symbol)
+                .declarations
+                .clone()
+                .into_iter()
+                .map(|d| self.get_external_module_container(d))
+                .find(|module| module.is_some())
+                .unwrap_or(SymbolId::NIL);
             if symbol_external_module.is_some() {
                 let enclosing_external_module =
                     self.get_external_module_container(enclosing_declaration);
@@ -1294,11 +1296,11 @@ impl Checker {
                         accessibility: SymbolAccessibility::CANNOT_BE_NAMED,
                         error_symbol_name,
                         error_module_name,
-                        error_node: if is_in_js_file(enclosing_declaration) {
-                            enclosing_declaration
-                        } else {
-                            Node::NIL
-                        },
+                        error_node: if_else(
+                            is_in_js_file(enclosing_declaration),
+                            enclosing_declaration,
+                            Node::NIL,
+                        ),
                         ..Default::default()
                     };
                 }
