@@ -1609,11 +1609,7 @@ impl Checker {
         //     }
         if is_for_of_statement(expr.parent()) {
             let iterated_type = self.check_right_hand_side_of_for_of(expr.parent());
-            let source_type = if iterated_type.is_some() {
-                iterated_type
-            } else {
-                self.error_type
-            };
+            let source_type = iterated_type.get().unwrap_or(self.error_type);
             return self.check_destructuring_assignment(
                 expr,
                 source_type,
@@ -1625,11 +1621,7 @@ impl Checker {
         //     for ({a } = elems[0];.....) { }
         if is_binary_expression(expr.parent()) {
             let iterated_type = self.get_type_of_expression(expr.parent().right());
-            let source_type = if iterated_type.is_some() {
-                iterated_type
-            } else {
-                self.error_type
-            };
+            let source_type = iterated_type.get().unwrap_or(self.error_type);
             return self.check_destructuring_assignment(
                 expr,
                 source_type,
@@ -1642,11 +1634,7 @@ impl Checker {
         if is_property_assignment(expr.parent()) {
             let node = expr.parent().parent();
             let parent_type = self.get_type_of_assignment_pattern(node);
-            let type_of_parent_object_literal = if parent_type.is_some() {
-                parent_type
-            } else {
-                self.error_type
-            };
+            let type_of_parent_object_literal = parent_type.get().unwrap_or(self.error_type);
             // slices.Index
             let property_index = node
                 .properties()
@@ -1665,11 +1653,7 @@ impl Checker {
         let node = expr.parent();
         //    [{ property1: p1, property2 }] = elems;
         let array_type = self.get_type_of_assignment_pattern(node);
-        let type_of_array_literal = if array_type.is_some() {
-            array_type
-        } else {
-            self.error_type
-        };
+        let type_of_array_literal = array_type.get().unwrap_or(self.error_type);
         let undefined_type = self.undefined_type;
         let iterated_type = self.check_iterated_type_or_element_type(
             IterationUse::DESTRUCTURING,
@@ -1677,11 +1661,7 @@ impl Checker {
             undefined_type,
             expr.parent(),
         );
-        let element_type = if iterated_type.is_some() {
-            iterated_type
-        } else {
-            self.error_type
-        };
+        let element_type = iterated_type.get().unwrap_or(self.error_type);
         // slices.Index
         let element_index = node
             .elements()
