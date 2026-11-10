@@ -123,16 +123,16 @@ impl Checker {
                 } else if self.is_array_like_type(parent_type) {
                     let index_type =
                         self.get_number_literal_type(crate::jsnum::Number(f64::from(index)));
-                    let mut declared_type = self.get_indexed_access_type_or_undefined(
-                        parent_type,
-                        index_type,
-                        access_flags,
-                        declaration.name(),
-                        None,
-                    );
-                    if declared_type.is_nil() {
-                        declared_type = self.error_type;
-                    }
+                    let declared_type = self
+                        .get_indexed_access_type_or_undefined(
+                            parent_type,
+                            index_type,
+                            access_flags,
+                            declaration.name(),
+                            None,
+                        )
+                        .get()
+                        .unwrap_or(self.error_type);
                     t = self.get_flow_type_of_destructuring(declaration, declared_type);
                 } else {
                     t = element_type;
