@@ -579,8 +579,9 @@ struct EmitPool {
     /// synthetic nodes. Else they end with the process and leak them, as
     /// the checker workers do.
     released: Arc<std::sync::atomic::AtomicBool>,
-    /// The jobs sent so far (`emit_pool_job_count`).
-    jobs: usize,
+    /// The jobs sent so far (`emit_job_stats::emit_pool_job_count`).
+    #[cfg(feature = "diagnostics")]
+    jobs: emit_job_stats::PoolJobs,
     /// Each job holds a clone of this token until it ends.
     /// `send_checker_barrier` puts a value in it and takes a new token, so
     /// the value drops when the jobs sent before have ended.
@@ -688,7 +689,8 @@ fn create_emit_pool(count: usize) -> EmitPool {
         queue,
         threads,
         released,
-        jobs: 0,
+        #[cfg(feature = "diagnostics")]
+        jobs: emit_job_stats::PoolJobs::default(),
         token: Arc::default(),
     }
 }
@@ -749,9 +751,6 @@ struct DtsTwin {
     released: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// The jobs sent to d.ts twins in this process (`dts_twin_job_count`).
-static DTS_TWIN_JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// Makes the d.ts twin of this checker worker. It starts from the current
 /// program and its tables, and from an empty synthetic arena that shares
 /// the chunk counters of this thread.
@@ -807,7 +806,8 @@ pub fn send_dts_twin_job<R: Send + 'static>(
             .send(job)
             .expect("d.ts twin stopped");
     });
-    DTS_TWIN_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(feature = "diagnostics")]
+    emit_job_stats::note_dts_twin_job();
     EmitPoolJob(receiver)
 }
 
@@ -834,12 +834,6 @@ fn stop_dts_twin() {
     let _ = twin.thread.join();
 }
 
-/// The number of jobs sent to d.ts twins in this process so far. Tests use
-/// it to see that the twins ran.
-pub fn dts_twin_job_count() -> usize {
-    DTS_TWIN_JOBS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// Sends `jobs` to the emit pool of the current program, in order, and
 /// returns where each result arrives. The first call makes the pool (and
 /// the checker pool, which binds the program) with one thread per job, up
@@ -856,7 +850,8 @@ pub fn send_emit_pool_jobs<R: Send + 'static>(
         let emit = pool
             .emit
             .get_or_insert_with(|| create_emit_pool(emit_thread_count().clamp(1, jobs.len())));
-        emit.jobs += jobs.len();
+        #[cfg(feature = "diagnostics")]
+        emit.jobs.note(jobs.len());
         jobs.into_iter()
             .map(|f| {
                 let (sender, receiver) = std::sync::mpsc::channel();
@@ -881,24 +876,63 @@ pub fn send_emit_pool_jobs<R: Send + 'static>(
     unreachable!("emit pool job on wasm")
 }
 
-/// The number of jobs sent to the emit pool of the current program so far.
-/// Tests use it to see that the pool ran.
-#[cfg(not(target_family = "wasm"))]
-pub fn emit_pool_job_count() -> usize {
-    let id = prog().id;
-    POOLS.with(|pools| {
-        pools
-            .borrow()
-            .get(&id)
-            .and_then(|pool| pool.emit.as_ref())
-            .map_or(0, |emit| emit.jobs)
-    })
-}
+/// Diagnostics builds: the counts of the emit jobs that went to other
+/// threads, which tests read to see that the emit pool and the d.ts twins
+/// ran (`tests/emit_pool.rs`, `tests/emit_context.rs`). Shipped builds keep
+/// none of them.
+#[cfg(feature = "diagnostics")]
+pub mod emit_job_stats {
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// wasm has no emit pool.
-#[cfg(target_family = "wasm")]
-pub fn emit_pool_job_count() -> usize {
-    0
+    /// The jobs sent to d.ts twins in this process (`dts_twin_job_count`).
+    static DTS_TWIN_JOBS: AtomicUsize = AtomicUsize::new(0);
+
+    /// The JS prints sent to twins in this process (`js_twin_print_count`).
+    static JS_TWIN_PRINTS: AtomicUsize = AtomicUsize::new(0);
+
+    pub(super) fn note_dts_twin_job() {
+        DTS_TWIN_JOBS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn note_js_twin_print() {
+        JS_TWIN_PRINTS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The number of jobs sent to d.ts twins in this process so far.
+    pub fn dts_twin_job_count() -> usize {
+        DTS_TWIN_JOBS.load(Ordering::Relaxed)
+    }
+
+    /// The number of JS prints sent to twins in this process so far.
+    pub fn js_twin_print_count() -> usize {
+        JS_TWIN_PRINTS.load(Ordering::Relaxed)
+    }
+
+    /// The jobs sent to an emit pool so far (`EmitPool::jobs`).
+    #[cfg(not(target_family = "wasm"))]
+    #[derive(Default)]
+    pub(super) struct PoolJobs(usize);
+
+    #[cfg(not(target_family = "wasm"))]
+    impl PoolJobs {
+        pub(super) fn note(&mut self, jobs: usize) {
+            self.0 += jobs;
+        }
+    }
+
+    /// The number of jobs sent to the emit pool of the current program so
+    /// far. wasm has no emit pool.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn emit_pool_job_count() -> usize {
+        let id = super::prog().id;
+        super::POOLS.with(|pools| {
+            pools
+                .borrow()
+                .get(&id)
+                .and_then(|pool| pool.emit.as_ref())
+                .map_or(0, |emit| emit.jobs.0)
+        })
+    }
 }
 
 /// Work for one checker worker. It runs on the worker thread, where

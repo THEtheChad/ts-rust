@@ -1904,15 +1904,6 @@ enum TwinTree {
     },
 }
 
-/// The JS prints sent to twins in this process (`js_twin_print_count`).
-static JS_TWIN_PRINTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The number of JS prints sent to twins in this process so far. Tests use
-/// it to see that the twins printed JS files.
-pub fn js_twin_print_count() -> usize {
-    JS_TWIN_PRINTS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 impl TwinPrint {
     /// The print of `emitter` after `transform_js_part` returned `print`.
     /// With `check` (`dts_twin_check_verify`), it prints on this thread too
@@ -1929,7 +1920,8 @@ impl TwinPrint {
         let expected = check.then(|| {
             dts_twin_check_verify::record_print(&emitter, |recorder| recorder.finish_js_part(print))
         });
-        JS_TWIN_PRINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(feature = "diagnostics")]
+        crate::program::emit_job_stats::note_js_twin_print();
         Self::from_parts(
             emitter,
             root,

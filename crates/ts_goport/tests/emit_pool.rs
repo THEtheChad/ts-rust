@@ -30,6 +30,10 @@
 //! (`set_emit_test_panic`) writes the same files and returns the same with
 //! the twins on as with the twins off, with a guard around each file (as the
 //! goport bin has) and without one.
+//!
+//! A `diagnostics` build also checks where the jobs went: it counts the jobs
+//! of the emit pool and the twins (`program::emit_job_stats`). Without it
+//! the tests compare the outputs only.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -40,13 +44,10 @@ use ts_goport::core::enter_program;
 use ts_goport::emitter::emitter::{EmitOnly, EmitTestPanic, set_emit_test_panic};
 use ts_goport::emitter::program_emit::{
     EmitOptions, EmitResult, WriteFile, WriteFileData, combine_emit_results, emit, emit_batch,
-    emit_with, js_twin_print_count,
+    emit_with,
 };
 use ts_goport::options::{CompilerOptions, Tristate};
-use ts_goport::program::{
-    dts_twin_job_count, emit_pool_job_count, format_diagnostic, release_program, source_files,
-    try_load_version,
-};
+use ts_goport::program::{format_diagnostic, release_program, source_files, try_load_version};
 
 /// The d.ts twin check mode (`set_dts_twin_check`): only in a
 /// `diagnostics` feature build; else the twins print without the check.
@@ -57,8 +58,59 @@ fn twin_check(check: Option<bool>) {
     let _ = check;
 }
 
+/// The jobs that the twins got during `f`, and the JS files that they
+/// printed (`twin_totals`).
+fn twin_counts<R>(f: impl FnOnce() -> R) -> (R, Option<TwinCounts>) {
+    let before = twin_totals();
+    let result = f();
+    let counts =
+        before
+            .zip(twin_totals())
+            .map(
+                |((jobs, js_prints), (jobs_after, js_prints_after))| TwinCounts {
+                    jobs: jobs_after - jobs,
+                    js_prints: js_prints_after - js_prints,
+                },
+            );
+    (result, counts)
+}
+
+/// What `twin_counts` counted.
+struct TwinCounts {
+    /// The jobs sent to the d.ts twins.
+    jobs: usize,
+    /// The JS files that the twins printed.
+    js_prints: usize,
+}
+
+/// The jobs sent to the d.ts twins and the JS files that the twins printed
+/// in this process so far: only a `diagnostics` build counts them
+/// (`program::emit_job_stats`).
+#[cfg(feature = "diagnostics")]
+fn twin_totals() -> Option<(usize, usize)> {
+    use ts_goport::program::emit_job_stats::{dts_twin_job_count, js_twin_print_count};
+    Some((dts_twin_job_count(), js_twin_print_count()))
+}
+
+#[cfg(not(feature = "diagnostics"))]
+fn twin_totals() -> Option<(usize, usize)> {
+    None
+}
+
+/// The jobs that the emit pool of the current program got: only a
+/// `diagnostics` build counts them (`program::emit_job_stats`).
+#[cfg(feature = "diagnostics")]
+fn pool_jobs() -> Option<usize> {
+    Some(ts_goport::program::emit_job_stats::emit_pool_job_count())
+}
+
+#[cfg(not(feature = "diagnostics"))]
+fn pool_jobs() -> Option<usize> {
+    None
+}
+
 /// The tests of this file run one at a time: the d.ts twin mode and the
-/// twin job count are process-wide.
+/// twin counts are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());
 
 const CONFIG: &str = concat!(
@@ -83,11 +135,11 @@ struct Written {
 }
 
 /// The `emit` and `emit_batch` of one load of the fixture, and the number of
-/// jobs its emit pool got.
+/// jobs its emit pool got (`pool_jobs`).
 struct Run {
     emit: Written,
     batch: Written,
-    pool_jobs: usize,
+    pool_jobs: Option<usize>,
 }
 
 #[test]
@@ -96,7 +148,9 @@ fn pool_emits_like_the_checker_threads() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let pool = run(|_| {});
-    assert!(pool.pool_jobs > 0, "the emit pool got no job");
+    if let Some(jobs) = pool.pool_jobs {
+        assert!(jobs > 0, "the emit pool got no job");
+    }
     assert!(
         pool.emit
             .files
@@ -107,21 +161,21 @@ fn pool_emits_like_the_checker_threads() {
     );
 
     let single = run(single_threaded);
-    assert_eq!(
-        single.pool_jobs, 0,
-        "--singleThreaded must not use the pool"
-    );
+    if let Some(jobs) = single.pool_jobs {
+        assert_eq!(jobs, 0, "--singleThreaded must not use the pool");
+    }
     assert_same(&pool, &single, "the pool against --singleThreaded");
 
     let one_checker = run(|options| options.checkers = Some(1));
-    assert!(one_checker.pool_jobs > 0, "--checkers 1 must use the pool");
+    if let Some(jobs) = one_checker.pool_jobs {
+        assert!(jobs > 0, "--checkers 1 must use the pool");
+    }
     assert_same(&pool, &one_checker, "4 checkers against --checkers 1");
 
     let whole = run(no_declarations);
-    assert!(
-        whole.pool_jobs > 0,
-        "without declarations the pool must run"
-    );
+    if let Some(jobs) = whole.pool_jobs {
+        assert!(jobs > 0, "without declarations the pool must run");
+    }
     let whole_single = run(|options| {
         no_declarations(options);
         single_threaded(options);
@@ -143,9 +197,7 @@ fn dts_twins_print_like_the_checker_threads() {
         |options| options.checkers = Some(1),
     ] {
         twin_check(Some(true));
-        let twin_jobs = dts_twin_job_count();
-        let twins = run(edit);
-        let twin_jobs = dts_twin_job_count() - twin_jobs;
+        let (twins, counts) = twin_counts(|| run(edit));
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
         let checkers = run(|options| {
@@ -153,7 +205,9 @@ fn dts_twins_print_like_the_checker_threads() {
             single_threaded(options);
         });
 
-        assert!(twin_jobs > 0, "the d.ts twins got no job");
+        if let Some(counts) = counts {
+            assert!(counts.jobs > 0, "the d.ts twins got no job");
+        }
         assert!(
             twins
                 .emit
@@ -185,11 +239,7 @@ fn twins_print_js_like_the_checker_threads() {
         ),
     ] {
         twin_check(Some(true));
-        let js_prints = js_twin_print_count();
-        let twin_jobs = dts_twin_job_count();
-        let twins = run_config(JS_TWIN_CONFIG, edit);
-        let js_prints = js_twin_print_count() - js_prints;
-        let twin_jobs = dts_twin_job_count() - twin_jobs;
+        let (twins, counts) = twin_counts(|| run_config(JS_TWIN_CONFIG, edit));
         twin_check(None);
         // `--singleThreaded` prints every part on its checker thread.
         let checkers = run_config(JS_TWIN_CONFIG, |options| {
@@ -197,13 +247,15 @@ fn twins_print_js_like_the_checker_threads() {
             single_threaded(options);
         });
 
-        assert!(twin_jobs > 0, "the twins got no job");
-        // `emit` and `emit_batch` each print the 3 files.
-        assert_eq!(
-            js_prints,
-            if prints_js { 6 } else { 0 },
-            "JS prints on the twins"
-        );
+        if let Some(counts) = counts {
+            assert!(counts.jobs > 0, "the twins got no job");
+            // `emit` and `emit_batch` each print the 3 files.
+            assert_eq!(
+                counts.js_prints,
+                if prints_js { 6 } else { 0 },
+                "JS prints on the twins"
+            );
+        }
         assert_eq!(
             twins.emit.files.len(),
             checkers.emit.files.len(),
@@ -230,13 +282,16 @@ fn twin_panics_write_like_the_checker_threads() {
     for step in [EmitTestPanic::DeclarationTransforms, EmitTestPanic::JsPrint] {
         set_emit_test_panic(Some((step, "/src/model.ts")));
         twin_check(Some(false));
-        let js_prints = js_twin_print_count();
-        let twins = run_panic(JS_TWIN_CONFIG);
-        let js_prints = js_twin_print_count() - js_prints;
+        let (twins, counts) = twin_counts(|| run_panic(JS_TWIN_CONFIG));
         twin_check(None);
         set_emit_test_panic(None);
 
-        assert!(js_prints > 0, "{step:?}: the twins printed no JS file");
+        if let Some(counts) = counts {
+            assert!(
+                counts.js_prints > 0,
+                "{step:?}: the twins printed no JS file"
+            );
+        }
         assert_eq!(twins.guard_panics, 1, "{step:?}: guarded panics");
         assert!(
             twins.panic.as_deref().is_some_and(
@@ -397,7 +452,7 @@ fn run_config(config: &str, edit: impl FnOnce(&mut CompilerOptions)) -> Run {
         Run {
             emit: emitted,
             batch,
-            pool_jobs: emit_pool_job_count(),
+            pool_jobs: pool_jobs(),
         }
     };
     release_program(program);
