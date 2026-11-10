@@ -152,16 +152,10 @@ impl Fix {
                 } else {
                     None
                 };
-                // Effect-TS/tsgo patch 018: a barrel rewrite imports the
-                // prefix (`import { Effect } from "effect"`).
-                let mut named_binding_name = &f.name;
-                if f.import_kind == lsproto::ImportKind::NAMED && !f.namespace_prefix.is_empty() {
-                    named_binding_name = &f.namespace_prefix;
-                }
                 let named_imports: Vec<NewImportBinding> =
                     if f.import_kind == lsproto::ImportKind::NAMED {
                         vec![NewImportBinding {
-                            name: named_binding_name.clone(),
+                            name: f.new_binding_name().clone(),
                             add_as_type_only: f.add_as_type_only,
                             ..Default::default()
                         }]
@@ -172,14 +166,9 @@ impl Fix {
                 if f.import_kind == lsproto::ImportKind::NAMESPACE
                     || f.import_kind == lsproto::ImportKind::COMMON_JS
                 {
-                    // Effect-TS/tsgo patch 018: the binding takes the prefix.
-                    let mut ns_name = &f.name;
-                    if !f.namespace_prefix.is_empty() {
-                        ns_name = &f.namespace_prefix;
-                    }
                     namespace_like_import = Some(NewImportBinding {
                         kind: f.import_kind,
-                        name: ns_name.clone(),
+                        name: f.new_binding_name().clone(),
                         ..Default::default()
                     });
                 }
@@ -283,6 +272,18 @@ impl Fix {
                 (edits, description, safe)
             }
             _ => crate::core::go_panic("unimplemented fix edit".to_string()),
+        }
+    }
+
+    /// Effect-TS/tsgo patch 018: the name of a new named or namespace import
+    /// binding. A barrel or namespace rewrite imports the prefix
+    /// (`import { Effect } from "effect"`), so the binding takes
+    /// `namespace_prefix` when it is set; otherwise it is Go's `f.Name`.
+    fn new_binding_name(&self) -> &String {
+        if self.namespace_prefix.is_empty() {
+            &self.name
+        } else {
+            &self.namespace_prefix
         }
     }
 }
