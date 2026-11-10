@@ -1301,3 +1301,18 @@ once a **reconciliation step** is built and tested.
 
   Next, as slots free: W2-CC (the rest of checker), W2-FE (frontend,
   execute/build/emit, the "other" ports) and W2-LS.
+- **W2-CA finished** (`t3/checker-code-quality`, head `e587325f7`, 39 commits).
+  - **Own code:** 6/6 targets now ≤ 25.
+  - **Port bloat:** 14/23 targets now below Δ10. The rest is metric residue:
+    a Go tagless `switch` against a Rust else-if chain, and `core.IfElse`.
+    The lane chose not to game the metric with an `if_else` helper or
+    `match () {}`. Root agrees.
+  - **Duplication:** 3.55% → 3.51%.
+  - **Parity full** (`w2-ca/parity-full-bdd395ffa`): PARITY OK.
+  - **icount:** single-threaded cells within ±0.05%.
+  - **Hot-body symbol sizes:** they hold.
+  - **Astra review:** running.
+  - Root removed the lane helper's worktree
+    (`.claude/worktrees/agent-a9ba…`, branch `w2ca-flowskip`), after
+    checking that all 7 of its commits had been cherry-picked.
+- **W2-CC started** in CA's slot: the rest of `checker/`.
