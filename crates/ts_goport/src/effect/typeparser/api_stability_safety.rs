@@ -1251,26 +1251,9 @@ impl ApiStabilitySafetyScan<'_> {
             {
                 return argument.t;
             }
-            if self
-                .materializing
-                .get(&argument.t)
-                .copied()
-                .unwrap_or(false)
-            {
-                return TypeId::NIL;
-            }
-            self.materializing.insert(argument.t, true);
-            let (mapped, replaced) = self.mapped_parameter_value(
-                tp,
-                argument.t,
-                &argument.subst,
-                argument.bindings.as_ref(),
-            );
-            self.materializing.remove(&argument.t);
-            if replaced {
-                return mapped;
-            }
-            return argument.t;
+            return self
+                .guarded_parameter_value(tp, argument.t, argument)
+                .unwrap_or(argument.t);
         }
         if argument.node.is_nil() {
             return TypeId::NIL;
@@ -1294,43 +1277,44 @@ impl ApiStabilitySafetyScan<'_> {
             return intrinsic;
         }
         if argument.node.kind() == SyntaxKind::TypeReference {
-            let symbol = self
-                .a
-                .symbol_at_type_name_node(tp, argument.node.type_name());
-            if symbol.is_some()
-                && tp
-                    .checker
-                    .sym(symbol)
-                    .flags
-                    .intersects(SymbolFlags::TYPE_PARAMETER)
+            let parameter = self.type_reference_parameter(tp, argument.node);
+            if parameter.is_some()
+                && let Some(value) = self.guarded_parameter_value(tp, parameter, argument)
             {
-                self.a.note_materializing_symbol_read(
-                    ApiStabilityMaterializationReadKind::DeclaredType,
-                    symbol,
-                );
-                let parameter = tp.checker.get_declared_type_of_symbol_exported(symbol);
-                if parameter.is_some() {
-                    if self.materializing.get(&parameter).copied().unwrap_or(false) {
-                        return TypeId::NIL;
-                    }
-                    self.materializing.insert(parameter, true);
-                    let (mapped, replaced) = self.mapped_parameter_value(
-                        tp,
-                        parameter,
-                        &argument.subst,
-                        argument.bindings.as_ref(),
-                    );
-                    self.materializing.remove(&parameter);
-                    if replaced {
-                        return mapped;
-                    }
-                }
+                return value;
             }
         }
-        // A concrete argument annotation (a reference to a declaration, an
-        // application, a literal) is only resolved when the guard establishes that
-        // its own resolution is bounded. The nested verification shares this
-        // analysis's work counter and never recurses into the same argument.
+        self.materialize_annotation_if_safe(tp, argument)
+    }
+
+    /// The value that the substitution and bindings of `argument` give the
+    /// type parameter `parameter`: `None` when they do not replace it, nil
+    /// when it is already being materialized (a cycle).
+    fn guarded_parameter_value(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        parameter: TypeId,
+        argument: &ApiStabilitySafetyArg,
+    ) -> Option<TypeId> {
+        if self.materializing.get(&parameter).copied().unwrap_or(false) {
+            return Some(TypeId::NIL);
+        }
+        self.materializing.insert(parameter, true);
+        let (mapped, replaced) =
+            self.mapped_parameter_value(tp, parameter, &argument.subst, argument.bindings.as_ref());
+        self.materializing.remove(&parameter);
+        replaced.then_some(mapped)
+    }
+
+    /// A concrete argument annotation (a reference to a declaration, an
+    /// application, a literal) is only resolved when the guard establishes that
+    /// its own resolution is bounded. The nested verification shares this
+    /// analysis's work counter and never recurses into the same argument.
+    fn materialize_annotation_if_safe(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        argument: &ApiStabilitySafetyArg,
+    ) -> TypeId {
         if self
             .materializing_nodes
             .get(&argument.node)
@@ -2522,25 +2506,7 @@ impl ApiStabilitySafetyScan<'_> {
                 if self.member_has_late_bound_name(member) {
                     return Unknown;
                 }
-                let annotation = member.type_();
-                if annotation.is_nil() && self.relation_operands {
-                    // The relation compares the member's resolved type. A property
-                    // without an annotation is only resolvable by inference (an
-                    // initializer or an implicit `any`), which the guard refuses to
-                    // force unless the checker already materialized the component.
-                    let symbol = self.member_symbol_of_declaration(tp, member);
-                    if symbol.is_some() {
-                        let materialized =
-                            checker_integration::get_resolved_type_of_symbol_if_materialized(
-                                tp.checker, symbol,
-                            );
-                        if materialized.is_some() {
-                            return self.type_value(tp, materialized, subst, bindings, true);
-                        }
-                    }
-                    return Unknown;
-                }
-                self.type_node(tp, annotation, subst, bindings, true)
+                self.property_member_annotation(tp, member, subst, bindings)
             }
             SyntaxKind::MethodSignature
             | SyntaxKind::MethodDeclaration
@@ -2562,6 +2528,36 @@ impl ApiStabilitySafetyScan<'_> {
                 Safe
             }
         }
+    }
+
+    /// A projected property member of [`Self::member_annotation`]: its
+    /// annotation, or for a relation operand without one, its materialized
+    /// type.
+    fn property_member_annotation(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        member: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+    ) -> ApiStabilitySafety {
+        let annotation = member.type_();
+        if annotation.is_some() || !self.relation_operands {
+            return self.type_node(tp, annotation, subst, bindings, true);
+        }
+        // The relation compares the member's resolved type. A property
+        // without an annotation is only resolvable by inference (an
+        // initializer or an implicit `any`), which the guard refuses to
+        // force unless the checker already materialized the component.
+        let symbol = self.member_symbol_of_declaration(tp, member);
+        if symbol.is_some() {
+            let materialized = checker_integration::get_resolved_type_of_symbol_if_materialized(
+                tp.checker, symbol,
+            );
+            if materialized.is_some() {
+                return self.type_value(tp, materialized, subst, bindings, true);
+            }
+        }
+        Unknown
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.functionLikeResolution
@@ -2986,66 +2982,77 @@ impl ApiStabilitySafetyScan<'_> {
                     if type_node.is_nil() {
                         continue;
                     }
-                    // An interface heritage entry is written as a type reference,
-                    // a class heritage entry as an expression with type arguments.
-                    let (base_symbol, arguments) = match type_node.kind() {
-                        SyntaxKind::TypeReference => (
-                            self.a.symbol_at_type_name_node(tp, type_node.type_name()),
-                            type_node.type_argument_list(),
-                        ),
-                        SyntaxKind::ExpressionWithTypeArguments => (
-                            self.a.symbol_at_type_name_node(tp, type_node.expression()),
-                            type_node.type_argument_list(),
-                        ),
-                        _ => continue,
-                    };
-                    if base_symbol.is_nil() {
-                        verdict = combine_safety(verdict, Unknown);
-                        continue;
-                    }
-                    if arguments.is_some() {
-                        verdict = combine_safety(
-                            verdict,
-                            self.type_arguments(tp, arguments, subst, bindings),
-                        );
-                    }
-                    let base_params = tp
-                        .checker
-                        .get_local_type_parameters_of_class_or_interface_or_type_alias_exported(
-                            base_symbol,
-                        );
-                    if base_params.is_empty() {
-                        verdict = combine_safety(
-                            verdict,
-                            self.declaration_structure(tp, base_symbol, subst, bindings, project),
-                        );
-                        continue;
-                    }
-                    let mut args = vec![ApiStabilitySafetyArg::default(); base_params.len()];
-                    for (index, argument) in arguments.nodes().iter().enumerate() {
-                        if index >= base_params.len() || argument.is_nil() {
-                            continue;
-                        }
-                        args[index] = ApiStabilitySafetyArg {
-                            node: argument,
-                            subst: subst.clone(),
-                            bindings: bindings.cloned(),
-                            ..Default::default()
-                        };
-                    }
-                    let frame = Rc::new(ApiStabilitySafetyBinding {
-                        parent: bindings.cloned(),
-                        params: base_params,
-                        args,
-                    });
                     verdict = combine_safety(
                         verdict,
-                        self.declaration_structure(tp, base_symbol, subst, Some(&frame), project),
+                        self.heritage_entry(tp, type_node, subst, bindings, project),
                     );
                 }
             }
         }
         verdict
+    }
+
+    /// One heritage entry `type_node` of [`Self::heritage`]: its type
+    /// arguments, and the base declaration's structure with the base's own
+    /// type parameters bound to those arguments.
+    fn heritage_entry(
+        &mut self,
+        tp: &mut TypeParser<'_>,
+        type_node: Node,
+        subst: &ApiStabilitySubstitution,
+        bindings: Option<&Rc<ApiStabilitySafetyBinding>>,
+        project: bool,
+    ) -> ApiStabilitySafety {
+        // An interface heritage entry is written as a type reference,
+        // a class heritage entry as an expression with type arguments.
+        let (base_symbol, arguments) = match type_node.kind() {
+            SyntaxKind::TypeReference => (
+                self.a.symbol_at_type_name_node(tp, type_node.type_name()),
+                type_node.type_argument_list(),
+            ),
+            SyntaxKind::ExpressionWithTypeArguments => (
+                self.a.symbol_at_type_name_node(tp, type_node.expression()),
+                type_node.type_argument_list(),
+            ),
+            _ => return Safe,
+        };
+        if base_symbol.is_nil() {
+            return Unknown;
+        }
+        let mut verdict = Safe;
+        if arguments.is_some() {
+            verdict = combine_safety(verdict, self.type_arguments(tp, arguments, subst, bindings));
+        }
+        let base_params = tp
+            .checker
+            .get_local_type_parameters_of_class_or_interface_or_type_alias_exported(base_symbol);
+        if base_params.is_empty() {
+            return combine_safety(
+                verdict,
+                self.declaration_structure(tp, base_symbol, subst, bindings, project),
+            );
+        }
+        let mut args = vec![ApiStabilitySafetyArg::default(); base_params.len()];
+        for (index, argument) in arguments.nodes().iter().enumerate() {
+            if index >= base_params.len() || argument.is_nil() {
+                continue;
+            }
+            args[index] = ApiStabilitySafetyArg {
+                node: argument,
+                subst: subst.clone(),
+                bindings: bindings.cloned(),
+                ..Default::default()
+            };
+        }
+        let frame = Rc::new(ApiStabilitySafetyBinding {
+            parent: bindings.cloned(),
+            params: base_params,
+            args,
+        });
+        combine_safety(
+            verdict,
+            self.declaration_structure(tp, base_symbol, subst, Some(&frame), project),
+        )
     }
 
     // Go: typeparser/api_stability_safety.go apiStabilitySafetyScan.memberTable
