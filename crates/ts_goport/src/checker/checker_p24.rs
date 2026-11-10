@@ -1601,17 +1601,19 @@ impl Checker {
                 let mut default_type = self.no_constraint_type;
                 let symbol = self.ty(t).symbol;
                 if symbol.is_some() {
-                    let mut default_declaration = Node::NIL;
-                    for &decl in &self.sym(symbol).declarations {
-                        if is_type_parameter_declaration(decl) {
-                            let d = decl.default_type();
-                            if d.is_some() {
-                                default_declaration = d;
-                                break;
+                    let default_declaration = self
+                        .sym(symbol)
+                        .declarations
+                        .iter()
+                        .map(|&decl| {
+                            if is_type_parameter_declaration(decl) {
+                                decl.default_type()
+                            } else {
+                                Node::NIL
                             }
-                        }
-                    }
-                    if default_declaration.is_some() {
+                        })
+                        .find(|d| d.is_some());
+                    if let Some(default_declaration) = default_declaration {
                         default_type = self.get_type_from_type_node(default_declaration);
                     }
                 }
