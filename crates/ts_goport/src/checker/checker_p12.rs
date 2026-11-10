@@ -654,11 +654,11 @@ impl Checker {
         };
         let result = self.instantiation_expression_get_instantiated_type(&mut state, expr_type);
         self.instantiation_expression_types.insert(key, result);
-        let error_type = if_else(
-            state.has_some_applicable_signature,
-            state.non_applicable_type,
-            expr_type,
-        );
+        let error_type = if state.has_some_applicable_signature {
+            state.non_applicable_type
+        } else {
+            expr_type
+        };
         if error_type.is_some() {
             let source_file = get_source_file_of_node(node);
             let loc = TextRange::new(
