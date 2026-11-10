@@ -393,38 +393,6 @@ pub fn resolve_stability_alias(c: &mut Checker, symbol: SymbolId) -> SymbolId {
     symbol
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Go: rules/stability_api_usage_test.go TestStabilityApiModuleName.
-    #[test]
-    fn stability_api_module_name_matches_go() {
-        for (file, want) in [
-            ("/pkg/src/http/HttpClient.ts", "effect/http/HttpClient"),
-            ("/pkg/dist/http/HttpClient.d.ts", "effect/http/HttpClient"),
-            (
-                "/pkg/dist/dts/http/HttpClient.d.mts",
-                "effect/http/HttpClient",
-            ),
-            (
-                "/pkg/dist/cjs/http/HttpClient.d.cts",
-                "effect/http/HttpClient",
-            ),
-            ("/pkg/dist/http/index.d.ts", "effect/http"),
-            ("/pkg/index.ts", "effect"),
-            ("/pkg/types/client.d.ts", "effect/types/client"),
-            ("/pkg-other/client.ts", ""),
-        ] {
-            assert_eq!(
-                stability_api_module_name("effect", "/pkg", file),
-                want,
-                "{file}"
-            );
-        }
-    }
-}
-
 /// The export symbol of `declaration` in the module `module_symbol`. A
 /// selected overload (for example a call signature of a dual export) carries
 /// its own `__call` symbol rather than the export's, so it is not a module
@@ -478,4 +446,36 @@ fn stability_entry_allows(
     let left = resolve_stability_alias(c, exported);
     let right = resolve_stability_alias(c, symbol);
     c.get_symbol_if_same_reference(left, right).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go: rules/stability_api_usage_test.go TestStabilityApiModuleName.
+    #[test]
+    fn stability_api_module_name_matches_go() {
+        for (file, want) in [
+            ("/pkg/src/http/HttpClient.ts", "effect/http/HttpClient"),
+            ("/pkg/dist/http/HttpClient.d.ts", "effect/http/HttpClient"),
+            (
+                "/pkg/dist/dts/http/HttpClient.d.mts",
+                "effect/http/HttpClient",
+            ),
+            (
+                "/pkg/dist/cjs/http/HttpClient.d.cts",
+                "effect/http/HttpClient",
+            ),
+            ("/pkg/dist/http/index.d.ts", "effect/http"),
+            ("/pkg/index.ts", "effect"),
+            ("/pkg/types/client.d.ts", "effect/types/client"),
+            ("/pkg-other/client.ts", ""),
+        ] {
+            assert_eq!(
+                stability_api_module_name("effect", "/pkg", file),
+                want,
+                "{file}"
+            );
+        }
+    }
 }

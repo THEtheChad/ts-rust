@@ -944,6 +944,81 @@ fn key_patterns_value(patterns: &[KeyPattern]) -> CompilerOptionsValue {
     )
 }
 
+/// A list of strings as a compiler options value.
+fn string_list_value(v: &[String]) -> CompilerOptionsValue {
+    CompilerOptionsValue::List(
+        v.iter()
+            .cloned()
+            .map(CompilerOptionsValue::String)
+            .collect(),
+    )
+}
+
+/// One entry of the `overrides` option of [`EffectPluginOptions::to_value`]:
+/// its non-empty `include` and `exclude` lists and its set options.
+fn override_value(o: &Override) -> CompilerOptionsValue {
+    let mut om = IndexMap::new();
+    if !o.include.is_empty() {
+        om.insert("include".to_string(), string_list_value(&o.include));
+    }
+    if !o.exclude.is_empty() {
+        om.insert("exclude".to_string(), string_list_value(&o.exclude));
+    }
+    let opts = override_options_value(&o.options);
+    if !opts.is_empty() {
+        om.insert("options".to_string(), CompilerOptionsValue::Map(opts));
+    }
+    CompilerOptionsValue::Map(om)
+}
+
+/// The options of an override that it sets.
+fn override_options_value(options: &OverrideOptions) -> IndexMap<String, CompilerOptionsValue> {
+    let mut opts = IndexMap::new();
+    if let Some(sev) = &options.diagnostic_severity {
+        opts.insert("diagnosticSeverity".to_string(), severity_value(sev));
+    }
+    if let Some(n) = options.pipeable_min_arg_count {
+        opts.insert(
+            "pipeableMinArgCount".to_string(),
+            CompilerOptionsValue::Int(n),
+        );
+    }
+    // A nil slice is written as `[]` (json v2), as a non-nil one.
+    if let Some(kp) = &options.key_patterns {
+        opts.insert(
+            "keyPatterns".to_string(),
+            key_patterns_value(kp.as_deref().unwrap_or_default()),
+        );
+    }
+    if let Some(b) = options.extended_key_detection {
+        opts.insert(
+            "extendedKeyDetection".to_string(),
+            CompilerOptionsValue::Bool(b),
+        );
+    }
+    let lists = [
+        ("allowedUnstableApis", &options.allowed_unstable_apis),
+        (
+            "allowedExperimentalApis",
+            &options.allowed_experimental_apis,
+        ),
+        (
+            "allowedDuplicatedPackages",
+            &options.allowed_duplicated_packages,
+        ),
+        ("effectFn", &options.effect_fn),
+    ];
+    for (name, list) in lists {
+        if let Some(p) = list {
+            opts.insert(
+                name.to_string(),
+                string_list_value(p.as_deref().unwrap_or_default()),
+            );
+        }
+    }
+    opts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1200,79 +1275,4 @@ mod tests {
             Some(Some(Vec::new()))
         );
     }
-}
-
-/// A list of strings as a compiler options value.
-fn string_list_value(v: &[String]) -> CompilerOptionsValue {
-    CompilerOptionsValue::List(
-        v.iter()
-            .cloned()
-            .map(CompilerOptionsValue::String)
-            .collect(),
-    )
-}
-
-/// One entry of the `overrides` option of [`EffectPluginOptions::to_value`]:
-/// its non-empty `include` and `exclude` lists and its set options.
-fn override_value(o: &Override) -> CompilerOptionsValue {
-    let mut om = IndexMap::new();
-    if !o.include.is_empty() {
-        om.insert("include".to_string(), string_list_value(&o.include));
-    }
-    if !o.exclude.is_empty() {
-        om.insert("exclude".to_string(), string_list_value(&o.exclude));
-    }
-    let opts = override_options_value(&o.options);
-    if !opts.is_empty() {
-        om.insert("options".to_string(), CompilerOptionsValue::Map(opts));
-    }
-    CompilerOptionsValue::Map(om)
-}
-
-/// The options of an override that it sets.
-fn override_options_value(options: &OverrideOptions) -> IndexMap<String, CompilerOptionsValue> {
-    let mut opts = IndexMap::new();
-    if let Some(sev) = &options.diagnostic_severity {
-        opts.insert("diagnosticSeverity".to_string(), severity_value(sev));
-    }
-    if let Some(n) = options.pipeable_min_arg_count {
-        opts.insert(
-            "pipeableMinArgCount".to_string(),
-            CompilerOptionsValue::Int(n),
-        );
-    }
-    // A nil slice is written as `[]` (json v2), as a non-nil one.
-    if let Some(kp) = &options.key_patterns {
-        opts.insert(
-            "keyPatterns".to_string(),
-            key_patterns_value(kp.as_deref().unwrap_or_default()),
-        );
-    }
-    if let Some(b) = options.extended_key_detection {
-        opts.insert(
-            "extendedKeyDetection".to_string(),
-            CompilerOptionsValue::Bool(b),
-        );
-    }
-    let lists = [
-        ("allowedUnstableApis", &options.allowed_unstable_apis),
-        (
-            "allowedExperimentalApis",
-            &options.allowed_experimental_apis,
-        ),
-        (
-            "allowedDuplicatedPackages",
-            &options.allowed_duplicated_packages,
-        ),
-        ("effectFn", &options.effect_fn),
-    ];
-    for (name, list) in lists {
-        if let Some(p) = list {
-            opts.insert(
-                name.to_string(),
-                string_list_value(p.as_deref().unwrap_or_default()),
-            );
-        }
-    }
-    opts
 }

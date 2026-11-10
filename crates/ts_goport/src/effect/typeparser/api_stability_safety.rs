@@ -3258,79 +3258,6 @@ pub fn declaration_annotation_node_of(declaration: Node) -> Node {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::frontend::parser::{SourceFileParseOptions, parse_source_file};
-
-    fn parse(source: &'static str) -> Node {
-        let opts = SourceFileParseOptions {
-            file_name: "/test.ts".to_string(),
-            ..Default::default()
-        };
-        parse_source_file(&opts, source, ScriptKind::TS).root
-    }
-
-    #[test]
-    fn combine_safety_order() {
-        assert_eq!(combine_safety(Safe, Safe), Safe);
-        assert_eq!(combine_safety(Safe, Unknown), Unknown);
-        assert_eq!(combine_safety(Unknown, Recursive), Recursive);
-        assert_eq!(combine_safety(Recursive, Safe), Recursive);
-    }
-
-    /// The computed names of an interface: `Symbol.iterator` is well known,
-    /// `Symbol.other` and `key` are not.
-    #[test]
-    fn well_known_symbol_names() {
-        let root = parse(
-            "interface I { [Symbol.iterator](): void; [Symbol.other]: 1; [key]: 2; [Other.iterator]: 3 }",
-        );
-        let members = root.statements().get(0).members();
-        let expression = |i: usize| members.get(i).name().expression();
-        assert!(api_stability_well_known_symbol_name(expression(0)));
-        assert_eq!(
-            api_stability_well_known_symbol_display_name(expression(0)),
-            "[Symbol.iterator]"
-        );
-        for i in 1..4 {
-            assert!(!api_stability_well_known_symbol_name(expression(i)));
-            assert_eq!(
-                api_stability_well_known_symbol_display_name(expression(i)),
-                ""
-            );
-        }
-    }
-
-    #[test]
-    fn declaration_annotation_nodes() {
-        let root = parse(
-            "class C { get a(): string { return '' } set b(v: number) {} c = 1 }\ntype T<A, B = string> = A",
-        );
-        let members = root.statements().get(0).members();
-        assert_eq!(
-            declaration_annotation_node_of(members.get(0)).kind(),
-            SyntaxKind::StringKeyword
-        );
-        assert_eq!(
-            declaration_annotation_node_of(members.get(1)).kind(),
-            SyntaxKind::NumberKeyword
-        );
-        assert!(declaration_annotation_node_of(members.get(2)).is_nil());
-        let alias = root.statements().get(1);
-        assert_eq!(
-            declaration_annotation_node_of(alias).kind(),
-            SyntaxKind::TypeReference
-        );
-        let parameters = alias.type_parameter_list().nodes();
-        assert!(parameters.get(0).default_type().is_nil());
-        assert_eq!(
-            parameters.get(1).default_type().kind(),
-            SyntaxKind::StringKeyword
-        );
-    }
-}
-
 /// Calls `f` on the type annotation children of `node` for the structural
 /// kinds that every raw annotation walk (Go `typeNodeMentions*`) follows the
 /// same way: wrapped types (parenthesized, optional, rest, type operator and
@@ -3432,4 +3359,77 @@ pub(crate) fn type_containment_operands_with_substitution(
         return smallvec![substitution.base_type, substitution.constraint];
     }
     type_containment_operands(c, t, flags)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::parser::{SourceFileParseOptions, parse_source_file};
+
+    fn parse(source: &'static str) -> Node {
+        let opts = SourceFileParseOptions {
+            file_name: "/test.ts".to_string(),
+            ..Default::default()
+        };
+        parse_source_file(&opts, source, ScriptKind::TS).root
+    }
+
+    #[test]
+    fn combine_safety_order() {
+        assert_eq!(combine_safety(Safe, Safe), Safe);
+        assert_eq!(combine_safety(Safe, Unknown), Unknown);
+        assert_eq!(combine_safety(Unknown, Recursive), Recursive);
+        assert_eq!(combine_safety(Recursive, Safe), Recursive);
+    }
+
+    /// The computed names of an interface: `Symbol.iterator` is well known,
+    /// `Symbol.other` and `key` are not.
+    #[test]
+    fn well_known_symbol_names() {
+        let root = parse(
+            "interface I { [Symbol.iterator](): void; [Symbol.other]: 1; [key]: 2; [Other.iterator]: 3 }",
+        );
+        let members = root.statements().get(0).members();
+        let expression = |i: usize| members.get(i).name().expression();
+        assert!(api_stability_well_known_symbol_name(expression(0)));
+        assert_eq!(
+            api_stability_well_known_symbol_display_name(expression(0)),
+            "[Symbol.iterator]"
+        );
+        for i in 1..4 {
+            assert!(!api_stability_well_known_symbol_name(expression(i)));
+            assert_eq!(
+                api_stability_well_known_symbol_display_name(expression(i)),
+                ""
+            );
+        }
+    }
+
+    #[test]
+    fn declaration_annotation_nodes() {
+        let root = parse(
+            "class C { get a(): string { return '' } set b(v: number) {} c = 1 }\ntype T<A, B = string> = A",
+        );
+        let members = root.statements().get(0).members();
+        assert_eq!(
+            declaration_annotation_node_of(members.get(0)).kind(),
+            SyntaxKind::StringKeyword
+        );
+        assert_eq!(
+            declaration_annotation_node_of(members.get(1)).kind(),
+            SyntaxKind::NumberKeyword
+        );
+        assert!(declaration_annotation_node_of(members.get(2)).is_nil());
+        let alias = root.statements().get(1);
+        assert_eq!(
+            declaration_annotation_node_of(alias).kind(),
+            SyntaxKind::TypeReference
+        );
+        let parameters = alias.type_parameter_list().nodes();
+        assert!(parameters.get(0).default_type().is_nil());
+        assert_eq!(
+            parameters.get(1).default_type().kind(),
+            SyntaxKind::StringKeyword
+        );
+    }
 }

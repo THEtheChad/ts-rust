@@ -153,10 +153,8 @@ fn layer_provide_call(
         return None;
     }
 
-    if tp.layer_type(arg_type).is_none() {
-        // provide call but not with a Layer argument — breaks the chain
-        return None;
-    }
+    // provide call but not with a Layer argument — breaks the chain
+    tp.layer_type(arg_type)?;
 
     // Find the enclosing call expression for this provide
     let call_node = find_ancestor_kind(transformation.callee, SyntaxKind::CallExpression);
