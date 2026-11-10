@@ -377,8 +377,11 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   integer `id`, and `result` or an `error` with an integer `code` and a string `message`; no duplicate
   key, no NaN); after every request, the state of the session's storage (every entry of the overlay's
   upper dir and of the home, none skipped: a file's sha256 and mode, `dir <mode>`, `deleted` or the link
-  target; and the home skeleton's deviations from its exact structure: each of its dirs a real dir of
-  mode 755), so a file written and removed between two requests is seen; the exit, survivors, whether the
+  target; the root itself as entry `.`, by `lstat`, so a root of another mode or type shows; every dir
+  that cannot be listed as `unlistable <why>` and every entry that cannot be stat'ed as `unstatable
+  <why>`, so storage the tier cannot read is never an empty listing; a root that does not exist, on
+  either side, gives no entries; and the home skeleton's deviations from its exact structure: each of
+  its dirs a real dir of mode 755), so a file written and removed between two requests is seen; the exit, survivors, whether the
   server exited by itself, the sha256 of stderr, and the storage at the end. Go and tsc-rs answer with
   the same bytes wherever they agree.
 - **The readers** (round 3): any exception of the stdout or stderr reader fails the session as
@@ -2200,6 +2203,33 @@ create `lib/out` and `app/out`, and Go's emitter then crashes with a nil derefer
 reproduces Go's panics, does too). The 14 api pins were regenerated for the new keys
 (`h7r3-gf-evidence-ed6edf820-{full,quick}`, `regen --only '^api/'`); their reasons, and the 36 fuzz
 entries, are unchanged.
+
+### The final fix (root's decision after the review cap)
+
+Astra's final recheck of `a08c934d6` closed every round 2 blocker and found one more false MATCH:
+`_walk` did not record the storage root's own metadata, and `os.walk` silently skips a directory it
+cannot list. A server that wrote `unexpected.js` after Go's answers and then made the fixture root mode
+000 (`review-noemit`, a disk scenario with no emit) got MATCH, and so did a root of mode 0700 on
+`build-composite`, quick and full (`scratch/review-h7r3-astra/confirmed-root-hide-full`,
+`confirmed-root-mode-{full,quick}`).
+
+- **Fix:** the root is entry `.` (its type and mode, by `lstat`; a root that is not a dir is recorded
+  as such and not walked); `os.walk` gets an `onerror` that records each dir it cannot list as
+  `unlistable <strerror>` (on the root, beside its `.` entry); an entry that cannot be stat'ed (a dir
+  that can be listed but not searched) is `unstatable <strerror>`. A root that does not exist on either
+  side still gives no entries.
+- **Controls** (`parity_h7_test.py`; Astra's two modes, `root-hide` and `root-mode`, are in
+  `parity_h7_fake.py` as she wrote them): `root-hide` on her `review-noemit` scenario, and `root-mode` on
+  `build-composite` in full and in quick. All three MATCH on `a08c934d6` (`--e2e-only --harness <git
+  archive a08c934d6>`) and DIFF now.
+
+**Known limit of the fixture check (document only; no fix).** A process on the host that maps a fixture
+file writable and shared before the tier starts its watch can change the file's bytes through the
+mapping and change them back before the end check: both content checks pass, and inotify sees nothing
+(writes through an mmap make no event). Astra's reproducer is `scratch/review-h7r3-astra/mmap-probe.py`
+(`mmap-probe.json`: before PASS, the bytes changed during the tier, no watch event, after PASS). That
+is another host process racing the harness, not the compiler under test, which runs in the sandbox
+and cannot reach the fixture snapshot. The same holds for the snapshots of the cli and lsp tiers.
 
 ### The lsp tier: the same gaps (reported, not fixed; for lane H8)
 

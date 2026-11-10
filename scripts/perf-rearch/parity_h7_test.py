@@ -388,6 +388,22 @@ def e2e_round3():
           'unshare(CLONE_NEWUSER) and setns all fail for the server (MATCH)', row.get('status') == 'MATCH', row or log[-400:])
     row, log = status('home-skeleton')
     check('round 3 finding 3: $HOME/tmp replaced by a file is a DIFF', row.get('status') == 'DIFF', row or log[-400:])
+    # the final recheck (of a08c934d6): storage the tier cannot read, or whose root changed, is no MATCH
+    sc = {'name': 'review-noemit', 'about': 'read-only API over a disk fixture (Astra, final H7 recheck)',
+          'disk': {'tsconfig.json': '{"compilerOptions":{"noLib":true,"noEmit":true},"files":["a.ts"]}', 'a.ts': 'export const a = 1;\n'},
+          'openProjects': ['@ROOT@/tsconfig.json'], 'requests': ['getSourceFileNames']}
+    sfile = SCRATCH / f'scenarios-noemit-{os.getpid()}.json'
+    sfile.write_text(json.dumps({'about': 'review', 'version': 1, 'texts': {}, 'scenarios': [sc]}))
+    r, log = tier(fake('root-hide'), '.', scenarios=sfile)
+    row = row_of(r, 'review-noemit')
+    check('final recheck: a write, then chmod 000 of the storage root (review-noemit): DIFF',
+          row.get('status') == 'DIFF', row or log[-400:])
+    sfile.unlink()
+    for tier_ in ('full', 'quick'):
+        r, log = tier(fake('root-mode'), '^build-composite$', tier_=tier_)
+        row = row_of(r, 'build-composite')
+        check(f'final recheck: chmod 0700 of the storage root on build-composite ({tier_}): DIFF',
+              row.get('status') == 'DIFF', row or log[-400:])
     for mode in ('large-int', 'minus-zero', 'unicode-escape', 'bom', 'whitespace', 'overflow'):
         row, log = status(mode)
         check(f'round 2 recheck: {mode} still fails closed (not MATCH)', row.get('status') not in ('MATCH', None), row or log[-400:])

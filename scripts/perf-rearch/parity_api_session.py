@@ -411,18 +411,40 @@ class Rpc:
 
 # ---- the session's storage --------------------------------------------------------------------
 
+def _describe_root(st):
+    if stat.S_ISDIR(st.st_mode):
+        return f'dir {stat.S_IMODE(st.st_mode):o}'
+    return f'not a dir: {stat.filemode(st.st_mode)}'
+
+
 def _walk(top):
     """({relative path: what it is}, {relative path: text}) of a host dir: every entry, none skipped, as
     "<sha256> <mode>" (a file), "dir <mode>", "link <target>" or "deleted" (an overlay whiteout: a deleted
-    input). Texts (up to 256 KB) are for the diff report only."""
+    input). The root itself is entry "." (its type and mode, by lstat: a root the server made unreadable,
+    or replaced, shows), and every dir that cannot be listed is "unlistable <why>" (os.walk would skip it).
+    A root that does not exist gives no entries (a session that has no such storage). Texts (up to 256 KB)
+    are for the diff report only."""
     out, texts = {}, {}
-    if not os.path.isdir(top):
+    try:
+        root_st = os.lstat(top)
+    except FileNotFoundError:
         return out, texts
-    for d, dirs, files in os.walk(top):
+    out['.'] = _describe_root(root_st)
+    if not stat.S_ISDIR(root_st.st_mode):
+        return out, texts
+
+    def unlistable(e):
+        key = os.path.relpath(e.filename, top) if e.filename else '?'
+        out[key] = f'{out[key]}; unlistable {e.strerror}' if key in out else f'unlistable {e.strerror}'
+    for d, dirs, files in os.walk(top, onerror=unlistable):
         for x in dirs + files:
             p = os.path.join(d, x)
             rel = os.path.relpath(p, top)
-            st = os.lstat(p)
+            try:
+                st = os.lstat(p)
+            except OSError as e:  # a dir that can be listed but not searched
+                out[rel] = f'unstatable {e.strerror}'
+                continue
             mode = f'{stat.S_IMODE(st.st_mode):o}'
             if stat.S_ISCHR(st.st_mode):
                 out[rel] = 'deleted'

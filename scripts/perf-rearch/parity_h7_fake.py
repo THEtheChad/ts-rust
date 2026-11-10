@@ -1,5 +1,6 @@
 # Lane H7's fake tsc-rs (parity_h7_test.py): Astra's probe.py of her round 2 recheck of the api tier
-# (~/.cache/perf-rearch/scratch/review-h7r2-astra/probe.py), verbatim but for the `privs` mode (round 3).
+# (~/.cache/perf-rearch/scratch/review-h7r2-astra/probe.py), verbatim but for the `privs` mode (round 3), with the
+# root-mode and root-hide modes of her final recheck (review-h7r3-astra/extra-probe2.py), verbatim.
 # usage (by the self-test): python3 parity_h7_fake.py MODE GO TYPINGS <server args>; OUTSIDE_LIST is
 # replaced by the self-test before it runs.
 
@@ -127,6 +128,13 @@ while True:
         out.write(b'Content-Lenght: 2\r\n\r\n{}'); out.flush(); continue
     out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body); out.flush()
 code = p.wait()
+
+if mode in ('root-mode', 'root-hide'):
+    cwd=args[args.index('--cwd')+1]
+    if mode == 'root-hide':
+        open(cwd+'/unexpected.js','w').write('unexpected output')
+    os.chmod(cwd,0 if mode == 'root-hide' else 0o700)
+    assert (os.stat(cwd).st_mode & 0o777) == (0 if mode == 'root-hide' else 0o700)
 if mode == 'trailing-deep':
     body=b'['*2000+b'0'+b']'*2000
     out.write(b'Content-Length: %d\r\n\r\n' % len(body)+body); out.flush()
