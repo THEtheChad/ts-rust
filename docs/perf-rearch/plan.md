@@ -1371,3 +1371,10 @@ once a **reconciliation step** is built and tested.
     - Remove the duplicate `or_else_node` (LS's copy and CB's copy).
     - Apply `if_else` where Go calls `core.IfElse` in CA's and LS's
       residue.
+- **Root's full gate on the merged CA + CB head** (`runs/head-e9b346998-full`):
+  **PARITY OK**.
+  - 187,196 items, 0 lost, 0 not run, 0 new items not good, 36
+    grandfathered.
+  - Tiers: cli 170 MATCH, lsp 2,629 + 29 GO-BROKEN, tests 139,910 PASS,
+    corpus 12,727 MATCH.
+  - It is now `base-current`.
