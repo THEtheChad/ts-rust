@@ -6,11 +6,11 @@ use crate::prelude::*;
 
 use crate::frontend::vfs::osvfs_fs;
 
-use super::deps::OutputPathsHost;
 use super::packagejson::{self, InfoCacheEntry, PackageJson};
 use super::symlinks::KnownSymlinks;
 use super::tspath;
 use super::types::ModuleSpecifierGenerationHost;
+use crate::frontend::outputpaths::OutputPathsHost;
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// The current program (`prog()`) as a `ModuleSpecifierGenerationHost`.

@@ -1054,8 +1054,8 @@ impl GlobVisitor<'_> {
         } else {
             self.host.realpath(absolute_path)
         };
-        let canonical_path =
-            get_canonical_file_name(&real_path, self.use_case_sensitive_file_names);
+        // Go: `v.caseSensitivity.PathKey(realPath)`.
+        let canonical_path = path_key(&real_path, self.use_case_sensitive_file_names);
         if self.visited.contains(&canonical_path) {
             return;
         }

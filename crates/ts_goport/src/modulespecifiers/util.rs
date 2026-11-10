@@ -30,14 +30,9 @@ pub(crate) fn compare_paths_by_redirect(
     }
     // Strada relies on Map insertion order to break remaining ties deterministically;
     // Go maps are unordered, so compare paths to keep the ordering stable.
-    tspath::compare_paths(
-        &a.file_name,
-        &b.file_name,
-        &tspath::ComparePathsOptions {
-            use_case_sensitive_file_names,
-            ..Default::default()
-        },
-    )
+    // Go: `caseSensitivity.CompareFilePaths` (ts#64159): rooted names, and
+    // an encoded dynamic name compares case-sensitively.
+    tspath::compare_rooted_text(&a.file_name, &b.file_name, use_case_sensitive_file_names)
 }
 
 // Go: modulespecifiers/util.go:43 PathIsBareSpecifier
@@ -312,10 +307,12 @@ pub(crate) fn get_relative_path_if_in_same_volume(
 }
 
 // Go: modulespecifiers/util.go:241 packageJsonPathsAreEqual
+// Go compares with `caseSensitivity.ComparePaths` (ts#64159): rooted
+// directory paths, and an encoded dynamic name compares case-sensitively.
 pub(crate) fn package_json_paths_are_equal(
     a: &str,
     b: &str,
-    options: &tspath::ComparePathsOptions,
+    use_case_sensitive_file_names: bool,
 ) -> bool {
     if a == b {
         return true;
@@ -323,7 +320,7 @@ pub(crate) fn package_json_paths_are_equal(
     if a.is_empty() || b.is_empty() {
         return false;
     }
-    tspath::compare_paths(a, b, options) == 0
+    tspath::compare_rooted_text(a, b, use_case_sensitive_file_names) == 0
 }
 
 // Go: modulespecifiers/util.go:251 prefersTsExtension

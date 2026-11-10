@@ -93,7 +93,7 @@ fn compare_strings_case_sensitive(a: &str, b: &str) -> i32 {
 }
 
 // Go: stringutil/compare.go:67 GetStringComparer
-fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> i32 {
+pub fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> i32 {
     if ignore_case {
         return compare_strings_case_insensitive;
     }
@@ -561,15 +561,6 @@ pub fn resolve_path_without_trailing_directory_separator(path: &str, paths: &[&s
         return remove_trailing_directory_separator(&resolved).to_string();
     }
     resolved
-}
-
-// Go: tspath/path.go:333 ResolveTripleslashReference (at 673a5f17d713; removed by ts#64159)
-pub fn resolve_tripleslash_reference(module_name: &str, containing_file: &str) -> String {
-    let base_path = get_directory_path(containing_file);
-    if is_rooted_disk_path(module_name) {
-        return normalize_path(module_name);
-    }
-    normalize_path(&combine_paths(&base_path, &[module_name]))
 }
 
 // Go: tspath/path.go:351 GetNormalizedPathComponents
@@ -1788,30 +1779,6 @@ pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
         }
     }
     a_components.len().cmp(&b_components.len()) as i32
-}
-
-// Go: tspath/path.go:1046 ComparePathsCaseSensitive (at 673a5f17d713; removed by ts#64159)
-pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(
-        a,
-        b,
-        &ComparePathsOptions {
-            use_case_sensitive_file_names: true,
-            current_directory: current_directory.to_string(),
-        },
-    )
-}
-
-// Go: tspath/path.go:1050 ComparePathsCaseInsensitive (at 673a5f17d713; removed by ts#64159)
-pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str) -> i32 {
-    compare_paths(
-        a,
-        b,
-        &ComparePathsOptions {
-            use_case_sensitive_file_names: false,
-            current_directory: current_directory.to_string(),
-        },
-    )
 }
 
 // Go: tspath/rooted_path.go:524 CaseSensitivity.compareRootedText (ts#64159)
