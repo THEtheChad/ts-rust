@@ -578,7 +578,7 @@ impl Checker {
         target: TypeId,
         s: TypeFlags,
         t: TypeFlags,
-        error_reporter: &mut Option<&mut dyn FnMut(&mut Checker, &'static Message, Vec<String>)>,
+        error_reporter: &mut Option<ErrorReporter<'_>>,
     ) -> bool {
         if s.intersects(TypeFlags::STRING_LIKE) && t.intersects(TypeFlags::STRING) {
             return true;
