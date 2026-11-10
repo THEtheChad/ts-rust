@@ -1041,14 +1041,10 @@ impl NewProgram {
                 self.block_emitting_of_file(emit_file_name, diag);
             }
 
-            let emit_file_key = if !self.host().fs().use_case_sensitive_file_names() {
-                to_file_name_lower_case(&emit_file_path)
-            } else {
-                emit_file_path.to_string()
-            };
-
             // Report error if multiple files write into same file
-            if emit_files_seen.contains(&emit_file_key) {
+            // ts#64159: the key is the path key (`PathKeyForFileName`), so
+            // an encoded dynamic name keeps its case.
+            if emit_files_seen.contains(emit_file_path.as_str()) {
                 // Already seen the same emit file - report error
                 self.block_emitting_of_file(
                     emit_file_name,
@@ -1058,7 +1054,7 @@ impl NewProgram {
                     ),
                 );
             } else {
-                emit_files_seen.insert(emit_file_key);
+                emit_files_seen.insert(emit_file_path.into_string());
             }
         }
     }
