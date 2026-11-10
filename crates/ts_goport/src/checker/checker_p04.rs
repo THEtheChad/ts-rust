@@ -1428,7 +1428,7 @@ impl Checker {
             self.error(
                 location,
                 diag::This_condition_will_always_return_0,
-                args![if truthy { "true" } else { "false" }],
+                args![if_else(truthy, "true", "false")],
             );
             return;
         }
