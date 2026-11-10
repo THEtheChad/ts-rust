@@ -606,109 +606,18 @@ impl<'a> JsonDecoder<'a> {
             let Some(&c) = b.get(i) else {
                 return Err((b.len(), SyntaxErr::UnexpectedEof));
             };
-            match c {
+            i = match c {
                 b'"' => return Ok((i + 1, out)),
-                b'\\' => {
-                    let Some(&e) = b.get(i + 1) else {
-                        return Err((i, SyntaxErr::UnexpectedEof));
-                    };
-                    match e {
-                        b'"' => out.push('"'),
-                        b'\\' => out.push('\\'),
-                        b'/' => out.push('/'),
-                        b'b' => out.push('\u{8}'),
-                        b'f' => out.push('\u{C}'),
-                        b'n' => out.push('\n'),
-                        b'r' => out.push('\r'),
-                        b't' => out.push('\t'),
-                        b'u' => {
-                            let escape = i;
-                            if b.len() < i + 6 {
-                                if has_escaped_utf16_prefix(&b[i..], false) {
-                                    return Err((escape, SyntaxErr::UnexpectedEof));
-                                }
-                                return Err((i, invalid_escape(&b[i..])));
-                            }
-                            let Some(v1) = parse_hex4(&b[i + 2..i + 6]) else {
-                                return Err((i, invalid_escape(&b[i..i + 6])));
-                            };
-                            i += 6;
-                            if (0xD800..0xE000).contains(&v1) {
-                                // Go checks the pair only with `validateUTF8`.
-                                let v2 = if b.len() < i + 6 {
-                                    if validate && has_escaped_utf16_prefix(&b[i..], true) {
-                                        return Err((escape, SyntaxErr::UnexpectedEof));
-                                    }
-                                    None
-                                } else if b[i] == b'\\' && b[i + 1] == b'u' {
-                                    parse_hex4(&b[i + 2..i + 6])
-                                } else {
-                                    None
-                                };
-                                let decoded = v2.and_then(|v2| {
-                                    ((0xD800..0xDC00).contains(&v1)
-                                        && (0xDC00..0xE000).contains(&v2))
-                                    .then(|| {
-                                        char::from_u32(
-                                            0x10000 + ((v1 - 0xD800) << 10) + (v2 - 0xDC00),
-                                        )
-                                    })
-                                    .flatten()
-                                });
-                                match decoded {
-                                    Some(ch) => {
-                                        out.push(ch);
-                                        i += 6;
-                                    }
-                                    None if !validate => out.push('\u{FFFD}'),
-                                    None => {
-                                        let what = &b[escape..(escape + 12).min(b.len())];
-                                        return Err((escape, invalid_escape(what)));
-                                    }
-                                }
-                            } else {
-                                out.push(char::from_u32(v1).expect("non-surrogate BMP code point"));
-                            }
-                            continue;
-                        }
-                        _ => return Err((i, invalid_escape(&b[i..i + 2]))),
-                    }
-                    i += 2;
-                }
+                b'\\' => consume_escape(b, i, validate, &mut out)?,
                 0x00..=0x1F => {
                     return Err((
                         i,
                         invalid_character(b, i, "in string (expecting non-control character)"),
                     ));
                 }
-                0x20..=0x7F => {
-                    // PERF: the run of plain ASCII bytes up to the next quote,
-                    // backslash, control or non-ASCII byte in one copy.
-                    let start = i;
-                    i += 1;
-                    while let Some(&c) = b.get(i) {
-                        if c == b'"' || c == b'\\' || !(0x20..0x80).contains(&c) {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    out.push_str(std::str::from_utf8(&b[start..i]).expect("ASCII run"));
-                }
-                _ => match decode_utf8(&b[i..]) {
-                    Some((ch, n)) => {
-                        out.push(ch);
-                        i += n;
-                    }
-                    None if !go_full_rune(&b[i..]) => {
-                        return Err((i, SyntaxErr::UnexpectedEof));
-                    }
-                    None if !validate => {
-                        out.push('\u{FFFD}');
-                        i += 1;
-                    }
-                    None => return Err((i, SyntaxErr::InvalidUtf8)),
-                },
-            }
+                0x20..=0x7F => push_ascii_run(b, i, &mut out),
+                _ => consume_utf8_rune(b, i, validate, &mut out)?,
+            };
         }
     }
 
@@ -888,6 +797,136 @@ fn has_escaped_utf16_prefix(b: &[u8], lower_surrogate_half: bool) -> bool {
 // Go: jsonwire parseHexUint16
 fn parse_hex4(b: &[u8]) -> Option<u32> {
     b.iter().try_fold(0, |v, &c| hex_val(c).map(|d| v * 16 + d))
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the escape sequence at `i` (a
+/// backslash). Pushes its text to `out` and gives the offset after it.
+#[inline]
+fn consume_escape(
+    b: &[u8],
+    i: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    let Some(&e) = b.get(i + 1) else {
+        return Err((i, SyntaxErr::UnexpectedEof));
+    };
+    let c = match e {
+        b'"' => '"',
+        b'\\' => '\\',
+        b'/' => '/',
+        b'b' => '\u{8}',
+        b'f' => '\u{C}',
+        b'n' => '\n',
+        b'r' => '\r',
+        b't' => '\t',
+        b'u' => return consume_unicode_escape(b, i, validate, out),
+        _ => return Err((i, invalid_escape(&b[i..i + 2]))),
+    };
+    out.push(c);
+    Ok(i + 2)
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the `\uXXXX` escape at
+/// `escape`, with the `\uXXXX` low half that follows a high surrogate. Go
+/// checks the pair only with `validateUTF8`; without it a lone or broken
+/// surrogate is U+FFFD.
+fn consume_unicode_escape(
+    b: &[u8],
+    escape: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    if b.len() < escape + 6 {
+        if has_escaped_utf16_prefix(&b[escape..], false) {
+            return Err((escape, SyntaxErr::UnexpectedEof));
+        }
+        return Err((escape, invalid_escape(&b[escape..])));
+    }
+    let Some(v1) = parse_hex4(&b[escape + 2..escape + 6]) else {
+        return Err((escape, invalid_escape(&b[escape..escape + 6])));
+    };
+    let i = escape + 6;
+    if !(0xD800..0xE000).contains(&v1) {
+        out.push(char::from_u32(v1).expect("non-surrogate BMP code point"));
+        return Ok(i);
+    }
+    let v2 = if b.len() < i + 6 {
+        if validate && has_escaped_utf16_prefix(&b[i..], true) {
+            return Err((escape, SyntaxErr::UnexpectedEof));
+        }
+        None
+    } else if b[i] == b'\\' && b[i + 1] == b'u' {
+        parse_hex4(&b[i + 2..i + 6])
+    } else {
+        None
+    };
+    match v2.and_then(|v2| decode_surrogate_pair(v1, v2)) {
+        Some(ch) => {
+            out.push(ch);
+            Ok(i + 6)
+        }
+        None if !validate => {
+            out.push('\u{FFFD}');
+            Ok(i)
+        }
+        None => {
+            let what = &b[escape..(escape + 12).min(b.len())];
+            Err((escape, invalid_escape(what)))
+        }
+    }
+}
+
+/// The character of the UTF-16 surrogate pair `v1`, `v2` (Go
+/// `utf16.DecodeRune`), or `None` when they are not a high and a low half.
+fn decode_surrogate_pair(v1: u32, v2: u32) -> Option<char> {
+    if (0xD800..0xDC00).contains(&v1) && (0xDC00..0xE000).contains(&v2) {
+        char::from_u32(0x10000 + ((v1 - 0xD800) << 10) + (v2 - 0xDC00))
+    } else {
+        None
+    }
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the plain ASCII byte at `i`
+/// and the run that follows it, up to the next quote, backslash, control or
+/// non-ASCII byte. Pushes the run to `out` and gives the offset after it.
+// PERF: the run is one copy.
+#[inline]
+fn push_ascii_run(b: &[u8], i: usize, out: &mut String) -> usize {
+    let start = i;
+    let mut i = i + 1;
+    while let Some(&c) = b.get(i) {
+        if c == b'"' || c == b'\\' || !(0x20..0x80).contains(&c) {
+            break;
+        }
+        i += 1;
+    }
+    out.push_str(std::str::from_utf8(&b[start..i]).expect("ASCII run"));
+    i
+}
+
+/// Part of `JsonDecoder::consume_string_raw`: the non-ASCII UTF-8 character
+/// at `i`. Pushes it (or U+FFFD for an invalid byte when not `validate`) to
+/// `out` and gives the offset after it.
+#[inline]
+fn consume_utf8_rune(
+    b: &[u8],
+    i: usize,
+    validate: bool,
+    out: &mut String,
+) -> Result<usize, (usize, SyntaxErr)> {
+    match decode_utf8(&b[i..]) {
+        Some((ch, n)) => {
+            out.push(ch);
+            Ok(i + n)
+        }
+        None if !go_full_rune(&b[i..]) => Err((i, SyntaxErr::UnexpectedEof)),
+        None if !validate => {
+            out.push('\u{FFFD}');
+            Ok(i + 1)
+        }
+        None => Err((i, SyntaxErr::InvalidUtf8)),
+    }
 }
 
 // Go `ConsumeLiteral` of the literal `lit` at `p`, which is not all there:
