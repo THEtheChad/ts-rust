@@ -1854,3 +1854,19 @@ once a **reconciliation step** is built and tested.
     `json.mjs`. Root's plan: fold a faster design into H8 round 2, together
     with any review fixes, so one lsp refill covers both.
   - **Astra review:** running.
+- **H8 review: REJECT** (`reviews/2026-11-10-astra-h8.md`), with 7 findings.
+  - **Finding 1 repeats H7's api-tier storage bug** in lspdiff's own JS
+    walker. The cause is duplicate code, not a missed case.
+  - **Round 2 (root's design points):**
+    - one storage lister and one write history for both tiers, in the shared
+      supervisor, recording writes through an inotify watch instead of
+      sampling;
+    - null-prototype maps;
+    - compare the server-to-client stream through EOF;
+    - validate the shutdown result;
+    - the stand-in npm takes a fixed read-only config, and its evidence
+      comes from the recorded history;
+    - final storage is judged strictly, apart from the timing-dependent
+      history;
+    - Astra's fast JSON tokenizer, so that one lsp refill covers
+      everything.
