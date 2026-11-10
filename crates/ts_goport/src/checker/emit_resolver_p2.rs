@@ -887,114 +887,123 @@ impl EmitResolver {
         // typeName = emitContext.ParseNode(typeName)
         // location = emitContext.ParseNode(location)
         self.with_checker(|c| {
-            if type_name.is_nil() || location.is_nil() {
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            // Resolve the symbol as a value to ensure the type can be reached at runtime during emit.
-            let mut is_type_only = false;
-            if is_qualified_name(type_name) {
-                let root_value_symbol = c.resolve_entity_name(
-                    get_first_identifier(type_name),
-                    SymbolFlags::VALUE,
-                    true,
-                    true,
-                    location,
-                );
-
-                if root_value_symbol.is_some() && !c.sym(root_value_symbol).declarations.is_empty()
-                {
-                    is_type_only = c
-                        .sym(root_value_symbol)
-                        .declarations
-                        .iter()
-                        .all(|&d| is_type_only_import_or_export_declaration(d));
-                }
-            }
-            let value_symbol =
-                c.resolve_entity_name(type_name, SymbolFlags::VALUE, true, true, location);
-            let mut resolved_value_symbol = value_symbol;
-            if value_symbol.is_some() && c.sym(value_symbol).flags.intersects(SymbolFlags::ALIAS) {
-                resolved_value_symbol = c.resolve_alias(value_symbol);
-            }
-
-            is_type_only = is_type_only
-                || (value_symbol.is_some()
-                    && c.get_type_only_alias_declaration_ex(value_symbol, SymbolFlags::VALUE)
-                        .is_some());
-
-            // Resolve the symbol as a type so that we can provide a more useful hint for the type serializer.
-            let type_symbol =
-                c.resolve_entity_name(type_name, SymbolFlags::TYPE, true, true, location);
-            let mut resolved_type_symbol = type_symbol;
-            if type_symbol.is_some() && c.sym(type_symbol).flags.intersects(SymbolFlags::ALIAS) {
-                resolved_type_symbol = c.resolve_alias(type_symbol);
-            }
-            // In case the value symbol can't be resolved (e.g. because of missing declarations), use type symbol for reachability check.
-            is_type_only = is_type_only
-                || (type_symbol.is_some()
-                    && c.get_type_only_alias_declaration_ex(type_symbol, SymbolFlags::TYPE)
-                        .is_some());
-
-            if resolved_value_symbol.is_some() && resolved_value_symbol == resolved_type_symbol {
-                let global_promise_symbol = c.get_global_promise_constructor_symbol();
-                if global_promise_symbol.is_some() && resolved_value_symbol == global_promise_symbol
-                {
-                    return TypeReferenceSerializationKind::PROMISE;
-                }
-
-                let constructor_type = c.get_type_of_symbol(resolved_value_symbol);
-                if constructor_type.is_some() && c.is_constructor_type(constructor_type) {
-                    if is_type_only {
-                        return TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE;
-                    }
-                    return TypeReferenceSerializationKind::TYPE_WITH_CONSTRUCT_SIGNATURE_AND_VALUE;
-                }
-            }
-
-            // We might not be able to resolve type symbol so use unknown type in that case (eg error case)
-            if resolved_type_symbol.is_nil() {
-                if is_type_only {
-                    return TypeReferenceSerializationKind::OBJECT_TYPE;
-                }
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            let type_ = c.get_declared_type_of_symbol(resolved_type_symbol);
-            if c.is_error_type(type_) {
-                if is_type_only {
-                    return TypeReferenceSerializationKind::OBJECT_TYPE;
-                }
-                return TypeReferenceSerializationKind::UNKNOWN;
-            }
-
-            if c.ty(type_).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
-                TypeReferenceSerializationKind::OBJECT_TYPE
-            } else if c.is_type_assignable_to_kind(
-                type_,
-                TypeFlags::VOID | TypeFlags::NULLABLE | TypeFlags::NEVER,
-            ) {
-                TypeReferenceSerializationKind::VOID_NULLABLE_OR_NEVER_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::BOOLEAN_LIKE) {
-                TypeReferenceSerializationKind::BOOLEAN_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::NUMBER_LIKE) {
-                TypeReferenceSerializationKind::NUMBER_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::BIG_INT_LIKE) {
-                TypeReferenceSerializationKind::BIG_INT_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::STRING_LIKE) {
-                TypeReferenceSerializationKind::STRING_LIKE_TYPE
-            } else if c.is_tuple_type(type_) {
-                TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
-            } else if c.is_type_assignable_to_kind(type_, TypeFlags::ES_SYMBOL_LIKE) {
-                TypeReferenceSerializationKind::ES_SYMBOL_TYPE
-            } else if c.is_function_type(type_) {
-                TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE
-            } else if c.is_array_type(type_) {
-                TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
-            } else {
-                TypeReferenceSerializationKind::OBJECT_TYPE
-            }
+            self.get_type_reference_serialization_kind_locked(c, type_name, location)
         })
+    }
+
+    // Go: checker/emitresolver.go:850 GetTypeReferenceSerializationKind
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn get_type_reference_serialization_kind_locked(
+        &self,
+        c: &mut Checker,
+        type_name: Node,
+        location: Node,
+    ) -> TypeReferenceSerializationKind {
+        if type_name.is_nil() || location.is_nil() {
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        // Resolve the symbol as a value to ensure the type can be reached at runtime during emit.
+        let mut is_type_only = false;
+        if is_qualified_name(type_name) {
+            let root_value_symbol = c.resolve_entity_name(
+                get_first_identifier(type_name),
+                SymbolFlags::VALUE,
+                true,
+                true,
+                location,
+            );
+
+            if root_value_symbol.is_some() && !c.sym(root_value_symbol).declarations.is_empty() {
+                is_type_only = c
+                    .sym(root_value_symbol)
+                    .declarations
+                    .iter()
+                    .all(|&d| is_type_only_import_or_export_declaration(d));
+            }
+        }
+        let value_symbol =
+            c.resolve_entity_name(type_name, SymbolFlags::VALUE, true, true, location);
+        let mut resolved_value_symbol = value_symbol;
+        if value_symbol.is_some() && c.sym(value_symbol).flags.intersects(SymbolFlags::ALIAS) {
+            resolved_value_symbol = c.resolve_alias(value_symbol);
+        }
+
+        is_type_only = is_type_only
+            || (value_symbol.is_some()
+                && c.get_type_only_alias_declaration_ex(value_symbol, SymbolFlags::VALUE)
+                    .is_some());
+
+        // Resolve the symbol as a type so that we can provide a more useful hint for the type serializer.
+        let type_symbol = c.resolve_entity_name(type_name, SymbolFlags::TYPE, true, true, location);
+        let mut resolved_type_symbol = type_symbol;
+        if type_symbol.is_some() && c.sym(type_symbol).flags.intersects(SymbolFlags::ALIAS) {
+            resolved_type_symbol = c.resolve_alias(type_symbol);
+        }
+        // In case the value symbol can't be resolved (e.g. because of missing declarations), use type symbol for reachability check.
+        is_type_only = is_type_only
+            || (type_symbol.is_some()
+                && c.get_type_only_alias_declaration_ex(type_symbol, SymbolFlags::TYPE)
+                    .is_some());
+
+        if resolved_value_symbol.is_some() && resolved_value_symbol == resolved_type_symbol {
+            let global_promise_symbol = c.get_global_promise_constructor_symbol();
+            if global_promise_symbol.is_some() && resolved_value_symbol == global_promise_symbol {
+                return TypeReferenceSerializationKind::PROMISE;
+            }
+
+            let constructor_type = c.get_type_of_symbol(resolved_value_symbol);
+            if constructor_type.is_some() && c.is_constructor_type(constructor_type) {
+                if is_type_only {
+                    return TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE;
+                }
+                return TypeReferenceSerializationKind::TYPE_WITH_CONSTRUCT_SIGNATURE_AND_VALUE;
+            }
+        }
+
+        // We might not be able to resolve type symbol so use unknown type in that case (eg error case)
+        if resolved_type_symbol.is_nil() {
+            if is_type_only {
+                return TypeReferenceSerializationKind::OBJECT_TYPE;
+            }
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        let type_ = c.get_declared_type_of_symbol(resolved_type_symbol);
+        if c.is_error_type(type_) {
+            if is_type_only {
+                return TypeReferenceSerializationKind::OBJECT_TYPE;
+            }
+            return TypeReferenceSerializationKind::UNKNOWN;
+        }
+
+        if c.ty(type_).flags.intersects(TypeFlags::ANY_OR_UNKNOWN) {
+            TypeReferenceSerializationKind::OBJECT_TYPE
+        } else if c.is_type_assignable_to_kind(
+            type_,
+            TypeFlags::VOID | TypeFlags::NULLABLE | TypeFlags::NEVER,
+        ) {
+            TypeReferenceSerializationKind::VOID_NULLABLE_OR_NEVER_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::BOOLEAN_LIKE) {
+            TypeReferenceSerializationKind::BOOLEAN_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::NUMBER_LIKE) {
+            TypeReferenceSerializationKind::NUMBER_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::BIG_INT_LIKE) {
+            TypeReferenceSerializationKind::BIG_INT_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::STRING_LIKE) {
+            TypeReferenceSerializationKind::STRING_LIKE_TYPE
+        } else if c.is_tuple_type(type_) {
+            TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
+        } else if c.is_type_assignable_to_kind(type_, TypeFlags::ES_SYMBOL_LIKE) {
+            TypeReferenceSerializationKind::ES_SYMBOL_TYPE
+        } else if c.is_function_type(type_) {
+            TypeReferenceSerializationKind::TYPE_WITH_CALL_SIGNATURE
+        } else if c.is_array_type(type_) {
+            TypeReferenceSerializationKind::ARRAY_LIKE_TYPE
+        } else {
+            TypeReferenceSerializationKind::OBJECT_TYPE
+        }
     }
 
     // Go: checker/emitresolver.go:942 GetPropertiesOfContainerFunction
@@ -1066,40 +1075,51 @@ impl EmitResolver {
         }
 
         self.with_checker(|c| {
-            let s = c.get_symbol_of_declaration(node);
-            if s.is_nil() || c.sym(s).parent.is_nil() {
-                return false;
+            self.is_this_property_assignment_declaration_redundant_locked(c, node)
+        })
+    }
+
+    // Go: checker/emitresolver.go:976 IsThisPropertyAssignmentDeclarationRedundant
+    // The body after `checkerMu.Lock()`: Go holds the lock with a `defer`;
+    // here `with_checker` hands the checker in.
+    fn is_this_property_assignment_declaration_redundant_locked(
+        &self,
+        c: &mut Checker,
+        node: Node,
+    ) -> bool {
+        let s = c.get_symbol_of_declaration(node);
+        if s.is_nil() || c.sym(s).parent.is_nil() {
+            return false;
+        }
+        let parent = c.sym(s).parent;
+        let parent_type = c.get_declared_type_of_symbol(parent);
+        if parent_type.is_nil() {
+            return false;
+        }
+        let name = c.sym(s).name.clone();
+        for base in c.get_base_types(parent_type) {
+            let base_prop = c.get_property_of_type(base, &name);
+            if base_prop.is_nil() {
+                continue;
             }
-            let parent = c.sym(s).parent;
-            let parent_type = c.get_declared_type_of_symbol(parent);
-            if parent_type.is_nil() {
-                return false;
+            if c.sym(base_prop)
+                .flags
+                .intersects(SymbolFlags::ACCESSOR | SymbolFlags::METHOD | SymbolFlags::FUNCTION)
+            {
+                return true;
             }
-            let name = c.sym(s).name.clone();
-            for base in c.get_base_types(parent_type) {
-                let base_prop = c.get_property_of_type(base, &name);
-                if base_prop.is_nil() {
-                    continue;
-                }
-                if c.sym(base_prop)
-                    .flags
-                    .intersects(SymbolFlags::ACCESSOR | SymbolFlags::METHOD | SymbolFlags::FUNCTION)
-                {
+            if c.is_readonly_symbol(base_prop) == c.is_readonly_symbol(s)
+                && (c.sym(s).flags & SymbolFlags::OPTIONAL)
+                    == (c.sym(base_prop).flags & SymbolFlags::OPTIONAL)
+            {
+                let s_type = c.get_type_of_symbol(s);
+                let base_type = c.get_type_of_symbol(base_prop);
+                if c.is_type_identical_to(s_type, base_type) {
                     return true;
                 }
-                if c.is_readonly_symbol(base_prop) == c.is_readonly_symbol(s)
-                    && (c.sym(s).flags & SymbolFlags::OPTIONAL)
-                        == (c.sym(base_prop).flags & SymbolFlags::OPTIONAL)
-                {
-                    let s_type = c.get_type_of_symbol(s);
-                    let base_type = c.get_type_of_symbol(base_prop);
-                    if c.is_type_identical_to(s_type, base_type) {
-                        return true;
-                    }
-                }
             }
-            false
-        })
+        }
+        false
     }
 }
 
