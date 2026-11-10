@@ -250,6 +250,24 @@ fn p1_add_length(b: &Rc<RefCell<NodeBuilderImpl>>, n: usize) {
     b.borrow().ctx.borrow_mut().approximate_length += i32::try_from(n).unwrap_or(i32::MAX);
 }
 
+/// PORT: the export name `create_access_from_symbol_chain` found, as Go
+/// prints it. A private name holds the key of its class, where Go's holds the
+/// class's symbol id, which Go prints here (`go_private_name`). Only when an
+/// export matched: with no match Go's `symbolName` stays empty and Go takes
+/// `getNameOfSymbolAsWritten` after it (nodebuilderimpl.go:796-815).
+fn go_export_name_of_private_name(
+    symbols: &SymbolArena,
+    symbol: SymbolId,
+    symbol_name: String,
+) -> String {
+    if !symbol_name.is_empty()
+        && let Some(go_name) = go_private_name(symbols, symbol)
+    {
+        return go_name;
+    }
+    symbol_name
+}
+
 // Go: checker/nodebuilderimpl.go:326 getAccessStack
 fn get_access_stack(ref_: Node) -> Vec<Node> {
     let mut state = ref_.type_name();
@@ -1254,11 +1272,10 @@ impl Checker {
             type_parameter_nodes = self.lookup_type_parameter_nodes(b, chain, index as i32);
         }
         let symbol = chain[index];
-        let parent = if index > 0 {
-            chain[index - 1]
-        } else {
-            SymbolId::NIL
-        };
+        let mut parent = SymbolId::NIL;
+        if index > 0 {
+            parent = chain[index - 1];
+        }
 
         let mut symbol_name = String::new();
         if index == 0 {
@@ -1306,17 +1323,8 @@ impl Checker {
                             symbol_name = results[&result_symbols[0]].clone();
                         }
                     }
-                    // PORT: a private name holds the key of its class, where
-                    // Go's holds the class's symbol id, which Go prints here
-                    // (`go_private_name`). Only when an export matched: with
-                    // no match Go's `symbolName` stays empty and Go takes
-                    // `getNameOfSymbolAsWritten` below
-                    // (nodebuilderimpl.go:796-815).
-                    if !symbol_name.is_empty()
-                        && let Some(go_name) = go_private_name(&self.symbols, symbol)
-                    {
-                        symbol_name = go_name;
-                    }
+                    symbol_name =
+                        go_export_name_of_private_name(&self.symbols, symbol, symbol_name);
                 }
             }
         }
