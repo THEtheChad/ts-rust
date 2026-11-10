@@ -90,24 +90,11 @@ fn eval_symlinks(path: &str) -> Result<String, FsError> {
     }
     let mut vol = path[..vol_len].to_string();
     let mut dest = vol.clone();
-    // The index of the last slash in dest, after the volume.
-    let last_slash = |dest: &str, vol_len: usize| {
-        dest.as_bytes()[vol_len..]
-            .iter()
-            .rposition(|&c| c == b'/')
-            .map(|r| vol_len + r)
-    };
     let mut links_walked = 0;
     let mut start = vol_len;
     while start < path.len() {
-        let bytes = path.as_bytes();
-        while start < bytes.len() && bytes[start] == b'/' {
-            start += 1;
-        }
-        let mut end = start;
-        while end < bytes.len() && bytes[end] != b'/' {
-            end += 1;
-        }
+        let end;
+        (start, end) = next_path_component(path.as_bytes(), start);
 
         // The next path component is in path[start:end].
         if end == start {
@@ -120,24 +107,7 @@ fn eval_symlinks(path: &str) -> Result<String, FsError> {
             continue;
         }
         if &path[start..end] == ".." {
-            // Back up to previous component if possible.
-            // Note that volLen includes any leading slash.
-            match last_slash(&dest, vol_len) {
-                Some(r) if &dest[r + 1..] != ".." => {
-                    // Discard everything since the last slash.
-                    dest.truncate(r);
-                }
-                _ => {
-                    // Either path has no slashes
-                    // (it's empty or just "C:")
-                    // or it ends in a ".." we had to keep.
-                    // Either way, keep this "..".
-                    if dest.len() > vol_len {
-                        dest.push('/');
-                    }
-                    dest.push_str("..");
-                }
-            }
+            back_up_dot_dot(&mut dest, vol_len);
             start = end;
             continue;
         }
@@ -175,25 +145,82 @@ fn eval_symlinks(path: &str) -> Result<String, FsError> {
             .map_err(|err| FsError::path("readlink", &dest, err))?;
 
         path = format!("{link}{}", &path[end..]);
-
-        if link.starts_with('/') {
-            // Symlink to absolute path.
-            dest = "/".to_string();
-            end = 1;
-            vol = "/".to_string();
-            vol_len = 1;
-        } else {
-            // Symlink to relative path; replace last
-            // path component in dest.
-            match last_slash(&dest, vol_len) {
-                Some(r) => dest.truncate(r),
-                None => dest = vol.clone(),
-            }
-            end = 0;
-        }
-        start = end;
+        start = walk_into_link(&link, &mut dest, &mut vol, &mut vol_len);
     }
     Ok(filepath_clean(&dest))
+}
+
+/// A step of `eval_symlinks` (Go stdlib `walkSymlinks`): the next path
+/// component of `path` from `start`, as its start and end, after the
+/// slashes before it. Equal start and end: no more components.
+#[cfg(not(windows))]
+#[inline]
+fn next_path_component(path: &[u8], mut start: usize) -> (usize, usize) {
+    while start < path.len() && path[start] == b'/' {
+        start += 1;
+    }
+    let mut end = start;
+    while end < path.len() && path[end] != b'/' {
+        end += 1;
+    }
+    (start, end)
+}
+
+/// A step of `eval_symlinks` (Go stdlib `walkSymlinks`): the index of the
+/// last slash in `dest`, after the volume (`vol_len` bytes).
+#[cfg(not(windows))]
+#[inline]
+fn last_slash_after_volume(dest: &str, vol_len: usize) -> Option<usize> {
+    dest.as_bytes()[vol_len..]
+        .iter()
+        .rposition(|&c| c == b'/')
+        .map(|r| vol_len + r)
+}
+
+/// A step of `eval_symlinks` (Go stdlib `walkSymlinks`): a `..` component.
+/// Backs `dest` up to its previous component if possible.
+#[cfg(not(windows))]
+fn back_up_dot_dot(dest: &mut String, vol_len: usize) {
+    // Note that volLen includes any leading slash.
+    match last_slash_after_volume(dest, vol_len) {
+        Some(r) if &dest[r + 1..] != ".." => {
+            // Discard everything since the last slash.
+            dest.truncate(r);
+        }
+        _ => {
+            // Either path has no slashes
+            // (it's empty or just "C:")
+            // or it ends in a ".." we had to keep.
+            // Either way, keep this "..".
+            if dest.len() > vol_len {
+                dest.push('/');
+            }
+            dest.push_str("..");
+        }
+    }
+}
+
+/// A step of `eval_symlinks` (Go stdlib `walkSymlinks`): the symlink at
+/// `dest` is `link`, whose text the walk goes on in. Sets `dest`, `vol` and
+/// `vol_len` for it and returns the index in the new path where the walk
+/// goes on.
+#[cfg(not(windows))]
+fn walk_into_link(link: &str, dest: &mut String, vol: &mut String, vol_len: &mut usize) -> usize {
+    if link.starts_with('/') {
+        // Symlink to absolute path.
+        *dest = "/".to_string();
+        *vol = "/".to_string();
+        *vol_len = 1;
+        1
+    } else {
+        // Symlink to relative path; replace last
+        // path component in dest.
+        match last_slash_after_volume(dest, *vol_len) {
+            Some(r) => dest.truncate(r),
+            None => *dest = vol.clone(),
+        }
+        0
+    }
 }
 
 // Go: realpath_windows.go:13 Realpath
