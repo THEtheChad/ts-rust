@@ -552,7 +552,7 @@ run in sequence, except tests, which runs beside them. Wall times:
 | lsp | 50 s (7 sessions, 4 at a time) | 137 s (12 sessions, tsc-rs ×3) | 252 s (Go ×4 per scenario) |
 | fuzz | 38 s | 516 s (30,000 × tsc-rs ×2) | 24 min |
 | corpus | – | 135 s | 10 min |
-| api (lane H7) | 0.6 s (17 scenarios) | 1.3 s (38 scenarios, tsc-rs ×2) | 1.7 s (Go ×2 per scenario) |
+| api (lane H7) | 1.7 s (22 scenarios) | 3.1 s (49 scenarios, tsc-rs ×2) | 12.3 s (Go ×2 per scenario) |
 | **total** | **about 4 min** (tests-bound), plus the go_baselines build after a change | **about 17 min** (994 s plus the test build) | about 45 min |
 
 The lsp times are from 2026-11-04 on the head bin `tsgo-head-b2febcd86-goport-w1`, at a load of
@@ -2156,7 +2156,7 @@ and passes now. The "on 6e97777e6" column is that run; for 7 and 8 it is Astra's
 | 6 | the tripwire saw no `stat`, `statx` or `O_PATH` access | the guarded dirs do not exist in the sandbox (no tripwires); the server gets no fd but 0, 1, 2; the `parity_watch` comment now says what IN_CLOSE_NOWRITE's removal rests on | `stat-bait`; `fds` | MATCH; MATCH | DIFF (the path does not exist); MATCH |
 | 7 | `regen --only` kept 36 version 3 entries and wrote `version: 4` | kept entries need a valid `--from` of this version | Astra's `grandfather-v3.json` with `--only '^api/'` | relabelled | refused, nothing written |
 | 8 | the pins left Go's stderr out | Go's `stdout` fingerprint holds its stderr sha | unit: another Go stderr is other evidence | matched | other evidence |
-| 9 | no scenario for dynamic directories that differ only in case | `dyn-config-include-dirs-insensitive` and its control | the scenario | – | DIFF, pinned for B2 |
+| 9 | no scenario for dynamic directories that differ only in case | `dyn-config-include-dirs-insensitive` and its control | unit: the scenario exists, quick runs it, B2's pin tracks it | absent | DIFF, pinned for B2 |
 
 ### The lsp tier: the same gaps (reported, not fixed)
 
@@ -2176,7 +2176,7 @@ Fixing them changes `sandbox.mjs` and `client.mjs`, which are session sources: e
 variant record would start empty, and the Go-race sessions need refills (H5's "Go fills"). That is a
 lane of its own; `parity_api_init.py` is the design to port.
 
-### Negative controls (`parity_h7_test.py`, 88 checks, `H7 SELFTEST OK`, about 2.5 min)
+### Negative controls (`parity_h7_test.py`, 89 checks, `H7 SELFTEST OK`, about 2.5 min)
 
 Besides the table above, the round 1 controls (fakes in front of the Go oracle, through the real tier
 and `parity_compare.py compare`): a transparent proxy MATCHes; a wrong output path is a DIFF and PARITY
@@ -2237,11 +2237,37 @@ tests tier on this lane's checkout, whose `crates/` equal `ed6edf820`). `base-cu
 
 ### Gate run, round 2
 
-R2GATE
+`parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel --base ~/.cache/perf-rearch/parity/base-current
+--accepted-ref t3/api-parity-tier` (this lane's branch at `f38ea4053`, the harness of the run), against
+`base-current` = `runs/head-ed6edf820-full` (root's accepted run of the same binary). Run
+`runs/h7r2-head-ed6edf820-full`, 23 min (14:02 to 14:25 UTC, load 13 to 17; it waited for another lane's
+gate first): **PARITY OK**.
+
+- 187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not
+  as pinned, 0 new items not good, 0 crashes on good items, **50 grandfathered** (the 36 fuzz entries,
+  unchanged, and the 14 api entries, each failing exactly as pinned), 0 stale entries, 0 recovered, 0
+  newly good by a referee.
+- api: **35 MATCH, 14 DIFF** (the known differences above), 3.1 s.
+- cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731
+  IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN,
+  1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+- An earlier round 2 run (`runs/h7r2-head-ed6edf820-full-interrupted`) had the same cli, tests, lsp and api
+  results and was cut off in its fuzz tier when the VM restarted.
 
 ### Cost
 
-R2COST
+- **api tier, round 2** (each session now starts the sandbox's init, a Python process, and the storage
+  is read after every request): 3.1 s full with the Go cache warm (49 scenarios, tsc-rs twice) in the gate
+  at a load of about 15; quick 1.7 s (22 scenarios) and cold 12.3 s (every Go entry new, as after an
+  edit of either sandbox source) at a load of 37 to 47. A session takes 0.41 s median, 0.71 s at most,
+  there; 8 scenarios run side by side. Round 1 took 1.3 s full and 0.6 s quick.
+- **Inputs:** the 8 fixtures (6 distinct) are a few KB each, made once; checking them, the ancestors'
+  state and the watches cost under 0.1 s.
+- **Go cache:** one JSON entry per scenario (2 Go sessions, with the storage after every request and the
+  written files' texts): 49 entries in the current keys; the dir holds 2.2 MB with the older keys and
+  the self-tests' entries.
+- **Self-tests:** `parity_h7_test.py` takes about 2.5 minutes (89 checks; the tripwire race about 10 s,
+  the end-to-end controls the rest); `--unit` about 14 s.
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
