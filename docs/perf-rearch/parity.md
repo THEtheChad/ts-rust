@@ -2223,6 +2223,20 @@ cannot list. A server that wrote `unexpected.js` after Go's answers and then mad
   `build-composite` in full and in quick. All three MATCH on `a08c934d6` (`--e2e-only --harness <git
   archive a08c934d6>`) and DIFF now.
 
+- **Pins** regenerated on the final sources (`h7final-gf-evidence-ed6edf820-{full,quick}`, `regen --only
+  '^api/'`): the 14 reasons and the 36 fuzz entries unchanged.
+- **Gate** (`--accepted-ref t3/api-parity-tier` at `7bfaa714b`, base `runs/head-ed6edf820-full`): run
+  `runs/h7final-head-ed6edf820-full-2`, 25 min (16:17 to 16:42 UTC, load 5 to 28): **PARITY OK**, 187,270
+  items compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 50 grandfathered (36 fuzz,
+  14 api), 0 stale; api 35 MATCH, 14 DIFF; cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (the usual
+  `watch_ends_soon_after_sigint_or_sigterm`); lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF
+  (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. The run before it
+  (`runs/h7final-head-ed6edf820-full`, same sources) was PARITY FAIL on one lost item, `fuzz/1:2450`:
+  tsc-rs's first attempt timed out (60.17 s of 60) during another project's build burst (load 42; the
+  fuzz tier's tsc-rs CPU time 10,321 s against the base's 5,602 s), and its retry (29 s) and second run
+  (12 s) answered. Alone, at a load of 26, the case MATCHes in about 10 s a run. The fuzz tier uses
+  nothing this fix changed.
+
 **Known limit of the fixture check (document only; no fix).** A process on the host that maps a fixture
 file writable and shared before the tier starts its watch can change the file's bytes through the
 mapping and change them back before the end check: both content checks pass, and inotify sees nothing
