@@ -1536,22 +1536,17 @@ impl Checker {
         let mut filtered_types = self.ty(contextual_type).types().to_vec();
         if is_object_literal_expression(node.parent()) || is_jsx_attributes(node.parent()) {
             // core.Filter
-            let mut kept = Vec::with_capacity(filtered_types.len());
-            for t in filtered_types {
-                if !self.is_type_invalid_due_to_union_discriminant(t, node.parent()) {
-                    kept.push(t);
-                }
-            }
-            filtered_types = kept;
+            filtered_types = filtered_types
+                .into_iter()
+                .filter(|&t| !self.is_type_invalid_due_to_union_discriminant(t, node.parent()))
+                .collect();
         }
         // core.MapNonNil
-        let mut discriminated_property_symbols = Vec::new();
-        for &t in &filtered_types {
-            let symbol = self.get_property_of_type(t, &name);
-            if symbol.is_some() {
-                discriminated_property_symbols.push(symbol);
-            }
-        }
+        let discriminated_property_symbols: Vec<SymbolId> = filtered_types
+            .iter()
+            .map(|&t| self.get_property_of_type(t, &name))
+            .filter(|symbol| symbol.is_some())
+            .collect();
         if union_symbol_ok
             && (discriminated_property_symbols.is_empty()
                 || discriminated_property_symbols.len() == self.ty(contextual_type).types().len())
@@ -1565,25 +1560,15 @@ impl Checker {
             // Bad discriminant -- do again without discriminating
             // core.MapNonNil
             let types = self.ty(contextual_type).types().to_vec();
-            let mut result = Vec::new();
-            for t in types {
-                let symbol = self.get_property_of_type(t, &name);
-                if symbol.is_some() {
-                    result.push(symbol);
-                }
-            }
-            return result;
+            return types
+                .into_iter()
+                .map(|t| self.get_property_of_type(t, &name))
+                .filter(|symbol| symbol.is_some())
+                .collect();
         }
         // by eliminating duplicates we might even end up with a single symbol
         // that helps with displaying better quick infos on properties of union types
-        // core.Deduplicate: keeps the first of each value, in order.
-        let mut result: Vec<SymbolId> = Vec::with_capacity(discriminated_property_symbols.len());
-        for symbol in discriminated_property_symbols {
-            if !result.contains(&symbol) {
-                result.push(symbol);
-            }
-        }
-        result
+        crate::scanner_util::deduplicate(discriminated_property_symbols)
     }
 
     // Go: checker/services.go:1069 GetPropertySymbolOfDestructuringAssignment
