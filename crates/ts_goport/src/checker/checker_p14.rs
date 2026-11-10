@@ -1091,7 +1091,7 @@ impl Checker {
                         synthetic,
                         None,
                     );
-                    let element_type = or_else_type(indexed, self.error_type);
+                    let element_type = or_else(indexed, self.error_type);
                     let mut assigned_type = element_type;
                     if self.has_default_value(element) {
                         assigned_type =

@@ -86,7 +86,7 @@ impl Checker {
             // We check only when (a) the property is declared in the containing type, or (b) the applicable index signature is declared
             // in the containing type, or (c) the containing type is an interface and no base interface contains both the property and
             // the index signature (i.e. property and index signature are declared in separate inherited interfaces).
-            let mut error_node = or_else_node(local_prop_declaration, local_index_declaration);
+            let mut error_node = or_else(local_prop_declaration, local_index_declaration);
             if error_node.is_nil() && interface_declaration.is_some() {
                 let prop_name = self.sym(prop).name.clone();
                 if !self.get_base_types(t).iter().any(|&base| {
@@ -156,7 +156,7 @@ impl Checker {
             // We check only when (a) the check index signature is declared in the containing type, or (b) the applicable index
             // signature is declared in the containing type, or (c) the containing type is an interface and no base interface contains
             // both index signatures (i.e. the index signatures are declared in separate inherited interfaces).
-            let mut error_node = or_else_node(local_check_declaration, local_index_declaration);
+            let mut error_node = or_else(local_check_declaration, local_index_declaration);
             if error_node.is_nil()
                 && interface_declaration.is_some()
                 && !self.get_base_types(t).iter().any(|&base| {

@@ -382,13 +382,13 @@ impl Checker {
                     }
                     for d in declarations {
                         self.error(
-                            or_else_node(get_name_of_declaration(d), d),
+                            or_else(get_name_of_declaration(d), d),
                             diag::Duplicate_identifier_0,
                             args![name],
                         );
                     }
                     self.error(
-                        or_else_node(decl_name, decl),
+                        or_else(decl_name, decl),
                         diag::Duplicate_identifier_0,
                         args![name],
                     );

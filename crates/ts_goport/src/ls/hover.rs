@@ -1247,7 +1247,7 @@ impl QuickInfoWriter<'_> {
                 .first()
                 .copied()
                 .unwrap_or(Node::NIL);
-            self.set_declaration(or_else_node(value_declaration, first_declaration));
+            self.set_declaration(or_else(value_declaration, first_declaration));
         }
         if flags.intersects(SymbolFlags::ENUM_MEMBER) {
             self.write_new_line();

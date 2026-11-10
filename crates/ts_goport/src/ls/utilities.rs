@@ -2036,11 +2036,6 @@ pub fn go_check_slice_bounds(text: &str, lo: i32, hi: i32) {
     }
 }
 
-/// Go `core.OrElse(value, fallback)` on nodes: `value` unless it is nil.
-pub fn or_else_node(value: Node, fallback: Node) -> Node {
-    if value.is_some() { value } else { fallback }
-}
-
 #[cfg(test)]
 mod go_text_slice_tests {
     use super::go_text_slice;

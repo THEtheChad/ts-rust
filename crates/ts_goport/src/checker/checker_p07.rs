@@ -1612,7 +1612,7 @@ impl Checker {
                 // The value of `return(value)` *is* awaited by async generators
                 let resolved =
                     (resolver.resolve_iteration_type)(self, method_parameter_type, error_node);
-                let resolved_method_parameter_type = or_else_type(resolved, self.any_type);
+                let resolved_method_parameter_type = or_else(resolved, self.any_type);
                 return_types.push(resolved_method_parameter_type);
             }
         }
@@ -1626,7 +1626,7 @@ impl Checker {
             self.never_type
         };
         let resolved = (resolver.resolve_iteration_type)(self, method_return_type, error_node);
-        let resolved_method_return_type = or_else_type(resolved, self.any_type);
+        let resolved_method_return_type = or_else(resolved, self.any_type);
         let iteration_types =
             self.get_iteration_types_of_iterator_result(resolved_method_return_type);
         if !iteration_types.has_types() {

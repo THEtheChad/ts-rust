@@ -1015,7 +1015,7 @@ impl Checker {
                 if contextual_return_type.is_some() {
                     let unwrapped = self.unwrap_return_type(contextual_return_type, function_flags);
                     let void_type = self.void_type;
-                    let t = or_else_type(unwrapped, void_type);
+                    let t = or_else(unwrapped, void_type);
                     has_undefined = self.some_type(t, &mut |c: &mut Checker, t: TypeId| {
                         c.ty(t).flags.intersects(TypeFlags::UNDEFINED)
                     });
@@ -1287,7 +1287,7 @@ impl Checker {
             // Unwrap an `Awaited<T>` to `T` to improve inference.
             let unwrapped = self.unwrap_awaited_type(promised_type);
             let awaited = self.get_awaited_type_no_alias(unwrapped);
-            let promised_type = or_else_type(awaited, self.unknown_type);
+            let promised_type = or_else(awaited, self.unknown_type);
             return self.create_type_reference(global_promise_type, &[promised_type]);
         }
         self.unknown_type
@@ -1303,7 +1303,7 @@ impl Checker {
             // Unwrap an `Awaited<T>` to `T` to improve inference.
             let unwrapped = self.unwrap_awaited_type(promised_type);
             let awaited = self.get_awaited_type_no_alias(unwrapped);
-            let promised_type = or_else_type(awaited, self.unknown_type);
+            let promised_type = or_else(awaited, self.unknown_type);
             return self.create_type_reference(global_promise_like_type, &[promised_type]);
         }
         self.unknown_type
@@ -1359,7 +1359,7 @@ impl Checker {
         }
         if is_async {
             let awaited = self.get_awaited_type_no_alias(return_type);
-            return or_else_type(awaited, self.error_type);
+            return or_else(awaited, self.error_type);
         }
         return_type
     }
@@ -1426,10 +1426,10 @@ impl Checker {
         let global_generator_type = (resolver.get_global_generator_type)(self);
         let resolved_yield =
             (resolver.resolve_iteration_type)(self, yield_type, Node::NIL /*errorNode*/);
-        let yield_type = or_else_type(resolved_yield, self.unknown_type);
+        let yield_type = or_else(resolved_yield, self.unknown_type);
         let resolved_return =
             (resolver.resolve_iteration_type)(self, return_type, Node::NIL /*errorNode*/);
-        let return_type = or_else_type(resolved_return, self.unknown_type);
+        let return_type = or_else(resolved_return, self.unknown_type);
         if global_generator_type == self.empty_generic_type {
             // Fall back to the global IterableIterator type.
             let global_iterable_iterator_type = (resolver.get_global_iterable_iterator_type)(self);

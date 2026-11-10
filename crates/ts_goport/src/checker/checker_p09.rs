@@ -160,7 +160,7 @@ impl Checker {
             self.get_single_signature(t, SignatureKind::CALL, true /*allowMembers*/);
         let construct_signature =
             self.get_single_signature(t, SignatureKind::CONSTRUCT, true /*allowMembers*/);
-        let signature = or_else_signature(call_signature, construct_signature);
+        let signature = or_else(call_signature, construct_signature);
         if signature.is_nil() || self.sig(signature).type_parameters.is_empty() {
             return t;
         }
@@ -822,7 +822,7 @@ impl Checker {
                             && c.ty(t).as_mapped_type().name_type.is_nil()
                             && {
                                 let target = c.ty(t).as_mapped_type().object.target;
-                                c.get_homomorphic_type_variable(or_else_type(target, t))
+                                c.get_homomorphic_type_variable(or_else(target, t))
                                     .is_some()
                             }
                 });
@@ -938,7 +938,7 @@ impl Checker {
                         Node::NIL,
                         None,
                     );
-                    element_types[i] = or_else_type(indexed, self.any_type);
+                    element_types[i] = or_else(indexed, self.any_type);
                 }
             }
             self.get_union_type_ex(&element_types, UnionReduction::SUBTYPE, None, TypeId::NIL)
