@@ -2307,6 +2307,18 @@ gate first): **PARITY OK**.
 - An earlier round 2 run (`runs/h7r2-head-ed6edf820-full-interrupted`) had the same cli, tests, lsp and api
   results and was cut off in its fuzz tier when the VM restarted.
 
+### Gate run, round 3
+
+Same command and base (`--accepted-ref t3/api-parity-tier`, the branch at `0c615dda3`, the harness of the
+run). Run `runs/h7r3-head-ed6edf820-full`, 23 min (14:59 to 15:21 UTC, load 6 to 16): **PARITY OK**.
+187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not as
+pinned, 0 new items not good, 0 crashes on good items, 50 grandfathered (the 36 fuzz entries, unchanged,
+and the 14 api entries, re-pinned for round 3's keys, each failing exactly as pinned), 0 stale entries.
+api 35 MATCH, 14 DIFF in 7.2 s (each session now also enters its own user namespace and drops its
+privileges: about 0.1 s more than round 2's). cli 170 MATCH; tests 139,983 PASS, 1 FLAKY
+(`watch_ends_soon_after_sigint_or_sigterm`), 1,731 IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955
+MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+
 ### Cost
 
 - **api tier, round 2** (each session now starts the sandbox's init, a Python process, and the storage
