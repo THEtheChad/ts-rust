@@ -403,10 +403,11 @@ impl Checker {
                 } else if is_union {
                     let mut index_info = IndexInfoId::NIL;
                     if !late_bound_name {
-                        if name_literal_type.is_nil() {
-                            name_literal_type = self.get_string_literal_type(name.text());
-                        }
-                        index_info = self.get_applicable_index_info(t, name_literal_type);
+                        index_info = self.get_applicable_index_info_for_name_literal(
+                            t,
+                            name,
+                            &mut name_literal_type,
+                        );
                     }
                     if index_info.is_some() {
                         prop_flags =
@@ -521,9 +522,8 @@ impl Checker {
             .iter()
             .map(|&prop| self.sym(prop).declarations.len())
             .sum();
-        // PERF: the declarations are collected on the stack. A list of 0 or 1
-        // declarations is stored with no heap list (no malloc). A longer list
-        // moves into one `Vec` for `Declarations::from`, as before.
+        // PERF: the declarations are collected on the stack
+        // (`declarations_from_stack`).
         let mut declarations: SmallVec<[Node; 4]> = SmallVec::with_capacity(declaration_count);
         // PERF: Go `core.AppendIfUnique` scans the list for each declaration,
         // which is quadratic in a long list (blueprint: 43k calls with 181
@@ -562,10 +562,9 @@ impl Checker {
             }
             let write_type = self.get_write_type_of_symbol(prop);
             if write_types.is_some() || write_type != t {
-                if write_types.is_none() {
-                    write_types = Some(prop_types.to_vec());
-                }
-                write_types.as_mut().unwrap().push(write_type);
+                write_types
+                    .get_or_insert_with(|| prop_types.to_vec())
+                    .push(write_type);
             }
             if t != first_type {
                 check_flags |= CheckFlags::HAS_NON_UNIFORM_TYPE;
@@ -584,16 +583,7 @@ impl Checker {
             table_key_name(name),
             check_flags | synthetic_flag,
         );
-        let declarations = if declarations.len() < 2 {
-            let mut list = Declarations::default();
-            if let Some(&node) = declarations.first() {
-                list.push(node);
-            }
-            list
-        } else {
-            Declarations::from(declarations.into_vec())
-        };
-        self.sym_mut(result).declarations = declarations;
+        self.sym_mut(result).declarations = declarations_from_stack(declarations);
         if !has_non_uniform_value_declaration && first_value_declaration.is_some() {
             self.sym_mut(result).value_declaration = first_value_declaration;
             // Inherit information about parent type.
@@ -633,6 +623,24 @@ impl Checker {
                 .write_type = write_type;
         }
         result
+    }
+
+    /// Go `getApplicableIndexInfoForName(t, name)` for a name that is not
+    /// late bound, in `create_union_or_intersection_property`. PERF: the
+    /// string literal type of `name` is made at the first constituent that
+    /// needs it, where Go first makes it, and kept in `name_literal_type`
+    /// for the later ones.
+    #[inline]
+    fn get_applicable_index_info_for_name_literal(
+        &mut self,
+        t: TypeId,
+        name: TableKey<'_>,
+        name_literal_type: &mut TypeId,
+    ) -> IndexInfoId {
+        if name_literal_type.is_nil() {
+            *name_literal_type = self.get_string_literal_type(name.text());
+        }
+        self.get_applicable_index_info(t, *name_literal_type)
     }
 
     // Go: checker/checker.go:22124 getTargetSymbol
@@ -2464,6 +2472,22 @@ impl Checker {
         }
         t
     }
+}
+
+/// The declarations of a synthetic union or intersection property, collected
+/// on the stack (`create_union_or_intersection_property`). PERF: a list of 0
+/// or 1 declarations is stored with no heap list (no malloc); a longer list
+/// moves into one `Vec` for `Declarations::from`.
+#[inline]
+fn declarations_from_stack(declarations: SmallVec<[Node; 4]>) -> Declarations {
+    if declarations.len() >= 2 {
+        return Declarations::from(declarations.into_vec());
+    }
+    let mut list = Declarations::default();
+    if let Some(&node) = declarations.first() {
+        list.push(node);
+    }
+    list
 }
 
 /// The `Name` of a table key: a `Name` key is copied, a text key is
