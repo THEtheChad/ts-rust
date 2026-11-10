@@ -2,7 +2,7 @@
 
 Lane W2-EF of wave 2 (code-quality phase). Own code (a port of
 Effect-TS/tsgo, no counterpart at the TypeScript-Go pin), so the limit is
-cognitive complexity 25. Base `perf/first-principles` @ `f59c229c5` (rebased in round 2 onto `1d0b7ff21`): 85 rows
+cognitive complexity 25. Base `perf/first-principles` @ `f59c229c5` (rebased in round 2 onto `af9b8c7e2`): 85 rows
 over 25, Σ (cog − 25) = 1,312 (`quality.sh ranking`).
 
 Cog numbers are rust-code-analysis cognitive complexity (the ranking's
