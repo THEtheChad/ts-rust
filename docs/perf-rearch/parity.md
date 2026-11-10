@@ -2034,6 +2034,99 @@ tests 139,908 PASS, 1,731 IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MA
 The harness and the file go together: this checkout's compare finds a version 2 file at an older
 accepted ref INVALID, and an older harness finds the version 3 file INVALID.
 
+## API tier (lane H7, 2026-11-10)
+
+B3 confirmed two output differences from pinned Go on the API emit path (D1, D2) and listed more
+suspect call sites. The gate missed them because no tier was an API client. This lane adds the `api`
+tier ("api: API sessions" above) and its scenario corpus, and pins every difference it finds as a
+known-bad tracking entry for the fix lane B2.
+
+### The corpus (`parity-api-scenarios.json`, 38 scenarios; quick: the 17 marked q)
+
+| group | scenarios | covers |
+|---|---|---|
+| dynamic names (D1, B3 risks) | `dyn-commondir` (q), `dyn-commondir-insensitive` (q), `dyn-commondir-samecase`, `dyn-resolve` (q) | B3 c0 and c3: the common directory of `^/~ts-uri~/` names in `A/` and `a/` (D1), module resolution under a dynamic root, declarations and maps to a dynamic `outDir` |
+| | `dyn-json-case`, `dyn-json-case-insensitive` (q) | B3 c1: a dynamic JSON module, `outDir` `SRC` and `rootDir` `src`: risks 3 and 4 (`source_file_may_be_emitted`, `json_file_may_be_emitted`, the `rootDir` branch) and 5 (`get_output_js_file_name`'s overwrite check) |
+| | `dyn-json-config-outdir-case`, `dyn-json-config-outdir-case-insensitive` (q) | risks 3 and 4 on the config branch: a config project in a dynamic `src/` with `outDir ../SRC` |
+| | `dyn-reference-ext`, `dyn-reference-ext-insensitive` (q) | risk 10 (`get_source_file_from_reference`): `/// <reference path="x.TS">` under a dynamic root |
+| | `dyn-config-include`, `dyn-config-include-insensitive` (q) | risks 12, 13 and 15 (tsconfig wildcard and file-name keys, `GlobVisitor`, `to_canonical_key`): `include` matching `src/A.ts` and `src/a.ts` |
+| mixed-case dirs (D2) | `case-mixed-dirs`, `case-mixed-dirs-sensitive` (q), `case-mixed-dirs-insensitive` (q), `-rootdir-insensitive` (q), `-reversed-insensitive`, `-decl-maps-insensitive`, `-decldir-insensitive` | B3 c2, c2b, c2c, c2d: `A/x.ts` and `a/y.ts` with an `outDir` on the OS default, a case-sensitive and a case-insensitive host; `rootDir` (isolates D2), the other root order, declaration plus declaration and source maps with `inlineSources`, `emitDeclarationOnly` into a `declarationDir` |
+| outDir and rootDir by case, overwrites | `case-json-overwrite-insensitive` (q), `case-json-overwrite-sensitive`, `case-js-overwrite-insensitive` (q), `case-js-overwrite-sensitive`, `js-overwrite` (q), `case-outdir-rootdir-insensitive` | B3 c1b: a JSON output that would overwrite its input on an insensitive host; `allowJs` outputs that would overwrite their inputs (TS5055), with and without a case-only `outDir`; TypeScript outputs into a case-only `outDir` with maps |
+| request filesystem | `case-duplicate-files-insensitive`, `case-import-casing-insensitive`, `symlink-dir`, `relative-names` | `A.ts` and `a.ts` in one insensitive filesystem (Go refuses the duplicate), an import whose casing differs, a request-filesystem symlink, file names relative to `--cwd` |
+| emit kinds | `json-module` (q), `decl-maps` (q), `errors-and-libs`, `composite-program` | a JSON module with declarations; declaration and source maps with `sourceRoot` and `mapRoot`; a full filesystem without `noLib` (no bundled libs) plus type and syntax errors; `composite` with a `tsBuildInfoFile` through `createPrograms` |
+| build orchestrator (disk fixtures) | `build-composite` (q), `build-clean`, `build-references`, `build-mixed-dirs`, `build-mixed-dirs-insensitive` (q) | a composite project built twice (cold, then up to date) with maps and `tsconfig.tsbuildinfo`; build then `cleanBuild`; a solution with two composite projects, a type error and `buildReferences`; the c2 tree as a composite config project, opened and built on both case settings |
+
+B3 risks 2 (D1), 3, 4, 5, 10, 12, 13 and 15 each have a scenario. Risks 3 to 5 do not show yet: on
+Linux D2 makes the emit side case-sensitive, so tsc-rs takes the case-sensitive path and gives Go's
+answer by accident. Go emits `SRC/data.json` in `dyn-json-case-insensitive` and
+`dyn-json-config-outdir-case-insensitive`, and so does tsc-rs today. Once B2 fixes D2, those items will
+show whether the call sites behind them still compare dynamic names with the OS's case rules.
+
+### Known differences at `ed6edf820` (11, pinned for B2)
+
+Each one reproduces with
+
+```sh
+P=scripts/perf-rearch/parity_api.py
+diff <(python3 $P probe ~/.local/bin/tsgo-oracle-3e9236361fa9 <scenario>) <(python3 $P probe <tsc-rs bin> <scenario>)
+```
+
+| scenario | difference (Go, then tsc-rs) | B3 |
+|---|---|---|
+| `dyn-commondir-insensitive` | `virtualout/A/x.{js,js.map,d.ts}` and `virtualout/a/y.*`; tsc-rs `virtualout/x.*`, and `y.*` beside its source as `^/~ts-uri~/mem/auth/a/y.*` | D1 |
+| `case-mixed-dirs-insensitive` | `out/x.js`, `out/y.js`; tsc-rs `out/x.js`, `a/y.js` | D2 |
+| `case-mixed-dirs-rootdir-insensitive` | `rootDir A`: `out/x.js`, `out/y.js`; tsc-rs `out/x.js`, `a/y.js` | D2 (isolated) |
+| `case-mixed-dirs-reversed-insensitive` | `out/x.js`, `out/y.js`; tsc-rs `A/x.js`, `out/y.js` | D2 |
+| `case-mixed-dirs-decl-maps-insensitive` | every output (js, map, d.ts, d.ts.map) in `out/`; tsc-rs `a/y.*` beside the source | D2 |
+| `case-mixed-dirs-decldir-insensitive` | `types/x.d.ts`, `types/y.d.ts`; tsc-rs `a/y.d.ts` | D2 |
+| `case-json-overwrite-insensitive` | no `SRC/data.json` (it would overwrite `src/data.json`); tsc-rs emits it | D2 (c1b) |
+| `case-outdir-rootdir-insensitive` | the maps' `sources` are `a.ts` and `b.ts` (`SRC/` and `src/` are one dir on this host); tsc-rs `../src/a.ts`, `../../src/sub/b.ts` | D2, at the source-map writer |
+| `build-mixed-dirs-insensitive` | the build orchestrator's `out/tsconfig.tsbuildinfo` has `"root":[[1,3]]`; tsc-rs `[[2,3]]` (it does not match the root `A/x.ts` to its `fileNames` entry `../a/x.ts`); every other output equal | D2 family (build info; not attributed further) |
+| `dyn-reference-ext-insensitive` | TS6054 "File 'x.TS' has an unsupported extension" and no `x.TS` in the program; tsc-rs takes `x.TS` into the program and emits `out/x.TS.js` | risk 10, confirmed |
+| `dyn-config-include-insensitive` | the config project has `src/A.ts` and `src/a.ts`; tsc-rs drops `src/a.ts` (and its output) | risks 12, 13, 15, confirmed |
+
+Risks 10 and 12 to 15 show although D2 is not fixed: they are on the program side (file loading and
+config parsing), which already takes the session's case setting. The two "confirmed" rows are new
+findings of this lane; B3 had them as "found by reading". Every other scenario is MATCH.
+
+**Pinned, not accepted.** Each is a `known-bad` tracking entry in `parity-grandfathered.json`, made with
+the grandfather tooling (`parity_grandfather.py evidence` and `regen --only '^api/'` on
+`tsgo-head-ed6edf820-rel`, full and quick). Its reason says that it is a confirmed difference, that fix
+lane B2 is open and removes the entry, and that any change fails the gate. The pins are the
+structured evidence every entry has: the scenario's key, Go's result and the fingerprint of every
+tsc-rs session. A fix makes the item good and its entry stale, so B2's gate fails until B2 removes the
+entry. Any other change also fails the gate: another wrong answer, nondeterminism, or a crash.
+`regen --only` is new: it rebuilds only the matching entries and keeps every other entry byte for
+byte. A plain `regen` from this lane's binary would have re-pinned the 36 fuzz entries to it.
+
+### Negative controls (`parity_h7_test.py`, 52 checks, `H7 SELFTEST OK`)
+
+The fake tsc-rs servers are Python proxies in front of the Go oracle, run through the real tier and
+`parity_compare.py compare`.
+
+| control | result |
+|---|---|
+| a proxy that forwards everything | MATCH (the proxy is transparent) |
+| a fake that emits to the wrong path (`/0ut/` for `/out/`) | DIFF; PARITY FAIL as LOST against a base where the item MATCHed, and as NEW against one without it |
+| a crash (a Rust panic line, exit 101) at the first emit; exit 3 after the last answer; a malformed frame header | DIFF with rsFailure crash; PARITY FAIL |
+| an emit that never answers (request timeout lowered to 3 s) | DIFF with rsFailure timeout |
+| another output name on every run | DIFF rs-nondet (full); as Go, GO-BROKEN, in full and in quick after the confirming run |
+| a server that writes into its home | DIFF (homeWrites) |
+| a server that reads the real `~/.cache/typescript` | ERROR ("touched an unkeyed path"), no Go entry published, PARITY FAIL |
+| an unkeyed input change: a second run of a scenario with a new fixture | Go cached, same key |
+| another case flag; one fixture byte more | another key: Go runs again |
+| a cache entry whose material is not the key's | not read: Go runs again |
+| a fixture snapshot whose bytes are not its scenario's | ERROR |
+| the key (unit): case flag, no flag, a file's content, the filesystem shape, an option, the requests, the fixture hash, the ancestors' state, the Go binary, the session driver's source, the protocol, the home path | each is another key; unchanged inputs give the same key |
+| the format (unit): a `layer` filesystem, a `host` symlink, no filesystem, build steps without a fixture, an unknown key, an absolute fixture path, an unknown request | refused |
+| the judge (unit): its order, a written file, a home write, stderr | as above |
+| grandfather (unit) | an api item is a valid entry; an lsp item is still refused |
+
+The H4, H6 and referee self-tests pass on this lane's harness (`H4 SELFTEST OK`, `H6 SELFTEST OK`,
+`SELFTEST OK`).
+
+GATE_SECTION
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
