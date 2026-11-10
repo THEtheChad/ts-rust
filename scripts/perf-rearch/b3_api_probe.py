@@ -71,7 +71,7 @@ def main(argv: list[str]) -> int:
     out = {"initialize": rpc.call("initialize", None).get("result")}
     snap = rpc.call("createSnapshot", case)
     if "error" in snap:
-        out["createSnapshot_error"] = snap["error"]
+        out["createSnapshot_error"] = str(snap["error"].get("message", snap["error"])).split("\n")[0]
         print(json.dumps(out, indent=1))
         rpc.close()
         return 0
@@ -82,7 +82,7 @@ def main(argv: list[str]) -> int:
     for pid in projects:
         r = rpc.call("emitToString", {"snapshot": res["snapshot"], "project": pid})
         if "error" in r:
-            out["emit"].append({"project": pid, "error": r["error"]})
+            out["emit"].append({"project": pid, "error": str(r["error"].get("message", r["error"])).split("\n")[0]})
             continue
         e = r["result"]
         out["emit"].append({
