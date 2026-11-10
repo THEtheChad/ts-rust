@@ -648,14 +648,12 @@ impl FlagSet {
         self.args.remove(0);
         let mut has_value = false;
         let mut value = String::new();
-        for i in 1..name.len() {
-            // equals cannot be first
-            if name.as_bytes()[i] == b'=' {
-                value = name[i + 1..].to_string();
-                has_value = true;
-                name = &name[..i];
-                break;
-            }
+        // equals cannot be first
+        if let Some(i) = name.bytes().skip(1).position(|c| c == b'=') {
+            let i = i + 1;
+            value = name[i + 1..].to_string();
+            has_value = true;
+            name = &name[..i];
         }
 
         let Some(flag_value) = self.formal.get(name).map(|flag| flag.value.clone()) else {
