@@ -1,6 +1,7 @@
 use crate::frontend::prelude::*;
 use std::borrow::Cow;
 // Go `strings.EqualFold`; other modules name it through vfsmatch.
+use crate::frontend::stringutil_ls::decode_rune_bytes as decode_rune;
 pub use crate::frontend::stringutil_ls::equal_fold;
 
 // This file ports vfs/vfsmatch/vfsmatch.go and stringer_generated.go.
@@ -852,27 +853,6 @@ fn ensure_trailing_slash(s: &str) -> String {
         return format!("{s}/");
     }
     s.to_string()
-}
-
-// PORT: Go `utf8.DecodeRuneInString`. An invalid or truncated sequence
-// gives U+FFFD with width 1. The input is never empty at the call sites.
-fn decode_rune(s: &[u8]) -> (char, usize) {
-    // PERF (cfgwalk1): an ASCII byte is its own rune, as in Go's fast path.
-    if let Some(&b) = s.first()
-        && b < 0x80
-    {
-        return (b as char, 1);
-    }
-    let head = &s[..s.len().min(4)];
-    let valid = match std::str::from_utf8(head) {
-        Ok(v) => v,
-        // `valid_up_to` marks the valid UTF-8 prefix.
-        Err(e) => std::str::from_utf8(&head[..e.valid_up_to()]).unwrap_or(""),
-    };
-    match valid.chars().next() {
-        Some(c) => (c, c.len_utf8()),
-        None => (char::REPLACEMENT_CHARACTER, 1),
-    }
 }
 
 // Go: vfs/vfsmatch/vfsmatch.go:515 globMatcher

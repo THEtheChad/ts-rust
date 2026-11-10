@@ -186,7 +186,8 @@ fn decode_rune_in_string(s: &str) -> (char, usize) {
 
 /// Go `utf8.DecodeRune` on bytes. An invalid or truncated sequence gives
 /// U+FFFD with width 1, like Go. `s` is not empty at the call sites.
-fn decode_rune_bytes(s: &[u8]) -> (char, usize) {
+#[inline]
+pub(crate) fn decode_rune_bytes(s: &[u8]) -> (char, usize) {
     // PERF (cfgwalk1): an ASCII byte is its own rune, as in Go's fast path.
     if let Some(&b) = s.first()
         && b < 0x80
