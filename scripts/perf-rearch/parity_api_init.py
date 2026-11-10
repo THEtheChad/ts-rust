@@ -19,13 +19,21 @@ Order (any failure is a setup failure: reported, exit 125, never a server result
      the upper or overlay work dir but through the overlay;
   4. the whole tree read-only (mount_setattr AT_RECURSIVE), then the home and the overlay writable again:
      the only writable places are the session's own storage, which the caller reads after every request;
-  5. every fd but 0, 1, 2 and the report closed; the server forked and exec'd at cwd /. An exec failure
-     comes back on a close-on-exec pipe and is a setup failure (exit 126), not a server crash;
+     /proc is writable again too, for step 5's id maps; without capabilities the server can change
+     nothing there that is not its own;
+  5. every fd but 0, 1, 2 and the report closed; an fd on /proc kept (close-on-exec) for step 6; the
+     server forked; it drops every privilege (drop(): a nested user namespace that owns none of this
+     script's namespaces and may make no other, an empty bounding, ambient, inheritable, permitted and
+     effective set, uid and gid 1000, no_new_privs, all checked) and is exec'd at cwd /. A drop or exec
+     failure comes back on a close-on-exec pipe and is a setup failure (exit 126), not a server crash;
   6. this script's own 0, 1 and 2 replaced by /dev/null, so the session's pipes are held by the server
-     and its descendants only; every process that ends is reaped; when the server ends, every other
-     process still in the namespace is a survivor: listed in the report, then killed (SIGKILL to all),
-     and the exit is the server's (128 + signal for a signal).
-Report: {"setup": why} or {"status": the server's wait status, "survivors": [cmdline, ...]}.
+     and its descendants only; every process that ends is reaped; when the server ends, the ends already
+     queued are reaped, every process still in the namespace is a survivor, listed through the /proc fd
+     of step 5 (the server cannot mount over it), then all are killed (SIGKILL to all, which PID 1 of a
+     PID namespace may do and none of them can stop) and reaped and counted (`reaped`: whatever /proc
+     showed, a process this script reaps after the server ended outlived it), and the exit is the
+     server's (128 + signal for a signal).
+Report: {"setup": why} or {"status": the server's wait status, "survivors": [cmdline, ...], "reaped": n}.
 """
 import ctypes
 import json
@@ -109,11 +117,96 @@ def setup():
         if os.path.ismount(d):
             check(libc.umount2(d.encode(), MNT_DETACH) == 0, f'umount {d}')
     readonly('/', True)
+    readonly('/proc', False, ro=False)  # the server's own uid_map, setgroups and user limit (drop(), step 5)
     readonly(spec['home'], False, ro=False)
     if spec['lower']:
         readonly(spec['target'], False, ro=False)
     for fd in [*fds.values(), *files.values()]:
         os.close(fd)
+
+
+CLONE_NEWUSER = 0x10000000
+PR_CAPBSET_DROP, PR_SET_NO_NEW_PRIVS, PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL = 24, 38, 47, 4
+SERVER_ID = 1000  # the server's uid and gid in its own user namespace (0 there would be root)
+
+
+class CapHeader(ctypes.Structure):
+    _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int)]
+
+
+class CapData(ctypes.Structure):
+    _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32), ('inheritable', ctypes.c_uint32)]
+
+
+def drop():
+    """In the forked server, before exec: give up every privilege over the sandbox, or say why not.
+    The mount, PID and network namespaces belong to this script's user namespace, in which the server
+    would be root. The server enters a user namespace of its own, nested in it, which owns none of them,
+    and there:
+      - maps uid and gid SERVER_ID to this script's 0 (one id each, setgroups denied): the host sees the
+        same user as before, so the server owns its home and overlay as before;
+      - sets that namespace's user.max_user_namespaces to 0: a user namespace of its own would give it a
+        full capability set again (the kernel resets the bounding set there), and with it a mount
+        namespace it could change;
+      - drops every capability from the bounding set, clears the ambient set, and empties the effective,
+        permitted and inheritable sets (capset), then becomes SERVER_ID (setresgid, setresuid: no root
+        uid left to regain them through exec) and sets no_new_privs;
+      - checks /proc/self/status: CapInh, CapPrm, CapEff, CapBnd and CapAmb all 0, NoNewPrivs 1, the
+        uid and gid SERVER_ID. Anything else is a setup failure.
+    So mount, umount, mount_setattr, pivot_root, unshare (of a mount or user namespace), setns into this
+    script's namespaces, ptrace of this script and access to its /proc/1/fd all fail for the server."""
+    def write(path, text):
+        with open(path, 'w') as f:
+            f.write(text)
+    try:
+        if libc.unshare(CLONE_NEWUSER) != 0:
+            return f'unshare(CLONE_NEWUSER): {os.strerror(ctypes.get_errno())}'
+        write('/proc/self/setgroups', 'deny')
+        write('/proc/self/uid_map', f'{SERVER_ID} 0 1\n')
+        write('/proc/self/gid_map', f'{SERVER_ID} 0 1\n')
+        write('/proc/sys/user/max_user_namespaces', '0')
+        last = int(open('/proc/sys/kernel/cap_last_cap').read())
+        for cap in range(last + 1):
+            if libc.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) != 0:
+                return f'PR_CAPBSET_DROP {cap}: {os.strerror(ctypes.get_errno())}'
+        if libc.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) != 0:
+            return f'PR_CAP_AMBIENT_CLEAR_ALL: {os.strerror(ctypes.get_errno())}'
+        os.setresgid(SERVER_ID, SERVER_ID, SERVER_ID)
+        os.setresuid(SERVER_ID, SERVER_ID, SERVER_ID)
+        data = (CapData * 2)()
+        if libc.capset(ctypes.byref(CapHeader(0x20080522, 0)), data) != 0:  # _LINUX_CAPABILITY_VERSION_3
+            return f'capset: {os.strerror(ctypes.get_errno())}'
+        if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            return f'PR_SET_NO_NEW_PRIVS: {os.strerror(ctypes.get_errno())}'
+    except OSError as e:
+        return f'dropping privileges: {e}'
+    status = dict(line.split(':', 1) for line in open('/proc/self/status') if ':' in line)
+    bad = [k for k in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb') if int(status.get(k, '1'), 16) != 0]
+    if bad or status.get('NoNewPrivs', '').strip() != '1':
+        return f'privileges left after the drop: {bad or "no_new_privs unset"}'
+    if status['Uid'].split() != [str(SERVER_ID)] * 4 or status['Gid'].split() != [str(SERVER_ID)] * 4:
+        return f'ids after the drop: Uid {status["Uid"].split()}, Gid {status["Gid"].split()}'
+    return None
+
+
+def living(proc):
+    """[cmdline] of every process of the namespace but this one that has not ended, read through an fd on
+    /proc opened before the server started (the server cannot mount anything, so it cannot hide one)."""
+    out = []
+    for d in os.listdir(proc):
+        if d.isdigit() and int(d) != 1:
+            try:
+                fd = os.open(f'{d}/stat', os.O_RDONLY, dir_fd=proc)
+                state = os.read(fd, 4096).decode().rsplit(')', 1)[1].split()[0]
+                os.close(fd)
+                if state == 'Z':
+                    continue  # ended, not yet reaped: no survivor
+                fd = os.open(f'{d}/cmdline', os.O_RDONLY, dir_fd=proc)
+                out.append(os.read(fd, 4096).replace(b'\0', b' ').decode('utf-8', 'replace').strip()[:200] or f'pid {d}')
+                os.close(fd)
+            except (OSError, IndexError):
+                pass
+    return sorted(out)
 
 
 def main():
@@ -126,11 +219,16 @@ def main():
             except OSError:
                 pass
     os.set_inheritable(report.fileno(), False)
-    r, w = os.pipe()  # close-on-exec: an exec failure comes back here
+    proc = os.open('/proc', os.O_RDONLY | os.O_DIRECTORY)  # close-on-exec: the survivor scan's own handle
+    r, w = os.pipe()  # close-on-exec: a privilege-drop or exec failure comes back here
     pid = os.fork()
     if pid == 0:
         os.close(r)
         os.chdir('/')
+        why = drop()
+        if why:
+            os.write(w, f'the server keeps privileges: {why}'.encode())
+            os._exit(127)
         try:
             os.execv(spec['cmd'][0], spec['cmd'])
         except OSError as e:
@@ -150,25 +248,33 @@ def main():
         got, status = os.waitpid(-1, 0)
         if got == pid:
             break
-    survivors = []
-    for d in os.listdir('/proc'):
-        if d.isdigit() and int(d) != 1:
-            try:
-                if open(f'/proc/{d}/stat').read().rsplit(')', 1)[1].split()[0] == 'Z':
-                    continue  # ended, not yet reaped: no survivor
-                survivors.append(open(f'/proc/{d}/cmdline', 'rb').read().replace(b'\0', b' ').decode('utf-8', 'replace').strip()[:200])
-            except OSError:
-                pass
-    report.write(json.dumps({'status': status, 'survivors': sorted(survivors)}))
-    report.flush()
-    os.kill(-1, signal.SIGKILL)
+    while True:  # the ends already queued: processes that ended before the server did
+        try:
+            if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                break
+        except ChildProcessError:
+            break
+    survivors = living(proc)
+    try:
+        os.kill(-1, signal.SIGKILL)
+    except ProcessLookupError:  # nothing else is left
+        pass
+    reaped = 0  # every process left in the namespace ends here, whatever /proc showed
     while True:
         try:
             os.waitpid(-1, 0)
+            reaped += 1
         except ChildProcessError:
             break
+    report.write(json.dumps({'status': status, 'survivors': survivors, 'reaped': reaped}))
+    report.flush()
     code = os.waitstatus_to_exitcode(status)
     os._exit(code if code >= 0 else 128 - code)
 
 
-main()
+
+try:
+    main()
+except BaseException as e:  # noqa: BLE001 (a failure of this script is a setup failure, with its reason)
+    import traceback
+    done({'setup': f'parity_api_init.py failed: {type(e).__name__}: {e}; {traceback.format_exc()[-600:]}'}, 125)

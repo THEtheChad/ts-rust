@@ -178,7 +178,7 @@ def fixture_snapshot(sc):
     and checked against the scenario every time (inputs.SnapshotError when it is not exactly that)."""
     files = sc['disk']
     h = inputs.json_hash(files)[:24]
-    tree = STATE / 'snapshots/api' / h / 'tree'
+    tree = STATE / 'snapshots/api' / f'{h}-m{session.FIXTURE_DIR_MODE:o}{session.FIXTURE_FILE_MODE:o}' / 'tree'
     if not tree.exists():
         tmp = tree.parent / f'tmp-{os.getpid()}-{time.monotonic_ns()}'
         tmp.mkdir(parents=True)
@@ -193,9 +193,9 @@ def fixture_snapshot(sc):
             for x in fs + dirs:
                 q = os.path.join(top, x)
                 if not os.path.islink(q):
-                    os.chmod(q, 0o555 if os.path.isdir(q) else 0o444)
+                    os.chmod(q, session.FIXTURE_DIR_MODE if os.path.isdir(q) else session.FIXTURE_FILE_MODE)
                 os.utime(q, (FIXED_MTIME, FIXED_MTIME), follow_symlinks=False)
-        os.chmod(tmp, 0o555)
+        os.chmod(tmp, session.FIXTURE_DIR_MODE)
         os.utime(tmp, (FIXED_MTIME, FIXED_MTIME))
         try:
             tmp.rename(tree)
@@ -206,16 +206,17 @@ def fixture_snapshot(sc):
 
 
 def check_fixture(tree, files):
-    """Raises inputs.SnapshotError unless tree holds exactly files (bytes, link targets, names, read-only,
-    the fixed mtime)."""
+    """Raises inputs.SnapshotError unless tree holds exactly files (bytes, link targets, names, the fixture
+    modes, the fixed mtime)."""
     seen = {}
     for top, dirs, fs in os.walk(tree):
         for x in dirs + fs:
             p = os.path.join(top, x)
             st = os.lstat(p)
             link = stat.S_ISLNK(st.st_mode)
-            if (st.st_mode & 0o222 and not link) or int(st.st_mtime) != FIXED_MTIME:
-                raise inputs.SnapshotError(f'{p}: writable or touched')
+            want = None if link else session.FIXTURE_DIR_MODE if stat.S_ISDIR(st.st_mode) else session.FIXTURE_FILE_MODE
+            if (want is not None and stat.S_IMODE(st.st_mode) != want) or int(st.st_mtime) != FIXED_MTIME:
+                raise inputs.SnapshotError(f'{p}: another mode or mtime than the fixture\'s')
             if link:
                 seen[os.path.relpath(p, tree)] = {'symlink': os.readlink(p)}
             elif not stat.S_ISDIR(st.st_mode):
@@ -243,7 +244,7 @@ def canon(value):
 def answers(t):
     """Every request as sent and its answer's raw message, and how the session ended."""
     return {'steps': [{k: s[k] for k in ('method', 'params', 'answer', 'failure') if k in s} for s in t['steps']],
-            'exit': t['exit'], 'forced': t['forced'], 'survivors': t['survivors'], 'failure': t['failure']}
+            'exit': t['exit'], 'forced': t['forced'], 'survivors': t['survivors'], 'reaped': t.get('reaped'), 'failure': t['failure']}
 
 
 def storage(t):

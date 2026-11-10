@@ -85,6 +85,7 @@ PROTOCOL = 'jsonrpc-async; tsc 3e9236361fa9 internal/api protocol 5'
 REQUEST_TIMEOUT = int(os.environ.get('PARITY_API_REQUEST_TIMEOUT', '60'))  # lowered only by parity_h7_test.py; keyed
 EXIT_TIMEOUT = 10
 EOF_TIMEOUT = 10
+MAX_HEADER_LINE, MAX_HEADERS, MAX_FRAME = 256, 4, 256 << 20
 PER_PROJECT = ['getSourceFileNames', 'getConfigFileNames', 'getConfigFileParsingDiagnostics', 'getProgramDiagnostics',
                'getGlobalDiagnostics', 'getSyntacticDiagnostics', 'getSemanticDiagnostics', 'getSuggestionDiagnostics',
                'getDeclarationDiagnostics', 'emitToString', 'emit']
@@ -92,6 +93,10 @@ SERVER_PATH = '/usr/bin:/bin'
 HOME_DIRS = ['.cache', '.config', '.local/share', '.local/state', 'tmp']
 HIDDEN = ['/home', '/tmp', '/var/tmp', '/run', '/mnt', '/media', '/srv', '/opt', '/dev/shm']
 FIXED_MTIME = 978307200  # 2001-01-01: every dir the sandbox makes, and every fixture file
+# A disk fixture's modes: a checkout's. The server is not root in its sandbox (parity_api_init.py drop()),
+# so it can write only where a user may; the fixture's immutability comes from its content check before
+# and after the tier and the inotify watch while it runs, not from its modes.
+FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o755, 0o644
 UNSHARE = ['unshare', '--user', '--map-root-user', '--mount', '--net', '--pid', '--fork', '--kill-child', '--mount-proc', '--']
 # Crash lines on stderr (vendor/lspdiff/sandbox.mjs CRASH_RE): Go's panic, fatal error, goroutine trace
 # and signal lines; Rust's panic and stack overflow; an abort.
@@ -266,33 +271,53 @@ class Rpc:
                                   cwd='/', start_new_session=True, pass_fds=pass_fds)
         self.n = 0
         self.frames, self.cond, self.eof, self.bad = [], threading.Condition(), False, None
+        # EOF is a fact a read reports (b''), set by the readers themselves, never inferred from a thread
+        # that ended: a reader that dies of an exception leaves its flag False and says why in self.bad.
+        self.out_eof = self.err_eof = False
         self.err = bytearray()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.err_reader = threading.Thread(target=self._read_err, daemon=True)
         self.reader.start()
         self.err_reader.start()
 
+    def _fail(self, why):
+        with self.cond:
+            self.bad = self.bad or why
+            self.cond.notify_all()
+
     def _read_err(self):
-        for chunk in iter(lambda: self.p.stderr.read1(65536), b''):
-            self.err += chunk
+        try:
+            for chunk in iter(lambda: self.p.stderr.read1(65536), b''):
+                self.err += chunk
+            self.err_eof = True
+        except BaseException as e:  # noqa: BLE001 (any failure of the reader fails the session)
+            self._fail(f'the stderr reader failed: {type(e).__name__}: {str(e)[:200]}')
 
     def _frame(self, f):
-        """One frame's body, or None at a clean end."""
+        """One frame's body, or None at a clean end (EOF at a frame boundary). Bounded: header lines of at
+        most MAX_HEADER_LINE bytes, at most MAX_HEADERS of them, a Content-Length of at most 10 digits and
+        MAX_FRAME bytes."""
         head = {}
-        line = f.readline()
+        line = f.readline(MAX_HEADER_LINE + 1)
         if not line:
             return None
         while line not in (b'\r\n', b'\n'):
+            if len(line) > MAX_HEADER_LINE:
+                raise Malformed(f'a header line longer than {MAX_HEADER_LINE} bytes: {line[:80]!r}...')
             if not line.endswith(b'\n'):
                 raise Malformed(f'a header line without its end: {line[:80]!r}')
             k, sep, v = line.decode('ascii', 'replace').partition(':')
             if not sep or k.strip().lower() not in ('content-length', 'content-type') or k.strip().lower() in head:
                 raise Malformed(f'not a header line: {line[:80]!r}')
             head[k.strip().lower()] = v.strip()
-            line = f.readline()
-        if not re.match(r'^\d+$', head.get('content-length', '')):
-            raise Malformed(f'no Content-Length: {head}')
+            if len(head) > MAX_HEADERS:
+                raise Malformed(f'more than {MAX_HEADERS} header lines')
+            line = f.readline(MAX_HEADER_LINE + 1)
+        if not re.match(r'^[0-9]{1,10}$', head.get('content-length', '')):
+            raise Malformed(f'no Content-Length of at most 10 digits: {str(head)[:120]}')
         n = int(head['content-length'])
+        if n > MAX_FRAME:
+            raise Malformed(f'a Content-Length of {n} bytes, more than {MAX_FRAME}')
         body = f.read(n)
         if len(body) != n:
             raise Malformed(f'a frame cut short: {len(body)} of {n} bytes')
@@ -304,16 +329,23 @@ class Rpc:
             while True:
                 body = self._frame(f)
                 if body is None:
+                    self.out_eof = True
                     break
                 msg = parse(body)
                 with self.cond:
                     self.frames.append((body, msg))
                     self.cond.notify_all()
         except Malformed as e:
-            with self.cond:
-                self.bad = str(e)
-            for _ in iter(lambda: f.read(65536), b''):  # drain to EOF, so EOF still means "nobody holds it"
-                pass
+            self._fail(str(e))
+        except BaseException as e:  # noqa: BLE001 (any failure of the reader fails the session)
+            self._fail(f'the stdout reader failed: {type(e).__name__}: {str(e)[:200]}')
+        if not self.out_eof:
+            try:  # drain to EOF, so that EOF still means "nobody holds it"
+                for _ in iter(lambda: f.read(65536), b''):
+                    pass
+                self.out_eof = True
+            except BaseException as e:  # noqa: BLE001
+                self._fail(f'the stdout reader failed while draining: {type(e).__name__}: {str(e)[:200]}')
         with self.cond:
             self.eof = True
             self.cond.notify_all()
@@ -363,7 +395,7 @@ class Rpc:
             self.p.wait()
         self.reader.join(EOF_TIMEOUT)
         self.err_reader.join(EOF_TIMEOUT)
-        eof = not self.reader.is_alive() and not self.err_reader.is_alive()
+        eof = self.out_eof and self.err_eof and not self.reader.is_alive() and not self.err_reader.is_alive()
         with self.cond:
             trailing = self.bad or (f'{len(self.frames)} frames after the last answer' if self.frames else None)
         return self.p.returncode, forced, trailing, eof
@@ -377,10 +409,10 @@ class Rpc:
 
 # ---- the session's storage --------------------------------------------------------------------
 
-def _walk(top, skip=()):
-    """({relative path: sha256, 'deleted', 'dir' or 'link <target>'}, {relative path: text}) of a host dir:
-    what a session wrote there (an overlay whiteout is a deleted input). Texts (up to 256 KB) are for
-    the diff report only."""
+def _walk(top):
+    """({relative path: what it is}, {relative path: text}) of a host dir: every entry, none skipped, as
+    "<sha256> <mode>" (a file), "dir <mode>", "link <target>" or "deleted" (an overlay whiteout: a deleted
+    input). Texts (up to 256 KB) are for the diff report only."""
     out, texts = {}, {}
     if not os.path.isdir(top):
         return out, texts
@@ -388,35 +420,63 @@ def _walk(top, skip=()):
         for x in dirs + files:
             p = os.path.join(d, x)
             rel = os.path.relpath(p, top)
-            if rel in skip:
-                continue
             st = os.lstat(p)
+            mode = f'{stat.S_IMODE(st.st_mode):o}'
             if stat.S_ISCHR(st.st_mode):
                 out[rel] = 'deleted'
             elif stat.S_ISLNK(st.st_mode):
                 out[rel] = 'link ' + os.readlink(p)
             elif stat.S_ISDIR(st.st_mode):
-                out[rel] = 'dir'
+                out[rel] = f'dir {mode}'
+            elif not stat.S_ISREG(st.st_mode):
+                out[rel] = f'special {st.st_mode:o}'
             else:
                 try:
                     data = Path(p).read_bytes()
                 except OSError as e:
                     out[rel] = f'unreadable {e.strerror}'
                     continue
-                out[rel] = hashlib.sha256(data).hexdigest()[:16]
+                out[rel] = f'{hashlib.sha256(data).hexdigest()[:16]} {mode}'
                 if len(data) <= 1 << 18:
                     texts[rel] = data.decode('utf-8', 'replace')
     return dict(sorted(out.items())), dict(sorted(texts.items()))
 
 
 HOME_SKELETON = {'/'.join(d.split('/')[:k + 1]) for d in HOME_DIRS for k in range(len(d.split('/')))}
+SKELETON_MODE = 0o755
+
+
+def make_home(home):
+    """The private home's skeleton: HOME_DIRS, every dir of it a real dir of mode SKELETON_MODE."""
+    for d in sorted(HOME_SKELETON):
+        (home / d).mkdir(parents=True, exist_ok=True)
+        os.chmod(home / d, SKELETON_MODE)
+    os.chmod(home, SKELETON_MODE)
+
+
+def skeleton_errors(home):
+    """How the home's skeleton is not what make_home made: a skeleton path that is gone, not a real dir,
+    or of another mode, and the home itself. Its contents are in the storage listing, compared with Go's."""
+    out = []
+    for rel in ['.', *sorted(HOME_SKELETON)]:
+        try:
+            st = os.lstat(home / rel)
+        except OSError:
+            out.append(f'{rel}: gone')
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            out.append(f'{rel}: not a dir ({stat.filemode(st.st_mode)})')
+        elif stat.S_IMODE(st.st_mode) != SKELETON_MODE:
+            out.append(f'{rel}: mode {stat.S_IMODE(st.st_mode):o}, not {SKELETON_MODE:o}')
+    return out
 
 
 def storage(work):
-    """The state of a session's writable places: the fixture's upper dir and the private home."""
+    """The state of a session's writable places: the fixture's upper dir and the private home, every entry
+    listed, and the home skeleton's deviations from its exact structure."""
     disk, texts = _walk(work / 'upper')
-    home, _ = _walk(work / 'home', HOME_SKELETON)
-    return {'disk': disk, 'home': home}, texts
+    home, _ = _walk(work / 'home')
+    return {'disk': disk, 'home': home, 'skeleton': skeleton_errors(work / 'home')}, texts
 
 
 def _clear(d):
@@ -446,8 +506,7 @@ class Session:
         self.sc, self.work, self.root = sc, work, root_of(sc)
         self.steps, self.failure = [], None
         _clear(work)
-        for d in HOME_DIRS:
-            (work / 'home' / d).mkdir(parents=True, exist_ok=True)
+        make_home(work / 'home')
         if fixture is not None:
             (work / 'upper').mkdir()
             (work / 'ovl').mkdir()
@@ -540,8 +599,8 @@ class Session:
         if not failure:
             if trailing:
                 failure = ('malformed', trailing)
-            elif rep.get('survivors'):
-                failure = ('crash', f'processes survived the server: {rep["survivors"][:5]}')
+            elif rep.get('survivors') or rep.get('reaped'):
+                failure = ('crash', f'processes survived the server: {rep.get("survivors", [])[:5]}, {rep.get("reaped")} killed after it')
             elif not eof:
                 failure = ('crash', f'its output was still held open {EOF_TIMEOUT} s after it ended')
             elif forced:
@@ -553,7 +612,7 @@ class Session:
         final, texts = storage(self.work)
         _clear(self.work)
         import parity_grandfather  # the site form a grandfather entry pins (never part of a cached Go answer's key)
-        return {'steps': self.steps, 'exit': code, 'forced': forced, 'survivors': rep.get('survivors', []),
+        return {'steps': self.steps, 'exit': code, 'forced': forced, 'survivors': rep.get('survivors', []), 'reaped': rep.get('reaped'),
                 'stderr': {'sha': hashlib.sha256(err).hexdigest()[:16], 'site': parity_grandfather.stderr_site_hash(err),
                            'bytes': len(err), 'crash': crash, 'tail': err[-600:].decode('utf-8', 'replace')},
                 'fs': final, 'writtenText': texts, 'failure': failure[0] if failure else None,

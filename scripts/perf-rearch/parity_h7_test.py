@@ -61,78 +61,7 @@ def check(name, ok, info=''):
         FAILS.append(name)
 
 
-# Astra's proxy-extra.py (review of 6e97777e6), without its two writes of logs to the review dir (they are
-# outside the session, so in the sandbox they would fail and end the proxy before what it tests), plus
-# the `fds` mode and an `outside-write` that tries more places and goes on whatever happens.
-FAKE = r'''
-import os, re, subprocess, sys, threading, time, random
-mode, go, typings = sys.argv[1], sys.argv[2], sys.argv[3]
-args = sys.argv[4:]
-if mode == 'fds':
-    fds = sorted(int(x) for x in os.listdir('/proc/self/fd'))
-    if [fd for fd in fds if fd > 3]:  # 3: the listing's own fd
-        sys.stderr.write('panic: inherited fds %r\n' % fds); sys.exit(2)
-if mode == 'read-typings':
-    os.listdir(typings)
-    open(os.path.join(typings, '7.1', 'package.json')).read()
-if mode == 'home-write':
-    open(os.path.join(os.environ['HOME'], '.cache', 'fake-was-here'), 'w').write('x')
-if mode == 'outside-write':
-    for target in OUTSIDE_LIST:
-        try:
-            open(target, 'w').write('escaped')
-        except OSError:
-            pass
-if mode == 'stat-bait':
-    assert os.stat(os.path.join(typings, '7.1', 'package.json')).st_size > 0
-    fd = os.open(os.path.join(typings, '7.1', 'package.json'), os.O_PATH)
-    os.fstat(fd)
-    os.close(fd)
-p = subprocess.Popen([go, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-def pump():
-    for chunk in iter(lambda: sys.stdin.buffer.read1(65536), b''):
-        p.stdin.write(chunk); p.stdin.flush()
-    p.stdin.close()
-threading.Thread(target=pump, daemon=True).start()
-out = sys.stdout.buffer
-tag = str(random.random())
-while True:
-    head = p.stdout.readline()
-    if not head:
-        break
-    n = int(head.split(b':')[1]); p.stdout.readline()
-    body = p.stdout.read(n)
-    if mode == 'bad-rpc':
-        assert b'"jsonrpc":"2.0"' in body
-    if mode == 'corrupt-build' and b'"ProjectsBuilt":1' in body:
-        cwd=args[args.index('--cwd')+1]
-        target=os.path.join(cwd,'out','a.js')
-        if os.path.exists(target):
-            open(target,'w').write('CORRUPTED BUILD OUTPUT')
-    if mode == 'bool-number':
-        body = re.sub(rb'("emitSkipped"\s*:\s*)false', rb'\g<1>0', body)
-    if mode == 'bad-rpc':
-        body = body.replace(b'"jsonrpc":"2.0"', b'"jsonrpc":"9.9"')
-    emit = b'outputFiles' in body or b'emittedFiles' in body
-    if emit and mode == 'wrong-path':
-        body = body.replace(b'/out/', b'/0ut/')
-    if emit and mode == 'nondet':
-        body = body.replace(b'/out/', ('/out-' + tag + '/').encode())
-    if emit and mode == 'crash':
-        sys.stderr.write("thread 'main' panicked at src/fake.rs:1:1:\nfake\n"); sys.stderr.flush(); os._exit(101)
-    if emit and mode == 'hang':
-        time.sleep(3600)
-    if emit and mode == 'malformed':
-        out.write(b'Content-Lenght: 2\r\n\r\n{}'); out.flush(); continue
-    out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body); out.flush()
-code = p.wait()
-if mode == 'child-stdout':
-    child = os.fork()
-    if child == 0:
-        time.sleep(120)
-        os._exit(0)
-sys.exit(3 if mode == 'late-exit' else code)
-'''
+FAKE = (HERE / 'parity_h7_fake.py').read_text()  # Astra's round 2 probe, plus `privs`
 OUTSIDE = [str(ASTRA / 'outside-sandbox-r2'), '/etc/parity-h7-escape', '/var/tmp/parity-h7-escape', '/tmp/parity-h7-escape']
 
 
@@ -268,6 +197,28 @@ def unit():
             check(f'frame: {what} is malformed', False)
         except session.Malformed:
             check(f'frame: {what} is malformed', True)
+
+    # round 3 finding 3: the home skeleton is checked against its exact structure
+    h = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH)) / 'home'
+    session.make_home(h)
+    check('round 3 finding 3: a fresh skeleton has no deviation', session.skeleton_errors(h) == [], session.skeleton_errors(h))
+    (h / 'tmp').rmdir()
+    (h / 'tmp').write_text('x')
+    check('round 3 finding 3: tmp replaced by a file is a deviation', any(e.startswith('tmp:') for e in session.skeleton_errors(h)))
+    (h / 'tmp').unlink()
+    (h / 'tmp').mkdir(mode=0o700)
+    os.chmod(h / 'tmp', 0o700)
+    check('round 3 finding 3: tmp of another mode is a deviation', any('mode 700' in e for e in session.skeleton_errors(h)))
+    os.chmod(h / '.cache', 0o755)
+    (h / '.cache').rmdir()
+    check('round 3 finding 3: a skeleton dir gone is a deviation', any(e == '.cache: gone' for e in session.skeleton_errors(h)))
+    inputs.remove_tree(h.parent)
+    w = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH))
+    session.make_home(w / 'home')
+    listing = session.storage(w)[0]
+    check('round 3 finding 3: the skeleton is in the storage listing, with its modes, not skipped',
+          listing['home'].get('tmp') == 'dir 755' and listing['skeleton'] == [], listing)
+    inputs.remove_tree(w)
 
     # finding 8: Go's stderr is in its pinned evidence
     check('pin: a changed Go stderr changes Go\'s evidence (finding 8)', api.go_evidence(t(), None) != api.go_evidence(t(err='other'), None))
@@ -412,6 +363,36 @@ def e2e_findings():
     check('finding 6: the server has no fd but 0, 1 and 2', row_of(r, item).get('status') == 'MATCH', row_of(r, item) or log)
 
 
+def e2e_round3():
+    """Astra's round 2 recheck (of 5c6b0c8d5): her cases, one control per finding."""
+    good, item = '^case-mixed-dirs-sensitive$', 'case-mixed-dirs-sensitive'
+
+    def status(mode):
+        r, log = tier(fake(mode), good)
+        return row_of(r, item), log
+    for mode in ('trailing-length', 'trailing-deep'):
+        row, log = status(mode)
+        check(f'round 3 finding 1: {mode} (a header the reader cannot take, after the last answer) is a DIFF rsFailure crash',
+              row.get('status') == 'DIFF' and row.get('rsFailure') == 'crash', row or log[-400:])
+    for mode, what in (('shm-remount', 'clears read-only on /dev/shm and writes there'),
+                       ('hide-proc-survivor', 'mounts a tmpfs over /proc and leaves a detached child'),
+                       ('report-access', "writes a forged report into PID 1's report pipe")):
+        row, log = status(mode)
+        check(f'round 3 finding 2: a server that {what} is not MATCH (it cannot: {row.get("status")})',
+              row.get('status') in ('DIFF', 'ERROR') and row.get('status') != 'MATCH', row or log[-400:])
+    row, log = status('detached')
+    check('round 3 finding 2: a detached grandchild (setsid) is a survivor: DIFF rsFailure crash',
+          row.get('status') == 'DIFF' and row.get('rsFailure') == 'crash' and 'survived' in row.get('detail', ''), row or log[-400:])
+    row, log = status('privs')
+    check('round 3 finding 2: no capability is left, and mount, umount, mount_setattr, pivot_root, unshare(CLONE_NEWNS), '
+          'unshare(CLONE_NEWUSER) and setns all fail for the server (MATCH)', row.get('status') == 'MATCH', row or log[-400:])
+    row, log = status('home-skeleton')
+    check('round 3 finding 3: $HOME/tmp replaced by a file is a DIFF', row.get('status') == 'DIFF', row or log[-400:])
+    for mode in ('large-int', 'minus-zero', 'unicode-escape', 'bom', 'whitespace', 'overflow'):
+        row, log = status(mode)
+        check(f'round 2 recheck: {mode} still fails closed (not MATCH)', row.get('status') not in ('MATCH', None), row or log[-400:])
+
+
 def e2e():
     good = '^case-mixed-dirs-sensitive$'
     item = 'case-mixed-dirs-sensitive'
@@ -489,12 +470,8 @@ def e2e():
     check('e2e cache: an entry whose material is not the key\'s is not read', r5['scenarios'].get(name, {}).get('goCached') is False, r5['scenarios'])
     tree, _h = api.fixture_snapshot(sc)
     f = tree / 'a/y.ts'
-    os.chmod(tree / 'a', 0o755)
-    os.chmod(f, 0o644)
     f.write_text('export const x1 = 99;\n')
-    os.chmod(f, 0o444)
     os.utime(f, (api.FIXED_MTIME, api.FIXED_MTIME))
-    os.chmod(tree / 'a', 0o555)
     r6, log6 = tier(GO, '.', scenarios=with_scenario(sc))
     check('e2e cache: a fixture snapshot that is not its scenario\'s content is ERROR', row_of(r6, name).get('status') == 'ERROR', (r6['items'], log6))
     inputs.remove_tree(tree.parent)
@@ -505,12 +482,14 @@ def main():
     SCRATCH.mkdir(parents=True, exist_ok=True)
     if '--e2e-only' in sys.argv:
         print(f'harness: {HARNESS}')
+        e2e_round3()
         e2e_findings()
         e2e()
     else:
         unit()
         tripwire()
         if '--unit' not in sys.argv:
+            e2e_round3()
             e2e_findings()
             e2e()
     print('H7 SELFTEST OK' if not FAILS else f'H7 SELFTEST FAIL ({len(FAILS)}): {", ".join(FAILS)}')
