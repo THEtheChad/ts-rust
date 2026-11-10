@@ -57,3 +57,7 @@ type Tree = { value: number; left?: Tree; right?: Tree }
 type Union = { kind: "a"; a: string } | { kind: "b"; b: number }
 type Tuple = readonly [string, number?, ...boolean[]]
 type Template = `a${string}`
+interface IndexWithoutType { [key?]: number }
+interface IndexWithTwoParameters { [a: string, b: string]: number }
+export type ExportedUnion = { a: string } | { b: number }
+type LocalUnion = { a: string } | { b: number }

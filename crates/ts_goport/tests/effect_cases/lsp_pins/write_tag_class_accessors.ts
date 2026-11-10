@@ -31,3 +31,10 @@ export class Primitive extends Effect.Tag("Primitive")<Primitive, string>() {}
 export class Plain extends Context.Tag("Plain")<Plain, {
   readonly generic: <A>(a: A) => Effect.Effect<A>
 }>() {}
+
+export class Shapes extends Effect.Tag("Shapes")<Shapes, {
+  readonly generic: <A>(a: A) => Effect.Effect<A>
+} | {
+  readonly generic: <A>(a: A) => Effect.Effect<A>
+  readonly other: <B>(b: B) => Effect.Effect<B>
+}>() {}

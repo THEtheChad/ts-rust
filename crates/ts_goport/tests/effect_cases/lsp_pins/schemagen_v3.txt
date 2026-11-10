@@ -39,6 +39,27 @@
       "message": "Member 'a' implicitly has an 'any' type."
     },
     {
+      "range": {"start":{"line":59,"character":30},"end":{"line":59,"character":34}},
+      "severity": 1,
+      "code": 7006,
+      "source": "ts",
+      "message": "Parameter 'key' implicitly has an 'any' type."
+    },
+    {
+      "range": {"start":{"line":59,"character":33},"end":{"line":59,"character":34}},
+      "severity": 1,
+      "code": 1019,
+      "source": "ts",
+      "message": "An index signature parameter cannot have a question mark."
+    },
+    {
+      "range": {"start":{"line":60,"character":36},"end":{"line":60,"character":37}},
+      "severity": 1,
+      "code": 1096,
+      "source": "ts",
+      "message": "An index signature must have exactly one parameter."
+    },
+    {
       "range": {"start":{"line":0,"character":42},"end":{"line":0,"character":48}},
       "severity": 4,
       "code": 6133,
@@ -233,6 +254,27 @@
       "code": 6196,
       "source": "ts",
       "message": "'Template' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":59,"character":10},"end":{"line":59,"character":26}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'IndexWithoutType' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":60,"character":10},"end":{"line":60,"character":32}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'IndexWithTwoParameters' is declared but never used."
+    },
+    {
+      "range": {"start":{"line":62,"character":5},"end":{"line":62,"character":15}},
+      "severity": 4,
+      "code": 6196,
+      "source": "ts",
+      "message": "'LocalUnion' is declared but never used."
     }
   ]
 }
@@ -1570,6 +1612,158 @@
           {
             "range": {"start":{"line":58,"character":0},"end":{"line":58,"character":0}},
             "newText": "export const Template = undefined /* type with flags 4194304 is not supported */;\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 59:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":59,"character":0},"end":{"line":59,"character":0}},
+            "newText": "undefined /* only explicit types are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":59,"character":0},"end":{"line":59,"character":0}},
+            "newText": "class IndexWithoutType extends Schema.Class<IndexWithoutType>(\"IndexWithoutType\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 60:10
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":60,"character":0},"end":{"line":60,"character":0}},
+            "newText": "undefined /* only index signatures with one parameter are supported */\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":60,"character":0},"end":{"line":60,"character":0}},
+            "newText": "class IndexWithTwoParameters extends Schema.Class<IndexWithTwoParameters>(\"IndexWithTwoParameters\")({}) {}\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 61:12
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":61,"character":0},"end":{"line":61,"character":0}},
+            "newText": "export const ExportedUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":61,"character":0},"end":{"line":61,"character":0}},
+            "newText": "export const ExportedUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":61,"character":0},"end":{"line":61,"character":0}},
+            "newText": "export const ExportedUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 62:5
+[
+  {
+    "title": "Generate Effect.Schema from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":62,"character":0},"end":{"line":62,"character":0}},
+            "newText": "export const LocalUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Generate Schema.Class from type",
+    "kind": "refactor.rewrite.effect.typeToEffectSchemaClass",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":62,"character":0},"end":{"line":62,"character":0}},
+            "newText": "export const LocalUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Refactor to Schema (Recursive Structural)",
+    "kind": "refactor.rewrite.effect.structuralTypeToSchema",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":62,"character":0},"end":{"line":62,"character":0}},
+            "newText": "const LocalUnion = Schema.Union(Schema.Struct({\n    a: Schema.String\n}), Schema.Struct({\n    b: Schema.Number\n}));\n\n"
           }
         ]
       }

@@ -1,4 +1,4 @@
-import { Effect, Option, pipe } from "effect"
+import { Effect, identity, Option, pipe } from "effect"
 
 export const a = pipe(
   Effect.succeed(1),
@@ -18,3 +18,5 @@ export const e = Effect.succeed(1).pipe(Effect.map((n) => n + 1))
 export const f = pipe(Effect.succeed(1), Effect.tap(Effect.log), Effect.zipRight(Effect.succeed(2)))
 
 export const g = pipe(Effect.succeed(1))
+
+export const h = pipe(Effect.succeed(1), identity, identity, Effect.map((n) => n + 1))

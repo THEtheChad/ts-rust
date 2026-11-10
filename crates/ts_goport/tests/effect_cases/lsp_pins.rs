@@ -21,8 +21,10 @@
 //!   keeping the Layer hovers (those that list what a Layer provides or
 //!   requires, or link its graph);
 //! - with `COMPLETIONS`: `textDocument/completion` after each `.` on a line
-//!   with `extends`, keeping the snippet items (the client has no snippet
-//!   support, so only the Effect completions are snippets).
+//!   with `extends`, and at the end of each identifier after `extends`,
+//!   keeping the snippet items (the client has no snippet support, so only
+//!   the Effect completions are snippets);
+//! - with `PLAINTEXT`, the client asks for plaintext hovers before markdown.
 //!
 //! Answers that give the same result at several positions are written once,
 //! with every position. `lsp_pins/<pin>.txt` holds the expected text;
@@ -40,11 +42,16 @@ use crate::{CaseDir, DIR, MARK, SUITES};
 /// markdown hovers.
 const CAPABILITIES: &str = r#"{"textDocument":{"diagnostic":{"dynamicRegistration":false},"codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix","refactor","source"]}}},"hover":{"contentFormat":["markdown","plaintext"]}}}"#;
 
+/// `CAPABILITIES` with plaintext hovers first (`PLAINTEXT`).
+const PLAINTEXT_CAPABILITIES: &str = r#"{"textDocument":{"diagnostic":{"dynamicRegistration":false},"codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix","refactor","source"]}}},"hover":{"contentFormat":["plaintext","markdown"]}}}"#;
+
 /// What a pin asks besides the diagnostics and their quick fixes.
 const FIXES: u8 = 0;
 const REFACTORS: u8 = 1;
 const HOVERS: u8 = 2;
 const COMPLETIONS: u8 = 4;
+/// The client asks for plaintext hovers before markdown.
+const PLAINTEXT: u8 = 8;
 
 /// One test per pin: `<test name>: <suite> <case> [<fixture>] <asks>;`.
 macro_rules! pins {
@@ -70,6 +77,14 @@ pins! {
     // `pipeableToDatafirst` and the other refactors on pipes.
     pipeable_to_datafirst_v3: "effect_v3" "schemaSync" "pipeable_to_datafirst" => REFACTORS;
     pipeable_to_datafirst_v4: "effect_v4" "schemaSync" "pipeable_to_datafirst" => REFACTORS;
+    // Round 2 (Astra): branches the first pins missed.
+    run_of_exit_pipe_argument_v3: "effect_v3" "runOfExitToRunExit" "run_of_exit_pipe_argument" => FIXES;
+    run_of_exit_pipe_argument_v4: "effect_v4" "runOfExitToRunExit" "run_of_exit_pipe_argument" => FIXES;
+    layer_graph_simple_plaintext: "effect_v4" "layerGraphSimple" => HOVERS | PLAINTEXT;
+    service_not_as_class_shapes: "effect_v4" "serviceNotAsClass" "service_not_as_class_shapes" => FIXES;
+    catch_callbacks_v3: "effect_v3" "catchAllToMapError" "catch_callbacks_v3" => FIXES;
+    catch_callbacks_v4: "effect_v4" "catchAllToMapError" "catch_callbacks_v4" => FIXES;
+    unsafe_angle_bracket_assertion: "effect_v4" "unsafeEffectTypeAssertion" "unsafe_angle_bracket_assertion" => FIXES;
     // Layer hovers (`ls/hover.rs` `format_layer_hover`).
     layer_graph_simple: "effect_v4" "layerGraphSimple" => HOVERS;
     layer_graph_multiple: "effect_v4" "layerGraphMultiple" => HOVERS;
@@ -133,7 +148,12 @@ fn run(test: &str, suite: &str, name: &str, fixture: Option<&str>, asks: u8) {
     let case = &SUITES[suite].cases[name];
     let files = with_fixture(&case.files, fixture);
     let case_dir = CaseDir::create(suite, name, &format!("pin-{test}"), &files);
-    let mut server = Server::start(&case_dir.real_cwd, CAPABILITIES);
+    let capabilities = if asks & PLAINTEXT != 0 {
+        PLAINTEXT_CAPABILITIES
+    } else {
+        CAPABILITIES
+    };
+    let mut server = Server::start(&case_dir.real_cwd, capabilities);
     let mut out = String::new();
     for (path, text) in files.iter().filter(|(path, _)| is_source(path)) {
         let _ = writeln!(out, "{MARK}file {path}");
@@ -250,9 +270,14 @@ fn ask_file(server: &mut Server, uri: &str, text: &str, asks: u8, out: &mut Stri
         }
     }
     if asks & COMPLETIONS != 0 {
-        for (line, character) in extends_member_positions(text) {
+        for (line, character, after_dot) in extends_completion_positions(text) {
+            let context = if after_dot {
+                r#"{"triggerKind":2,"triggerCharacter":"."}"#
+            } else {
+                r#"{"triggerKind":1}"#
+            };
             let params = format!(
-                r#"{{"textDocument":{document},"position":{{"line":{line},"character":{character}}},"context":{{"triggerKind":2,"triggerCharacter":"."}}}}"#
+                r#"{{"textDocument":{document},"position":{{"line":{line},"character":{character}}},"context":{context}}}"#
             );
             let answer = Json::parse(&server.request("textDocument/completion", &params));
             grouped.add(
@@ -416,18 +441,27 @@ fn identifier_starts(text: &str) -> Vec<(usize, usize)> {
     starts
 }
 
-/// The position after each `.` on a line that contains `extends`.
-fn extends_member_positions(text: &str) -> Vec<(usize, usize)> {
+/// The completion positions of the lines that contain `extends`: after
+/// each `.` (`true`: a `.` trigger) and at the end of each identifier after
+/// the first `extends` (`false`: an invoked completion, as in
+/// `class A extends C|`).
+fn extends_completion_positions(text: &str) -> Vec<(usize, usize, bool)> {
+    let is_part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
     let mut positions = Vec::new();
     for (line, line_text) in text.split('\n').enumerate() {
-        if !line_text.contains("extends") {
+        let Some(extends_at) = line_text.find("extends") else {
             continue;
-        }
+        };
+        let after_extends = extends_at + "extends".len();
         let mut character = 0;
-        for c in line_text.chars() {
+        let mut chars = line_text.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
             character += c.len_utf16();
+            let next_is_part = chars.peek().is_some_and(|&(_, next)| is_part(next));
             if c == '.' {
-                positions.push((line, character));
+                positions.push((line, character, true));
+            } else if at >= after_extends && is_part(c) && !next_is_part {
+                positions.push((line, character, false));
             }
         }
     }

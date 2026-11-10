@@ -1093,3 +1093,186 @@
     }
   }
 ]
+#### refactor 21:13
+[
+  {
+    "title": "Toggle type annotation",
+    "kind": "refactor.rewrite.effect.toggleTypeAnnotation",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":14},"end":{"line":21,"character":14}},
+            "newText": ": Effect.Effect<number, never, never>"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Toggle lazy const",
+    "kind": "refactor.rewrite.effect.toggleLazyConst",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":16},"end":{"line":21,"character":16}},
+            "newText": " () =>"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 21:17
+[
+  {
+    "title": "Rewrite as X.pipe(Y, Z, ...)",
+    "kind": "refactor.rewrite.effect.togglePipeStyle",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.succeed(1).pipe(identity, identity, Effect.map((n) => n + 1))"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Rewrite to datafirst",
+    "kind": "refactor.rewrite.effect.pipeableToDatafirst",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.map(pipe(Effect.succeed(1), identity, identity), n => n + 1)"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Wrap with Effect.gen",
+    "kind": "refactor.rewrite.effect.wrapWithEffectGen",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.gen(function*() { return yield* pipe(Effect.succeed(1), identity, identity, Effect.map((n) => n + 1)) })"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 21:22 21:29
+[
+  {
+    "title": "Rewrite as X.pipe(Y, Z, ...)",
+    "kind": "refactor.rewrite.effect.togglePipeStyle",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.succeed(1).pipe(identity, identity, Effect.map((n) => n + 1))"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Wrap with Effect.gen",
+    "kind": "refactor.rewrite.effect.wrapWithEffectGen",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":22},"end":{"line":21,"character":39}},
+            "newText": "Effect.gen(function*() { return yield* Effect.succeed(1) })"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 21:41 21:51 21:61 21:68
+[
+  {
+    "title": "Rewrite as X.pipe(Y, Z, ...)",
+    "kind": "refactor.rewrite.effect.togglePipeStyle",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.succeed(1).pipe(identity, identity, Effect.map((n) => n + 1))"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Wrap with Effect.gen",
+    "kind": "refactor.rewrite.effect.wrapWithEffectGen",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.gen(function*() { return yield* pipe(Effect.succeed(1), identity, identity, Effect.map((n) => n + 1)) })"
+          }
+        ]
+      }
+    }
+  }
+]
+#### refactor 21:73 21:79
+[
+  {
+    "title": "Rewrite as X.pipe(Y, Z, ...)",
+    "kind": "refactor.rewrite.effect.togglePipeStyle",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.succeed(1).pipe(identity, identity, Effect.map((n) => n + 1))"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Wrap with Effect.gen",
+    "kind": "refactor.rewrite.effect.wrapWithEffectGen",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":17},"end":{"line":21,"character":86}},
+            "newText": "Effect.gen(function*() { return yield* pipe(Effect.succeed(1), identity, identity, Effect.map((n) => n + 1)) })"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "title": "Toggle return type annotation",
+    "kind": "refactor.rewrite.effect.toggleReturnTypeAnnotation",
+    "edit": {
+      "changes": {
+        "file://<case>/.src/schemaSync.ts": [
+          {
+            "range": {"start":{"line":21,"character":75},"end":{"line":21,"character":75}},
+            "newText": ": number"
+          }
+        ]
+      }
+    }
+  }
+]
