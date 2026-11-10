@@ -664,44 +664,20 @@ fn stack_at(data: &[u8], end: usize) -> Vec<StackEntry> {
     stack
 }
 
-// Go: jsontext/state.go:180 appendStackPointer, with where = +1 for
-// `Before`, 0 for `Ambiguous` and -1 otherwise.
+// Go `state.appendStackPointer` of `stack` (`append_stack_pointer`), with
+// where = +1 for `Before`, 0 for `Ambiguous` and -1 otherwise.
 fn stack_pointer(stack: &[StackEntry], pos: ErrorPos) -> String {
-    let before = pos == ErrorPos::Before;
-    let ambiguous = pos == ErrorPos::Ambiguous;
-    let mut b = String::new();
-    for (i, e) in stack.iter().enumerate() {
-        // By default point to the previous array element.
-        let mut index = e.len.wrapping_sub(1);
-        if i == stack.len() - 1 {
-            // Go `needObjectValue`: an object whose last member has no value yet.
-            let need_object_value = e.is_object && !e.len.is_multiple_of(2);
-            if (!before && !ambiguous && e.len == 0)
-                || (ambiguous && !need_object_value)
-                || (before && e.is_object && e.len.is_multiple_of(2))
-            {
-                return b;
-            }
-            if before && !e.is_object {
-                // Point to the next array element.
-                index = e.len;
-            }
-        }
-        b.push('/');
-        if e.is_object {
-            // Per RFC 6901, section 3, escape '~' and '/' characters.
-            for c in e.name.chars() {
-                match c {
-                    '~' => b.push_str("~0"),
-                    '/' => b.push_str("~1"),
-                    c => b.push(c),
-                }
-            }
-        } else {
-            b.push_str(&index.to_string());
-        }
-    }
-    b
+    let at = match pos {
+        ErrorPos::Before => 1,
+        ErrorPos::Ambiguous => 0,
+        ErrorPos::After | ErrorPos::AfterEnd => -1,
+    };
+    crate::frontend::json::append_stack_pointer(
+        stack,
+        |e| (e.is_object, e.len),
+        |e| std::borrow::Cow::Borrowed(e.name.as_str()),
+        at,
+    )
 }
 
 /// Go `reflect.Type.String()` of the Go type that the Rust type `T` stands

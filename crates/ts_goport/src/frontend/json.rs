@@ -1027,15 +1027,56 @@ fn consume_number_raw(b: &[u8], p: usize) -> Result<usize, (usize, SyntaxErr)> {
     Ok(i)
 }
 
-// Go `appendEscapePointerName`: a JSON pointer token for an object name.
+// A JSON pointer token for an object name (`append_escape_pointer_name`).
 fn escape_pointer_token(name: &str) -> String {
     let mut b = String::with_capacity(name.len());
+    append_escape_pointer_name(&mut b, name);
+    b
+}
+
+// Go: jsontext/state.go:203 appendEscapePointerName
+fn append_escape_pointer_name(b: &mut String, name: &str) {
     for c in name.chars() {
         // Per RFC 6901, section 3, escape '~' and '/' characters.
         match c {
             '~' => b.push_str("~0"),
             '/' => b.push_str("~1"),
             c => b.push(c),
+        }
+    }
+}
+
+// Go: jsontext/state.go:180 appendStackPointer, over `entries`, the open
+// objects and arrays below the top level: `kind_len` gives whether an entry
+// is an object and its length (names and values read), `name` the unquoted
+// last name read in an object. `at` is Go's `where`.
+pub(crate) fn append_stack_pointer<'s, T>(
+    entries: &'s [T],
+    kind_len: impl Fn(&T) -> (bool, usize),
+    name: impl Fn(&'s T) -> Cow<'s, str>,
+    at: i32,
+) -> String {
+    let mut b = String::new();
+    for (i, e) in entries.iter().enumerate() {
+        let (is_object, len) = kind_len(e);
+        // By default point to the previous array element.
+        let mut index = len.wrapping_sub(1);
+        if i + 1 == entries.len() {
+            let need_value = is_object && len % 2 == 1;
+            let need_name = is_object && len.is_multiple_of(2);
+            if (at < 0 && len == 0) || (at == 0 && !need_value) || (at > 0 && need_name) {
+                return b;
+            }
+            if at > 0 && !is_object {
+                // Point to the next array element.
+                index = len;
+            }
+        }
+        b.push('/');
+        if is_object {
+            append_escape_pointer_name(&mut b, &name(e));
+        } else {
+            b.push_str(&index.to_string());
         }
     }
     b
@@ -1098,32 +1139,15 @@ fn syntactic_error_text(err: &SyntaxErr, mut pointer: String, mut offset: usize)
 }
 
 impl JsonDecoder<'_> {
-    // Go: jsontext/state.go:180 appendStackPointer
+    // Go `state.appendStackPointer` of the decoder state
+    // (`append_stack_pointer`).
     fn stack_pointer(&self, at: i32) -> String {
-        let mut b = String::new();
-        let n = self.stack.len();
-        for (i, f) in self.stack.iter().enumerate() {
-            // By default point to the previous array element.
-            let mut index = f.len.wrapping_sub(1);
-            if i + 1 == n {
-                let need_value = f.is_object && f.len % 2 == 1;
-                let need_name = f.is_object && f.len.is_multiple_of(2);
-                if (at < 0 && f.len == 0) || (at == 0 && !need_value) || (at > 0 && need_name) {
-                    return b;
-                }
-                if at > 0 && !f.is_object {
-                    // Point to the next array element.
-                    index = f.len;
-                }
-            }
-            b.push('/');
-            if f.is_object {
-                b.push_str(&pointer_token_of_name(self.quoted_name_at(f.name)));
-            } else {
-                b.push_str(&index.to_string());
-            }
-        }
-        b
+        append_stack_pointer(
+            &self.stack,
+            |f| (f.is_object, f.len),
+            |f| Cow::Owned(unquote_pointer_name(self.quoted_name_at(f.name))),
+            at,
+        )
     }
 
     // The JSON string (with its quotes) that starts at `p`.
