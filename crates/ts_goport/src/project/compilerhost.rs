@@ -638,9 +638,10 @@ impl compiler::CompilerHost for CompilerHost {
                     .and_then(|read| read.as_ref().map(|(_, text)| text.clone()))
             }) as crate::frontend::module::AheadText
         };
+        #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
+        let scratch = resolve_ahead_verify::scratch(self.source_fs.to_path.clone(), files.clone());
         let accept = {
             let source_fs = self.source_fs.clone();
-            let files = files.clone();
             Rc::new(move |_answer: AheadAnswer<'_>, calls: &[AheadCall]| {
                 accept_ahead_answer(&source_fs, &files, &load, calls)
             })
@@ -660,8 +661,8 @@ impl compiler::CompilerHost for CompilerHost {
             package_json_text,
             keep_keys: Box::new(move |new_keys| *keys.borrow_mut() = Some(new_keys)),
             share: self.kept_share.borrow().clone()?,
-            #[cfg(any(debug_assertions, feature = "diagnostics"))]
-            scratch: resolve_ahead_verify::scratch(self.source_fs.to_path.clone(), files),
+            #[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
+            scratch,
         })
     }
 }
@@ -887,8 +888,10 @@ fn shared_key(call: &Arc<AheadCall>) -> usize {
 /// Debug builds: the tracking view of the host's file system that resolve
 /// ahead checks each taken answer on (`ResolveAheadHost::scratch`,
 /// `resolve_ahead::resolve_ahead_verify`). Compiled in debug and
-/// `diagnostics` builds, made in debug builds only.
-#[cfg(any(debug_assertions, feature = "diagnostics"))]
+/// `diagnostics` builds, made in debug builds only. Not under rustdoc's
+/// doctest collection, which compiles this crate with `debug_assertions`
+/// against a release `goport_core` that has no `resolve_ahead_verify`.
+#[cfg(all(any(debug_assertions, feature = "diagnostics"), not(doctest)))]
 mod resolve_ahead_verify {
     use super::*;
     use crate::frontend::compiler::resolve_ahead::resolve_ahead_verify::ScratchFs;
