@@ -831,16 +831,15 @@ impl Checker {
                         let type_with_super =
                             self.create_marker_type(symbol, tp, marker_super_type);
                         let type_with_sub = self.create_marker_type(symbol, tp, marker_sub_type);
-                        variance =
-                            (if self.is_type_assignable_to(type_with_sub, type_with_super) {
-                                VarianceFlags::COVARIANT
-                            } else {
-                                VarianceFlags::default()
-                            }) | (if self.is_type_assignable_to(type_with_super, type_with_sub) {
-                                VarianceFlags::CONTRAVARIANT
-                            } else {
-                                VarianceFlags::default()
-                            });
+                        variance = if_else(
+                            self.is_type_assignable_to(type_with_sub, type_with_super),
+                            VarianceFlags::COVARIANT,
+                            VarianceFlags::default(),
+                        ) | if_else(
+                            self.is_type_assignable_to(type_with_super, type_with_sub),
+                            VarianceFlags::CONTRAVARIANT,
+                            VarianceFlags::default(),
+                        );
                         // If the instantiations appear to be related bivariantly it may be because the
                         // type parameter is independent (i.e. it isn't witnessed anywhere in the generic
                         // type). To determine this we compare instantiations where the type parameter is
