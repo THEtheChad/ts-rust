@@ -1976,65 +1976,58 @@ impl Checker {
         };
         if !components.is_empty() {
             // Index info is derived from object or class computed property names (plus explicit named members) - we can clone those instead of writing out the result computed index signature
-            let mut all_component_computed_names_serializable =
-                nb_enclosing_declaration(b).is_some();
-            if all_component_computed_names_serializable {
-                for &c in &components {
-                    if !self.is_trivially_serializable_computed_name(b, c) {
-                        all_component_computed_names_serializable = false;
-                        break;
-                    }
-                }
-            }
+            let all_component_computed_names_serializable = nb_enclosing_declaration(b).is_some()
+                && components
+                    .iter()
+                    .all(|&c| self.is_trivially_serializable_computed_name(b, c));
             if all_component_computed_names_serializable {
                 // Only use computed name serialization form if all components are visible and take the `a.b.c` form
-                let mut new_components: Vec<Node> = Vec::new();
-                for c in components {
+                let new_components: Vec<Node> = components
+                    .into_iter()
                     // skip late bound props that contribute to the index signature - they'll be created by property creation anyway
-                    if !self.has_late_bindable_name(c) {
-                        new_components.push(c);
-                    }
-                }
+                    .filter(|&c| !self.has_late_bindable_name(c))
+                    .collect();
                 let e_ctx = nb_e(b);
                 let mut bailed = false;
-                // PORT: Go `core.Map` visits every component even after a bail, so this loop does too.
-                let mut results: Vec<Node> = Vec::with_capacity(new_components.len());
-                for e in new_components {
-                    let name = self.reuse_node(b, e.name());
-                    if name.is_some() {
-                        // Still need to track visibility even if we've already checked it to paint references as used
-                        let enclosing = nb_enclosing_declaration(b);
-                        self.track_computed_name(b, e.name().expression(), enclosing);
-                        let mut mods = ModifierList::NIL;
-                        if is_readonly {
-                            mods = e_ctx.factory.new_modifier_list(&[e_ctx
-                                .factory
-                                .new_modifier(SyntaxKind::ReadonlyKeyword)]);
+                // PORT: Go `core.Map` visits every component even after a bail, so this map does too.
+                let results: Vec<Node> = new_components
+                    .into_iter()
+                    .map(|e| {
+                        let name = self.reuse_node(b, e.name());
+                        if name.is_some() {
+                            // Still need to track visibility even if we've already checked it to paint references as used
+                            let enclosing = nb_enclosing_declaration(b);
+                            self.track_computed_name(b, e.name().expression(), enclosing);
+                            let mut mods = ModifierList::NIL;
+                            if is_readonly {
+                                mods = e_ctx.factory.new_modifier_list(&[e_ctx
+                                    .factory
+                                    .new_modifier(SyntaxKind::ReadonlyKeyword)]);
+                            }
+                            let mut postfix_token = Node::NIL;
+                            if e.postfix_token().is_some() {
+                                postfix_token = e_ctx.factory.clone_node(e.postfix_token());
+                            }
+                            let current_type_node = if type_node.is_some() {
+                                e_ctx.factory.deep_clone_node(type_node)
+                            } else {
+                                let t = self.get_type_of_symbol(e.symbol());
+                                self.type_to_type_node(b, t)
+                            };
+                            let sig = e_ctx.factory.new_property_signature_declaration(
+                                mods,
+                                name,
+                                postfix_token,
+                                current_type_node,
+                                Node::NIL,
+                            );
+                            set_node_loc(sig, e.loc());
+                            return sig;
                         }
-                        let mut postfix_token = Node::NIL;
-                        if e.postfix_token().is_some() {
-                            postfix_token = e_ctx.factory.clone_node(e.postfix_token());
-                        }
-                        let current_type_node = if type_node.is_some() {
-                            e_ctx.factory.deep_clone_node(type_node)
-                        } else {
-                            let t = self.get_type_of_symbol(e.symbol());
-                            self.type_to_type_node(b, t)
-                        };
-                        let sig = e_ctx.factory.new_property_signature_declaration(
-                            mods,
-                            name,
-                            postfix_token,
-                            current_type_node,
-                            Node::NIL,
-                        );
-                        set_node_loc(sig, e.loc());
-                        results.push(sig);
-                        continue;
-                    }
-                    bailed = true;
-                    results.push(Node::NIL);
-                }
+                        bailed = true;
+                        Node::NIL
+                    })
+                    .collect();
                 if !bailed {
                     return results;
                 }
