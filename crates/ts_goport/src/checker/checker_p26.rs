@@ -47,23 +47,17 @@ impl Checker {
                     return self.may_resolve_type_alias(node.element_type());
                 }
                 SyntaxKind::TupleType => {
-                    for e in node.elements() {
-                        if self.may_resolve_type_alias(e) {
-                            return true;
-                        }
-                    }
-                    return false;
+                    return node
+                        .elements()
+                        .into_iter()
+                        .any(|e| self.may_resolve_type_alias(e));
                 }
                 SyntaxKind::TypeReference => {
-                    if has_default_type_arguments {
-                        return true;
-                    }
-                    for a in node.type_arguments() {
-                        if self.may_resolve_type_alias(a) {
-                            return true;
-                        }
-                    }
-                    return false;
+                    return has_default_type_arguments
+                        || node
+                            .type_arguments()
+                            .into_iter()
+                            .any(|a| self.may_resolve_type_alias(a));
                 }
                 _ => {}
             }
@@ -1520,16 +1514,12 @@ impl Checker {
             let resolved_type;
             if target == self.empty_generic_type {
                 resolved_type = self.empty_object_type;
-            } else if !(node.kind() == SyntaxKind::TupleType && {
-                let mut some = false;
-                for e in node.elements() {
-                    if self.is_variadic_tuple_element(e) {
-                        some = true;
-                        break;
-                    }
-                }
-                some
-            }) && self.is_deferred_type_reference_node(node, false)
+            } else if !(node.kind() == SyntaxKind::TupleType
+                && node
+                    .elements()
+                    .into_iter()
+                    .any(|e| self.is_variadic_tuple_element(e)))
+                && self.is_deferred_type_reference_node(node, false)
             {
                 if node.kind() == SyntaxKind::TupleType && node.elements().is_empty() {
                     resolved_type = target;
@@ -1545,11 +1535,10 @@ impl Checker {
                 let element_types = if node.kind() == SyntaxKind::ArrayType {
                     vec![self.get_type_from_type_node(node.element_type())]
                 } else {
-                    let mut types = Vec::new();
-                    for e in node.elements() {
-                        types.push(self.get_type_from_type_node(e));
-                    }
-                    types
+                    node.elements()
+                        .into_iter()
+                        .map(|e| self.get_type_from_type_node(e))
+                        .collect()
                 };
                 if self.ty(target).object_flags.intersects(ObjectFlags::TUPLE) {
                     resolved_type = self.create_normalized_tuple_type_ex(
