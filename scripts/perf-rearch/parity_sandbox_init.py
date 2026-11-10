@@ -25,10 +25,12 @@ the server, not even for stat; the whole tree is read-only but the `rw` binds an
 the caller reads; the server has no privilege (drop()), no fd but 0, 1 and 2, no network.
 
 Order (any failure is a setup failure: reported, exit 125, never a server result):
-  1. every mount private; an O_PATH fd on every source (binds, lowers, bases, exposed paths), taken before
-     anything is hidden;
+  1. every mount private; an O_PATH fd on every source (binds, lowers, bases, exposed paths), and every
+     symlink in a hidden dir on the way to the cwd, an exposed path or a dst (lane H8: a project seen
+     through a symlink, umami), taken before anything is hidden;
   2. an empty tmpfs on each hidden dir; the mount points made in it (every dst, every exposed path, a
-     staging dir under /run), every made dir and file at the fixed mtime, dirs mode 755;
+     staging dir under /run) and those symlinks, with their targets, every made dir, file and link at
+     the fixed mtime, dirs mode 755;
   3. the mounts in order: a bind from its fd; an overlay from its lower and base bound at the staging
      dir, which is detached again (the overlay holds its own clones of its layers), so the server cannot
      reach an upper or work dir but through the overlay; then the exposed paths, bound read-only;
@@ -72,6 +74,13 @@ SERVER_ID = 1000  # the server's uid and gid in its own user namespace (0 there 
 
 def hidden(path):
     return any(path == h or path.startswith(h + '/') for h in HIDDEN)
+
+
+def links_along(path):
+    """[(link, target)] of every symlink in a hidden dir among the path's prefixes, as the host has them."""
+    parts = path.strip('/').split('/')
+    prefixes = ['/' + '/'.join(parts[:k]) for k in range(1, len(parts) + 1)]
+    return [(p, os.readlink(p)) for p in prefixes if hidden(p) and os.path.islink(p)]
 
 
 class MountAttr(ctypes.Structure):
@@ -125,6 +134,7 @@ class Init:
                 self.done({'setup': f'not a bind or an overlay at a path in a hidden dir: {m}'}, 125)
         src = [fd(m['bind']) if 'bind' in m else (fd(m['overlay']), fd(m['base'])) for m in mounts]
         exposed = {p: fd(p) for p in expose}
+        links = dict(x for p in [spec.get('cwd') or '/', *spec.get('expose', []), *[m['at'] for m in mounts]] for x in links_along(p))
         for h in HIDDEN:
             if os.path.isdir(h) and not os.path.islink(h):
                 self.mount('tmpfs', h, 'tmpfs', MS_NOSUID | MS_NODEV, 'mode=755')
@@ -153,6 +163,11 @@ class Init:
             point(m['at'], s if 'bind' in m else s[0])
         for p, f in exposed.items():
             point(p, f)
+        for p, target in sorted(links.items()):
+            if not os.path.lexists(p):
+                makedirs(os.path.dirname(p))
+                os.symlink(target, p)
+                made.add(p)
         for p in sorted(made, key=len, reverse=True) + [h for h in HIDDEN if os.path.isdir(h)]:
             os.utime(p, (spec['mtime'], spec['mtime']), follow_symlinks=False)
         for m, s in zip(mounts, src):
