@@ -8,10 +8,11 @@ usage: parity_modes.py shell quick|full     the mode's settings as shell assignm
 
 full runs every tier on everything, and a full run must have every base item. quick runs a subset,
 and its required items are the quick manifest's (parity-quick-manifest.json): the cli items it names,
-every answer of the lsp sessions it names, fuzz cases 0 to count-1 of its seed, the tests of the
-binaries whose names start with its binaryPrefixes, and the TestLocal rows. No corpus. The tiers run
-at least the manifest's items in quick mode (parity_cli.py, parity_lsp.py and parity_tests.py read
-it; parity.sh passes its fuzz count), so execution may cover more than the manifest, never less.
+every answer of the lsp sessions it names, the api scenarios it names (lane H7), fuzz cases 0 to
+count-1 of its seed, the tests of the binaries whose names start with its binaryPrefixes, and the
+TestLocal rows. No corpus. The tiers run at least the manifest's items in quick mode (parity_cli.py,
+parity_lsp.py, parity_api.py and parity_tests.py read it; parity.sh passes its fuzz count), so
+execution may cover more than the manifest, never less. Version 2 of the manifest adds "api".
 
 parity_compare.py does not judge a run by the candidate's own manifest: it reads the accepted one,
 `accepted_file(ref, name)` from git (the accepted ref, default perf/first-principles), so a lane
@@ -31,11 +32,12 @@ sys.path.insert(0, str(HERE))
 MANIFEST = HERE / 'parity-quick-manifest.json'
 MANIFEST_REPO_PATH = 'scripts/perf-rearch/parity-quick-manifest.json'
 MODES = {
-    'quick': {'tiers': ['cli', 'tests', 'lsp', 'fuzz'], 'rs_runs': 1},
-    'full': {'tiers': ['cli', 'tests', 'lsp', 'fuzz', 'corpus'], 'rs_runs': 2, 'fuzz_count': 30000},
+    'quick': {'tiers': ['cli', 'tests', 'lsp', 'api', 'fuzz'], 'rs_runs': 1},
+    'full': {'tiers': ['cli', 'tests', 'lsp', 'api', 'fuzz', 'corpus'], 'rs_runs': 2, 'fuzz_count': 30000},
 }
-TIER_OF = {'cli': 'cli', 'test': 'tests', 'test-local': 'tests', 'lsp': 'lsp', 'fuzz': 'fuzz', 'corpus': 'corpus'}
-MANIFEST_KEYS = {'about': str, 'version': int, 'cli': list, 'lsp': list, 'fuzz': dict, 'tests': dict}
+TIER_OF = {'cli': 'cli', 'test': 'tests', 'test-local': 'tests', 'lsp': 'lsp', 'api': 'api', 'fuzz': 'fuzz', 'corpus': 'corpus'}
+MANIFEST_KEYS = {'about': str, 'version': int, 'cli': list, 'lsp': list, 'api': list, 'fuzz': dict, 'tests': dict}
+MANIFEST_VERSION = 2  # 2: lane H7's api scenarios
 CLI_ITEM = re.compile(r'^cli/[^/]+/[^/]+/[^/]+$')
 
 
@@ -65,11 +67,11 @@ class Manifest:
     def __init__(self, data, origin):
         self.origin = origin
         _exact_keys('manifest', data, MANIFEST_KEYS)
-        if data['version'] != 1:
-            raise ArtifactError(f'manifest.version: {data["version"]}, not 1')
+        if data['version'] != MANIFEST_VERSION:
+            raise ArtifactError(f'manifest.version: {data["version"]}, not {MANIFEST_VERSION}')
         _exact_keys('manifest.fuzz', data['fuzz'], {'seed': str, 'count': int})
         _exact_keys('manifest.tests', data['tests'], {'binaryPrefixes': list, 'testLocal': bool})
-        for k, pat in (('cli', CLI_ITEM), ('lsp', re.compile(r'^[\w.-]+$'))):
+        for k, pat in (('cli', CLI_ITEM), ('lsp', re.compile(r'^[\w.-]+$')), ('api', re.compile(r'^[a-z0-9][a-z0-9.-]*$'))):
             for x in data[k]:
                 if not isinstance(x, str) or not pat.match(x):
                     raise ArtifactError(f'manifest.{k}: not an item name: {x!r}')
@@ -82,6 +84,7 @@ class Manifest:
         self.data = data
         self.cli = set(data['cli'])
         self.lsp = set(data['lsp'])
+        self.api = set(data['api'])
         self.fuzz_seed, self.fuzz_count = data['fuzz']['seed'], data['fuzz']['count']
         self.test_prefixes = tuple(data['tests']['binaryPrefixes'])
         self.test_local = data['tests']['testLocal']
@@ -93,6 +96,8 @@ class Manifest:
             return item in self.cli
         if tier == 'lsp':
             return len(parts) > 1 and parts[1] in self.lsp
+        if tier == 'api':
+            return len(parts) == 2 and parts[1] in self.api
         if tier == 'fuzz':
             m = re.match(r'^fuzz/([^:]+):(\d+)$', item)
             return bool(m) and m[1] == self.fuzz_seed and int(m[2]) < self.fuzz_count
@@ -106,7 +111,7 @@ class Manifest:
 
     def items(self):
         """What the manifest names, for the shrink report: cli items, lsp sessions, fuzz cases, tests."""
-        return ({f'cli {x}' for x in self.cli} | {f'lsp session {x}' for x in self.lsp}
+        return ({f'cli {x}' for x in self.cli} | {f'lsp session {x}' for x in self.lsp} | {f'api/{x}' for x in self.api}
                 | {f'fuzz/{self.fuzz_seed}:{i}' for i in range(self.fuzz_count)}
                 | {f'tests binary {p}*' for p in self.test_prefixes} | ({'test-local rows'} if self.test_local else set()))
 
@@ -173,7 +178,7 @@ def main():
         except ArtifactError as e:
             print(f'INVALID {e}')
             return 1
-        print(f'ok {path}: {len(m.cli)} cli items, {len(m.lsp)} lsp sessions, fuzz {m.fuzz_count}, '
+        print(f'ok {path}: {len(m.cli)} cli items, {len(m.lsp)} lsp sessions, {len(m.api)} api scenarios, fuzz {m.fuzz_count}, '
               f'tests {",".join(m.test_prefixes)}{" + TestLocal" if m.test_local else ""}')
         return 0
     print(__doc__)

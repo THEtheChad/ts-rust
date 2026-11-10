@@ -51,9 +51,20 @@ IN_CLOEXEC = 0o2000000
 CHANGES = (IN_MODIFY | IN_ATTRIB | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
            | IN_DELETE_SELF | IN_MOVE_SELF)
 # Every access, reads too: the tripwires of parity_lsp.py (lane H5), dirs no process of a session may
-# read. A read or a directory listing opens the file or dir, which makes IN_OPEN; a lookup of a name that
-# does not exist makes no event.
-ACCESS = CHANGES | IN_ACCESS | IN_OPEN | IN_CLOSE_NOWRITE
+# read. A read or a directory listing opens the file or dir after the watch started, which makes IN_OPEN.
+# IN_CLOSE_NOWRITE is not watched (lane H7): a close alone is the late close of a file description opened
+# before the watch, such as the watch's own listing of the dirs (os.scandir), whose fd a child that another
+# thread forked at that moment holds until subprocess's close_fds closes it, after _discard(). That made
+# lsp/hono-f12-p6 ERROR in a full gate ("touched ~/.config (close-nowrite)"; 15 to 52 of 400 watches
+# under 4 forking threads in parity_h7_test.py, 0 without it). Dropping it loses nothing only because of
+# the lsp tier's lifecycle: each session's watch is built before lspdiff starts, every server is a
+# descendant started after it, and Popen gives them no fd but 0, 1 and 2, so none of them holds a
+# description of a bait opened before the watch.
+# What no inotify mask sees (Astra, H7 review): stat, statx, access and a lookup (no event at all), and
+# open(O_PATH) with fstat on it. The lsp tier's tripwires therefore catch reads and listings of the
+# guarded dirs, not metadata reads; the api tier has no tripwires: its sandbox has no such dirs at all
+# (parity_api_init.py).
+ACCESS = CHANGES | IN_ACCESS | IN_OPEN
 NAMES = {IN_ACCESS: 'access', IN_OPEN: 'open', IN_CLOSE_NOWRITE: 'close-nowrite', IN_MODIFY: 'modify', IN_ATTRIB: 'attrib', IN_CLOSE_WRITE: 'close-write', IN_MOVED_FROM: 'moved-from',
          IN_MOVED_TO: 'moved-to', IN_CREATE: 'create', IN_DELETE: 'delete', IN_DELETE_SELF: 'delete-self',
          IN_MOVE_SELF: 'move-self', IN_Q_OVERFLOW: 'queue overflow'}

@@ -43,7 +43,8 @@ PARITY FAIL on any of:
 - **LOST:** good in the base, not good now. No grandfather entry excuses it.
 - **NOT RUN:** a base item, good or known-bad, that the run must have and lacks. A full run must have
   every base item; a quick run every item the accepted manifest names (its cli items, every answer
-  of its lsp sessions, fuzz cases 0 to 1,499, the go_baselines tests and TestLocal rows). A run with
+  of its lsp sessions, its api scenarios, fuzz cases 0 to 1,499, the go_baselines tests and TestLocal
+  rows). A run with
   `--tiers` fails on the tiers it left out.
 - **KNOWN-BAD:** a base item that is not good, is still not good, and that no grandfather entry
   matches exactly: it changed to another failure, became nondeterministic, or was never pinned.
@@ -59,8 +60,8 @@ rsFailure, the case's content identity, Go's cached result (status, outcome, pan
 attempt labels each mode makes, and the fingerprint every tsc-rs attempt must have (outcome, exit
 code, sha256 of stdout, of stderr in its site form and of the written files, inputs intact). The site
 form replaces only the Rust line number of the port-site line that tsc-rs prints in place of Go's
-goroutine trace (lane H6, "Grandfather pins without Rust line numbers"). Entries exist for fuzz and
-corpus items, the tiers whose rows carry that evidence. Every excused item is printed with its
+goroutine trace (lane H6, "Grandfather pins without Rust line numbers"). Entries exist for fuzz,
+corpus and api items, the tiers whose rows carry that evidence. Every excused item is printed with its
 reason (`GRANDFATHERED`). Only one gate runs at a time, under a lock: the scratch paths are fixed,
 so the paths in the output agree with the cached Go results. The test tier builds and tests the
 checkout (`--checkout`, default the worktree that holds the script). Every other tier runs `<tsgo
@@ -87,6 +88,11 @@ material and is read only when it matches (lane H4).
   `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
   `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`.
+- **api** (lane H7): the scenario as expanded (request filesystem, options, requests, build steps, the
+  case flag), its root, the disk fixture's content hash, the session's sources (`parity_api_session.py`
+  and `parity_api_init.py`: protocol client, requests, sandbox, timeouts), the protocol, the private
+  home path, the ancestor dirs' lookup names, the Go binary's sha and the Go run count. See "api: API
+  sessions".
 - **fuzz and corpus:** the case's id and `json_hash` of its content (every file, the options, the
   extra arguments), its directory, `oracle.ARGS`, the timeout and the number of Go runs. A changed
   mutator, seed corpus or parameter makes new Go runs.
@@ -120,7 +126,7 @@ project dir; see "Gate fixes, round 2" for the details.
 
 Each item is MATCH (tsc-rs equals Go's default run), one of the referee statuses GO-BROKEN,
 GO-PARTITION and JS-AGREES (cli, fuzz and corpus, see "Referees"; lsp has GO-BROKEN and JS-AGREES,
-see "JS tsserver as the LSP referee"), DIFF, GO-UNSTABLE (two Go runs disagree, so the item is not
+see "JS tsserver as the LSP referee"; api has GO-BROKEN only, see "api: API sessions"), DIFF, GO-UNSTABLE (two Go runs disagree, so the item is not
 compared; cli, fuzz and corpus only with `--no-referees`, lsp no longer), GO-FAIL
 (fuzz and corpus with `--no-referees`: Go timed out or panicked), ERROR (harness), SKIP, or for
 tests PASS / FAIL / FLAKY /
@@ -310,6 +316,122 @@ project, unmutated, through the real binary. TestLocal checks the same cases in-
 the test harness; this tier checks them through the CLI (option parsing, file system, the
 multi-checker program and the output writer).
 
+### api: API sessions (`parity_api.py`, `parity-api-scenarios.json`; lane H7)
+
+An API session is a client the other tiers never are: it gives the server its own filesystem
+(`createSnapshot` `fileSystem`) and its own case setting (`--useCaseSensitiveFileNames`), so output
+paths, common directories and the overwrite checks run on a host that is not the OS's. Lane B3 found two
+output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could see. Round 2 of the lane
+(Astra's review of `6e97777e6`, nine findings) sealed the sandbox and made every comparison exact; see
+"API tier (lane H7)" below.
+
+- **A session** is one `tsgo --api --async` process (JSON-RPC 2.0 over stdio, Content-Length framing; Go
+  `cmd/tsc/api.go`, `internal/api/proto.go`), started with `--cwd <root>` and the scenario's case flag.
+  `parity_api_session.py` sends `initialize`, `createSnapshot`, then for each project of the answer, in
+  its order, `getSourceFileNames`, `getConfigFileNames`, the seven diagnostics methods, `emitToString`
+  and `emit`; then the scenario's updates (`updateSnapshot` on the current snapshot, the requests again,
+  `release` of the replaced one) and build steps (`createBuildOrchestrator`, `build`, `buildReferences`,
+  `cleanBuild`, `disposeBuildOrchestrator`). It then closes stdin. The server must exit 0 by itself
+  within 10 s, and both its output streams must reach EOF.
+- **Filesystems.** A request filesystem is `kind: "full"` (Go's `requestfilesystem` makes it canonical
+  and total; with it `emit` returns the contents instead of writing), rooted at `/parity-api/<scenario>`,
+  which exists nowhere. A **disk fixture** (written once to a content-addressed copy,
+  `snapshots/api/<hash>-m755644/tree`, with a checkout's modes, dirs 755 and files 644, since the server
+  writes as a user, and a fixed 2001 mtime; checked byte for byte and mode for mode before and after the
+  tier and watched while it runs) is mounted as an overlay at
+  `scratch/api/<scenario>/root` for the requests that use the host filesystem: the build orchestrator,
+  and `kind: "layer"` filesystems, which are allowed only over a fixture (they fall back to the host,
+  which in the sandbox is the fixture and nothing else). `host` symlinks are refused.
+- **The sandbox** (`parity_api_init.py`, PID 1 of a new user, mount, network and PID namespace; `unshare
+  --pid --fork --kill-child --mount-proc`):
+  - `/home`, `/tmp`, `/var/tmp`, `/run`, `/mnt`, `/media`, `/srv`, `/opt` and `/dev/shm` are empty tmpfs
+    dirs: the user's files (the real `~/.cache/typescript`, `~/.npm`, `~/.config`, every other lane's
+    trees) do not exist for the server, not even for `stat`. The dirs the sandbox makes there have mode
+    755 and the fixed mtime. The command's own files under a hidden dir are bound back read-only.
+  - The whole tree is read-only (`mount_setattr` `AT_RECURSIVE`). The only writable places are the
+    private home (new and empty for every process, at `~/.cache/perf-rearch/parity/api-home`) and the
+    fixture's overlay, both host dirs of the session that the tier reads after every request. The
+    overlay's upper and work dirs are reachable only through the overlay.
+  - The server gets the environment of `sandbox.mjs` (`PATH=/usr/bin:/bin`, HOME, the XDG dirs and
+    TMPDIR in the home, `LANG=C.UTF-8`, nothing else), cwd `/`, no network, and no fd but 0, 1 and 2.
+  - **No privileges** (round 3): the init is root of the namespaces it built; the server is not. Before
+    exec it enters a user namespace of its own, nested in the init's, which owns none of the sandbox's
+    namespaces and may make no other (`user.max_user_namespaces` 0 there: a new user namespace would
+    give it a full capability set again); its bounding, ambient, inheritable, permitted and effective
+    sets are emptied; it runs as uid and gid 1000 (the host sees the same user, so it owns its home and
+    overlay) with `no_new_privs`; all of that is checked in `/proc/self/status` before exec, and anything
+    else is a setup failure. So `mount`, `umount`, `mount_setattr`, `pivot_root`, `unshare` of a mount or
+    user namespace and `setns` all fail for the server, and it cannot reach the init's `/proc/1/fd`.
+    `/proc` itself stays writable for the server's id maps; without capabilities nothing there is the
+    server's to change but its own process files.
+  - When the server ends, every other process in the namespace is a **survivor**: listed through an fd
+    on `/proc` that the init opened before the server started, then killed, and counted as the init
+    reaps it (whatever `/proc` shows, a process reaped after the server ended outlived it). Either is a
+    failure. Nothing is collected before the namespace is empty and both streams are at EOF.
+  - A mount, namespace, privilege-drop or exec failure, or a failure of the init itself, is reported on
+    a private pipe (never a server result).
+  - Nothing of this needs more than an unprivileged user namespace: no setuid helper, no subuid range,
+    no cgroup. WSL2's kernel (6.18) allows all of it.
+- **Compared** (canonical strings, so `false` is never `0`): every request as sent and its answer's raw
+  bytes, the JSON-RPC envelope included, after a strict check (exactly `jsonrpc` `"2.0"`, the request's
+  integer `id`, and `result` or an `error` with an integer `code` and a string `message`; no duplicate
+  key, no NaN); after every request, the state of the session's storage (every entry of the overlay's
+  upper dir and of the home, none skipped: a file's sha256 and mode, `dir <mode>`, `deleted` or the link
+  target; the root itself as entry `.`, by `lstat`, so a root of another mode or type shows; every dir
+  that cannot be listed as `unlistable <why>` and every entry that cannot be stat'ed as `unstatable
+  <why>`, so storage the tier cannot read is never an empty listing; a root that does not exist, on
+  either side, gives no entries; and the home skeleton's deviations from its exact structure: each of
+  its dirs a real dir of mode 755), so a file written and removed between two requests is seen; the exit, survivors, whether the
+  server exited by itself, the sha256 of stderr, and the storage at the end. Go and tsc-rs answer with
+  the same bytes wherever they agree.
+- **The readers** (round 3): any exception of the stdout or stderr reader fails the session as
+  malformed; EOF counts only when a read returned it (a flag each reader sets), never because a thread
+  ended. Headers are bounded: lines of at most 256 bytes, at most 4 of them, a `Content-Length` of at
+  most 10 digits and 256 MiB.
+- **Items:** `api/<scenario>`, one per scenario; the detail names the first difference (`emitToString
+  /steps/11/answer/result/outputFiles/0/fileName: Go "...", tsc-rs "..."`, or `the raw bytes differ (the
+  same JSON value)`). `api/<scenario>/` in the run dir holds `go.json` and `rs.json` (the transcripts,
+  with the written files' texts) and, when not MATCH, `diff.txt`.
+- **Inputs:** fixtures are checked against their scenario before the tier and watched (inotify) while it
+  runs; the ancestor dirs of every root that the sandbox shows from the host (only `/`; the hidden dirs
+  are the sandbox's own) are keyed and watched for the names module resolution looks up. A change to
+  either is ERROR. There are no tripwires: the dirs they guarded do not exist in the sandbox.
+- **Key** (`material`): the expanded scenario, its root, the fixture hash, the sha of
+  `parity_api_session.py` and `parity_api_init.py` (`SOURCES`), `PROTOCOL` (the wire protocol: JSON-RPC
+  `--async`, the pin's protocol 5 in `api_oracle.py`'s numbering), the home path, the ancestors' state,
+  whether `/parity-api` exists, the timeouts, the Go command's identity (a binary's sha256) and the Go run
+  count. Go's two sessions per scenario are cached in `go-cache/<go sha>/api/<scenario>-<key>.json` with
+  that material, staged, and published only when the tier ends with its inputs verified clean. A Go
+  timeout is not cached, nor is anything of a tier where a session had an infra failure.
+- **Judged** in the order of the other tiers:
+  0. **ERROR** when any session (Go or tsc-rs) had an infra failure: the sandbox could not be made, or the
+     command could not be exec'd (Astra's non-executable oracle). Never GO-BROKEN, never cached.
+  1. a tsc-rs session that crashed (exit not 0, killed after the exit wait, a crash line on stderr, its
+     output closed before an answer, a survivor, its output held open after it ended), timed out (60 s per
+     request) or answered malformed is a DIFF with `rsFailure` crash or timeout (malformed counts as
+     crash); two tsc-rs runs that differ are `rs-nondet` (full runs tsc-rs twice);
+  2. GO-BROKEN: a Go run crashed, timed out or answered malformed, or Go's two runs differ, and tsc-rs is
+     clean and stable (quick runs tsc-rs once more first);
+  3. MATCH; 4. DIFF.
+- **Go variants** as on cli and fuzz: two Go runs when the entry is made; runs that differ make the item
+  GO-BROKEN. There is no accumulated variant record (the lsp tier's): a new fill happens only for new key
+  material, and material is never merged.
+- **No GO-PARTITION:** the partition rule is about the CLI's `--checkers`, and no scenario sets
+  `checkers`.
+- **No JS-AGREES:** JS tsc 6.0.3 has no API server. Its package has `tsc` and `tsserver` only, no
+  `--api`, no `createSnapshot` or `emitToString`, no request filesystems, no `^/~ts-uri~/` names and no
+  server case flag. Its in-process compiler API (`ts.createProgram` with a `CompilerHost`) can take a
+  filesystem and a case setting, but it is another surface with other answers, so it is no referee here
+  (`jsError` in the tier's summary). For the record, on D2's tree (`A/x.ts`, `a/y.ts`, `outDir`) with a
+  host that says `useCaseSensitiveFileNames: false`, it emits `out/x.js` and `out/y.js`, as Go does
+  (`scratch/h7/js_c2.cjs`).
+- **quick** runs the 22 scenarios the quick manifest names (`"api"`, manifest version 2), tsc-rs once;
+  **full** runs all 49, tsc-rs twice.
+- `parity_api.py probe <bin> <scenario>` runs one session in the sandbox and prints its transcript, so
+  `diff <(parity_api.py probe <Go> X) <(parity_api.py probe <tsc-rs> X)` reproduces an item (it replaces
+  B3's `b3_api_probe.py`). `parity_api.py list [quick]` lists the scenarios, `key X` prints a key's
+  material.
+
 ## Referees (`parity_referees.py`; Chad, 2026-11-04)
 
 The brief's "Goal" allows three kinds of difference from Go's default run (4 checkers), each decided
@@ -456,6 +578,7 @@ run in sequence, except tests, which runs beside them. Wall times:
 | lsp | 50 s (7 sessions, 4 at a time) | 137 s (12 sessions, tsc-rs ×3) | 252 s (Go ×4 per scenario) |
 | fuzz | 38 s | 516 s (30,000 × tsc-rs ×2) | 24 min |
 | corpus | – | 135 s | 10 min |
+| api (lane H7) | 1.7 s (22 scenarios) | 3.1 s (49 scenarios, tsc-rs ×2) | 12.3 s (Go ×2 per scenario) |
 | **total** | **about 4 min** (tests-bound), plus the go_baselines build after a change | **about 17 min** (994 s plus the test build) | about 45 min |
 
 The lsp times are from 2026-11-04 on the head bin `tsgo-head-b2febcd86-goport-w1`, at a load of
@@ -703,7 +826,8 @@ material allows.
 
 **Fail closed.** In lspdiff's namespace (so in every server's), each guarded dir that exists
 (`~/.cache/typescript`, `~/.npm`, `~/.config`) is covered by a read-only bait dir of the session's
-own, which inotify watches for every access, reads included (`parity_watch.ACCESS`). The typings bait
+own, which inotify watches for every access, reads included (`parity_watch.ACCESS`; since lane H7
+without IN_CLOSE_NOWRITE, see "The tripwire race"). The typings bait
 holds what ATA's init reads first (`7.1/package.json`, `package-lock.json`,
 `node_modules/types-registry/index.json`). Any access makes the session ERROR ("a process of the
 session touched an unkeyed path") and discards every staged Go and JS entry of the tier. The watch
@@ -1800,8 +1924,12 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
     load of umami). There, only `watch delta` and `watch active` protect the result.
   - Not exercised: a symlink event on the link path itself, case-only renames, and directory
     deletes with children.
-- **The msgpack/JSON API** (`scripts/goport/api_oracle.py`) and the native-preview client suite
-  (`np-suite.sh`).
+- **The API beyond the api tier's sessions** (lane H7 covers JSON-RPC `--async` sessions: request
+  filesystems, the case flag, dynamic names, the diagnostics methods, emit and the build orchestrator).
+  Not covered: the msgpack sync protocol, the checker and type queries (`scripts/goport/api_oracle.py`
+  batteries), callback filesystems (`--callbacks`), `layer` request filesystems and `host` symlinks
+  (they read the real disk), `updateSnapshot`, API sessions inside an LSP server
+  (`custom/initializeAPISession`), and the native-preview client suite (`np-suite.sh`).
 - **Not compared at all:** lsp GO-UNSTABLE items and the masked `--extendedDiagnostics` memory and
   time values. Where Go is broken (GO-BROKEN), only tsc-rs's own stability and absence of crashes
   and hangs are checked: there is no Go answer to compare with.
@@ -1949,6 +2077,306 @@ tests 139,908 PASS, 1,731 IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MA
 The harness and the file go together: this checkout's compare finds a version 2 file at an older
 accepted ref INVALID, and an older harness finds the version 3 file INVALID.
 
+## API tier (lane H7, 2026-11-10)
+
+B3 confirmed two output differences from pinned Go on the API emit path (D1, D2) and listed more
+suspect call sites. The gate missed them because no tier was an API client. This lane adds the `api`
+tier ("api: API sessions" above) and its scenario corpus, and pins every difference it finds as a
+known-bad tracking entry for the fix lane B2. Round 2 answers Astra's review of round 1 (`6e97777e6`,
+REJECT, `reviews/2026-11-10-astra-h7.md`).
+
+### The corpus (`parity-api-scenarios.json`, 49 scenarios; quick: the 22 marked q)
+
+| group | scenarios | covers |
+|---|---|---|
+| dynamic names (D1, B3 risks) | `dyn-commondir` (q), `dyn-commondir-insensitive` (q), `dyn-commondir-samecase`, `dyn-resolve` (q) | B3 c0 and c3: the common directory of `^/~ts-uri~/` names in `A/` and `a/` (D1), module resolution under a dynamic root, declarations and maps to a dynamic `outDir` |
+| | `dyn-json-case`, `dyn-json-case-insensitive` (q) | B3 c1: a dynamic JSON module, `outDir` `SRC` and `rootDir` `src`: risks 3 and 4 (`source_file_may_be_emitted`, `json_file_may_be_emitted`, the `rootDir` branch) and 5 (`get_output_js_file_name`'s overwrite check) |
+| | `dyn-json-config-outdir-case`, `dyn-json-config-outdir-case-insensitive` (q) | risks 3 and 4 on the config branch: a config project in a dynamic `src/` with `outDir ../SRC` |
+| | `dyn-reference-ext`, `dyn-reference-ext-insensitive` (q) | risk 10 (`get_source_file_from_reference`): `/// <reference path="x.TS">` under a dynamic root |
+| | `dyn-config-include`, `dyn-config-include-insensitive` (q) | risks 12, 13 and 15 (tsconfig wildcard and file-name keys, `GlobVisitor`, `to_canonical_key`): `include` matching `src/A.ts` and `src/a.ts` |
+| | `dyn-config-include-dirs`, `dyn-config-include-dirs-insensitive` (q) | Astra's finding 9, risk 13: `include` matching `src/A/x.ts` and `src/a/y.ts`, directories that differ only in case |
+| mixed-case dirs (D2) | `case-mixed-dirs`, `case-mixed-dirs-sensitive` (q), `case-mixed-dirs-insensitive` (q), `-rootdir-insensitive` (q), `-reversed-insensitive`, `-decl-maps-insensitive`, `-decldir-insensitive` | B3 c2, c2b, c2c, c2d: `A/x.ts` and `a/y.ts` with an `outDir` on the OS default, a case-sensitive and a case-insensitive host; `rootDir` (isolates D2), the other root order, declaration plus declaration and source maps with `inlineSources`, `emitDeclarationOnly` into a `declarationDir` |
+| outDir and rootDir by case, overwrites | `case-json-overwrite-insensitive` (q), `case-json-overwrite-sensitive`, `case-js-overwrite-insensitive` (q), `case-js-overwrite-sensitive`, `js-overwrite` (q), `case-outdir-rootdir-insensitive` | B3 c1b: a JSON output that would overwrite its input on an insensitive host; `allowJs` outputs that would overwrite their inputs (TS5055), with and without a case-only `outDir`; TypeScript outputs into a case-only `outDir` with maps |
+| request filesystem | `case-duplicate-files-insensitive`, `case-import-casing-insensitive`, `symlink-dir`, `relative-names` | `A.ts` and `a.ts` in one insensitive filesystem (Go refuses the duplicate), an import whose casing differs, a request-filesystem symlink, file names relative to `--cwd` |
+| emit kinds | `json-module` (q), `decl-maps` (q), `errors-and-libs`, `composite-program` | a JSON module with declarations; declaration and source maps with `sourceRoot` and `mapRoot`; a full filesystem without `noLib` (no bundled libs) plus type and syntax errors; `composite` with a `tsBuildInfoFile` through `createPrograms` |
+| snapshot updates (round 2) | `update-reconfigure-emit` (q), `update-file-change-emit`, `update-mixed-dirs-insensitive` (q) | repeated emits with changed options (`reconfigurePrograms`: declarations, maps, another `outDir`), `release` of the replaced snapshot and a second `release` of it (an error answer); a new full filesystem with an edit and a new file; D2 after an update |
+| layer filesystems (round 2) | `layer-emit-disk` (q), `layer-emit-mixed-dirs`, `layer-emit-mixed-dirs-insensitive` (q) | a `layer` filesystem over a disk fixture: a file only in the layer importing one only on disk, and `emit` writing through the host filesystem into the fixture; D2 on that writing path |
+| build orchestrator (disk fixtures) | `build-composite` (q), `build-clean`, `build-references`, `build-dispose`, `build-mixed-dirs`, `build-mixed-dirs-insensitive` (q), `build-symlink-references`, `build-symlink-references-insensitive` | a composite project built twice (cold, then up to date) with maps and `tsconfig.tsbuildinfo`; build then `cleanBuild`; a solution with two composite projects, a type error and `buildReferences`; build, `disposeBuildOrchestrator`, then build and dispose on the disposed one (error answers); the c2 tree as a composite config project on both case settings; B3 risk 7 (project-reference symlink redirects): a pnpm-style monorepo where `packages/b` references `packages/a` and imports it through `node_modules/a -> ../../a` |
+
+B3 risks 2 (D1), 3, 4, 5, 7, 10, 12, 13 and 15 each have a scenario. Risks 3 to 5 do not show yet: on
+Linux D2 makes the emit side case-sensitive, so tsc-rs takes the case-sensitive path and gives Go's
+answer by accident. Go emits `SRC/data.json` in `dyn-json-case-insensitive` and
+`dyn-json-config-outdir-case-insensitive`, and so does tsc-rs today. Once B2 fixes D2, those items will
+show whether the call sites behind them still compare dynamic names with the OS's case rules. B3's
+LSP-preference risk (6, `userpreferences.rs`) is not an API path: this tier does not cover it.
+
+**Known coverage gaps** (not in the corpus):
+- dynamic redirect targets and package paths that differ only in case (B3 risks 8 and 9,
+  `compare_paths_by_redirect`, `package_json_paths_are_equal`): reaching them needs a declaration emit or
+  an auto-import that generates a module specifier through two such redirects; no cheap scenario does;
+- edit-then-rebuild through the build orchestrator: the edit would have to happen on disk between two
+  `build` requests, inside the sandbox, and no request makes one (layer and full filesystems are
+  snapshot inputs, which the orchestrator does not read);
+- callback filesystems (`--callbacks`): the client would have to answer the server's filesystem
+  requests; the driver enables no callbacks and fails a session that sends one;
+- `host` symlinks in a request filesystem (refused: they read the host);
+- the msgpack sync protocol, the checker and type queries (`scripts/goport/api_oracle.py`), and API
+  sessions inside an LSP server (`custom/initializeAPISession`).
+
+### Known differences at `ed6edf820` (14, pinned for B2)
+
+Each one reproduces with
+
+```sh
+P=scripts/perf-rearch/parity_api.py
+diff <(python3 $P probe ~/.local/bin/tsgo-oracle-3e9236361fa9 <scenario>) <(python3 $P probe <tsc-rs bin> <scenario>)
+```
+
+| scenario | difference (Go, then tsc-rs) | B3 |
+|---|---|---|
+| `dyn-commondir-insensitive` | `virtualout/A/x.{js,js.map,d.ts}` and `virtualout/a/y.*`; tsc-rs `virtualout/x.*`, and `y.*` beside its source as `^/~ts-uri~/mem/auth/a/y.*` | D1 |
+| `case-mixed-dirs-insensitive` | `out/x.js`, `out/y.js`; tsc-rs `out/x.js`, `a/y.js` | D2 |
+| `case-mixed-dirs-rootdir-insensitive` | `rootDir A`: `out/x.js`, `out/y.js`; tsc-rs `out/x.js`, `a/y.js` | D2 (isolated) |
+| `case-mixed-dirs-reversed-insensitive` | `out/x.js`, `out/y.js`; tsc-rs `A/x.js`, `out/y.js` | D2 |
+| `case-mixed-dirs-decl-maps-insensitive` | every output (js, map, d.ts, d.ts.map) in `out/`; tsc-rs `a/y.*` beside the source | D2 |
+| `case-mixed-dirs-decldir-insensitive` | `types/x.d.ts`, `types/y.d.ts`; tsc-rs `a/y.d.ts` | D2 |
+| `case-json-overwrite-insensitive` | no `SRC/data.json` (it would overwrite `src/data.json`); tsc-rs emits it | D2 (c1b) |
+| `case-outdir-rootdir-insensitive` | the maps' `sources` are `a.ts` and `b.ts` (`SRC/` and `src/` are one dir on this host); tsc-rs `../src/a.ts`, `../../src/sub/b.ts` | D2, at the source-map writer |
+| `build-mixed-dirs-insensitive` | the build orchestrator's `out/tsconfig.tsbuildinfo` has `"root":[[1,3]]`; tsc-rs `[[2,3]]` (it does not match the root `A/x.ts` to its `fileNames` entry `../a/x.ts`); every other output equal | D2 family (build info; not attributed further) |
+| `update-mixed-dirs-insensitive` (round 2) | `out/x.js`, `out/y.js` before and after an `updateSnapshot`; tsc-rs `a/y.js` | D2, after an update |
+| `layer-emit-mixed-dirs-insensitive` (round 2) | `emit` through a layer filesystem writes `out/x.js`, `out/y.js` into the fixture; tsc-rs `out/x.js`, `a/y.js` | D2, on the path that writes |
+| `dyn-reference-ext-insensitive` | TS6054 "File 'x.TS' has an unsupported extension" and no `x.TS` in the program; tsc-rs takes `x.TS` into the program and emits `out/x.TS.js` | risk 10, confirmed |
+| `dyn-config-include-insensitive` | the config project has `src/A.ts` and `src/a.ts`; tsc-rs drops `src/a.ts` (and its output) | risks 12, 13, 15, confirmed |
+| `dyn-config-include-dirs-insensitive` (round 2, Astra's finding 9) | the config project has `src/A/x.ts` and `src/a/y.ts`; tsc-rs drops `src/a/y.ts` | risk 13, confirmed |
+
+Risks 10, 12, 13 and 15 show although D2 is not fixed: they are on the program side (file loading and
+config parsing), which already takes the session's case setting. Every other scenario is MATCH.
+
+**Pinned, not accepted.** Each is a `known-bad` tracking entry in `parity-grandfathered.json`, made with
+the grandfather tooling (`parity_grandfather.py evidence` and `regen --only '^api/'` on
+`tsgo-head-ed6edf820-rel`, full and quick: runs `h7r2-gf-evidence-ed6edf820-{full,quick}`). Its reason
+says that it is a confirmed difference, that fix lane B2 is open and removes the entry, and that any
+change fails the gate. The pins are the structured evidence every entry has: the scenario's key, Go's
+result (since round 2 its `stdout` fingerprint covers Go's answers, how it ended and its stderr; its
+`written` fingerprint the storage after every request) and the fingerprint of every tsc-rs session. A
+fix makes the item good and its entry stale, so B2's gate fails until B2 removes the entry. Any other
+change also fails the gate. `regen --only` rebuilds only the matching entries and keeps every other entry
+byte for byte (the 36 fuzz entries are unchanged); since round 2 it refuses a `--from` file of an older
+version, whose kept entries it would otherwise relabel.
+
+### Round 2: Astra's nine findings
+
+Every control is in `parity_h7_test.py` and uses Astra's probes where there are some (her proxy,
+`scratch/review-h7-astra/proxy-extra.py`, without its two log writes outside the session; her
+version 3 grandfather file; her non-executable oracle). The end-to-end controls ran on round 1's harness
+too (`parity_h7_test.py --e2e-only --harness <git archive 6e97777e6>`): each finding's control fails there
+and passes now. The "on 6e97777e6" column is that run; for 7 and 8 it is Astra's review.
+
+| # | finding | fix | control | on 6e97777e6 | now |
+|---|---|---|---|---|---|
+| 1 | a child that outlives the server holding its output passed (the reader joins timed out unchecked) | the init is PID 1 of a PID namespace: when the server ends, every other process is a survivor, a failure, and is killed; both streams must reach EOF | `child-stdout` | MATCH, after 20 s | DIFF rsFailure crash, at once |
+| 2 | the host outside the mounted dirs was writable | the whole tree read-only, the host's state dirs empty tmpfs; writable: the home and the fixture's overlay, read after every request | `outside-write` (the review dir, `/etc`, `/var/tmp`, `/tmp`) | 3 host files written, MATCH | none written |
+| 3 | answers compared as parsed values (`false` = `0`) and the envelope dropped | the answer's raw bytes compared; strict envelope (`jsonrpc` `"2.0"`, the integer `id`, `result` or a typed `error`, nothing else; no duplicate key, no NaN) | `bool-number`; `bad-rpc`; unit: `1` against `1.0`, other bytes of the same value, 7 malformed envelopes | MATCH, MATCH | DIFF; DIFF rsFailure crash |
+| 4 | an oracle that could not be exec'd was GO-BROKEN, and cached | setup and exec failures come back on the init's private pipe: ERROR, nothing cached | Astra's `unexecutable-go` | GO-BROKEN, cached | ERROR, not cached |
+| 5 | a build output corrupted and then removed by `cleanBuild` passed | the storage (upper dir and home) is read after every request and compared | `corrupt-build` on `build-clean` | MATCH | DIFF |
+| 6 | the tripwire saw no `stat`, `statx` or `O_PATH` access | the guarded dirs do not exist in the sandbox (no tripwires); the server gets no fd but 0, 1, 2; the `parity_watch` comment now says what IN_CLOSE_NOWRITE's removal rests on | `stat-bait`; `fds` | MATCH; MATCH | DIFF (the path does not exist); MATCH |
+| 7 | `regen --only` kept 36 version 3 entries and wrote `version: 4` | kept entries need a valid `--from` of this version | Astra's `grandfather-v3.json` with `--only '^api/'` | relabelled | refused, nothing written |
+| 8 | the pins left Go's stderr out | Go's `stdout` fingerprint holds its stderr sha | unit: another Go stderr is other evidence | matched | other evidence |
+| 9 | no scenario for dynamic directories that differ only in case | `dyn-config-include-dirs-insensitive` and its control | unit: the scenario exists, quick runs it, B2's pin tracks it | absent | DIFF, pinned for B2 |
+
+### Round 3: Astra's recheck of `5c6b0c8d5`
+
+Astra's cases (`scratch/review-h7r2-astra/probe.py`) are the self-test's fake as they are
+(`parity_h7_fake.py`, plus a `privs` mode). Run on round 2's harness (`--e2e-only --harness <git archive
+5c6b0c8d5>`), each finding's control fails; on this head, all pass.
+
+| # | finding | fix | control | on 5c6b0c8d5 | now |
+|---|---|---|---|---|---|
+| 1 | a reader that died of an exception counted as a clean EOF (`Content-Length: ` and 5,000 digits after the last answer: `int()` raised, MATCH) | any reader exception fails the session as malformed; EOF is a flag set on `b''`; header lines, count, digits and frame size bounded | `trailing-length` (and `trailing-deep`, caught before too) | MATCH | DIFF rsFailure crash |
+| 2 | the server was root in its user namespace: it cleared read-only on `/dev/shm` and wrote there, and mounted a tmpfs over `/proc` to hide a survivor | the server drops every privilege before exec (nested user namespace owning nothing, no further user namespaces, all five capability sets empty, uid and gid 1000, `no_new_privs`, checked); survivors from a `/proc` fd opened before the server and from what PID 1 reaps after the kill | `shm-remount`, `hide-proc-survivor`; `privs` (no capability; `mount`, `umount`, `mount_setattr` of `/dev/shm` and of `/` recursively, `pivot_root`, `unshare(CLONE_NEWNS)`, `unshare(CLONE_NEWUSER)`, `setns` into PID 1's mount namespace: every one fails); `detached`, `report-access` (caught before too) | MATCH, MATCH; ERROR | DIFF (each operation fails, so the probe fails); MATCH |
+| 3 | the home skeleton's paths were skipped unchecked (`$HOME/tmp` replaced by a file: MATCH) | every home entry listed with its type and mode; the skeleton checked against its exact structure (each dir real, mode 755) | `home-skeleton`; unit: a file for a dir, another mode, a dir gone | MATCH | DIFF |
+
+Astra's other round 2 cases (a large integer, `-0`, a `\u` escape in a key, a BOM, trailing whitespace,
+`1e999`) stay not MATCH. One consequence of the drop: the server writes as a user, so a fixture's dirs
+have a checkout's modes (755) instead of the snapshot's 555; with 555 the reference builds could not
+create `lib/out` and `app/out`, and Go's emitter then crashes with a nil dereference (and tsc-rs, which
+reproduces Go's panics, does too). The 14 api pins were regenerated for the new keys
+(`h7r3-gf-evidence-ed6edf820-{full,quick}`, `regen --only '^api/'`); their reasons, and the 36 fuzz
+entries, are unchanged.
+
+### The final fix (root's decision after the review cap)
+
+Astra's final recheck of `a08c934d6` closed every round 2 blocker and found one more false MATCH:
+`_walk` did not record the storage root's own metadata, and `os.walk` silently skips a directory it
+cannot list. A server that wrote `unexpected.js` after Go's answers and then made the fixture root mode
+000 (`review-noemit`, a disk scenario with no emit) got MATCH, and so did a root of mode 0700 on
+`build-composite`, quick and full (`scratch/review-h7r3-astra/confirmed-root-hide-full`,
+`confirmed-root-mode-{full,quick}`).
+
+- **Fix:** the root is entry `.` (its type and mode, by `lstat`; a root that is not a dir is recorded
+  as such and not walked); `os.walk` gets an `onerror` that records each dir it cannot list as
+  `unlistable <strerror>` (on the root, beside its `.` entry); an entry that cannot be stat'ed (a dir
+  that can be listed but not searched) is `unstatable <strerror>`. A root that does not exist on either
+  side still gives no entries.
+- **Controls** (`parity_h7_test.py`; Astra's two modes, `root-hide` and `root-mode`, are in
+  `parity_h7_fake.py` as she wrote them): `root-hide` on her `review-noemit` scenario, and `root-mode` on
+  `build-composite` in full and in quick. All three MATCH on `a08c934d6` (`--e2e-only --harness <git
+  archive a08c934d6>`) and DIFF now.
+
+- **Pins** regenerated on the final sources (`h7final-gf-evidence-ed6edf820-{full,quick}`, `regen --only
+  '^api/'`): the 14 reasons and the 36 fuzz entries unchanged.
+- **Gate** (`--accepted-ref t3/api-parity-tier` at `7bfaa714b`, base `runs/head-ed6edf820-full`): run
+  `runs/h7final-head-ed6edf820-full-2`, 25 min (16:17 to 16:42 UTC, load 5 to 28): **PARITY OK**, 187,270
+  items compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 50 grandfathered (36 fuzz,
+  14 api), 0 stale; api 35 MATCH, 14 DIFF; cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (the usual
+  `watch_ends_soon_after_sigint_or_sigterm`); lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF
+  (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. The run before it
+  (`runs/h7final-head-ed6edf820-full`, same sources) was PARITY FAIL on one lost item, `fuzz/1:2450`:
+  tsc-rs's first attempt timed out (60.17 s of 60) during another project's build burst (load 42; the
+  fuzz tier's tsc-rs CPU time 10,321 s against the base's 5,602 s), and its retry (29 s) and second run
+  (12 s) answered. Alone, at a load of 26, the case MATCHes in about 10 s a run. The fuzz tier uses
+  nothing this fix changed.
+
+**Known limit of the fixture check (document only; no fix).** A process on the host that maps a fixture
+file writable and shared before the tier starts its watch can change the file's bytes through the
+mapping and change them back before the end check: both content checks pass, and inotify sees nothing
+(writes through an mmap make no event). Astra's reproducer is `scratch/review-h7r3-astra/mmap-probe.py`
+(`mmap-probe.json`: before PASS, the bytes changed during the tier, no watch event, after PASS). That
+is another host process racing the harness, not the compiler under test, which runs in the sandbox
+and cannot reach the fixture snapshot. The same holds for the snapshots of the cli and lsp tiers.
+
+### The lsp tier: the same gaps (reported, not fixed; for lane H8)
+
+`vendor/lspdiff/sandbox.mjs` runs each server under `unshare -rmn` with overlays of its inputs and its
+home bound, and `client.mjs` kills only that process. With Astra's corrections from her recheck:
+- **survivors (finding 1):** no PID namespace; a server's child can outlive it. Stdout's EOF is enforced
+  (the client reads to the end); stderr's is not: the session result waits at most 2 s for stderr to
+  close and records `stderr.complete: false`, which does not change the verdict;
+- **privileges (round 3 finding 2):** the server is root in its user namespace, which owns its mount
+  namespace: it can remount, unmount or mount over anything there, `/proc` included;
+- **the initialize answer is not compared** (high; `session.mjs:21`): only an `error` in it is checked;
+- **number parsing** (high; `client.mjs:56`): `JSON.parse` reads `1e999` as `Infinity`, which
+  `JSON.stringify` writes as `null`, so a server that answers `1e999` where Go answers `null` matches;
+- **private-home writes** (medium; `sandbox.mjs:162`): what a server writes into its private home is
+  counted (`homeWrites`) but changes no verdict;
+- **sandbox exec failures** (high; `lspdiff.mjs:305`): a server that cannot be started (a namespace or
+  exec failure) is a crash of that run, so on the Go side it is GO-BROKEN, not ERROR;
+- **host writes (finding 2):** everything but the overlays and the home stays writable with the user's
+  permissions; a server can write outside its session unseen;
+- **metadata reads (finding 6):** the tripwires see reads and listings of the guarded dirs, not `stat`,
+  `statx` or `O_PATH`;
+- **envelopes (finding 3):** `client.mjs` dispatches answers by `id` and does not check `jsonrpc` or the
+  envelope's keys (an answer with both `result` and `error`, or extra keys, passes; an answer to an
+  unknown id is dropped; `JSON.parse` takes the last of duplicate keys). The answers themselves are
+  normalized with `JSON.stringify`, which keeps types (`false` is not `0`).
+Fixing them changes `sandbox.mjs`, `client.mjs` and `session.mjs`, which are session sources: every lsp Go
+fill and variant record would start empty, and the Go-race sessions need refills (H5's "Go fills"). That
+is lane H8; `parity_api_init.py` and `parity_api_session.py`'s readers are the design to port.
+
+### Negative controls (`parity_h7_test.py`, 108 checks, `H7 SELFTEST OK`, about 30 s to 2.5 min)
+
+Besides the table above, the round 1 controls (fakes in front of the Go oracle, through the real tier
+and `parity_compare.py compare`): a transparent proxy MATCHes; a wrong output path is a DIFF and PARITY
+FAIL (LOST against a base where it MATCHed, NEW against one without it); a crash, a late exit 3 and a
+malformed header are DIFF rsFailure crash; a hang is DIFF rsFailure timeout; another output on every run
+is rs-nondet, and as Go GO-BROKEN (full, and quick after the confirming run); a home write is a DIFF; a
+read of the real typings cache finds nothing (the fake fails: DIFF). Cache controls on a scenario of its
+own: a second run reads Go from the cache with the same key; another case flag and one more fixture byte
+are other keys (Go runs again); an entry whose material is not the key's is not read; a fixture whose
+bytes are not its scenario's is ERROR. Unit: every key input (case flag, no flag, a file, the filesystem
+shape, an option, the requests, the updates, the fixture, the ancestors, the Go binary, both sandbox
+sources, the protocol, the home path) is another key; the format refuses a layer filesystem without a
+fixture, a host symlink, no filesystem, build steps without a fixture, an unknown key, an absolute
+fixture path, a fixture symlink that leaves the fixture, an unknown request; the judge's order; the
+tripwire race of `parity_watch.ACCESS`. The H4, H5, H6 and referee self-tests pass on this harness.
+
+### The tripwire race (found by this lane's first gate run)
+
+The first full gate of this lane (`runs/h7-head-ed6edf820-full-stopped`, stopped after its api tier)
+had one lsp ERROR: `lsp/hono-f12-p6: a process of the session touched an unkeyed path:
+/home/agent/.config (close-nowrite /home/agent/.config)`. The first event on the bait was a close,
+with no open after the watch started. That is the race lane H4 found for IN_CLOSE_WRITE, now on H5's
+access mask:
+
+- `Watch.__init__` lists the bait dirs (`os.scandir`), then drops its own events (`_discard`).
+- Another thread of the tier forks a process (`subprocess`) during that listing. The child has a copy
+  of the dir fd and closes it (`close_fds`), and the description's last close comes after `_discard`.
+- The close alone was counted as an access.
+
+`ACCESS` no longer holds IN_CLOSE_NOWRITE. That loses nothing only because of the lsp tier's lifecycle:
+each session's watch is built before lspdiff starts, every server is a descendant started after it, and
+none gets an fd but 0, 1 and 2, so every read or listing by a session process opens after the watch
+(IN_OPEN). It is no blanket rule: `stat`, `statx`, `access` and `open(O_PATH)` with `fstat` make no
+inotify event at all (Astra, H7 review), so the lsp tripwires do not see metadata reads; see "The lsp
+tier: the same gaps". `parity_h7_test.py` has the race: 400 watches while 4 threads fork. The old
+mask tripped 15 to 52 of them in each run, the new one none. A read, a listing and a listing of a
+subdir after the watch started still trip. `parity_h5_test.py` passes (`H5 SELFTEST OK`). The lsp tier's
+tripwires had the same latent flake since H5. (The api tier has had no tripwires since round 2.)
+
+### Gate run, round 1
+
+`parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel --base ~/.cache/perf-rearch/parity/base-current
+--accepted-ref 5ae5006ca` (this lane's manifest and grandfather file; root accepts them by merging; the
+tests tier on this lane's checkout, whose `crates/` equal `ed6edf820`). `base-current` was
+`runs/head-ed6edf820-full`, root's accepted run of the same binary (sha256 `310f56f918c3…`, built from
+`ed6edf820` in root's checkout). Run `runs/h7-head-ed6edf820-full`, 26 min (09:40 to 10:06 UTC, load 4 to
+34): **PARITY OK**.
+
+- 187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not
+  as pinned, 0 new items not good, 0 crashes on good items, **47 grandfathered** (the 36 fuzz entries
+  and the 11 new api entries, each failing exactly as pinned), 0 stale entries, 0 recovered, 0 newly
+  good by a referee.
+- api: **27 MATCH, 11 DIFF** (the known differences above), 1.3 s. The 74 new items are all new to the
+  base: the 27 MATCHes count as good, and the 11 DIFFs pass only through their entries.
+- cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731
+  IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN,
+  1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+
+### Gate run, round 2
+
+`parity.sh full ~/.cache/perf-rearch/bins/tsgo-head-ed6edf820-rel --base ~/.cache/perf-rearch/parity/base-current
+--accepted-ref t3/api-parity-tier` (this lane's branch at `f38ea4053`, the harness of the run), against
+`base-current` = `runs/head-ed6edf820-full` (root's accepted run of the same binary). Run
+`runs/h7r2-head-ed6edf820-full`, 23 min (14:02 to 14:25 UTC, load 13 to 17; it waited for another lane's
+gate first): **PARITY OK**.
+
+- 187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not
+  as pinned, 0 new items not good, 0 crashes on good items, **50 grandfathered** (the 36 fuzz entries,
+  unchanged, and the 14 api entries, each failing exactly as pinned), 0 stale entries, 0 recovered, 0
+  newly good by a referee.
+- api: **35 MATCH, 14 DIFF** (the known differences above), 3.1 s.
+- cli 170 MATCH; tests 139,983 PASS, 1 FLAKY (`watch_ends_soon_after_sigint_or_sigterm`), 1,731
+  IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN,
+  1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+- An earlier round 2 run (`runs/h7r2-head-ed6edf820-full-interrupted`) had the same cli, tests, lsp and api
+  results and was cut off in its fuzz tier when the VM restarted.
+
+### Gate run, round 3
+
+Same command and base (`--accepted-ref t3/api-parity-tier`, the branch at `0c615dda3`, the harness of the
+run). Run `runs/h7r3-head-ed6edf820-full`, 23 min (14:59 to 15:21 UTC, load 6 to 16): **PARITY OK**.
+187,270 items compared (185,539 base items a full run must have): 0 lost, 0 not run, 0 known-bad not as
+pinned, 0 new items not good, 0 crashes on good items, 50 grandfathered (the 36 fuzz entries, unchanged,
+and the 14 api entries, re-pinned for round 3's keys, each failing exactly as pinned), 0 stale entries.
+api 35 MATCH, 14 DIFF in 7.2 s (each session now also enters its own user namespace and drops its
+privileges: about 0.1 s more than round 2's). cli 170 MATCH; tests 139,983 PASS, 1 FLAKY
+(`watch_ends_soon_after_sigint_or_sigterm`), 1,731 IGNORED; lsp 2,629 MATCH, 29 GO-BROKEN; fuzz 29,955
+MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. All as in the base.
+
+### Cost
+
+- **api tier, round 2** (each session now starts the sandbox's init, a Python process, and the storage
+  is read after every request): 3.1 s full with the Go cache warm (49 scenarios, tsc-rs twice) in the gate
+  at a load of about 15; quick 1.7 s (22 scenarios) and cold 12.3 s (every Go entry new, as after an
+  edit of either sandbox source) at a load of 37 to 47. A session takes 0.41 s median, 0.71 s at most,
+  there; 8 scenarios run side by side. Round 1 took 1.3 s full and 0.6 s quick.
+- **Inputs:** the 8 fixtures (6 distinct) are a few KB each, made once; checking them, the ancestors'
+  state and the watches cost under 0.1 s.
+- **Go cache:** one JSON entry per scenario (2 Go sessions, with the storage after every request and the
+  written files' texts): 49 entries in the current keys; the dir holds 2.2 MB with the older keys and
+  the self-tests' entries.
+- **Self-tests:** `parity_h7_test.py` takes about 2.5 minutes (89 checks; the tripwire race about 10 s,
+  the end-to-end controls the rest); `--unit` about 14 s.
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
@@ -1962,6 +2390,12 @@ accepted ref INVALID, and an older harness finds the version 3 file INVALID.
 - `parity_h4_test.py` and `vendor/lspdiff/selftest/h4-selftest.mjs`: lane H4's negative controls
   (about 1 minute together; the JS file also has lane ND2's and H5's).
 - `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
+- `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
+  (the protocol client, the requests, the storage reads); `parity_api_init.py`: the session's sandbox,
+  PID 1 of its namespaces (both keyed: their sha is in every api key); `parity-api-scenarios.json`: the
+  scenarios; `parity_h7_test.py`: lane H7's negative controls (30 s to 2.5 minutes; `--unit` about 14 s;
+  `--e2e-only --harness DIR` against another harness); `parity_h7_fake.py`: its fake server, Astra's
+  review probe.
 - `ata_typings.py`: builds and checks the frozen typings store (`build`, `check`, `path`);
   `ata-typings.json`: its manifest (hash, versions, every file's sha256; the store itself is in
   `~/.cache/perf-rearch/ata-typings/<sha>/`); `parity_h5_test.py`: lane H5's negative controls (unit

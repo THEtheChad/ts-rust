@@ -1,0 +1,1458 @@
+{
+ "about": "The api tier's scenarios (lane H7; parity_api_session.py has the format, parity_api.py the tier). @ROOT@ is the scenario's root; @GLOBALS@ the minimal global interfaces a noLib program needs.",
+ "version": 1,
+ "texts": {
+  "@GLOBALS@": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+ },
+ "scenarios": [
+  {
+   "name": "dyn-commondir",
+   "about": "B3 D1 (c0, Astra W2-FE 2): dynamic names in A/ and a/; Go's common directory compares them case-sensitively",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/A/x.ts": "export const x0 = 0;",
+     "^/~ts-uri~/mem/auth/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/A/x.ts",
+      "^/~ts-uri~/mem/auth/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/virtualout",
+      "declaration": true,
+      "sourceMap": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-commondir-insensitive",
+   "about": "D1 under --useCaseSensitiveFileNames=false: dynamic names stay case-sensitive in Go",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/A/x.ts": "export const x0 = 0;",
+     "^/~ts-uri~/mem/auth/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/A/x.ts",
+      "^/~ts-uri~/mem/auth/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/virtualout",
+      "declaration": true,
+      "sourceMap": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-commondir-samecase",
+   "about": "control for D1: dynamic names in src/ and src/sub/, a common directory with no case question",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/x.ts": "export const x0 = 0;",
+     "^/~ts-uri~/mem/auth/src/sub/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/x.ts",
+      "^/~ts-uri~/mem/auth/src/sub/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "declarationMap": true,
+      "sourceMap": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-resolve",
+   "about": "B3 c3: module resolution under a dynamic root (lib.v2/, dir/, c.js -> c.ts, ../src/sub/d, a space, %20), declarations, a dynamic outDir",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/main.ts": "import {a} from \"./lib.v2\";\nimport {b} from \"./dir/\";\nimport {c} from \"./c.js\";\nimport {d} from \"../src/sub/d\";\nimport {e} from \"./My Dir/e\";\nimport {f} from \"./pct%20/f\";\nexport const all = [a,b,c,d,e,f];",
+     "^/~ts-uri~/mem/auth/src/lib.v2/index.ts": "export const a = 1;",
+     "^/~ts-uri~/mem/auth/src/dir/index.ts": "export const b = 2;",
+     "^/~ts-uri~/mem/auth/src/c.ts": "export const c = 3;",
+     "^/~ts-uri~/mem/auth/src/sub/d.ts": "export const d = 4;",
+     "^/~ts-uri~/mem/auth/src/My Dir/e.ts": "export const e = 5;",
+     "^/~ts-uri~/mem/auth/src/pct%20/f.ts": "export const f = 6;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "module": 99,
+      "moduleResolution": 100,
+      "declaration": true,
+      "outDir": "^/~ts-uri~/mem/auth/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-json-case",
+   "about": "B3 c1: a dynamic JSON module, outDir SRC and rootDir src differ only in case",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/a.ts",
+      "^/~ts-uri~/mem/auth/src/data.json",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/SRC",
+      "rootDir": "^/~ts-uri~/mem/auth/src",
+      "module": 99,
+      "moduleResolution": 100,
+      "resolveJsonModule": true,
+      "allowSyntheticDefaultImports": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-json-case-insensitive",
+   "about": "B3 risks 3, 4 (rootDir branch) and 5 (get_output_js_file_name): c1 on an insensitive host; Go compares dynamic names case-sensitively, so SRC/data.json is no overwrite of src/data.json and is emitted. D2 hides it on Linux",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/a.ts",
+      "^/~ts-uri~/mem/auth/src/data.json",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/SRC",
+      "rootDir": "^/~ts-uri~/mem/auth/src",
+      "module": 99,
+      "moduleResolution": 100,
+      "resolveJsonModule": true,
+      "allowSyntheticDefaultImports": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-json-config-outdir-case-insensitive",
+   "about": "B3 risks 3 and 4, config branch (source_file_may_be_emitted, json_file_may_be_emitted): a config project in a dynamic src/ with outDir ../SRC, so the common directory is the config dir and the JSON output differs from its input only in case; insensitive host: Go emits it. D2 hides it on Linux",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"../SRC\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"resolveJsonModule\": true, \"allowSyntheticDefaultImports\": true}, \"files\": [\"a.ts\", \"data.json\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "^/~ts-uri~/mem/auth/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/src/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-json-config-outdir-case",
+   "about": "the config branch of risks 3 and 4 on a case-sensitive host (control)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"../SRC\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"resolveJsonModule\": true, \"allowSyntheticDefaultImports\": true}, \"files\": [\"a.ts\", \"data.json\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "^/~ts-uri~/mem/auth/src/data.json": "{\"x\": 1}",
+     "^/~ts-uri~/mem/auth/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/src/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-reference-ext-insensitive",
+   "about": "B3 risk 10 (file_loader get_source_file_from_reference): /// <reference path=\"x.TS\"> under a dynamic root, insensitive host: Go keeps the dynamic case, so .TS is no supported extension",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/main.ts": "/// <reference path=\"x.TS\" />\nexport const m = 1;",
+     "^/~ts-uri~/mem/auth/src/x.TS": "declare const fromX: number;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-reference-ext",
+   "about": "risk 10 on a case-sensitive host (control)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/src/main.ts": "/// <reference path=\"x.TS\" />\nexport const m = 1;",
+     "^/~ts-uri~/mem/auth/src/x.TS": "declare const fromX: number;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "^/~ts-uri~/mem/auth/src/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "^/~ts-uri~/mem/auth/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "dyn-config-include-insensitive",
+   "about": "B3 risks 12, 13, 15 (tsconfig wildcard keys, GlobVisitor, to_canonical_key): a config project on a dynamic root whose include matches src/A.ts and src/a.ts, insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-config-include",
+   "about": "risks 12, 13, 15 on a case-sensitive host (control)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-config-include-dirs-insensitive",
+   "about": "Astra H7 finding 9 (B3 risk 13, GlobVisitor keys of dynamic directories): a dynamic config project whose include matches src/A/x.ts and src/a/y.ts, directories that differ only in case, insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A/x.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a/y.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
+   "name": "dyn-config-include-dirs",
+   "about": "finding 9 on a case-sensitive host (control)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "^/~ts-uri~/mem/auth/tsconfig.json": "{\"compilerOptions\": {\"noLib\": true, \"outDir\": \"out\"}, \"include\": [\"src/**/*\", \"g.d.ts\"]}",
+     "^/~ts-uri~/mem/auth/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+     "^/~ts-uri~/mem/auth/src/A/x.ts": "export const upper = 1;",
+     "^/~ts-uri~/mem/auth/src/a/y.ts": "export const lower = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "openProjects": [
+    "^/~ts-uri~/mem/auth/tsconfig.json"
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-insensitive",
+   "about": "B3 D2 (c2-flag-disk): A/x.ts and a/y.ts, outDir, insensitive host: Go emits out/x.js and out/y.js",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-sensitive",
+   "about": "c2 on a case-sensitive host (passed explicitly)",
+   "caseSensitive": true,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs",
+   "about": "c2 with the OS default case setting (no flag)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-rootdir-insensitive",
+   "about": "B3 c2b: rootDir A fixes the common directory, so only the emit-side case setting (D2) is left",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "rootDir": "@ROOT@/A"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-reversed-insensitive",
+   "about": "B3 c2c: the root files in the other order",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a/y.ts",
+      "@ROOT@/A/x.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-decl-maps-insensitive",
+   "about": "B3 c2d plus maps: declaration, declarationMap, sourceMap, inlineSources on the c2 tree",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "declarationMap": true,
+      "sourceMap": true,
+      "inlineSources": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-mixed-dirs-decldir-insensitive",
+   "about": "emitDeclarationOnly into a declarationDir, mixed-case source dirs, insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "declaration": true,
+      "emitDeclarationOnly": true,
+      "declarationDir": "@ROOT@/types"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-json-overwrite-insensitive",
+   "about": "B3 c1b-json-case-disk: outDir SRC, rootDir src, a JSON module, insensitive host: SRC/data.json would overwrite src/data.json, so Go does not emit it",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "@ROOT@/src/data.json": "{\"x\": 1}",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/data.json",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/SRC",
+      "rootDir": "@ROOT@/src",
+      "module": 99,
+      "moduleResolution": 100,
+      "resolveJsonModule": true,
+      "allowSyntheticDefaultImports": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-json-overwrite-sensitive",
+   "about": "c1b on a case-sensitive host: SRC/data.json is another file",
+   "caseSensitive": true,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "@ROOT@/src/data.json": "{\"x\": 1}",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/data.json",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/SRC",
+      "rootDir": "@ROOT@/src",
+      "module": 99,
+      "moduleResolution": 100,
+      "resolveJsonModule": true,
+      "allowSyntheticDefaultImports": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-js-overwrite-insensitive",
+   "about": "allowJs, outDir SRC and rootDir src differ only in case, insensitive host: SRC/a.js would overwrite the input src/a.js (TS5055)",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.js": "export const a = 1;",
+     "@ROOT@/src/b.ts": "export const b = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.js",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "allowJs": true,
+      "outDir": "@ROOT@/SRC",
+      "rootDir": "@ROOT@/src"
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-js-overwrite-sensitive",
+   "about": "the same on a case-sensitive host: no overwrite",
+   "caseSensitive": true,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.js": "export const a = 1;",
+     "@ROOT@/src/b.ts": "export const b = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.js",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "allowJs": true,
+      "outDir": "@ROOT@/SRC",
+      "rootDir": "@ROOT@/src"
+     }
+    }
+   ]
+  },
+  {
+   "name": "js-overwrite",
+   "about": "allowJs without outDir: a.js would overwrite its input (TS5055, emit skipped)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.js": "export const a = 1;",
+     "@ROOT@/src/b.ts": "export const b = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.js",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "allowJs": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-outdir-rootdir-insensitive",
+   "about": "TypeScript only: outDir SRC under the same parent as rootDir src, insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a = 1;",
+     "@ROOT@/src/sub/b.ts": "export const b = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/sub/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/SRC",
+      "rootDir": "@ROOT@/src",
+      "declaration": true,
+      "sourceMap": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-duplicate-files-insensitive",
+   "about": "a request filesystem with A.ts and a.ts on an insensitive host: Go refuses the duplicate path",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A.ts": "export const a = 1;",
+     "@ROOT@/a.ts": "export const b = 2;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "case-import-casing-insensitive",
+   "about": "an import whose casing differs from the file on an insensitive host (forceConsistentCasingInFileNames)",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/main.ts": "import {util} from \"./Util\";\nexport const m = util;",
+     "@ROOT@/src/util.ts": "export const util = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "forceConsistentCasingInFileNames": true,
+      "module": 99,
+      "moduleResolution": 100
+     }
+    }
+   ]
+  },
+  {
+   "name": "json-module",
+   "about": "a JSON module emitted to outDir with declarations",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "import d from \"./data.json\"; export const v = d.x;",
+     "@ROOT@/src/data.json": "{\"x\": 1, \"y\": [true]}",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/data.json",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "module": 99,
+      "moduleResolution": 100,
+      "resolveJsonModule": true,
+      "allowSyntheticDefaultImports": true,
+      "declaration": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "decl-maps",
+   "about": "declaration, declarationMap, sourceMap, inlineSourceMap off, sourceRoot and mapRoot",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export class A { m(x: number): string { return String(x); } }\n",
+     "@ROOT@/src/b.ts": "import { A } from \"./a\";\nexport const b = new A();\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "declarationMap": true,
+      "sourceMap": true,
+      "sourceRoot": "/srcroot/",
+      "mapRoot": "/maproot/",
+      "module": 99,
+      "moduleResolution": 100
+     }
+    }
+   ]
+  },
+  {
+   "name": "errors-and-libs",
+   "about": "no noLib: the bundled libs are not in a full request filesystem, plus a type error and a syntax error",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const a: string = 1;\nexport function f( {\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts"
+     ],
+     "compilerOptions": {
+      "outDir": "@ROOT@/out",
+      "declaration": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "symlink-dir",
+   "about": "a request-filesystem symlink (not host) from node_modules/pkg to packages/pkg, resolved through it",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/main.ts": "import { p } from \"pkg\";\nexport const m = p;",
+     "@ROOT@/packages/pkg/package.json": "{\"name\": \"pkg\", \"types\": \"index.d.ts\"}",
+     "@ROOT@/packages/pkg/index.d.ts": "export declare const p: number;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    },
+    "symlinks": {
+     "@ROOT@/node_modules/pkg": {
+      "target": "../packages/pkg"
+     }
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "module": 99,
+      "moduleResolution": 100,
+      "declaration": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "relative-names",
+   "about": "request file names and root files relative to the server's --cwd",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "src/a.ts": "export const a = 1;",
+     "src/b.ts": "import { a } from \"./a\";\nexport const b = a;",
+     "globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "src/a.ts",
+      "src/b.ts",
+      "globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "out",
+      "declaration": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "composite-program",
+   "about": "composite and incremental through createPrograms: what emit and emitToString give for the build info",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a: number = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "composite": true,
+      "outDir": "@ROOT@/out",
+      "rootDir": "@ROOT@",
+      "tsBuildInfoFile": "@ROOT@/out/tsconfig.tsbuildinfo"
+     }
+    }
+   ]
+  },
+  {
+   "name": "build-composite",
+   "about": "disk fixture: the build orchestrator builds a composite project (outputs, maps, tsconfig.tsbuildinfo), then again (up to date); the project also opened and emitted to string",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"rootDir\": \"src\", \"noLib\": true, \"declarationMap\": true, \"sourceMap\": true}, \"files\": [\"src/a.ts\", \"src/b.ts\", \"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "openProjects": [
+    "@ROOT@/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "build-clean",
+   "about": "disk fixture: build, then cleanBuild (the files it deletes are in its answer and the overlay)",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"rootDir\": \"src\", \"noLib\": true, \"declarationMap\": true, \"sourceMap\": true}, \"files\": [\"src/a.ts\", \"src/b.ts\", \"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "clean": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "build-references",
+   "about": "disk fixture: a solution with two composite projects (app references lib, with a type error in app): build, buildReferences of app, statuses and diagnostics",
+   "disk": {
+    "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./lib\"}, {\"path\": \"./app\"}]}",
+    "lib/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"noLib\": true}, \"files\": [\"index.ts\", \"../g.d.ts\"]}",
+    "lib/index.ts": "export const lib: number = 1;\n",
+    "app/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"noLib\": true}, \"files\": [\"main.ts\", \"../g.d.ts\"], \"references\": [{\"path\": \"../lib\"}]}",
+    "app/main.ts": "import { lib } from \"../lib/index\";\nexport const app: string = lib;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "buildReferences": "@ROOT@/app/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "build-mixed-dirs-insensitive",
+   "about": "disk fixture: the c2 tree as a composite config project on an insensitive host, through the build orchestrator and openProjects",
+   "caseSensitive": false,
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"noLib\": true}, \"files\": [\"A/x.ts\", \"a/y.ts\", \"g.d.ts\"]}",
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "openProjects": [
+    "@ROOT@/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "build-mixed-dirs",
+   "about": "build-mixed-dirs-insensitive on the OS default case setting (control)",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"noLib\": true}, \"files\": [\"A/x.ts\", \"a/y.ts\", \"g.d.ts\"]}",
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "openProjects": [
+    "@ROOT@/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "update-reconfigure-emit",
+   "about": "repeated emits with changed options: updateSnapshot reconfigures the program (declaration, maps, another outDir), emits again, releases the first snapshot, then releases it once more (an error answer)",
+   "updates": [
+    {
+     "changes": {
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/src/a.ts",
+         "@ROOT@/src/b.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/dist",
+         "declaration": true,
+         "declarationMap": true,
+         "sourceMap": true
+        }
+       }
+      ]
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getSemanticDiagnostics",
+      "emitToString",
+      "emit"
+     ],
+     "release": true
+    },
+    {
+     "changes": {},
+     "requests": [
+      "emitToString"
+     ],
+     "release": true
+    }
+   ],
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a: number = 1;\n",
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
+   "name": "update-file-change-emit",
+   "about": "snapshot updates: a new full filesystem with a.ts edited (a type error) and c.ts added, the diagnostics and emit again, the old snapshot released",
+   "updates": [
+    {
+     "changes": {
+      "fileSystem": {
+       "kind": "full",
+       "files": {
+        "@ROOT@/src/a.ts": "export const a: number = \"one\";\n",
+        "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+        "@ROOT@/src/c.ts": "export const c = 3;\n",
+        "@ROOT@/globals.d.ts": "@GLOBALS@"
+       }
+      },
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/src/a.ts",
+         "@ROOT@/src/b.ts",
+         "@ROOT@/src/c.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/out"
+        }
+       }
+      ]
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getSemanticDiagnostics",
+      "emitToString"
+     ],
+     "release": true
+    }
+   ],
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/src/a.ts": "export const a: number = 1;\n",
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
+   "name": "update-mixed-dirs-insensitive",
+   "about": "D2 after a snapshot update: the c2 tree reconfigured with declarations on an insensitive host",
+   "caseSensitive": false,
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/A/x.ts": "export const x0 = 0;",
+     "@ROOT@/a/y.ts": "export const x1 = 1;",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "emitToString"
+   ],
+   "updates": [
+    {
+     "changes": {
+      "reconfigurePrograms": [
+       {
+        "id": "/dev/null/synthetic/1",
+        "rootFiles": [
+         "@ROOT@/A/x.ts",
+         "@ROOT@/a/y.ts",
+         "@ROOT@/globals.d.ts"
+        ],
+        "compilerOptions": {
+         "noLib": true,
+         "outDir": "@ROOT@/out",
+         "declaration": true
+        }
+       }
+      ]
+     },
+     "requests": [
+      "emitToString"
+     ],
+     "release": true
+    }
+   ]
+  },
+  {
+   "name": "build-dispose",
+   "about": "disk fixture: build, disposeBuildOrchestrator, then build and dispose again on the disposed orchestrator (error answers)",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"rootDir\": \"src\", \"noLib\": true, \"declarationMap\": true, \"sourceMap\": true}, \"files\": [\"src/a.ts\", \"src/b.ts\", \"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "dispose": null
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "dispose": null
+    }
+   ]
+  },
+  {
+   "name": "layer-emit-disk",
+   "about": "a layer request filesystem over a disk fixture: b.ts only in the layer imports a.ts only on disk; emit writes through the host filesystem into the fixture (no full filesystem: emit writes, not returns)",
+   "disk": {
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {
+     "@ROOT@/src/b.ts": "import { a } from \"./a\";\nexport const b = a + 1;\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/a.ts",
+      "@ROOT@/src/b.ts",
+      "@ROOT@/src/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 99,
+      "moduleResolution": 100
+     }
+    }
+   ]
+  },
+  {
+   "name": "layer-emit-mixed-dirs-insensitive",
+   "about": "D2 on the path that writes: a layer filesystem over the c2 tree on disk, insensitive host; emit writes its outputs into the fixture",
+   "caseSensitive": false,
+   "disk": {
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {}
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "emit"
+   ]
+  },
+  {
+   "name": "layer-emit-mixed-dirs",
+   "about": "layer-emit-mixed-dirs-insensitive on the OS default case setting (control)",
+   "disk": {
+    "A/x.ts": "export const x0 = 0;\n",
+    "a/y.ts": "export const x1 = 1;\n",
+    "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+   },
+   "fs": {
+    "kind": "layer",
+    "files": {}
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/A/x.ts",
+      "@ROOT@/a/y.ts",
+      "@ROOT@/g.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out"
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "emit"
+   ]
+  },
+  {
+   "name": "build-symlink-references",
+   "about": "B3 risk 7 (project-reference symlink redirects): a pnpm-style monorepo, packages/b references packages/a and imports it through node_modules/a -> ../../a; the solution built, and b opened before and after",
+   "disk": {
+    "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"packages/a\"}, {\"path\": \"packages/b\"}]}",
+    "packages/a/package.json": "{\"name\": \"a\", \"types\": \"dist/index.d.ts\"}",
+    "packages/a/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"]}",
+    "packages/a/src/index.ts": "export const a: number = 1;\n",
+    "packages/a/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"], \"references\": [{\"path\": \"../a\"}]}",
+    "packages/b/src/index.ts": "import { a } from \"a\";\nexport const b = a + 1;\n",
+    "packages/b/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/node_modules/a": {
+     "symlink": "../../a"
+    }
+   },
+   "openProjects": [
+    "@ROOT@/packages/b/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
+    }
+   ]
+  },
+  {
+   "name": "build-symlink-references-insensitive",
+   "about": "build-symlink-references on an insensitive host",
+   "caseSensitive": false,
+   "disk": {
+    "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"packages/a\"}, {\"path\": \"packages/b\"}]}",
+    "packages/a/package.json": "{\"name\": \"a\", \"types\": \"dist/index.d.ts\"}",
+    "packages/a/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"]}",
+    "packages/a/src/index.ts": "export const a: number = 1;\n",
+    "packages/a/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"dist\", \"rootDir\": \"src\", \"noLib\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src/index.ts\", \"src/g.d.ts\"], \"references\": [{\"path\": \"../a\"}]}",
+    "packages/b/src/index.ts": "import { a } from \"a\";\nexport const b = a + 1;\n",
+    "packages/b/src/g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+    "packages/b/node_modules/a": {
+     "symlink": "../../a"
+    }
+   },
+   "openProjects": [
+    "@ROOT@/packages/b/tsconfig.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
+    }
+   ]
+  }
+ ]
+}

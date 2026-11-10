@@ -1,6 +1,6 @@
 {
- "about": "The accepted coverage of the quick parity mode (lane H4): every item a quick run must have, whatever the harness that runs it says. parity_compare.py reads this file from the accepted ref (perf/first-principles, or --accepted-ref), never from the candidate's checkout, and requires each base item it names; parity_cli.py, parity_lsp.py, parity_fuzz.py (through parity.sh) and parity_tests.py run at least these items in quick mode. Removing an entry is a reviewed change of this file: until it is accepted, compare still requires the item and prints the shrink. cli: item names; lsp: session names (every answer of the session); fuzz: cases 0 to count-1 of the seed; tests: every test of a binary whose name starts with one of binaryPrefixes, and every TestLocal row when testLocal.",
- "version": 1,
+ "about": "The accepted coverage of the quick parity mode (lane H4): every item a quick run must have, whatever the harness that runs it says. parity_compare.py reads this file from the accepted ref (perf/first-principles, or --accepted-ref), never from the candidate's checkout, and requires each base item it names; parity_cli.py, parity_lsp.py, parity_fuzz.py (through parity.sh) and parity_tests.py run at least these items in quick mode. Removing an entry is a reviewed change of this file: until it is accepted, compare still requires the item and prints the shrink. cli: item names; lsp: session names (every answer of the session); fuzz: cases 0 to count-1 of the seed; tests: every test of a binary whose name starts with one of binaryPrefixes, and every TestLocal row when testLocal. Version 2 (lane H7) adds \"api\": the api scenarios a quick run must have (parity-api-scenarios.json).",
+ "version": 2,
  "cli": [
   "cli/hono/build/emit",
   "cli/hono/build/extdiag",
@@ -36,6 +36,30 @@
   "umami-f12-p6",
   "unsaved-ts-pattern",
   "watch-ts-pattern-f12"
+ ],
+ "api": [
+  "build-composite",
+  "build-mixed-dirs-insensitive",
+  "case-js-overwrite-insensitive",
+  "case-json-overwrite-insensitive",
+  "case-mixed-dirs-insensitive",
+  "case-mixed-dirs-rootdir-insensitive",
+  "case-mixed-dirs-sensitive",
+  "decl-maps",
+  "dyn-commondir",
+  "dyn-commondir-insensitive",
+  "dyn-config-include-dirs-insensitive",
+  "dyn-config-include-insensitive",
+  "dyn-json-case-insensitive",
+  "dyn-json-config-outdir-case-insensitive",
+  "dyn-reference-ext-insensitive",
+  "dyn-resolve",
+  "js-overwrite",
+  "json-module",
+  "layer-emit-disk",
+  "layer-emit-mixed-dirs-insensitive",
+  "update-mixed-dirs-insensitive",
+  "update-reconfigure-emit"
  ],
  "fuzz": {
   "seed": "1",
