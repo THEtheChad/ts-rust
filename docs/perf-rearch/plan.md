@@ -1773,3 +1773,13 @@ once a **reconciliation step** is built and tested.
   - fix all 14 api differences (three are new since its report);
   - remove the pins with `regen --only`;
   - run the full gate, api tier included.
+- **H8 started:** port the api tier's sealed, unprivileged session design
+  to the lsp tier, and fix its documented gaps:
+  - the initialize answer isn't compared;
+  - lossy number parsing;
+  - home writes are ignored;
+  - an exec failure counts as GO-BROKEN;
+  - no PID namespace and a writable host.
+
+  It also refills the lsp Go and JS evidence. It runs beside B2 and touches
+  harness code only.
