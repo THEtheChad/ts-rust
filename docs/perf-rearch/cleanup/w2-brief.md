@@ -88,6 +88,8 @@ Then read this page. Your lane prompt gives you your files and your targets.
     helper, a different boundary) or explained with numbers.
   - Multi-threaded cells are noisy (spread around 0.3–0.4%): recheck with
     5 runs before you call one a cost.
+- **Gating:** `quality.sh gating HEAD` must print `GATING OK` (`brief.md`,
+  "Verification code is gated whole"). Paste the result.
 - **Quality:** `quality.sh report HEAD --base perf/first-principles`. Paste
   the summary and your area's Go-relative numbers before and after.
 

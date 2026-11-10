@@ -1316,3 +1316,23 @@ once a **reconciliation step** is built and tested.
     (`.claude/worktrees/agent-a9ba…`, branch `w2ca-flowskip`), after
     checking that all 7 of its commits had been cherry-picked.
 - **W2-CC started** in CA's slot: the rest of `checker/`.
+- **Q5 merged** (`t3/quality-expanded-source-audit`, merge `e84916b7f`).
+  - **What it does:** `quality.sh` reads the shipped source from rustc's own
+    cfg expansion (`qexpand`), on CI's toolchain, for the default, features
+    and wasm builds. Every file is checked against rustc's dep-info. The
+    hand-written cfg parser is gone, which ends the loop.
+  - **Inventory:** 11 shipped env names, which agrees with §8.
+  - **`quality.sh gating`** is the mechanical check that verification code
+    is gated whole. Validated on old commits: it re-finds 4 of the 5 helpers
+    from Astra's Q3 finding, and the C1 r2 `phase_times` leftovers.
+  - **Repo-config clippy** now uses CI's 1.95.0; the forced audit stays on
+    stable.
+  - Tooling only, so it merged without an Astra round.
+  - **Convention:** root adopts Q5's gating convention (brief, "Verification
+    code is gated whole"). Wave-2 lanes must report `GATING OK`.
+  - **Findings at head (11), fixed by lane Q6:**
+    - the `program.rs` checker call log (7 items that ship);
+    - `program/reuse_verify.rs`, which ships whole;
+    - `dts_twin_check`'s branches in its callers;
+    - 2 items that are dead in the default build (`synthetic_live_slot_count`,
+      `registered_programs`).

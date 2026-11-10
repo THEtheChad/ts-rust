@@ -213,7 +213,7 @@ is a rewrite, so it does not keep old code behind switches:
   not only the common CLI case.
 - **Verification code is gated whole:** state, functions, counters and test
   setters, not only the env read. The shipped binary must not contain it.
-  The convention (proposed by lane Q5; `quality.md` section 9) that makes
+  The convention (proposed by lane Q5, adopted by root 2026-11-09; `quality.md` section 9) that makes
   this checkable:
   - Diagnostic, verification and test-hook code lives in a module named
     `diag`, `test_hooks`, or `<topic>_diag`, `_verify`, `_dump`, `_stats` or
