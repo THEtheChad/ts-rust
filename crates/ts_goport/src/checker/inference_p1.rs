@@ -1899,7 +1899,7 @@ impl Checker {
         } else if left_flags.intersects(TypeFlags::STRING_MAPPING) {
             left
         } else if right_flags.intersects(TypeFlags::STRING_MAPPING)
-            && str == self.apply_string_mapping(self.ty(right).symbol, &str)
+            && str == self.apply_string_mapping(self.ty(right).symbol, str)
         {
             source
         } else if left_flags.intersects(TypeFlags::STRING_LITERAL) {
@@ -1911,21 +1911,21 @@ impl Checker {
         } else if left_flags.intersects(TypeFlags::NUMBER) {
             left
         } else if right_flags.intersects(TypeFlags::NUMBER) {
-            self.get_number_literal_type(crate::jsnum::from_string(&str))
+            self.get_number_literal_type(crate::jsnum::from_string(str))
         } else if left_flags.intersects(TypeFlags::ENUM) {
             left
         } else if right_flags.intersects(TypeFlags::ENUM) {
-            self.get_number_literal_type(crate::jsnum::from_string(&str))
+            self.get_number_literal_type(crate::jsnum::from_string(str))
         } else if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
             left
         } else if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
-            && self.get_number_literal_value(right) == crate::jsnum::from_string(&str)
+            && self.get_number_literal_value(right) == crate::jsnum::from_string(str)
         {
             right
         } else if left_flags.intersects(TypeFlags::BIG_INT) {
             left
         } else if right_flags.intersects(TypeFlags::BIG_INT) {
-            self.parse_big_int_literal_type(&str)
+            self.parse_big_int_literal_type(str)
         } else if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
             left
         } else if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
@@ -2653,6 +2653,15 @@ impl Checker {
     }
 }
 
+/// Go's `core.AppendIfUnique` on the short matched lists of `infer_from_matching_types`.
+// Go: core/core.go:380 AppendIfUnique
+#[inline]
+fn append_if_unique(list: &mut SmallVec<[TypeId; 8]>, t: TypeId) {
+    if !list.contains(&t) {
+        list.push(t);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2900,14 +2909,5 @@ mod tests {
         assert!(stack.set_ids.is_empty());
         stack.push_ids(TypeId(4), StackIds::One(a), 0);
         assert_eq!(stack.top_deeply_nested(2), Some(true));
-    }
-}
-
-/// Go's `core.AppendIfUnique` on the short matched lists of `infer_from_matching_types`.
-// Go: core/core.go:380 AppendIfUnique
-#[inline]
-fn append_if_unique(list: &mut SmallVec<[TypeId; 8]>, t: TypeId) {
-    if !list.contains(&t) {
-        list.push(t);
     }
 }
