@@ -31,11 +31,11 @@ impl Checker {
             parent_type = self.get_type_with_facts(parent_type, TypeFacts::NE_UNDEFINED);
         }
         let access_flags = AccessFlags::EXPRESSION_POSITION
-            | if no_tuple_bounds_check || self.has_default_value(declaration) {
-                AccessFlags::ALLOW_MISSING
-            } else {
-                AccessFlags::NONE
-            };
+            | if_else(
+                no_tuple_bounds_check || self.has_default_value(declaration),
+                AccessFlags::ALLOW_MISSING,
+                AccessFlags::NONE,
+            );
         let t: TypeId;
         match pattern.kind() {
             SyntaxKind::ObjectBindingPattern => {
@@ -79,11 +79,11 @@ impl Checker {
                 // present (aka the tuple element property). This call also checks that the parentType is in
                 // fact an iterable or array (depending on target language).
                 let use_ = IterationUse::DESTRUCTURING
-                    | if has_dot_dot_dot_token(declaration) {
-                        IterationUse(0)
-                    } else {
-                        IterationUse::POSSIBLY_OUT_OF_BOUNDS
-                    };
+                    | if_else(
+                        has_dot_dot_dot_token(declaration),
+                        IterationUse(0),
+                        IterationUse::POSSIBLY_OUT_OF_BOUNDS,
+                    );
                 let undefined_type = self.undefined_type;
                 let element_type = self.check_iterated_type_or_element_type(
                     use_,
@@ -880,11 +880,11 @@ impl Checker {
             SyntaxKind::BinaryExpression
             | SyntaxKind::PropertyDeclaration
             | SyntaxKind::PropertySignature => {
-                diagnostic = if self.no_implicit_any {
-                    diag::Member_0_implicitly_has_an_1_type
-                } else {
-                    diag::Member_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage
-                };
+                diagnostic = if_else(
+                    self.no_implicit_any,
+                    diag::Member_0_implicitly_has_an_1_type,
+                    diag::Member_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage,
+                );
             }
             SyntaxKind::Parameter => {
                 let param = declaration;
@@ -916,11 +916,7 @@ impl Checker {
                             .map_or(-1, |i| i as i32);
                         let new_name = format!("arg{index}");
                         let type_name = declaration_name_to_string(param.name())
-                            + if param.dot_dot_dot_token().is_some() {
-                                "[]"
-                            } else {
-                                ""
-                            };
+                            + if_else(param.dot_dot_dot_token().is_some(), "[]", "");
                         let no_implicit_any = self.no_implicit_any;
                         self.error_or_suggestion(
                             no_implicit_any,
