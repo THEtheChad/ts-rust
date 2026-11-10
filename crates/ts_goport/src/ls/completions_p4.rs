@@ -1447,19 +1447,12 @@ impl LanguageService {
                         }
                         tracker.add_value(enum_value);
                     }
-                    // PORT: Go passes the nil-able interface; the boxed adder is
-                    // lent as `&mut dyn ImportAdder` (explicit coercion).
-                    let import_adder_ref: Option<&mut dyn autoimport::ImportAdder> =
-                        match import_adder.as_mut() {
-                            Some(adder) => {
-                                let adder: &mut dyn autoimport::ImportAdder = &mut **adder;
-                                Some(adder)
-                            }
-                            None => None,
-                        };
                     let type_node = autoimport::type_to_auto_importable_type_node(
                         c,
-                        import_adder_ref,
+                        // PORT: the cast lends the boxed adder for this call only.
+                        import_adder
+                            .as_deref_mut()
+                            .map(|adder| adder as &mut dyn autoimport::ImportAdder),
                         t,
                         case_block,
                     );
@@ -1484,48 +1477,46 @@ impl LanguageService {
                         .unwrap_or_else(|| {
                             crate::core::go_panic("Unsupported type: <nil>".to_string())
                         });
-                    if !tracker.has_value(&value) {
-                        match value {
-                            LiteralValue::PseudoBigInt(mut v) => {
-                                let big_int: Node = if v.negative {
-                                    v.negative = false;
-                                    factory.new_prefix_unary_expression(
-                                        SyntaxKind::MinusToken,
-                                        factory
-                                            .new_big_int_literal(format!("{v}n"), TokenFlags::NONE),
-                                    )
-                                } else {
-                                    factory.new_big_int_literal(format!("{v}n"), TokenFlags::NONE)
-                                };
-                                elements.push(big_int);
-                            }
-                            LiteralValue::Number(v) => {
-                                let number: Node = if v.0 < 0.0 {
-                                    factory.new_prefix_unary_expression(
-                                        SyntaxKind::MinusToken,
-                                        factory.new_numeric_literal(
-                                            v.abs().to_string(),
-                                            TokenFlags::NONE,
-                                        ),
-                                    )
-                                } else {
-                                    factory.new_numeric_literal(v.to_string(), TokenFlags::NONE)
-                                };
-                                elements.push(number);
-                            }
-                            LiteralValue::String(v) => {
-                                let literal = factory.new_string_literal(
-                                    v,
-                                    if quote_preference == lsutil::QuotePreference::SINGLE {
-                                        TokenFlags::SINGLE_QUOTE
-                                    } else {
-                                        TokenFlags::NONE
-                                    },
-                                );
-                                elements.push(literal);
-                            }
-                            _ => {}
+                    if tracker.has_value(&value) {
+                        continue;
+                    }
+                    match value {
+                        LiteralValue::PseudoBigInt(mut v) => {
+                            let big_int: Node = if v.negative {
+                                v.negative = false;
+                                factory.new_prefix_unary_expression(
+                                    SyntaxKind::MinusToken,
+                                    factory.new_big_int_literal(format!("{v}n"), TokenFlags::NONE),
+                                )
+                            } else {
+                                factory.new_big_int_literal(format!("{v}n"), TokenFlags::NONE)
+                            };
+                            elements.push(big_int);
                         }
+                        LiteralValue::Number(v) => {
+                            let number: Node = if v.0 < 0.0 {
+                                factory.new_prefix_unary_expression(
+                                    SyntaxKind::MinusToken,
+                                    factory
+                                        .new_numeric_literal(v.abs().to_string(), TokenFlags::NONE),
+                                )
+                            } else {
+                                factory.new_numeric_literal(v.to_string(), TokenFlags::NONE)
+                            };
+                            elements.push(number);
+                        }
+                        LiteralValue::String(v) => {
+                            let literal = factory.new_string_literal(
+                                v,
+                                if quote_preference == lsutil::QuotePreference::SINGLE {
+                                    TokenFlags::SINGLE_QUOTE
+                                } else {
+                                    TokenFlags::NONE
+                                },
+                            );
+                            elements.push(literal);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1553,16 +1544,18 @@ impl LanguageService {
                 None, /*emitContext*/
             );
             // Go: core.MapIndex(newClauses, func(clause, i) string { ... })
-            let mut clause_texts: Vec<String> = Vec::with_capacity(new_clauses.len());
-            for (i, &clause) in new_clauses.iter().enumerate() {
-                if client_supports_item_snippet(ctx) {
-                    // Go: printNode(clause)
-                    let printed = printer.print_and_format_node(ctx, clause, file);
-                    clause_texts.push(format!("{}${}", printed, i + 1));
-                } else {
-                    clause_texts.push(printer.print_unescaped_node(clause));
-                }
-            }
+            let clause_texts: Vec<String> = new_clauses
+                .iter()
+                .enumerate()
+                .map(|(i, &clause)| {
+                    if client_supports_item_snippet(ctx) {
+                        // Go: printNode(clause)
+                        let printed = printer.print_and_format_node(ctx, clause, file);
+                        return format!("{}${}", printed, i + 1);
+                    }
+                    printer.print_unescaped_node(clause)
+                })
+                .collect();
             let insert_text = clause_texts.join(new_line_char.as_str());
 
             let first_clause = printer.print_unescaped_node(new_clauses[0]);
