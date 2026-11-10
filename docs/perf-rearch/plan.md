@@ -1409,3 +1409,15 @@ once a **reconciliation step** is built and tested.
   - rerun parity full on the final source.
 
   Then W2-EF2 handles the 24 remaining rows.
+- **Q6 finished** (head `1eaba8cbb`): GATING OK (and `--wasm`), parity full
+  OK, icount +0.002% to +0.016%. Astra review running.
+  - **What moved behind gates:** the checker call log, reuse_verify (whole),
+    the `dts_twin_check` parameter, the dead items, `early_emit_verify`, and
+    `resolve_ahead_verify` (2 sites).
+  - **Open for root:**
+    - 3 test-only counters still ship (`JS_TWIN_PRINTS`, `DTS_TWIN_JOBS`,
+      `emit_pool_job_count`);
+    - `emit_files.rs:1427` has the same fingerprint `debug_assert!`
+      pattern;
+    - `project::unfrozen_compiler_hosts`;
+    - `checker/inference_p1.rs:1234` is a debug verifier.
