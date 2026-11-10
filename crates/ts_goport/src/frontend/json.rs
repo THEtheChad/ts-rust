@@ -395,41 +395,14 @@ impl<'a> JsonDecoder<'a> {
 
     /// `read_token` without the `JsonToken` copies of the text
     /// (`RawToken`): the same checks, state changes and errors.
+    // Go `decoderState.ReadToken`: each kind of token is a method, as Go's
+    // cases call the `stateMachine` methods.
     fn next_token(&mut self) -> Result<RawToken<'a>, JsonError> {
         let (p, _) = self.peek_pos()?;
         let c = self.buf[p];
         match c {
-            b'n' | b't' | b'f' => {
-                let (lit, tok): (&[u8], RawToken<'a>) = match c {
-                    b'n' => (b"null", RawToken::Null),
-                    b't' => (b"true", RawToken::True),
-                    _ => (b"false", RawToken::False),
-                };
-                if !self.buf[p..].starts_with(lit) {
-                    let (pos, err) = consume_literal_error(self.buf, p, lit);
-                    return Err(self.syntactic_error(err, pos, 1, &[]));
-                }
-                self.append_value(p)?;
-                self.pos = p + lit.len();
-                Ok(tok)
-            }
-            b'"' => {
-                let (end, s) = self.scan_string(p)?;
-                if self.need_object_name() {
-                    let dup = match &mut self.stack.last_mut().expect("object frame").names {
-                        Some(names) => !names.insert(s.clone()),
-                        None => false,
-                    };
-                    if dup {
-                        let name = pointer_token_of_name(&self.buf[p..end]);
-                        return Err(self.syntactic_error(SyntaxErr::DuplicateName, p, 1, &[name]));
-                    }
-                    self.stack.last_mut().expect("object frame").name = p;
-                }
-                self.increment();
-                self.pos = end;
-                Ok(RawToken::String(s))
-            }
+            b'n' | b't' | b'f' => self.read_literal(p, c),
+            b'"' => self.read_string(p),
             b'-' | b'0'..=b'9' => {
                 let end = self.consume_number(p)?;
                 self.append_value(p)?;
@@ -437,54 +410,9 @@ impl<'a> JsonDecoder<'a> {
                 let raw = std::str::from_utf8(&self.buf[p..end]).expect("number is ASCII");
                 Ok(RawToken::Number(raw))
             }
-            b'{' | b'[' => {
-                if self.need_object_name() {
-                    return Err(self.syntactic_error(SyntaxErr::NonStringName, p, 1, &[]));
-                }
-                if self.stack.len() == MAX_NESTING_DEPTH {
-                    return Err(self.syntactic_error(SyntaxErr::MaxDepth, p, 1, &[]));
-                }
-                self.increment();
-                let is_object = c == b'{';
-                let names = if is_object && !self.options.allow_duplicate_names {
-                    Some(self.spare_names.pop().unwrap_or_default())
-                } else {
-                    None
-                };
-                self.stack.push(Frame {
-                    is_object,
-                    len: 0,
-                    names,
-                    name: 0,
-                });
-                self.pos = p + 1;
-                Ok(if is_object {
-                    RawToken::BeginObject
-                } else {
-                    RawToken::BeginArray
-                })
-            }
-            b'}' => {
-                if !self.last_is_object() {
-                    return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
-                }
-                if self.need_object_value() {
-                    return Err(self.syntactic_error(SyntaxErr::MissingValue, p, 1, &[]));
-                }
-                if let Some(names) = self.stack.pop().and_then(|f| f.names) {
-                    self.keep_names(names);
-                }
-                self.pos = p + 1;
-                Ok(RawToken::EndObject)
-            }
-            b']' => {
-                if self.stack.is_empty() || self.last_is_object() {
-                    return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
-                }
-                self.stack.pop();
-                self.pos = p + 1;
-                Ok(RawToken::EndArray)
-            }
+            b'{' | b'[' => self.push_container(p, c == b'{'),
+            b'}' => self.pop_object(p),
+            b']' => self.pop_array(p),
             _ => Err(self.syntactic_error(
                 invalid_character(self.buf, p, "at start of value"),
                 p,
@@ -492,6 +420,99 @@ impl<'a> JsonDecoder<'a> {
                 &[],
             )),
         }
+    }
+
+    /// Part of Go `ReadToken`: the literal at `p` that starts with `c`
+    /// (`consumeLiteral`, `appendLiteral`).
+    #[inline]
+    fn read_literal(&mut self, p: usize, c: u8) -> Result<RawToken<'a>, JsonError> {
+        let end = consume_literal_raw(self.buf, p, literal_text(c))
+            .map_err(|(pos, err)| self.syntactic_error(err, pos, 1, &[]))?;
+        self.append_value(p)?;
+        self.pos = end;
+        Ok(match c {
+            b'n' => RawToken::Null,
+            b't' => RawToken::True,
+            _ => RawToken::False,
+        })
+    }
+
+    /// Part of Go `ReadToken`: the string at `p`, with the duplicate check
+    /// of an object name (`insertQuoted`) and `appendString`.
+    #[inline]
+    fn read_string(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        let (end, s) = self.scan_string(p)?;
+        if self.need_object_name() {
+            let dup = match &mut self.stack.last_mut().expect("object frame").names {
+                Some(names) => !names.insert(s.clone()),
+                None => false,
+            };
+            if dup {
+                let name = pointer_token_of_name(&self.buf[p..end]);
+                return Err(self.syntactic_error(SyntaxErr::DuplicateName, p, 1, &[name]));
+            }
+            self.stack.last_mut().expect("object frame").name = p;
+        }
+        self.increment();
+        self.pos = end;
+        Ok(RawToken::String(s))
+    }
+
+    /// Go `stateMachine.pushObject` / `pushArray` and `Namespaces.push` for
+    /// the '{' or '[' at `p`.
+    #[inline]
+    fn push_container(&mut self, p: usize, is_object: bool) -> Result<RawToken<'a>, JsonError> {
+        if self.need_object_name() {
+            return Err(self.syntactic_error(SyntaxErr::NonStringName, p, 1, &[]));
+        }
+        if self.stack.len() == MAX_NESTING_DEPTH {
+            return Err(self.syntactic_error(SyntaxErr::MaxDepth, p, 1, &[]));
+        }
+        self.increment();
+        let names = if is_object && !self.options.allow_duplicate_names {
+            Some(self.spare_names.pop().unwrap_or_default())
+        } else {
+            None
+        };
+        self.stack.push(Frame {
+            is_object,
+            len: 0,
+            names,
+            name: 0,
+        });
+        self.pos = p + 1;
+        Ok(if is_object {
+            RawToken::BeginObject
+        } else {
+            RawToken::BeginArray
+        })
+    }
+
+    /// Go `stateMachine.popObject` and `Namespaces.pop` for the '}' at `p`.
+    #[inline]
+    fn pop_object(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        if !self.last_is_object() {
+            return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
+        }
+        if self.need_object_value() {
+            return Err(self.syntactic_error(SyntaxErr::MissingValue, p, 1, &[]));
+        }
+        if let Some(names) = self.stack.pop().and_then(|f| f.names) {
+            self.keep_names(names);
+        }
+        self.pos = p + 1;
+        Ok(RawToken::EndObject)
+    }
+
+    /// Go `stateMachine.popArray` for the ']' at `p`.
+    #[inline]
+    fn pop_array(&mut self, p: usize) -> Result<RawToken<'a>, JsonError> {
+        if self.stack.is_empty() || self.last_is_object() {
+            return Err(self.syntactic_error(SyntaxErr::MismatchDelim, p, 1, &[]));
+        }
+        self.stack.pop();
+        self.pos = p + 1;
+        Ok(RawToken::EndArray)
     }
 
     /// Go `jsontext.Decoder.ReadValue`: the raw bytes of the next complete
