@@ -2236,3 +2236,20 @@ once a **reconciliation step** is built and tested.
   - **Lower ranks:** A4 and A6–A9, B1b and B2 (log lines only).
   - **Lane B9** fixes them once B6 merges: A2 and A6 reuse B6's
     `gostd/conv.rs` amd64 helper, and B6 owns `parsing_helpers.rs`.
+- **B6 round 2 done** (head `6fb96eb1e`). All 5 findings are fixed.
+  - **The fixes:**
+    - `i64` hover cap with `wrapping_mul`;
+    - `i64` formatter sizes, with Go's `strings.Repeat` panic text;
+    - integer tokens;
+    - `Option<Vec>` slices.
+    - The 3 amd64 conversions are folded into
+      `gostd::conv::float64_to_int64`; the lib blobs are byte-identical.
+  - **The prefs battery:** 50 one-preference probes, each shown to bite in
+    Go (`prefs_sensitivity.py`). DIFFs: base 7, round 1 3, round 2 0
+    (902 MATCH).
+  - **Gate:** `runs/b6r2-6fb96eb1e-full` PARITY OK; icount flat.
+  - **Cost:** the lsp tier goes from about 300 s to 573 s (prefs is about
+    117 s per server run). Astra's recheck is asked to list the redundant
+    probes, and root trims after the recheck. Prefs also moves to the full
+    tier only, unless a quick-tier reason holds.
+  - **Astra recheck** running (round 2 of 3).
