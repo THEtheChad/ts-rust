@@ -2932,7 +2932,58 @@ claim is "load-independent within that bound", not "independent of load".
 - `parity_h8_test.py` `h9()` now requires MATCH on every item of the late-progress control.
 - The npm-floor check of `h4-selftest.mjs` uses a progress of 0.5 s, shorter than the 1.5 s floor.
 
-H9R2_EVIDENCE
+**Controls, before (`3195ad922`) and after (`fafe6a374`).**
+- **Unit** (`h4-selftest.mjs`, parts `h9r2-finding1` to `-finding3`; the head's file run in a copy of each
+  harness):
+  - **On the head, all pass:** caughtUp's three outcomes; the eight lifecycle breaks refused while Go's
+    sequence is not; Go's payloads pass and seven broken ones are each a finding; a broken rule joins the
+    checkpoint and session lists.
+  - **On `3195ad922`:** finding 1 FAILs (the deadline resolved); findings 2 and 3 FAIL (no lifecycle, no
+    payload check); so does round 1's token check (it now creates first). Every other part passes.
+- **End to end** (`parity_h8_test.py` `h9()`, the head's fake and test against each harness; pkgjson-overlay,
+  the self server behind both sides):
+
+| control | head `485852aa4` | `3195ad922` |
+| --- | --- | --- |
+| silent-open (finding 1; `LSPDIFF_REQUEST_TIMEOUT_MS` 5 s) | harness error, lspdiff exit 3, no items | 38 MATCH, 1 DIFF |
+| progress-twobegin, -nocreate, -report-nobegin, -end-nobegin, -end-uncreated, -nobegin (finding 2) | each a protocol failure: DIFF, rsFailure crash, the rule named | each 39 MATCH |
+| progress-title (finding 3) | a `server messages` DIFF, no crash | 39 MATCH |
+| progress-late (round 1, now MATCH required) | 39 MATCH | 39 MATCH |
+| progress-never, lspdiff and the tier (round 1) | exit 3; the tier ERROR | the same |
+
+  The modes that never begin or end send the marker too, as progress-0 does, so on the base the lifecycle
+  break is the only difference.
+
+**Self-tests on the head** (`fafe6a374`, under the heavy-run rule): all OK.
+- H4: JS 61 ok, Python 36.
+- H6 40, H7 111.
+- H8 84 (unit and end to end, 11 `h9` checks).
+- Referees: `parity_referees_test.py` 122; `referee-selftest.mjs` 48.
+
+**In real sessions** (round 2's fill-1, all lsp sessions: Go 4 to 8 runs, tsc-rs 3): no progress lifecycle
+failure and no payload finding on either server. The checkpoints of these runs held 6 to 24 progress
+messages each.
+
+**Refill, gate and lsp runs.** The keyed sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`), so
+there was one refill, as in round 1 (`scratch/h9/r2/fill.sh`, 11:57 to 12:51 UTC).
+- **fill-1** (`runs/h9r2-lsp-fill-1`): 2,682 MATCH and 28 GO-BROKEN. `hono-f12-p6/0295 src/index.ts:27:5
+  references`, a known Go race of the standard session (base GO-BROKEN), had Go's 8 runs agree there and
+  tsc-rs match them.
+- **fill-2** (`runs/h9r2-lsp-fill-2`, 233.5 s, after two refills of each Go-race session): 2,681 MATCH and
+  29 GO-BROKEN. Every one of the 2,710 items has its base status.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current`, `runs/h9r2-fafe6a374-full`,
+  `checkoutHead` `fafe6a374`, harness clean, 12:52 to 13:15 UTC, load 1.1 to 15: **PARITY OK**.
+  - 187,389 items: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on good items,
+    36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9r2-fafe6a374-lsp-{2,3}`): each 2,681 MATCH and 29 GO-BROKEN, no item off
+  its base status. In all 3 runs every `session messages` item (13) and every `server messages` item (73)
+  is MATCH.
+- **lsp wall:** 233.4 s in the gate, then 233.4 s and 233.1 s. The base's is 232 s.
+- **Starvation:** the wait is unchanged in round 2. `caughtUp` differs only once its deadline expires, and
+  the payload and lifecycle checks do not wait. So the table above stands, and starvation was not run again.
 
 ## Files
 
