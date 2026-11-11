@@ -17,6 +17,146 @@ import { SETTINGS } from "./settings.mjs";
 // A request the server does not answer in this time ends the run: the server is killed and the
 // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
 const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
+// The notifications whose handling LspClient.caughtUp waits for: the ones a scenario sends between
+// its waits.
+const BARRIER_METHODS = new Set(["textDocument/didOpen", "textDocument/didChange", "textDocument/didClose", "textDocument/didSave", "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration"]);
+// The log line of a handled notification; a request's line has its id after the method:
+// "handled method 'm' in 1.2ms", "error handling method 'm': e" (Go lsp/server.go
+// handleRequestOrNotification, and tsc-rs's port of it).
+const HANDLED_LOG = /^(?:handled|error handling) method '([^']+)'(?: in |: )/;
+
+// Lane B4: which sent notifications of BARRIER_METHODS the server has handled, by its log. Both
+// servers handle notifications one at a time, in order, on their dispatch loop, and log one such line
+// when the handler returns. A notification has no answer, so a wait on the stream's quiet alone can
+// end while the server still handles the last one; the next step's notifications then queue behind it
+// and their background work runs back to back: ATA's results, each scheduling a refresh that a 500 ms
+// debounce coalesces (watch-hono-f12's load: 10 to 12 refreshes on a starved CPU, Go and tsc-rs alike).
+export class NotificationBarrier {
+  constructor() {
+    this.sent = new Map();
+    this.handled = new Map();
+  }
+
+  // A notification the client sends.
+  send(method) {
+    if (BARRIER_METHODS.has(method)) this.sent.set(method, (this.sent.get(method) ?? 0) + 1);
+  }
+
+  // A window/logMessage text of the server.
+  log(message) {
+    const m = HANDLED_LOG.exec(message ?? "");
+    if (m) this.handled.set(m[1], (this.handled.get(m[1]) ?? 0) + 1);
+  }
+
+  // The methods with sent notifications the server has not logged yet ("<method> <handled>/<sent>").
+  behind() {
+    return [...this.sent].filter(([m, n]) => (this.handled.get(m) ?? 0) < n).map(([m, n]) => `${m} ${this.handled.get(m) ?? 0}/${n}`);
+  }
+}
+
+// Lane H9: the work-done progress of a server, by token. The watch scenarios advertise window.workDoneProgress
+// (initializeParams), so both servers report their background work through it (Go lsp/progress.go
+// projectLoadingProgress, and tsc-rs's port lsp/progress.rs): ATA's "Installing types for '<project>'"
+// (project/session.go triggerATAForUpdatedProjects, around InstallTypings) and a program's "Project '<name>'"
+// (projectcollectionbuilder.go). Go keeps one token while its group of active operations is nonempty, and
+// shows it only once the group has run 250 ms (cmd/tsc/lsp.go ProgressDelay): window/workDoneProgress/create,
+// then $/progress begin, reports, and end. ATA's npm calls of one request are thus inside one begin/end pair,
+// and Script.settle waits for it (lane B4's residual race: a first install spent more than ATA_IDLE_MS between
+// its two npm calls and the npm-idle wait ended). Work shorter than 250 ms never shows: progress is a signal
+// of work in flight, never proof that none is coming.
+//
+// The lifecycle Go keeps (progress.go run, at the pin) is enforced (round 2): every token is created once
+// (tokenID++ makes a new one per group, :141), its create comes before its begin (:146, :186), it has one
+// begin (:203, after `begun` is false), and reports and its end come only while it is begun (:166, :173, :210).
+// A message that breaks it is a protocol failure (LspClient #broken: the run ends there, a crash of that
+// server). A token created and not begun in LSPDIFF_PROGRESS_DEADLINE_MS is one too (Go sends the begin right
+// after the create, in the same step).
+export class ProgressBarrier {
+  constructor() {
+    this.tokens = new Map(); // token (as JSON) -> { state: "created" | "begun" | "ended", title, message }
+  }
+
+  // The params of a window/workDoneProgress/create request: null, or why it breaks the lifecycle.
+  create(params) {
+    const token = JSON.stringify(params?.token ?? null);
+    if (this.tokens.has(token)) return `work-done progress token ${token} created again`;
+    this.tokens.set(token, { state: "created" });
+    return null;
+  }
+
+  // The params of a $/progress notification: null, or why it breaks the lifecycle.
+  update(params) {
+    const token = JSON.stringify(params?.token ?? null);
+    const v = params?.value ?? {};
+    const t = this.tokens.get(token);
+    const kind = JSON.stringify(v.kind);
+    if (!t) return `$/progress ${kind} on token ${token}, which was never created`;
+    if (v.kind === "begin") {
+      if (t.state !== "created") return `$/progress "begin" on token ${token}, which is ${t.state === "begun" ? "already begun" : "ended"}`;
+      Object.assign(t, { state: "begun", title: v.title, message: v.message });
+    } else if (v.kind === "report" || v.kind === "end") {
+      if (t.state !== "begun") return `$/progress ${kind} on token ${token} with no active begin (${t.state})`;
+      if (v.kind === "end") t.state = "ended";
+      else if (v.message !== undefined) t.message = v.message;
+    } else return `$/progress of kind ${kind} on token ${token}`;
+    return null;
+  }
+
+  // The progress created or begun and not ended ("<token> <title>: <message>", or "<token> (created)").
+  pending() {
+    return [...this.tokens].filter(([, t]) => t.state !== "ended").map(([token, t]) => (t.state === "created" ? `${token} (created, not begun)` : `${token} ${t.title}${t.message ? `: ${t.message}` : ""}`));
+  }
+}
+
+// The work-done progress messages (ProgressBarrier). Whether one shows, in which order and on which token number
+// depends on how long the work took (umami's program load, near 250 ms, began a progress in 1 of 4 Go runs), so
+// they are left out of every compared message list (scenario.mjs checkpoint "server messages", session.mjs
+// "session messages") and kept in the checkpoint's log entry as `progress`, which is not compared. What Go fixes
+// in each payload is checked instead (progressPayloadErrors): the rules a server's messages break go into the
+// entry's `progressRules`, which lspdiff.mjs judges per server before it compares the item (lane H9 round 3: a
+// tsc-rs that breaks one is a DIFF, a Go that does makes the item GO-BROKEN).
+export const PROGRESS_METHODS = new Set(["$/progress", "window/workDoneProgress/create"]);
+
+const keysAre = (o, want) => !!o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).sort().join(",") === [...want].sort().join(",");
+// The token: fmt.Sprintf("tsgo-loading-%d", tokenID), tokenID from 1 (progress.go:141-142).
+const TOKEN = /^tsgo-loading-[1-9][0-9]*$/;
+// The two texts a progress message has: diagnostics Installing_types_for_0 (95203) and Project_0 (95204), English
+// (the client sends no locale; progress.go localize). Their argument is a project's display name; which projects
+// show a progress depends on the time their work took, so it is not checked against Go's run (a project Go loaded
+// in under 250 ms has no Go progress to compare with: a false DIFF from timing).
+const MESSAGE = /^(?:Installing types for|Project) '[^]*'$/;
+
+// The rules a progress message breaks, of those Go fixes at the pin whatever the timing (lane H9 round 2; Go
+// lsp/progress.go and lsproto's omitzero fields):
+//   create   params exactly { token }, the token as above (serverProgressReporter.createWorkDoneProgress :46-50)
+//   $/progress params exactly { token, value } (sendProgress :52-56)
+//   begin    value exactly { kind, title, message }: title the localized "Loading" (diagnostics 95202, :202-206),
+//            message one of the two texts (beginOrReport's text, a loading key)
+//   report   value exactly { kind, message }, the message one of the two texts (:175-179, :210-213)
+//   end      value exactly { kind } (:167-169)
+export function progressPayloadErrors(method, params) {
+  const out = [];
+  const token = params?.token;
+  if (method === "window/workDoneProgress/create") {
+    if (!keysAre(params, ["token"])) out.push(`create params with keys ${Object.keys(params ?? {})}`);
+  } else if (!keysAre(params, ["token", "value"])) out.push(`$/progress params with keys ${Object.keys(params ?? {})}`);
+  if (typeof token !== "string" || !TOKEN.test(token)) out.push(`token ${JSON.stringify(token)}, not tsgo-loading-<n>`);
+  if (method !== "$/progress") return out;
+  const v = params?.value ?? {};
+  const fields = { begin: ["kind", "title", "message"], report: ["kind", "message"], end: ["kind"] }[v.kind];
+  if (!fields) return [...out, `value of kind ${JSON.stringify(v.kind)}`];
+  if (!keysAre(v, fields)) out.push(`${v.kind} with fields ${Object.keys(v).sort()}, not ${[...fields].sort()}`);
+  if (v.kind === "begin" && v.title !== "Loading") out.push(`begin title ${JSON.stringify(v.title)}, not "Loading"`);
+  if (v.kind !== "end" && !(typeof v.message === "string" && MESSAGE.test(v.message))) out.push(`${v.kind} message ${JSON.stringify(v.message)}, not "Installing types for '{0}'" or "Project '{0}'"`);
+  return out;
+}
+
+// The rules a list of progress events breaks, each once, sorted ([] for a server that keeps them, whatever
+// progress it showed): a log entry's `progressRules` (scenario.mjs, session.mjs), judged by lspdiff.mjs.
+export function progressRules(events) {
+  return [...new Set(events.flatMap((e) => progressPayloadErrors(e.method, e.params)))].sort();
+}
+
 const MAX_HEADER_LINE = 256;
 const MAX_HEADERS = 4;
 const MAX_FRAME = 256 << 20;
@@ -61,6 +201,9 @@ export class LspClient {
     // The watch scenarios (scenario.mjs) read registrations and publishDiagnostics from it.
     this.events = [];
     this.lastMessageAt = performance.now();
+    this.barrier = new NotificationBarrier(); // caughtUp
+    this.progress = new ProgressBarrier(); // scenario.mjs Script.progressEnded
+    this.unbegun = new Map(); // a created progress token -> its timer: not begun in LSPDIFF_PROGRESS_DEADLINE_MS breaks the protocol
     this.buf = Buffer.alloc(0);
     this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
@@ -78,6 +221,7 @@ export class LspClient {
         p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
       }
       this.pending.clear();
+      for (const timer of this.unbegun.values()) clearTimeout(timer);
     });
   }
 
@@ -118,6 +262,7 @@ export class LspClient {
       const why = envelopeError(msg, this.pending);
       if (why) return this.#broken(`not a JSON-RPC 2.0 message: ${why}`);
       this.#onMessage(msg, !exact);
+      if (this.malformed) return; // the message broke the protocol (a progress lifecycle): nothing after it counts
     }
   }
 
@@ -130,6 +275,7 @@ export class LspClient {
       p.reject(new Error(`${this.dead} during ${p.method}`));
     }
     this.pending.clear();
+    for (const timer of this.unbegun.values()) clearTimeout(timer);
     this.server.kill();
   }
 
@@ -137,6 +283,15 @@ export class LspClient {
   #onMessage(msg, raw) {
     const at = performance.now();
     this.lastMessageAt = at;
+    // Lane H9 round 3: a progress message on the wrong transport. Go sends window/workDoneProgress/create as a
+    // request (sendClientRequestFireAndForget, progress.go:47) and $/progress as a notification (sendNotification,
+    // :53). Checked before dispatch, so it neither gets an answer nor is filtered out of the compared lists; the
+    // lifecycle tracking still sees it; then the run ends (a protocol failure of that server).
+    if (PROGRESS_METHODS.has(msg.method) && (msg.method === "$/progress") !== (msg.id === undefined)) {
+      if (msg.method === "$/progress") this.progress.update(msg.params);
+      else this.progress.create(msg.params);
+      return this.#broken(msg.method === "$/progress" ? `$/progress sent as a request (id ${JSON.stringify(msg.id)}), not a notification` : "window/workDoneProgress/create sent as a notification, not a request");
+    }
     if (msg.id !== undefined && msg.method !== undefined) return this.#onServerRequest(msg, raw);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
@@ -145,14 +300,29 @@ export class LspClient {
       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, ...(raw ? { rawNumbers: true } : {}) });
       return;
     }
+    if (msg.method === "window/logMessage") this.barrier.log(msg.params?.message);
+    if (msg.method === "$/progress") {
+      const why = this.progress.update(msg.params);
+      if (why) return this.#broken(why);
+      if (msg.params?.value?.kind === "begin") clearTimeout(this.unbegun.get(JSON.stringify(msg.params.token)));
+    }
     this.notifications.push({ method: msg.method, params: msg.params, at });
     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
   }
 
   #onServerRequest(msg, raw) {
+    if (msg.method === "window/workDoneProgress/create") {
+      const why = this.progress.create(msg.params);
+      if (why) return this.#broken(why);
+      const token = JSON.stringify(msg.params?.token ?? null);
+      const ms = SETTINGS.LSPDIFF_PROGRESS_DEADLINE_MS;
+      const timer = setTimeout(() => this.#broken(`work-done progress token ${token} created and not begun in ${ms} ms`), ms);
+      timer.unref?.();
+      this.unbegun.set(token, timer);
+    }
     // workspace/configuration is never asked: initialize does not advertise it.
-    // registerCapability, unregisterCapability, workDoneProgress/create, refresh requests: accept with
-    // null (the answer of a successful registration).
+    // registerCapability, unregisterCapability, window/workDoneProgress/create, refresh requests: accept
+    // with null (the answer of a successful registration, and of a progress token created).
     this.events.push({ kind: "request", method: msg.method, params: msg.params, at: performance.now(), ...(raw ? { raw } : {}) });
     this.#write({ jsonrpc: "2.0", id: msg.id, result: null });
   }
@@ -195,7 +365,29 @@ export class LspClient {
   }
 
   notify(method, params) {
+    this.barrier.send(method);
     this.#write({ jsonrpc: "2.0", method, params });
+  }
+
+  // Resolves once the server has handled every notification of BARRIER_METHODS sent so far
+  // (NotificationBarrier). Three outcomes (lane H9 round 2):
+  //   caught up        resolves with the time waited;
+  //   the server died  resolves as well: the next request reports its crash or timeout, as before (a tsc-rs
+  //                    failure, not a harness error);
+  //   `maxMs` passed   (LSPDIFF_REQUEST_TIMEOUT_MS) with notifications still unhandled: rejects as a harness error
+  //                    naming what is behind (lspdiff exits 3: the session is ERROR), never a pass of the barrier.
+  // A server that handles a notification and does not log it, or takes that long, cannot be paced, so its
+  // session has no verdict.
+  async caughtUp(maxMs = REQUEST_TIMEOUT_MS) {
+    const start = performance.now();
+    for (;;) {
+      const waited = performance.now() - start;
+      if (this.dead || this.barrier.behind().length === 0) return waited;
+      if (waited >= maxMs) {
+        throw Object.assign(new Error(`the server did not log the handling of every notification sent in ${maxMs} ms: ${this.barrier.behind().join("; ")} handled`), { harness: true });
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
   }
 
   cancel(id) {
@@ -269,7 +461,8 @@ export const userPreferences = {
 // support, and refresh support for diagnostics, semantic tokens, inlay hints and code lenses, as
 // VS Code does. Both servers then register their watch globs with the client
 // (client/registerCapability) instead of logging "file watching: disabled", and send refresh
-// requests after file-system events.
+// requests after file-system events. It also advertises window.workDoneProgress (lane H9), so both
+// servers report their background work (ProgressBarrier).
 //
 // ata: false turns automatic type acquisition off (disableAutomaticTypeAcquisition). With it on,
 // both servers start ATA for an inferred project in the background, and its first step runs
@@ -322,7 +515,9 @@ export function initializeParams(rootDir, { watch = false, ata = true } = {}) {
         },
         inlayHint: { resolveSupport: { properties: [] } },
       },
-      window: { workDoneProgress: false },
+      // The watch scenarios take work-done progress, as VS Code does: Script.settle waits for every
+      // progress begun to end (ProgressBarrier). The standard sessions have no waits and keep it off.
+      window: { workDoneProgress: watch },
     },
   };
   if (watch) {

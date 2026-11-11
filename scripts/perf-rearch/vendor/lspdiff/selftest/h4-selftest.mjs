@@ -20,6 +20,13 @@ import vm from "node:vm";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LSPDIFF = join(HERE, "..");
+// client.mjs progressRules (lane H9 round 3; round 2's progressFindings before it), for the probe of scenario.mjs
+// checkpoint; a no-op where both are missing.
+let PROGRESS_RULES = () => [];
+try {
+  const c = await import(join(LSPDIFF, "client.mjs"));
+  PROGRESS_RULES = c.progressRules ?? c.progressFindings ?? PROGRESS_RULES;
+} catch {}
 const ROOT = join(homedir(), `.cache/perf-rearch/parity/scratch/h4-lsp-selftest-${process.pid}`);
 const fails = [];
 const check = (name, ok, got = "") => {
@@ -281,10 +288,11 @@ await part("finding 11", async () => {
 
 // The Script waits of scenario.mjs (npmCalls, npmIdle, settle, ataIdle) in a context of their own:
 // `npmLog(polls)` gives the npm log's text at each read, `now()` the clock (ms); `alive`: whether a
-// logged npm process still runs (finding 11: always).
-function scriptProbe(npmLog, now, alive = true) {
+// logged npm process still runs (finding 11: always); `progress()`: the client's open work-done progress
+// (client.mjs ProgressBarrier pending; lane H9).
+function scriptProbe(npmLog, now, alive = true, progress = () => []) {
   const src = readFileSync(join(LSPDIFF, "scenario.mjs"), "utf8");
-  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async settle(ms, label) {", "async ataIdle(label) {", "npmReport() {"].map((head) => {
+  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async progressEnded(label) {", "async settle(ms, label) {", "async ataIdle(label) {", "npmReport() {", "async checkpoint(name) {", "activeKeys() {"].map((head) => {
     const at = src.indexOf(`\n  ${head}`);
     if (at < 0) throw new Error(`scenario.mjs has no ${head}`);
     return src.slice(at, src.indexOf("\n  }\n", at) + 4);
@@ -302,8 +310,12 @@ function scriptProbe(npmLog, now, alive = true) {
     existsSync: () => true,
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
+    PROGRESS_METHODS: new Set(["$/progress", "window/workDoneProgress/create"]),
+    progressRules: PROGRESS_RULES,
+    progressFindings: PROGRESS_RULES,
+    maskId: (id) => id,
     ATA_DIR: "/run/lspdiff-ata",
-    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
+    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000, LSPDIFF_PROGRESS_DEADLINE_MS: 60000 },
     setTimeout: (cb) => cb(),
     Error,
     Object,
@@ -314,9 +326,11 @@ function scriptProbe(npmLog, now, alive = true) {
   const settles = [];
   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
   // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
-  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, inside: (p) => p } };
+  // caughtUp (lane B4): the windows that settle had opened when each barrier wait began.
+  const caught = [];
+  script.client = { settle: async () => settles.push(now()), caughtUp: async () => caught.push(settles.length), progress: { pending: () => progress(settles.length) }, server: { alive: () => alive, inside: (p) => p } };
   script.log = [];
-  return { script, settles, reads: () => reads };
+  return { script, settles, caught, reads: () => reads };
 }
 
 // ---- lane ND2: the scenarios' waits cover ATA's npm calls ----------------------------------------
@@ -341,6 +355,188 @@ await part("nd2", async () => {
   off.script.ata = undefined;
   const quick = await off.script.settle(300, "probe");
   check("nd2: with ATA off, a scenario wait is the server's quiet window alone", off.reads() === 0 && quick < 1500, `reads ${off.reads()}, waited ${quick}`);
+});
+
+// ---- lane B4: a scenario wait starts when the server has handled the notifications sent -----------
+await part("b4", async () => {
+  // Every wait first waits for the barrier, before any of its quiet or npm windows.
+  let clock = 0;
+  const probe = scriptProbe(() => "", () => (clock += 100), false);
+  await probe.script.settle(300, "probe");
+  check("b4: a scenario wait waits for the server to have handled its notifications before its windows", probe.caught.length === 1 && probe.caught[0] === 0 && probe.settles.length >= 1, `caught ${probe.caught}, settles ${probe.settles}`);
+  // The barrier counts the notifications sent and the server's log lines of handled ones.
+  const { NotificationBarrier } = await import(join(LSPDIFF, "client.mjs"));
+  const b = new NotificationBarrier();
+  b.send("textDocument/didOpen");
+  b.send("textDocument/didOpen");
+  b.send("$/cancelRequest"); // not waited for
+  b.send("workspace/didChangeWatchedFiles");
+  const first = b.behind().join("; ");
+  b.log("handled method 'textDocument/didOpen' in 3.1ms");
+  b.log("handled method 'textDocument/diagnostic' (4) in 1ms"); // a request's line
+  b.log("handled method 'textDocument/didOpen' (7) in 1ms"); // with an id: not a notification
+  b.log("Processed 1 file changes in 85µs");
+  const second = b.behind().join("; ");
+  b.log("handled method 'textDocument/didOpen' in 1.2s");
+  b.log("error handling method 'workspace/didChangeWatchedFiles': boom");
+  check("b4: the barrier is behind until each notification sent has its handled (or error) log line, requests' lines aside",
+    first === "textDocument/didOpen 0/2; workspace/didChangeWatchedFiles 0/1" && second === "textDocument/didOpen 1/2; workspace/didChangeWatchedFiles 0/1" && b.behind().length === 0,
+    JSON.stringify({ first, second, last: b.behind() }));
+});
+
+// ---- lane H9: a scenario wait lasts until every work-done progress the server began has ended ------
+await part("h9", async () => {
+  const OPEN = ['"tsgo-loading-1" Loading: Installing types for /dev/null/inferred'];
+  // A progress that ends late (at 3 s, 100 ms per clock read): no quiet window opens before its end.
+  let clock = 0;
+  const late = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 3000 ? OPEN : []));
+  late.script.ata = undefined; // the quiet window alone besides the progress (ATA off)
+  const lateWaited = await late.script.settle(300, "probe");
+  check("h9: a progress whose end comes late: the wait's quiet window starts only after the end", late.settles.length >= 1 && late.settles[0] >= 3000 && lateWaited >= 3000,
+    `settles ${late.settles}, waited ${lateWaited}`);
+  // A progress that begins during the quiet window (after the first check) and ends at 5 s: the wait runs again.
+  clock = 0;
+  const during = scriptProbe(() => "", () => (clock += 100), false, (quiets) => (quiets >= 1 && clock < 5000 ? OPEN : []));
+  during.script.ata = undefined;
+  await during.script.settle(300, "probe");
+  check("h9: a progress begun during the quiet window: the wait waits for its end, then for quiet again", during.settles.length >= 2 && during.settles.at(-1) >= 5000,
+    `settles ${during.settles}`);
+  // With ATA on, the progress barrier comes before the npm-idle window, and the floor still holds.
+  clock = 0;
+  const ata = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 500 ? OPEN : []));
+  const ataWaited = await ata.script.settle(300, "probe");
+  check("h9: with ATA on, the wait ends after the progress (0.5 s) and only after the npm-idle floor (1.5 s)", ata.settles[0] >= 500 && ataWaited >= 1500, `settles ${ata.settles}, waited ${ataWaited}`);
+  // A progress that never ends: the run fails as a harness error at LSPDIFF_PROGRESS_DEADLINE_MS, never a success.
+  clock = 0;
+  const never = scriptProbe(() => "", () => (clock += 1000), false, () => OPEN);
+  let threw = null;
+  try {
+    await never.script.settle(300, "checkpoint load");
+  } catch (e) {
+    threw = e;
+  }
+  check("h9: a progress that never ends fails the run as a harness error (lspdiff exits 3: ERROR), with no quiet window passed",
+    !!threw && threw.harness === true && /did not end in 60000 ms at checkpoint load: "tsgo-loading-1" Loading: Installing types/.test(threw.message) && never.settles.length === 0,
+    threw ? threw.message : `no error; settles ${never.settles}`);
+  // The barrier: begin opens a token (by its JSON: 1 and "1" are two tokens), a report changes its message, end
+  // closes it, an end of a token never begun is ignored.
+  const { ProgressBarrier, initializeParams } = await import(join(LSPDIFF, "client.mjs"));
+  const b = new ProgressBarrier();
+  const ok = [b.create({ token: 1 }), b.create({ token: "1" }), b.update({ token: 1, value: { kind: "begin", title: "Loading", message: "Project a" } })];
+  ok.push(b.update({ token: "1", value: { kind: "begin", title: "Loading" } }), b.update({ token: 1, value: { kind: "report", message: "Installing types for b" } }));
+  const both = b.pending().join("; ");
+  ok.push(b.update({ token: "1", value: { kind: "end" } }));
+  const one = b.pending().join("; ");
+  ok.push(b.update({ token: 1, value: { kind: "end" } }));
+  check("h9: the progress barrier keeps each token from its create until its end (1 and \"1\" are two tokens)",
+    ok.every((x) => x === null) && both === '1 Loading: Installing types for b; "1" Loading' && one === "1 Loading: Installing types for b" && b.pending().length === 0, JSON.stringify({ ok, both, one, last: b.pending() }));
+  // The progress messages are the barrier's signal, never compared: a checkpoint keeps them in its entry's
+  // `progress` (not compared) and out of "server messages"; "session messages" leaves them out too.
+  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: "tsgo-loading-1" } };
+  const begin = { kind: "notification", method: "$/progress", params: { token: "tsgo-loading-1", value: { kind: "begin", title: "Loading", message: "Project 'a'" } } };
+  const refresh = { kind: "request", method: "workspace/diagnostic/refresh" };
+  const cp = scriptProbe(() => "", () => 0, false);
+  Object.assign(cp.script, { ata: undefined, seen: 0, active: new Map(), registered: new Map(), ids: [] });
+  cp.script.client.events = [create, begin, refresh];
+  await cp.script.checkpoint("load");
+  const sm = cp.script.log.find((e) => e.step === "load server messages");
+  const { messagesEntry } = await import(join(LSPDIFF, "session.mjs"));
+  const tail = messagesEntry({ events: [create, begin, refresh, { kind: "notification", method: "window/logMessage" }] });
+  check("h9: progress messages are left out of the compared message lists (checkpoint and session), and kept in the entry's progress",
+    JSON.stringify(sm?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && sm?.progress?.length === 2 && JSON.stringify(tail.result) === '[{"request":"workspace/diagnostic/refresh","params":null}]',
+    JSON.stringify({ sm, tail: tail.result }));
+  const caps = (watch) => initializeParams("/x", { watch }).capabilities.window.workDoneProgress;
+  check("h9: the watch scenarios advertise window.workDoneProgress, the standard sessions do not", caps(true) === true && caps(false) === false, `${caps(true)} ${caps(false)}`);
+});
+
+// ---- lane H9 round 2 (Astra's H9 review, reviews/2026-11-11-astra-h9.md): one part per finding, so that each
+// check fails on its own on a harness without the fix ---------------------------------------------------------
+await part("h9r2-finding1", async () => {
+  // Finding 1: caughtUp has three outcomes; a deadline with notifications unhandled is a harness error.
+  const { LspClient, NotificationBarrier } = await import(join(LSPDIFF, "client.mjs"));
+  const behind = new NotificationBarrier();
+  behind.send("textDocument/didOpen");
+  let overdue = null;
+  try {
+    await LspClient.prototype.caughtUp.call({ dead: null, barrier: behind }, 60);
+  } catch (e) {
+    overdue = e;
+  }
+  const deadWait = await LspClient.prototype.caughtUp.call({ dead: "server exited (1)", barrier: behind }, 60).then(() => "resolved", (e) => `rejected: ${e.message}`);
+  const caught = new NotificationBarrier();
+  caught.send("textDocument/didOpen");
+  caught.log("handled method 'textDocument/didOpen' in 1ms");
+  const upWait = await LspClient.prototype.caughtUp.call({ dead: null, barrier: caught }, 60).then(() => "resolved", (e) => `rejected: ${e.message}`);
+  check("h9 r2 finding 1: a notification unhandled at the deadline is a harness error naming what is behind; a dead server and a caught-up one resolve",
+    overdue?.harness === true && /textDocument\/didOpen 0\/1 handled/.test(overdue.message) && deadWait === "resolved" && upWait === "resolved", JSON.stringify({ overdue: overdue?.message, harness: overdue?.harness, deadWait, upWait }));
+});
+
+await part("h9r2-finding2", async () => {
+  const { ProgressBarrier } = await import(join(LSPDIFF, "client.mjs"));
+  // Finding 2: each lifecycle break of Go's progress.go is refused (LspClient breaks the protocol on it).
+  const life = (steps) => {
+    const pb = new ProgressBarrier();
+    for (const [op, params] of steps) {
+      const why = op === "create" ? pb.create(params) : pb.update(params);
+      if (why) return why;
+    }
+    return null;
+  };
+  const T = "tsgo-loading-1";
+  const cr = ["create", { token: T }];
+  const bg = ["update", { token: T, value: { kind: "begin", title: "Loading", message: "Project 'a'" } }];
+  const rp = ["update", { token: T, value: { kind: "report", message: "Project 'a'" } }];
+  const en = ["update", { token: T, value: { kind: "end" } }];
+  const cases = {
+    "a second begin on an active token": life([cr, bg, bg]),
+    "a begin on a token never created": life([bg]),
+    "a report on a token never created": life([rp]),
+    "an end on a token never created": life([en]),
+    "a report with no active begin": life([cr, rp]),
+    "an end with no active begin": life([cr, en]),
+    "a begin on an ended token": life([cr, bg, en, bg]),
+    "a token created twice": life([cr, cr]),
+  };
+  const good = life([cr, bg, rp, en]);
+  check("h9 r2 finding 2: every lifecycle break is refused, Go's sequence (create, begin, report, end) is not",
+    good === null && Object.values(cases).every((x) => typeof x === "string"), JSON.stringify({ good, cases }));
+});
+
+await part("h9r2-finding3", async () => {
+  const { progressPayloadErrors } = await import(join(LSPDIFF, "client.mjs"));
+  const { messagesEntry } = await import(join(LSPDIFF, "session.mjs"));
+  const T = "tsgo-loading-1";
+  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: T } };
+  const refresh = { kind: "request", method: "workspace/diagnostic/refresh" };
+  // Finding 3: the payload rules Go fixes (progress.go), whatever the timing.
+  const P = (value, token = T) => progressPayloadErrors("$/progress", { token, value });
+  const fine = [P({ kind: "begin", title: "Loading", message: "Installing types for 'x'" }), P({ kind: "report", message: "Project 'tsconfig.json'" }), P({ kind: "end" }),
+    progressPayloadErrors("window/workDoneProgress/create", { token: T })];
+  const broken = {
+    title: P({ kind: "begin", title: "Wrong title", message: "Project 'a'" }),
+    beginNoMessage: P({ kind: "begin", title: "Loading" }),
+    beginExtra: P({ kind: "begin", title: "Loading", message: "Project 'a'", percentage: 1 }),
+    reportText: P({ kind: "report", message: "Working" }),
+    endMessage: P({ kind: "end", message: "done" }),
+    token: P({ kind: "end" }, "h9-1"),
+    createExtra: progressPayloadErrors("window/workDoneProgress/create", { token: T, x: 1 }),
+  };
+  check("h9 r2 finding 3: Go's payloads pass; a wrong title, missing or extra fields, another text, another token form are each a finding",
+    fine.every((x) => x.length === 0) && Object.values(broken).every((x) => x.length > 0), JSON.stringify({ fine, broken }));
+  const cp2 = scriptProbe(() => "", () => 0, false);
+  Object.assign(cp2.script, { ata: undefined, seen: 0, active: new Map(), registered: new Map(), ids: [] });
+  const wrong = { kind: "notification", method: "$/progress", params: { token: T, value: { kind: "begin", title: "Wrong title", message: "Project 'a'" } } };
+  cp2.script.client.events = [{ ...create, params: { token: T } }, wrong, refresh];
+  await cp2.script.checkpoint("load");
+  const sm2 = cp2.script.log.find((e) => e.step === "load server messages");
+  const tail2 = messagesEntry({ events: [{ ...create, params: { token: T } }, wrong] });
+  // Round 3: the rules broken are the entry's `progressRules`, judged per server by lspdiff.mjs, never part of the
+  // compared lists.
+  const RULE = 'begin title "Wrong title", not "Loading"';
+  check("h9 r3 finding 2: a broken rule is the entry's progressRules (checkpoint and session messages), out of the compared lists",
+    JSON.stringify(sm2?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && JSON.stringify(sm2?.progressRules) === JSON.stringify([RULE])
+      && JSON.stringify(tail2.result) === "[]" && JSON.stringify(tail2.progressRules) === JSON.stringify([RULE]),
+    JSON.stringify({ sm2: [sm2?.result, sm2?.progressRules], tail2: [tail2.result, tail2.progressRules] }));
 });
 
 // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------

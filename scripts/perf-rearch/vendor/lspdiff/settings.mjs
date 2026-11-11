@@ -15,6 +15,8 @@
 //                               npmIdle: the stand-in npm ata-npm/)
 //   ATA_NPM_DELAY_MS            the stand-in npm's time per call (ata-npm/fake-npm.mjs)
 //   ATA_DEADLINE_MS             an ATA wait longer than this fails the run (never a success)
+//   LSPDIFF_PROGRESS_DEADLINE_MS  a work-done progress the server began and did not end in this time fails the
+//                               run as a harness error (scenario.mjs progressEnded; never a success)
 const num = (k, d) => {
   const v = process.env[k];
   if (v === undefined || v === "") return d;
@@ -33,4 +35,5 @@ export const SETTINGS = Object.freeze({
   ATA_IDLE_MS: num("ATA_IDLE_MS", 1500),
   ATA_NPM_DELAY_MS: num("ATA_NPM_DELAY_MS", 500),
   ATA_DEADLINE_MS: num("ATA_DEADLINE_MS", 60000),
+  LSPDIFF_PROGRESS_DEADLINE_MS: num("LSPDIFF_PROGRESS_DEADLINE_MS", 60000),
 });

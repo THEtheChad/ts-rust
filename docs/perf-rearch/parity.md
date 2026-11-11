@@ -85,7 +85,8 @@ material and is read only when it matches (lane H4).
   also holds the lspdiff sources that script the session (the stand-in npm, the servers'
   environment in `sandbox.mjs`, and `settings.mjs` included) and every lspdiff setting (`vendor/lspdiff/settings.mjs`, read with
   `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
-  `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
+  `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`,
+  `LSPDIFF_PROGRESS_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
   `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`. Since lane H8 the
   sources also hold `json.mjs` (the wire's JSON reader) and the sandbox's init
@@ -255,7 +256,7 @@ with no request pending, then adds five items for what arrived since the last ch
 | `<cp> watch delta` | `watch/delta` | the registrations added and removed since the last checkpoint, sorted: the net effect, free of order |
 | `<cp> watch active` | `watch/active` | every registration in force after the checkpoint, sorted |
 | `<cp> publishDiagnostics` | `publishDiagnostics` | the pushed diagnostics, stable-sorted by uri |
-| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, progress, …) and notification, with payload, in order. Only `window/logMessage`, the server's log with timings, is left out. With ATA on, the list ends with the npm calls ATA made since the last checkpoint (`{ ata: { args, code } }`, package names sorted, the calls sorted; lane H5) |
+| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, …) and notification, with payload, in order. `window/logMessage`, the server's log with timings, is left out, and so is the work-done progress (`window/workDoneProgress/create`, `$/progress`; lane H9: whether one shows depends on how long the work took, so it is the waits' signal only, kept in the entry's `progress` field, not compared). The rules Go fixes in a progress (its transport, lifecycle and payload) are judged per server (lane H9, rounds 2 and 3): a tsc-rs that breaks one makes a DIFF, a Go that breaks one makes the item GO-BROKEN. With ATA on, the list ends with the npm calls ATA made since the last checkpoint (`{ ata: { args, code } }`, package names sorted, the calls sorted; lane H5) |
 
 Normalization: the project root is `<root>`, as for answers. Registration ids are
 `<name> watcher <n>.<i>`, and the `<n>` comes from a process-wide counter (Go
@@ -267,6 +268,9 @@ runs, and 34 in all three tsc-rs runs. Every item masks `<n>` except one per ses
 `end watch ids`: the sorted raw ids. It is compared too (it MATCHes where Go is stable) and gives
 tsc-rs's rs-nondet check on the raw ids.
 
+Every wait first waits until the server has logged `handled method` for every notification sent
+(lane B4) and has ended every work-done progress it began (lane H9; the client advertises
+`window.workDoneProgress` in these scenarios only); see "Progress barrier (lane H9)".
 Scripts also let the server go quiet (300 ms) after each `didOpen`, so one snapshot's watch
 update ends before the next snapshot starts. In the scenarios with ATA on, that wait and every
 checkpoint also wait for ATA's npm and last at least `ATA_IDLE_MS` (lane ND2, "ATA's npm and the
@@ -2700,6 +2704,359 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12
   fuzz and corpus tiers do not use this lane's code.
 - **Self-tests:** `parity_h8_test.py --unit` about 10 s; the end-to-end controls about 15 minutes.
 
+## Progress barrier (lane H9, 2026-11-11)
+
+**Goal:** lspdiff paces a watch scenario the same way on every run, so that no debounced server message
+(Go's and tsc-rs's 500 ms `workspace/diagnostic/refresh`) depends on the host's load. The pacing is
+load-independent only within a bound: no signal marks the end of an ATA worker, so a worker starved past
+the npm-idle floor can still change it ("Round 2", finding 4).
+
+### What changed in lspdiff
+
+- **Lane B4's notification barrier is in `vendor/lspdiff`.** Before, it was a patch in `b4/`.
+  `client.mjs` `NotificationBarrier` counts the notifications sent and the server's `handled method '<m>'
+  in` log lines. `caughtUp()` waits for them, and `Script.settle` (`scenario.mjs`) calls it first.
+  `b4/lspdiff-barrier.patch` and `b4/apply-barrier.py` are deleted. `tsserver.mjs` (the JS referee, which
+  can replay a scenario) gets the same interface with nothing to wait for; without it, a JS replay of a
+  scenario would have thrown.
+- **Work-done progress.** The watch scenarios advertise `window.workDoneProgress`; the standard sessions
+  keep it off. Both servers answer with `window/workDoneProgress/create` and `$/progress`
+  begin/report/end (Go `lsp/progress.go` `projectLoadingProgress`, tsc-rs `lsp/progress.rs`). That happens
+  around each ATA install (`project/session.go` `triggerATAForUpdatedProjects`: `ProgressStart`,
+  `InstallTypings`, `ProgressFinish`) and each program load (`projectcollectionbuilder.go`, "Project
+  <name>"). Go checks the capability nowhere else (`server.go` initialize), so nothing else changes. The
+  client answers `create` with null, as it answers every server request. `client.mjs`
+  `ProgressBarrier` keeps every token that has a begin and no end.
+- **Each wait (`Script.settle`), in order:**
+  1. The server has handled every notification sent (B4).
+  2. Every progress it began has ended (`progressEnded`).
+  3. It has been quiet for the window with no request pending. If a progress began meanwhile, the wait
+     goes back to step 2.
+  4. With ATA on, the npm-idle wait runs. After any npm wait, everything from step 2 runs again.
+
+  A progress still open after `LSPDIFF_PROGRESS_DEADLINE_MS` (60 s, a new keyed setting) fails the run as
+  a harness error. lspdiff exits 3 and the session is ERROR, never MATCH or GO-BROKEN. A server that died
+  is not waited for.
+- **Progress is the waits' signal only, not compared.** `create` and `$/progress` are left out of every
+  `<cp> server messages` and of `session messages` (`client.mjs` `PROGRESS_METHODS`). Each checkpoint's
+  log entry keeps them in a `progress` field, which is not compared. Round 2 adds what Go fixes in them:
+  their lifecycle (a protocol failure when broken) and their payload (a compared finding when broken).
+- **B4's tools.** `b4/harness-copy.sh` builds the scratch harness copy that `starve-repro.sh` needs
+  (B4_RS_RUNS, B4_GO_CACHE, server logs). `starve-repro.sh` also counts duplicate npm installs and
+  `Delaying scheduled diagnostics refresh` lines per run.
+
+### Why progress is not compared (Go's own nondeterminism)
+
+Go shows a progress only after its group of operations has run for 250 ms (`cmd/tsc/lsp.go`
+`ProgressDelay`). It takes the group's token when the set of active operations goes from empty to nonempty
+(`lsp/progress.go:139-142`), but sends nothing until the delay fires. So whether a progress appears, and on
+which token number, depends on how long the work took:
+
+- **Unstarved, in all watch scenarios** (`scratch/h9/exp1`; Go 4 runs, 8 on hono; tsc-rs 3 runs). The ATA
+  installs agree in every run of both servers: `Installing types for '<project>'` on the same tokens and at
+  the same checkpoints (ata-overlay, watch-ts-pattern-f12, watch-hono-f12). umami's program load is the
+  exception. `Project 'tsconfig.json'` began a progress in Go's run 1 only, 1 of 4 runs (load 8 at the
+  start), on watch-umami-f12 and on watch-narrow-umami-f12. Compared, both `load server messages` items were
+  GO-BROKEN. tsc-rs showed that progress in all 3 runs: its umami load takes more than 250 ms, which is a
+  speed difference, not an output difference.
+- **Starved** (the table below): Go's 8 runs on the head harness gave two progress sequences (the token
+  after `tsgo-loading-4` was 16 in 4 runs and 6 in the other 4). tsc-rs gave two sequences in 50 runs (one
+  run had no progress for the first program load). Both servers vary with the load, Go included.
+
+The token numbers also show why progress cannot replace the npm-idle window. Go takes a new token number
+for every group of operations (each time its set of active operations becomes nonempty), shown or not. On
+hono's load the tokens go from 3 to 17: 13 groups were never shown. Most are ATA requests of the inferred
+project that ran no npm call and ended in under 250 ms. Each still schedules one of
+the load's 12 refreshes, 500 ms later. Nothing on the stream marks them, so the `ATA_IDLE_MS` floor of
+every wait stays (lane ND2): it covers both the work that has not yet run 250 ms and the work that never
+shows. The progress barrier covers what the floor could not: an ATA request whose npm calls are more than
+`ATA_IDLE_MS` apart (B4's residual race).
+
+### Controls
+
+- **`selftest/h4-selftest.mjs` part `h9`** (unit, with the probe client):
+  - A progress that ends late: no quiet window starts before the end.
+  - A progress that begins during the quiet window is waited for.
+  - With ATA on, the wait ends after both the progress and the npm floor.
+  - A progress that never ends is a harness error, after no quiet window.
+  - Token handling of the barrier.
+  - Progress is left out of the checkpoint and session message lists.
+  - The capability is set for watch scenarios only.
+
+  On a harness without `progressEnded` the part fails.
+- **`parity_h8_test.py` `h9()`** (end to end; fake modes `progress-0`, `progress-late`, `progress-never`
+  in `parity_h8_fake.py`). Each mode sends its own progress around every didOpen, then a publishDiagnostics
+  marker after its end. The self server now logs `handled method` for each notification, as Go does.
+  - **On this lane's head, every check passes:**
+    - An end 4 s late against one at once on pkgjson-overlay: every item MATCH.
+    - A progress that never ends: lspdiff exits 3 with no items, and through the tier (in front of the real
+      Go) the session is ERROR.
+  - **On the base harness (`2a09b28ca`), all three fail:**
+    - The late case gives 4 DIFFs (`load publishDiagnostics`, `load server messages`,
+      `close-overlay publishDiagnostics`, `close-overlay server messages`): the markers moved to later
+      checkpoints.
+    - The never-ending case gives no harness error.
+
+### Starvation (`b4/starve-repro.sh`, watch-hono-f12, 2026-11-11)
+
+- **Setup:** the server on CPU 7 with 12 busy loops. Each harness had a private Go cache, filled unstarved. Harness copies by `harness-copy.sh`: base
+  `perf/first-principles` `2a09b28ca`, head `6ad5bb93c`. tsc-rs `tsgo-head-865385add-rel`, run as
+  `--rs-runs 4 --rs-env GOPORT_PARSE_THREADS=1`.
+- **A first try with 6 busy loops, as B4 used, was too mild** (`scratch/h9/starve6`). The third open took
+  1.1 to 1.5 s, just under `ATA_IDLE_MS`, and the base harness gave 12 refreshes in 20 of 20 tsc-rs runs
+  and in 7 of 8 Go runs, so it did not reproduce the race.
+
+| harness | server (starved) | runs | load refreshes | duplicate installs | runs with `Delaying` |
+| --- | --- | --- | --- | --- | --- |
+| base | Go oracle | 8 | 10 ×3, 11 ×5 | 0 | 8 |
+| base | tsc-rs | 20 | 11 ×19, 12 ×1 | 0 | 19 |
+| head | Go oracle | 8 | 12 ×8 | 0 | 0 |
+| head | tsc-rs | 50 | 12 ×50 | 0 | 0 |
+
+- **The head's items:** every head iteration was MATCH on all 55 items plus the known GO-BROKEN `end watch
+  ids`. Each base iteration had one DIFF (`0016 load server messages`).
+- **The double install did not show in any run** (B4 saw it in 1 of 50). Its fix is shown by the
+  `progress-late` control above, not by this table.
+
+### Refill, gate and cost
+
+- **Self-tests** (`df7a71ff3`'s harness, `6ad5bb93c`, under the heavy-run rule): all OK.
+  - H4: JS 57 ok, Python 36.
+  - H6 40, H7 111.
+  - H8 76 (unit and end to end, with `h9()`).
+  - Referees: `parity_referees_test.py` 122; `referee-selftest.mjs` 48.
+- **Refill.** The session sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`, `settings.mjs`),
+  so every lsp key is new. The one refill followed H8's plan, on `tsgo-head-865385add-rel`
+  (`scratch/h9/fill.sh`, 09:07 to 09:56 UTC):
+  - fill-1 (`runs/h9-lsp-fill-1`, 637 s);
+  - two `--go-refill` fills of each session where Go races (hono-f12-p6, umami-f12-p6,
+    second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12);
+  - fill-2 (`runs/h9-lsp-fill-2`, 239 s).
+
+  fill-1 and fill-2 each gave 2,681 MATCH and 29 GO-BROKEN, every one of the 2,710 lsp items with its
+  status in the base. The GO-BROKEN set is the base's: hono 23, umami 5, watch-hono `end watch ids` 1.
+  Without progress in the compare, the umami `load server messages` items of the probe above are MATCH.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current` (`runs/h8r3b-head-865385add-full`),
+  `runs/h9-df7a71ff3-full`, `checkoutHead` `df7a71ff3`, harness clean, 10:03 to 10:26 UTC, load 1.7 to 16:
+  **PARITY OK**.
+  - 187,389 items compared: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on
+    good items, 36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9-df7a71ff3-lsp-{2,3}`): 2,681 MATCH and 29 GO-BROKEN each, with no item
+  off its base status. In all 3 runs every `session messages` item (13) and every checkpoint `server
+  messages` item (73) is MATCH.
+- **Cost:** the lsp tier's wall time was 298 s in the gate (its load rose to 16 while it ran), then 240.9 s
+  and 239.5 s in the two extra runs (load 1 to 8). The base's gate tier took 232 s, so the barriers cost
+  about 8 s (3%) on a quiet host. Most of a scenario's time is still the `ATA_IDLE_MS` floor of its waits.
+
+### Round 2: Astra's review (`reviews/2026-11-11-astra-h9.md`, REJECT of `3195ad922`)
+
+All four findings are in the threat model; root's decisions are in the review file.
+
+**Finding 1: `caughtUp()` passed its deadline as if caught up.** It now has three outcomes:
+- caught up: it resolves;
+- the server died: it resolves, and the next request reports the crash or timeout, as before;
+- `LSPDIFF_REQUEST_TIMEOUT_MS` passed with a notification still unhandled: it rejects as a harness error
+  naming what is behind (`textDocument/didOpen 11/12 handled`). lspdiff exits 3 and the session is ERROR.
+
+A server that handles a notification without logging it cannot be paced, so its session has no verdict.
+
+**Finding 2: the progress lifecycle.** At the pin, Go never sends a progress without its `create`:
+- the token is new for each group (`progress.go:141-142`);
+- `create` comes first in both paths (`:146` with no delay, `:186` when the delay fires), and the begin
+  follows in the same step (`:152-153`, `:187`);
+- `begun` allows one begin (`:200-209`);
+- a report goes only on a token that has begun (`:173`, and `delayFired` implies `begun`), and so does an
+  end (`:166`);
+- a token is never used again after `token = ""` (`:172`).
+
+`client.mjs` `ProgressBarrier` keeps each token's state (created, begun, ended). Go's rule, no stricter, is
+enforced through the protocol-failure path (`#broken`: the run ends, a crash of that server; for tsc-rs a
+DIFF with `rsFailure` crash):
+- a second begin, or a begin on an ended token;
+- a begin, report or end on a token never created;
+- a report or end with no active begin;
+- a token created twice;
+- a token created and not begun within `LSPDIFF_PROGRESS_DEADLINE_MS`.
+
+A begun progress that never ends stays a harness error (round 1).
+
+**Finding 3: the payload Go fixes.** Every progress message is checked (`client.mjs`
+`progressPayloadErrors`). Each rule it breaks joins the compared list of its checkpoint (and of `session
+messages`) as `{ progress: <rule> }`. Each rule is listed once, so a server that keeps the rules adds
+nothing, whatever progress it showed. The rules, at the pin (`lsp/progress.go` and lsproto's `omitzero`
+fields):
+
+| message | rule | Go |
+| --- | --- | --- |
+| `create` | params exactly `{ token }` | `serverProgressReporter.createWorkDoneProgress`, `:46-50` |
+| `$/progress` | params exactly `{ token, value }` | `sendProgress`, `:52-56` |
+| any | the token is `tsgo-loading-<n>`, n from 1 | `:141-142` |
+| begin | value exactly `{ kind, title, message }`; title `Loading` (diagnostics 95202, English: the client sends no locale) | `beginOrReport`, `:202-206` |
+| report | value exactly `{ kind, message }` | `:175-179`, `:210-213` |
+| end | value exactly `{ kind }` | `:167-169` |
+| begin, report | the message is `Installing types for '{0}'` (95203) or `Project '{0}'` (95204) | the loading keys, `project/session.go:2048`, `projectcollectionbuilder.go:1502` |
+
+Not checked:
+- **The `{0}`** (a project's display name). Which projects show a progress depends on the time their work
+  took, so "a name Go also showed" would be a false DIFF from timing.
+- **Occurrence, order and token numbers** (round 1).
+
+**Finding 4: no completion signal for ATA.** Go queues the ATA worker on the background queue
+(`session.go:2027-2030`) before it calls `ProgressStart` (`:2048`).
+- **No log line marks a worker's start or end.** The worker's logs (`ATA:: ...`, "Triggering ATA for
+  project") go into a log tree of its request. That tree is printed only when a later snapshot adopts the
+  result (`DidUpdateATAState`), or on a failure (`:2056-2059`).
+- **"Scheduling new diagnostics refresh..."** (`scheduleDiagnosticsRefresh`, `:519-521`) is logged only
+  when the result differs.
+- **So a worker whose result is unchanged leaves no trace at all.** tsc-rs ports the same logs, and adding
+  one would change its output. The wait therefore keeps the npm-idle floor.
+
+The assumption the pacing rests on, then: every ATA worker that a step's notification queued must show
+itself before the wait ends. That means one of these happens within `ATA_IDLE_MS` (1.5 s) of the wait's
+start:
+- it starts an npm call (the stand-in npm's log);
+- it runs 250 ms (a progress begins);
+- it ends with no change.
+
+If its result changes, the refresh it schedules (500 ms later) must arrive before the wait's last quiet
+window ends. A worker that the scheduler keeps from running for longer than that, with nothing visible, can
+still finish after the wait. Its refresh then falls into the next step's debounce window, in Go and in
+tsc-rs alike. The bound held in every starved run above: 12 busy loops on the server's CPU, with the
+third open taking 2.0 to 4.1 s, gave 12 refreshes in 58 of 58 head runs. Harder starvation can break it. The
+claim is "load-independent within that bound", not "independent of load".
+
+**Test weaknesses fixed.**
+- `parity_h8_test.py` `h9()` now requires MATCH on every item of the late-progress control.
+- The npm-floor check of `h4-selftest.mjs` uses a progress of 0.5 s, shorter than the 1.5 s floor.
+
+**Controls, before (`3195ad922`) and after (`fafe6a374`).**
+- **Unit** (`h4-selftest.mjs`, parts `h9r2-finding1` to `-finding3`; the head's file run in a copy of each
+  harness):
+  - **On the head, all pass:** caughtUp's three outcomes; the eight lifecycle breaks refused while Go's
+    sequence is not; Go's payloads pass and seven broken ones are each a finding; a broken rule joins the
+    checkpoint and session lists.
+  - **On `3195ad922`:** finding 1 FAILs (the deadline resolved); findings 2 and 3 FAIL (no lifecycle, no
+    payload check); so does round 1's token check (it now creates first). Every other part passes.
+- **End to end** (`parity_h8_test.py` `h9()`, the head's fake and test against each harness; pkgjson-overlay,
+  the self server behind both sides):
+
+| control | head `485852aa4` | `3195ad922` |
+| --- | --- | --- |
+| silent-open (finding 1; `LSPDIFF_REQUEST_TIMEOUT_MS` 5 s) | harness error, lspdiff exit 3, no items | 38 MATCH, 1 DIFF |
+| progress-twobegin, -nocreate, -report-nobegin, -end-nobegin, -end-uncreated, -nobegin (finding 2) | each a protocol failure: DIFF, rsFailure crash, the rule named | each 39 MATCH |
+| progress-title (finding 3) | a `server messages` DIFF, no crash | 39 MATCH |
+| progress-late (round 1, now MATCH required) | 39 MATCH | 39 MATCH |
+| progress-never, lspdiff and the tier (round 1) | exit 3; the tier ERROR | the same |
+
+  The modes that never begin or end send the marker too, as progress-0 does, so on the base the lifecycle
+  break is the only difference.
+
+**Self-tests on the head** (`fafe6a374`, under the heavy-run rule): all OK.
+- H4: JS 61 ok, Python 36.
+- H6 40, H7 111.
+- H8 84 (unit and end to end, 11 `h9` checks).
+- Referees: `parity_referees_test.py` 122; `referee-selftest.mjs` 48.
+
+**In real sessions** (round 2's fill-1, all lsp sessions: Go 4 to 8 runs, tsc-rs 3): no progress lifecycle
+failure and no payload finding on either server. The checkpoints of these runs held 6 to 24 progress
+messages each.
+
+**Refill, gate and lsp runs.** The keyed sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`), so
+there was one refill, as in round 1 (`scratch/h9/r2/fill.sh`, 11:57 to 12:51 UTC).
+- **fill-1** (`runs/h9r2-lsp-fill-1`): 2,682 MATCH and 28 GO-BROKEN. `hono-f12-p6/0295 src/index.ts:27:5
+  references`, a known Go race of the standard session (base GO-BROKEN), had Go's 8 runs agree there and
+  tsc-rs match them.
+- **fill-2** (`runs/h9r2-lsp-fill-2`, 233.5 s, after two refills of each Go-race session): 2,681 MATCH and
+  29 GO-BROKEN. Every one of the 2,710 items has its base status.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current`, `runs/h9r2-fafe6a374-full`,
+  `checkoutHead` `fafe6a374`, harness clean, 12:52 to 13:15 UTC, load 1.1 to 15: **PARITY OK**.
+  - 187,389 items: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on good items,
+    36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9r2-fafe6a374-lsp-{2,3}`): each 2,681 MATCH and 29 GO-BROKEN, no item off
+  its base status. In all 3 runs every `session messages` item (13) and every `server messages` item (73)
+  is MATCH.
+- **lsp wall:** 233.4 s in the gate, then 233.4 s and 233.1 s. The base's is 232 s.
+- **Starvation:** the wait is unchanged in round 2. `caughtUp` differs only once its deadline expires, and
+  the payload and lifecycle checks do not wait. So the table above stands, and starvation was not run again.
+
+### Round 3: Astra's recheck (`reviews/2026-11-11-astra-h9-r2.md`, REJECT of `73db30179`)
+
+Both findings are in scope; everything else of round 2 was confirmed fixed.
+
+**Finding 1: a progress on the wrong transport vanished.** Her sequence was a create request, a begin, a
+report *sent as a request with an id*, then an end. The report got a null answer and was filtered out:
+MATCH. Go sends `window/workDoneProgress/create` as a request (`sendClientRequestFireAndForget`,
+`progress.go:47`) and `$/progress` as a notification (`sendNotification`, `:53`).
+- `client.mjs` `#onMessage` now checks the transport before dispatch and before any filtering. A
+  progress message of the wrong type still updates the lifecycle tracking.
+- Then it ends the run through the protocol-failure path. For tsc-rs that is a DIFF with `rsFailure`
+  crash; for Go, GO-BROKEN.
+
+**Finding 2: rule violations were compared as output, not attributed.** In round 2, a broken rule joined
+the compared message list. So a Go that broke it made a correct tsc-rs a DIFF; both breaking it was a
+MATCH; and a varying Go was GO-BROKEN, which hid a tsc-rs that broke it too.
+- Now the rules a run's progress breaks go into its entry's `progressRules`, which is not part of the
+  answer (`scenario.mjs` checkpoint, `session.mjs` `messagesEntry`).
+- `lspdiff.mjs` judges them per server, as part of step 1, right after tsc-rs's crash check and before
+  any comparison:
+  - **tsc-rs broke a rule** (any of its runs, the confirming run too): DIFF, the rule and the run named,
+    whatever Go did.
+  - **Else, a Go run broke a rule:** GO-BROKEN with the rule named (step 2, beside a Go crash or
+    disagreeing Go runs). tsc-rs is not blamed, and Go's break never counts in tsc-rs's favour.
+  - **Else:** the ordinary comparison.
+- No new status: both outcomes use the existing DIFF and GO-BROKEN.
+- Lifecycle and transport breaks already end the run that made them, so they are attributed by the crash
+  path: a tsc-rs crash is a DIFF before anything else, and a Go crash GO-BROKEN.
+
+**Controls** (`parity_h8_test.py` `h9r3()`, lspdiff alone on pkgjson-overlay, the self server behind both
+sides). The status of `load server messages`, on the round-2 head and on this one:
+
+| control | `73db30179` | `e3355751a` |
+| --- | --- | --- |
+| transport: her sequence, on tsc-rs's side | MATCH | DIFF, rsFailure crash (`$/progress sent as a request (id "h9-report-1")`) |
+| Go only breaks the rule (title `Wrong title`, 2 of 2 Go runs) | DIFF (counted against tsc-rs) | GO-BROKEN, "Go breaks its progress rules: go: …, go2: …" |
+| tsc-rs only | DIFF (as differing output, the rule not named) | DIFF, "tsc-rs breaks Go's progress rules: rs, rs2, rs-env1" |
+| both | MATCH | DIFF |
+| Go varies (4 of 8 runs), tsc-rs valid | GO-BROKEN ("Go runs differ") | GO-BROKEN, the 4 runs and the rule named |
+| Go varies (4 and 6 of 8 runs), tsc-rs breaks it | GO-BROKEN (tsc-rs's break hidden) | DIFF |
+
+`h4-selftest.mjs` part `h9r2-finding3` now checks that a broken rule is the entry's `progressRules` and
+out of the compared lists.
+
+**Self-tests on the head.** All OK.
+- `e3355751a`: H4 JS 61, H4 Python 36, H6 40, H7 111; referees `parity_referees_test.py` 122,
+  `referee-selftest.mjs` 48.
+- The first H8 run on `e3355751a` had 89 ok and 1 FAIL. That was H8's own round-3 ATA control (mode `go`
+  on both sides, which sends no progress). The fake's second tsc-rs run exited with SIGABRT, a race in the
+  fake proxy, not in what it tests: its pump thread (a daemon) can be inside a read of stdin when the
+  server exits, and CPython aborts at finalization. The proxy now ends with `os._exit` after flushing
+  (`ab7be7932`). H8 then passed whole on `ab7be7932`, 90 ok (the 6 `h9r3` controls included).
+
+**Refill, gate and lsp runs.** The keyed sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`), so
+there was one refill, as in round 1 (`scratch/h9/r3/fill.sh`, 14:15 to 15:08 UTC).
+- **Fills:** fill-1 (`runs/h9r3-lsp-fill-1`) and fill-2 (`runs/h9r3-lsp-fill-2`, 233.8 s) each gave
+  2,681 MATCH and 29 GO-BROKEN.
+- **No real session's item changed status because of the attribution.** All 2,710 lsp items have their
+  base status and their round-2 status, and no item has a progress-rule detail. Neither Go nor tsc-rs
+  broke a rule in any run.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current`, `runs/h9r3-ab7be7932-full`,
+  `checkoutHead` `ab7be7932`, harness clean, 15:09 to 15:32 UTC, load 1.2 to 13: **PARITY OK**.
+  - 187,389 items: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on good items,
+    36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9r3-ab7be7932-lsp-{2,3}`): each 2,681 MATCH and 29 GO-BROKEN, every item
+  at its base status. In all 3 runs every `session messages` item (13) and every `server messages` item
+  (73) is MATCH.
+- **lsp wall:** 234.4 s in the gate, then 233.7 s and 234.8 s. The base's is 232 s.
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
@@ -2731,7 +3088,9 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12
 - `parity_sandbox_init.py`: PID 1 of every api and lsp server's sandbox (lane H8 made it shared; it was
   `parity_api_init.py`); `parity_h8_test.py`: lane H8's negative controls for the lsp tier (`--unit` in
   seconds; the end-to-end controls about 10 minutes; `--e2e-only --harness DIR` against another harness);
-  `parity_h8_fake.py`: its fake LSP server, a proxy in front of the Go oracle.
+  `parity_h8_fake.py`: its fake LSP server, a proxy in front of the Go oracle (lane H9 added the
+  progress modes and `h9()`).
+- `b4/`: lane B4's starvation repro (`starve-repro.sh`, `harness-copy.sh`) and its README.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and

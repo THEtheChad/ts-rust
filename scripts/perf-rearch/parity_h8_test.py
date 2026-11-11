@@ -29,6 +29,12 @@ escape) with every other mode:
                 home-skeleton (Astra's: tmp replaced by a file), home-root-hide, home-root-mode (her
                 storage-root chmod probes, on the home): session home DIFF
   exec failure  unexec-go (Astra's: a Go that cannot be exec'd): ERROR, and nothing cached
+  progress      lane H9 (h9()): a work-done progress that ends 4 s after each didOpen: MATCH on every item
+                against one that ends at once; one that never ends: a harness error, the session ERROR;
+                round 2: opens never logged as handled (ERROR), each break of Go's progress lifecycle (a
+                protocol DIFF), a begin titled "Wrong title" (a server messages DIFF); round 3 (h9r3()): a
+                progress on the wrong transport (a protocol DIFF), a progress rule broken by Go only
+                (GO-BROKEN), by tsc-rs only, by both, by a varying Go with tsc-rs valid (GO-BROKEN) or not (DIFF)
 It takes the gate's lock (the tier's paths are fixed) and uses the real Go cache.
 """
 import fcntl
@@ -318,7 +324,7 @@ EXPECT = {  # mode -> (what a good harness shows, a test on the items)
 }
 
 
-def lspdiff(tag, go, rs, extra=(), scenario=None):
+def lspdiff(tag, go, rs, extra=(), scenario=None, env=None):
     """The harness's lspdiff alone (sandboxed, as parity_lsp.py runs it) on a one-file project, or on a fixture
     scenario: its items."""
     proj = SCRATCH / 'project'
@@ -328,7 +334,7 @@ def lspdiff(tag, go, rs, extra=(), scenario=None):
     out = SCRATCH / f'lspdiff-{tag}'
     shutil.rmtree(out, ignore_errors=True)
     (SCRATCH / 'home').mkdir(exist_ok=True)
-    env = {**os.environ, 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
+    env = {**os.environ, **(env or {}), 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
                                                          'mounts': [] if scenario else [{'lower': str(proj), 'target': str(proj)}]})}
     r = subprocess.run(['node', str(HARNESS / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root), '--file', 'a.ts', '--positions', '1',
                         '--go', go, '--rs', rs, '--out', str(out), '--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1', *extra,
@@ -400,6 +406,90 @@ def finding7():
           and 'tmp/P' in detail(later, 'session storage'), short(later, log3))
 
 
+def h9():
+    """Lane H9: the barriers of a scenario's waits (vendor/lspdiff scenario.mjs Script.settle, client.mjs). The fake's
+    progress-* modes send a work-done progress of their own around every didOpen, with Go's payloads unless the mode
+    breaks one, then a publishDiagnostics marker after its end; silent-open drops the server's handled lines of its
+    opens. All on pkgjson-overlay (ATA off: the waits are the barriers and the quiet windows alone), the self server
+    behind both sides, Go's side progress-0:
+      late             an end 4 s late: MATCH on every item (each wait lasts until the end; a harness without the
+                       barrier ends the waits first and the markers move: a DIFF)
+      never            a progress that never ends: a harness error (lspdiff exit 3, no items); through the tier in
+                       front of the real Go: the session ERROR
+    Round 2 (Astra's H9 review):
+      silent-open      finding 1: handled lines missing past LSPDIFF_REQUEST_TIMEOUT_MS: a harness error, exit 3
+      lifecycle        finding 2: twobegin, nocreate, report-nobegin, end-nobegin, end-uncreated, nobegin: each a
+                       protocol failure of tsc-rs's side (a DIFF with rsFailure crash, the rule named)
+      title            finding 3: a begin titled "Wrong title": a DIFF of a server messages item"""
+    fake('pass')
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    run = lambda tag, rs, env=None: lspdiff(tag, sh('progress-0'), sh(rs), scenario='pkgjson-overlay', env=env)  # noqa: E731
+    counts = lambda items: dict(__import__('collections').Counter(v['status'] for v in items.values()))  # noqa: E731
+    items, log = run('h9-late', 'progress-late')
+    check('h9: a progress that ends 4 s late: every item MATCH (each wait lasts until the end)',
+          items and all(v['status'] == 'MATCH' for v in items.values()), f'{counts(items)} {short(items, log)}')
+    items, log = run('h9-never', 'progress-never', {'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
+    check('h9: a progress that never ends: a harness error (lspdiff exit 3), no items', not items and 'harness error' in log and 'did not end' in log, short(items, log))
+    items, log = tier(fake('progress-never'), session='pkgjson-overlay')
+    check('h9: a progress that never ends, through the tier in front of the real Go: the session is ERROR, not MATCH',
+          items and all(v['status'] == 'ERROR' for v in items.values()), short(items, log))
+    items, log = run('h9-silent', 'silent-open', {'LSPDIFF_REQUEST_TIMEOUT_MS': '5000'})
+    check('h9 r2 finding 1: opens handled without their log line past the deadline: a harness error (exit 3) naming what is behind, '
+          'never MATCH or DIFF', not items and 'harness error' in log and 'textDocument/didOpen' in log and 'handled' in log, f'{counts(items)} {short(items, log)}')
+    for mode, rule in [('progress-twobegin', 'already begun'), ('progress-nocreate', 'never created'), ('progress-report-nobegin', 'no active begin'),
+                       ('progress-end-nobegin', 'no active begin'), ('progress-end-uncreated', 'never created'), ('progress-nobegin', 'not begun in 5000 ms')]:
+        items, log = run(f'h9-{mode}', mode, {'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
+        check(f'h9 r2 finding 2: {mode}: a protocol failure of tsc-rs ({rule}): a DIFF with rsFailure crash',
+              items and any(v['status'] == 'DIFF' and v.get('rsFailure') == 'crash' for v in items.values()) and rule in log, f'{counts(items)} {short(items, log)}')
+    items, log = run('h9-title', 'progress-title')
+    check('h9 r2 finding 3: a begin titled "Wrong title": a server messages DIFF (no crash)',
+          items and any(k.endswith(' server messages') and v['status'] == 'DIFF' for k, v in items.items()) and not any(v.get('rsFailure') for v in items.values()),
+          f'{counts(items)} {short(items, log)}')
+
+
+def h9r3():
+    """Lane H9 round 3 (Astra's recheck, reviews/2026-11-11-astra-h9-r2.md), with lspdiff alone on pkgjson-overlay and
+    the self server behind both sides (each line prints the status of `load server messages`, where the opens'
+    progress is, on any harness):
+      transport        finding 1, her sequence: create, begin, a report sent as a request, end, on tsc-rs's side:
+                       a protocol failure (DIFF, rsFailure crash)
+      go-only          finding 2: every Go run begins with "Wrong title", tsc-rs keeps Go's rules: GO-BROKEN, the
+                       rule named (tsc-rs not blamed)
+      rs-only          tsc-rs breaks the rule, Go does not: DIFF, the rule named
+      both             both break it the same way: DIFF (tsc-rs breaks a rule; Go's doing it too never excuses it)
+      go-varies        Go breaks it in some of its 8 runs, tsc-rs keeps the rules: GO-BROKEN
+      go-varies-rs-bad Go varies, tsc-rs breaks it: DIFF (Go's variation never hides tsc-rs's own break)"""
+    fake('pass')
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    STEP = 'load server messages'
+
+    def run(tag, go, rs, go_runs=2):
+        for attempt in range(4):
+            items, log = lspdiff(f'h9r3-{tag}', sh(go), sh(rs), ['--go-runs', str(go_runs)], scenario='pkgjson-overlay')
+            go_logs = sorted((SCRATCH / f'lspdiff-h9r3-{tag}').glob('*/go*.jsonl'))
+            wrong = [('Wrong title' in f.read_text()) for f in go_logs]
+            if go != 'progress-title-vary' or (any(wrong) and not all(wrong)):  # a varying Go must have varied
+                break
+        it = next((v for k, v in items.items() if k.endswith(' ' + STEP)), {})
+        print(f'  h9r3 {tag}: {STEP} {it.get("status")} rsFailure={it.get("rsFailure")} detail={str(it.get("detail", ""))[:220]} '
+              f'(Go runs with Wrong title: {sum(wrong)} of {len(wrong)})', flush=True)
+        return items, it, log
+    items, it, log = run('transport', 'progress-0', 'progress-report-request')
+    check('h9 r3 finding 1: a report sent as a request (her sequence): a protocol failure of tsc-rs, DIFF rsFailure crash',
+          any(v['status'] == 'DIFF' and v.get('rsFailure') == 'crash' for v in items.values()) and 'sent as a request' in log, short(items, log))
+    _, it, log = run('go-only', 'progress-title', 'progress-0')
+    check('h9 r3 finding 2, Go only: GO-BROKEN, the rule named', it.get('status') == 'GO-BROKEN' and 'Go breaks its progress rules' in it.get('detail', '')
+          and 'Wrong title' in it.get('detail', ''), it)
+    _, it, log = run('rs-only', 'progress-0', 'progress-title')
+    check('h9 r3 finding 2, tsc-rs only: DIFF, the rule named', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+    _, it, log = run('both', 'progress-title', 'progress-title')
+    check('h9 r3 finding 2, both: DIFF (Go breaking it too does not excuse tsc-rs)', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+    _, it, log = run('go-varies', 'progress-title-vary', 'progress-0', go_runs=8)
+    check('h9 r3 finding 2, Go varies, tsc-rs valid: GO-BROKEN, the rule named', it.get('status') == 'GO-BROKEN' and 'Go breaks its progress rules' in it.get('detail', ''), it)
+    _, it, log = run('go-varies-rs-bad', 'progress-title-vary', 'progress-title', go_runs=8)
+    check('h9 r3 finding 2, Go varies, tsc-rs breaks the rule: DIFF', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+
+
 def e2e():
     lock = open(Path.home() / '.cache/perf-rearch/parity/.lock', 'w')  # the gate's lock: the tier's paths are fixed
     print('e2e: waiting for the gate lock', flush=True)
@@ -434,6 +524,10 @@ def e2e():
         finding7()
     if not only or 'round3' in only:
         round3()
+    if not only or 'h9' in only:
+        h9()
+    if not only or 'h9r3' in only:
+        h9r3()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
     # dir is new: ERROR, and nothing of it cached.
     unexec = SCRATCH / f'unexec-go-{"new" if NEW else "old"}'
