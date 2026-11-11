@@ -2571,7 +2571,7 @@ modes, lspdiff alone as she ran it) and unit checks; "before" is `--harness <git
 
 | # | finding | fix | control | before (`95006241b`) | now |
 |---|---|---|---|---|---|
-| 1 | unresolved paths are one identity: writes to `A/f` and `B/f` in dirs made and removed before their handles were resolved both read `?/f` (`parity_sandbox_storage.py:215`) | such an event is `?<nonce>.<n>/<name>`: n counts them, the nonce is new in every run, so two are never equal, in a run or across runs, and each is a path no Go run has: fail closed | `path-go`/`path-rs`; unit: two files in dirs gone before the reader reads are two distinct unresolved paths | 60 MATCH | session writes DIFF |
+| 1 | unresolved paths are one identity: writes to `A/f` and `B/f` in dirs made and removed before their handles were resolved both read `?/f` (`parity_sandbox_storage.py:215`) | the record keeps every event by its dir's handle and names it when the record ends, by the dir's last known path (a dir learned late, where a rename put it, names its earlier events too); a dir never seen at any path is `?<nonce>.<n>`, n one per such dir and the nonce new in every run, so two are never equal, in a run or across runs, and each is a path no Go run has: fail closed. (A first version named unresolved events as they were read, which made overlayfs's own copy-up nondeterministic: a dir it makes in its work dir and moves into the upper dir at once had its attrib event unresolved in some runs; the gate's api tier showed it as rs-nondet on build-references and two more, and that gate run was stopped) | `path-go`/`path-rs`; unit: two files in dirs gone before the reader reads are two distinct unresolved paths | 60 MATCH | session writes DIFF |
 | 2 | a writable place outside the record: the stand-in npm's log dir `/run/lspdiff-ata/log` was a writable host bind (`scenario.mjs:659`) | the log is on the recorded storage (the init's `plumbing/`, bound at that path; lspdiff reads it through the init's `/proc/<pid>/root`); there are no writable host binds; before exec the init checks `/proc/self/mountinfo`: a writable mount that is not on the storage's tmpfs, an overlay of ours, or `/proc` is a setup ERROR | `ata-log-transient` on ata-overlay; unit: a writable bind of a host dir is a setup failure | 49 MATCH | session writes DIFF (`plumbing/extra`) |
 | 3 | the stand-in npm trusts its runtime environment: `NODE_OPTIONS=--import=...` runs other code before it reads its config (`ata-npm/npm:5`) | `env -i`: node and the stand-in at fixed paths (`/run/lspdiff-ata/node`, `/run/lspdiff-ata/fake-npm.mjs`, both read-only binds), no flags, nothing of the environment | `npm-env` on ata-overlay | 49 MATCH | DIFF (the call reaches the stand-in, which refuses a package the store lacks) |
 | 4 | masking watcher ids changed diagnostic payloads: a replace over the whole message made `bad watcher 1.` equal `bad watcher 999.` (`session.mjs:41`) | only the registration ids are masked, by JSON path (`params.registrations[*].id`, `params.unregisterations[*].id`) | `mask-go`/`mask-rs` | 60 MATCH | session messages DIFF |
@@ -2638,15 +2638,16 @@ run judged with all of it (`runs/h8r2-lsp-fill-2`, 676 s).
   Round 1's `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly
   the calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
 
-**Round 3's refill** (its keyed sources changed: the init and its storage module, the scripts, the
-stand-in npm): the same plan under the heavy-run rule, 02:50 to 03:43 UTC (`runs/h8r3-lsp-fill-{1,2}` and
-`runs/h8r3-lsp-refill-*`). fill-1 and fill-2 each 2,681 MATCH and 29 GO-BROKEN: every base item has its
-base status, the GO-BROKEN set is the base's, and the 52 new items all MATCH; no DIFF in any run of it. The
-variant records against the base's: the base's records hold 2,645 requests, every one present in round
-3's; the unstable request sets are unchanged in every session (hono-f12-p6 23, umami-f12-p6 5,
-watch-hono-f12 1, others 0); the answer-hash sets are identical on all 2,616 stable requests and on 4 of
-the 29 unstable ones, and differ on the other 25 (Go's racing orders, as in round 2); no new request
-(initialize, messages, per-path writes) varied in any fill. fill-2's lsp tier took 289 s.
+**Round 3's refills** (its keyed sources changed: the init and its storage module, the scripts, the
+stand-in npm): the same plan under the heavy-run rule. The first (`runs/h8r3-lsp-*`, 02:50 to 03:43 UTC:
+fill-1 and fill-2 each 2,681 MATCH and 29 GO-BROKEN, no DIFF) was made before the record's last fix (above)
+and is superseded; the final one is `runs/h8r3b-lsp-*` (05:39 to 06:28 UTC): fill-1 (630 s) and fill-2 (234 s) each 2,681 MATCH and 29 GO-BROKEN, every
+refill MATCH or its base GO-BROKEN, no DIFF in any run. Every base item has its base status, the GO-BROKEN
+set is the base's, and the 52 new items all MATCH. The variant records against the base's: the base's hold
+2,645 requests, all present; the unstable request sets are unchanged in every session (hono-f12-p6 23,
+umami-f12-p6 5, watch-hono-f12 1, others 0); the answer-hash sets are identical on all 2,616 stable
+requests and on 4 of the 29 unstable ones, and differ on the other 25 (Go's racing orders, as in round 2);
+no new request (initialize, messages, per-path writes) varied in any fill.
 
 ### Gate run
 
