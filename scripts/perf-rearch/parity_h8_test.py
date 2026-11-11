@@ -136,6 +136,8 @@ storage.make_home(t + '/home', 0); os.makedirs(t + '/ovl0/upper'); os.makedirs(t
 r = storage.Recorder(t, 1); r.start()
 os.makedirs(t + '/home/new/deep'); time.sleep(0.3)  # the reader names the new dirs (the race is round 3's test)
 open(t + '/home/new/deep/f', 'w').write('x'); os.unlink(t + '/home/new/deep/f')
+# a dir made and moved at once, as overlayfs does for a copy-up: its events are named where it lands
+os.mkdir(t + '/home/tmpdir'); os.chmod(t + '/home/tmpdir', 0o700); os.rename(t + '/home/tmpdir', t + '/home/landed')
 open(t + '/home/__proto__', 'w').write('y'); open(t + '/ovl0/work/tmp', 'w').write('z'); open(t + '/ovl0/upper/in', 'w').write('w')
 os.rename(t + '/home/new', t + '/home/moved'); open(t + '/home/moved/deep/g', 'w').write('g')
 time.sleep(0.3); print(json.dumps(r.finish()))
@@ -144,8 +146,10 @@ time.sleep(0.3); print(json.dumps(r.finish()))
         got = json.loads(rec.stdout)['writes']
     except ValueError:
         got = {'error': rec.stderr[-400:]}
-    check('write record: finding 3: a file made and removed in a dir made a moment before is recorded',
-          'create' in got.get('home/new/deep/f', []) and 'delete' in got.get('home/new/deep/f', []), got)
+    check('write record: finding 3: a file made and removed in a dir made a moment before is recorded (by its dir\'s last path)',
+          'create' in got.get('home/moved/deep/f', []) and 'delete' in got.get('home/moved/deep/f', []), got)
+    check('write record: round 3: a dir made, changed and moved at once has its change at the path it landed at, never unresolved',
+          'attrib' in got.get('home/landed', []) and not any(k.startswith('?') for k in got), got)
     check('write record: __proto__, a write into an input (disk0), a moved dir\'s new path; the overlay work dir left out',
           'home/__proto__' in got and 'disk0/in' in got and 'home/moved/deep/g' in got and not any('work' in k for k in got), got)
     # The stand-in npm, as a user without privileges, from a read-only store (dirs 555, as the frozen store's

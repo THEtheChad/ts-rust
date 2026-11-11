@@ -21,10 +21,13 @@ Paths are relative to the storage: `home/<rel>` and `disk<k>/<rel>` (the upper d
 write into the server's inputs); the overlay's own work dir is left out (overlayfs's copy-up names there
 come from a counter). A dir's events name it by its file handle; the recorder maps handles to paths as
 dirs are made (name_to_handle_at; open_by_handle_at is refused in a user namespace). An event in a dir
-already gone when its event is read cannot be named (a temp dir made and removed at once): it is
-`?<nonce>.<n>/<name>`, n counting such events and the nonce new in every run, so no two such paths are
+never seen at any path cannot be named (a temp dir made and removed before the reader read its events):
+it is `?<nonce>.<n>/<name>`, n one per such dir and the nonce new in every run, so no two such paths are
 ever the same, in one run or across runs, and each is a path no other run has (lane H8 round 3,
-finding 1: `?/<name>` made writes to A/f and B/f one path). Never dropped, never matched.
+finding 1: `?/<name>` made writes to A/f and B/f one path). Never dropped, never matched. Every other
+event is named by its dir's last known path when the record ends, whatever the reader's timing: a dir
+overlayfs makes in its work dir and moves into the upper dir at once (a copy-up) is learned where it
+lands, and its earlier events are named there too.
 """
 import ctypes
 import hashlib
@@ -192,7 +195,7 @@ class Recorder:
         for d, subdirs, _ in os.walk(root):
             self._learn(os.path.relpath(d, root) if d != root else '')
         self.writes, self.overflow, self.stop, self.thread = {}, False, threading.Event(), None
-        self.nonce, self.unresolved = os.urandom(6).hex(), 0
+        self.nonce, self.events = os.urandom(6).hex(), []
         self.lock = threading.Lock()
 
     def _handle(self, rel):
@@ -241,19 +244,30 @@ class Recorder:
             off += ev_len
 
     def _event(self, mask, handle, name):
+        """One event: learn a dir it makes (by its path now, so a dir made in the overlay's work dir and moved
+        at once into the upper dir is learned where it lands), and keep it by its dir's handle; finish()
+        names every event by its dir's last known path (lane H8 round 3: an event read before its dir is
+        learned is then still named, whatever the reader's timing)."""
         parent = self.dirs.get(handle)
-        if parent is None:
-            self.unresolved += 1
-            rel = f'?{self.nonce}.{self.unresolved}/{name}'
-        else:
-            rel = parent if name == '.' else (f'{parent}/{name}' if parent else name)
-            if mask & FAN_ONDIR and mask & (FAN_CREATE | FAN_MOVED_TO) and name != '.':
-                self._learn(rel)
-        key = rel if parent is None else self._name(rel)
-        if key is None:
-            return
+        if parent is not None and mask & FAN_ONDIR and mask & (FAN_CREATE | FAN_MOVED_TO) and name != '.':
+            self._learn(f'{parent}/{name}' if parent else name)
         ops = {v for k, v in OPS.items() if mask & k}
         if ops:
+            self.events.append((handle, name, ops))
+
+    def _resolve(self):
+        """Every event by its dir's last known path. A dir never seen at any path (made and removed before
+        the reader read its events) gets `?<nonce>.<n>`, n one per such dir: never another path's name."""
+        unknown = {}
+        for handle, name, ops in self.events:
+            parent = self.dirs.get(handle)
+            if parent is None:
+                n = unknown.setdefault(handle, len(unknown) + 1)
+                key = f'?{self.nonce}.{n}' + ('' if name == '.' else f'/{name}')
+            else:
+                key = self._name(parent if name == '.' else (f'{parent}/{name}' if parent else name))
+                if key is None:
+                    continue
             self.writes.setdefault(key, set()).update(ops)
 
     def _read(self):
@@ -282,4 +296,5 @@ class Recorder:
             self.thread.join()
         self._read()
         os.close(self.fd)
+        self._resolve()
         return {'writes': {k: sorted(v) for k, v in sorted(self.writes.items())}, 'overflow': self.overflow}

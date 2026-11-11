@@ -2638,7 +2638,19 @@ run judged with all of it (`runs/h8r2-lsp-fill-2`, 676 s).
   Round 1's `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly
   the calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
 
+**Round 3's refill** (its keyed sources changed: the init and its storage module, the scripts, the
+stand-in npm): the same plan under the heavy-run rule, 02:50 to 03:43 UTC (`runs/h8r3-lsp-fill-{1,2}` and
+`runs/h8r3-lsp-refill-*`). fill-1 and fill-2 each 2,681 MATCH and 29 GO-BROKEN: every base item has its
+base status, the GO-BROKEN set is the base's, and the 52 new items all MATCH; no DIFF in any run of it. The
+variant records against the base's: the base's records hold 2,645 requests, every one present in round
+3's; the unstable request sets are unchanged in every session (hono-f12-p6 23, umami-f12-p6 5,
+watch-hono-f12 1, others 0); the answer-hash sets are identical on all 2,616 stable requests and on 4 of
+the 29 unstable ones, and differ on the other 25 (Go's racing orders, as in round 2); no new request
+(initialize, messages, per-path writes) varied in any fill. fill-2's lsp tier took 289 s.
+
 ### Gate run
+
+Round 3: see "Round 3 gate run" below. Round 2's:
 
 `parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref t3/harden-lsp-parity-harness`
 (harness `b64de20d5`; base `runs/b2-29e23ede3-full`), `runs/h8r2-head-865385add-full`, 23 min (01:31 to
