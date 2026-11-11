@@ -215,9 +215,96 @@ def canon(value):
     return json.dumps(value, sort_keys=True)
 
 
+_DECODER = json.JSONDecoder()
+_WS = ' \t\n\r'
+
+
+def _members(text, i):
+    """[(key, start, end)] of the members of the JSON object at text[i] ('{'), each member's span from its
+    key's opening quote to the end of its value, and the index after the object's '}'."""
+    members, i = [], i + 1
+    while True:
+        while text[i] in _WS:
+            i += 1
+        if text[i] == '}':
+            return members, i + 1
+        if members:
+            if text[i] != ',':
+                raise ValueError('expected , in an object')
+            i += 1
+            while text[i] in _WS:
+                i += 1
+        key, end = _DECODER.raw_decode(text, i)
+        start, j = i, end
+        while text[j] in _WS:
+            j += 1
+        if text[j] != ':':
+            raise ValueError('expected : in an object')
+        j += 1
+        while text[j] in _WS:
+            j += 1
+        _, i = _DECODER.raw_decode(text, j)
+        members.append((key, start, i))
+
+
+def _member(text, i, key):
+    """(start, end) of the value of member `key` of the object at text[i], or None."""
+    if text[i] != '{':
+        return None
+    for k, start, end in _members(text, i)[0]:
+        if k == key:
+            j = _DECODER.raw_decode(text, start)[1]
+            while text[j] in _WS + ':':
+                j += 1
+            return j, end
+    return None
+
+
+def sort_changed_projects(raw):
+    """An answer's raw message with the members of result.changes.changedProjects in key order, and every
+    other byte as it was: the members' own text, every other object and every array keep their order.
+    Go writes that map (api/proto.go, project.ID keys) in random order, so an updateSnapshot that
+    changes two projects has two byte forms in Go's own runs; nothing else of an answer is reordered.
+    A message without that member, or one this reader cannot walk, is returned as it was."""
+    if '"changedProjects"' not in raw:
+        return raw
+    try:
+        span = (0, len(raw))
+        for key in ('result', 'changes', 'changedProjects'):
+            i = span[0]
+            while raw[i] in _WS:
+                i += 1
+            span = _member(raw, i, key)
+            if span is None:
+                return raw
+        start, end = span
+        if raw[start] != '{':
+            return raw
+        members, after = _members(raw, start)
+        if after != end or len(members) < 2:
+            return raw
+        gaps = [raw[start + 1:members[0][1]], raw[members[-1][2]:end - 1]]
+        gaps += [raw[x[2]:y[1]] for x, y in zip(members, members[1:])]
+        if gaps != ['', ''] + [','] * (len(members) - 1):
+            return raw  # not Go's compact form: leave it
+        parts = sorted((k, raw[a:b]) for k, a, b in members)
+        if len({k for k, _ in parts}) != len(parts):
+            return raw
+        return raw[:start + 1] + ','.join(text for _, text in parts) + raw[end - 1:]
+    except (ValueError, IndexError):
+        return raw
+
+
 def answers(t):
-    """Every request as sent and its answer's raw message, and how the session ended."""
-    return {'steps': [{k: s[k] for k in ('method', 'params', 'answer', 'failure') if k in s} for s in t['steps']],
+    """Every request as sent and its answer's raw message (the changedProjects map in key order,
+    sort_changed_projects), and how the session ended."""
+    steps = []
+    for s in t['steps']:
+        step = {k: s[k] for k in ('method', 'params', 'answer', 'failure') if k in s}
+        if isinstance(step.get('answer'), str):
+            step['answer'] = sort_changed_projects(step['answer'])
+        steps.append(step)
+    return {'steps': steps,
             'exit': t['exit'], 'forced': t['forced'], 'survivors': t['survivors'], 'reaped': t.get('reaped'), 'failure': t['failure']}
 
 
