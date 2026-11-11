@@ -347,3 +347,142 @@ fn overlay_fs_file_system() {
     assert!(root_entries.directories.contains(&"virtual".to_string()));
     assert!(!root_entries.files.contains(&"virtual".to_string()));
 }
+
+// Lane B5 (B3 risk 14): Go overlayFS.GetAccessibleEntries (overlayfs.go:308)
+// drops a host entry or an earlier child whose name equals an overlay child
+// by `fs.caseSensitivity.GetComparer()`, which folds with `unicode.ToLower`
+// rune by rune: on a case-insensitive host "İ" (U+0130) folds to "i". The
+// overlay keys are `PathKey`s, whose `ToFileNameLowerCase` keeps "İ" and keeps
+// the case of an encoded dynamic name, so such names are separate children.
+// Dotless "ı" (U+0131) folds to neither "i" nor "I". Go ranges over the
+// directory map, so a directory with two children that fold together lists
+// either one; a stable answer must be one of Go's. Go answers from
+// `TestB5OverlayProbe` at 3e9236361fa9, 500 runs each
+// (`scripts/perf-rearch/b5_go_probes.sh`).
+#[test]
+fn overlay_entries_fold_names_like_go() {
+    type Case = (
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+        &'static [(&'static str, &'static str)],
+        &'static [&'static [&'static str]],
+    );
+    const UNTITLED: &str = "^/~ts-uri~/untitled/ts-nul-authority/";
+    // (name, host files, overlays: file names or URIs, Go's keys of the
+    // overlays (file name, PathKey), Go's listings of the directory)
+    let cases: &[Case] = &[
+        (
+            "disk overlay İ over host i",
+            &["/dir/i.ts", "/dir/b.ts"],
+            &["/dir/İ.ts"],
+            &[("/dir/İ.ts", "/dir/İ.ts")],
+            &[&["b.ts", "İ.ts"]],
+        ),
+        (
+            "disk overlays İ and i",
+            &["/dir/b.ts"],
+            &["/dir/İ.ts", "/dir/i.ts"],
+            &[("/dir/İ.ts", "/dir/İ.ts"), ("/dir/i.ts", "/dir/i.ts")],
+            &[&["b.ts", "i.ts"], &["b.ts", "İ.ts"]],
+        ),
+        (
+            "disk overlay ı over host i",
+            &["/dir/i.ts"],
+            &["/dir/ı.ts"],
+            &[("/dir/ı.ts", "/dir/ı.ts")],
+            &[&["i.ts", "ı.ts"]],
+        ),
+        (
+            "disk overlay I over host i",
+            &["/dir/i.ts"],
+            &["/dir/I.ts"],
+            &[("/dir/I.ts", "/dir/i.ts")],
+            &[&["I.ts"]],
+        ),
+        (
+            "untitled Untitled-1 and untitled-1",
+            &["/x.ts"],
+            &["untitled:Untitled-1", "untitled:untitled-1"],
+            &[
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/Untitled-1",
+                    "^/~ts-uri~/untitled/ts-nul-authority/Untitled-1",
+                ),
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/untitled-1",
+                    "^/~ts-uri~/untitled/ts-nul-authority/untitled-1",
+                ),
+            ],
+            &[&["Untitled-1"], &["untitled-1"]],
+        ),
+        (
+            "untitled İ and i",
+            &["/x.ts"],
+            &["untitled:İ.ts", "untitled:i.ts"],
+            &[
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/İ.ts",
+                    "^/~ts-uri~/untitled/ts-nul-authority/İ.ts",
+                ),
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/i.ts",
+                    "^/~ts-uri~/untitled/ts-nul-authority/i.ts",
+                ),
+            ],
+            &[&["i.ts"], &["İ.ts"]],
+        ),
+        (
+            "untitled ı and i",
+            &["/x.ts"],
+            &["untitled:ı.ts", "untitled:i.ts"],
+            &[
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/ı.ts",
+                    "^/~ts-uri~/untitled/ts-nul-authority/ı.ts",
+                ),
+                (
+                    "^/~ts-uri~/untitled/ts-nul-authority/i.ts",
+                    "^/~ts-uri~/untitled/ts-nul-authority/i.ts",
+                ),
+            ],
+            &[&["i.ts", "ı.ts"], &["ı.ts", "i.ts"]],
+        ),
+    ];
+    for &(name, host_files, overlay_files, keys, listings) in cases {
+        let host = vfstest::from_map(
+            host_files.iter().map(|f| (*f, "")),
+            false, /* useCaseSensitiveFileNames */
+        );
+        let mut overlays: IndexMap<tspath::Path, Rc<Overlay>> = IndexMap::default();
+        let mut directory = "/dir".to_string();
+        for (file, &(want_file_name, want_key)) in overlay_files.iter().zip(keys) {
+            let file_name = if file.contains(':') {
+                directory = UNTITLED.to_string();
+                uri(file).file_name()
+            } else {
+                file.to_string()
+            };
+            let key = tspath::to_path(&file_name, "", false);
+            assert_eq!(file_name, want_file_name, "{name}: file name");
+            assert_eq!(key.0, want_key, "{name}: key of {file_name}");
+            overlays.insert(
+                key,
+                Rc::new(new_overlay(&file_name, "x".to_string(), 1, ScriptKind::TS)),
+            );
+        }
+        let file_system = new_overlay_fs(
+            host,
+            overlays,
+            lsproto::PositionEncodingKind::UTF16,
+            Rc::new(|file_name: &str| tspath::to_path(file_name, "", false)),
+        );
+        let entries = Fs::get_accessible_entries(&*file_system, &directory);
+        assert!(entries.directories.is_empty(), "{name}: {entries:?}");
+        assert!(
+            listings.iter().any(|files| entries.files == *files),
+            "{name}: files {:?}, Go lists one of {listings:?}",
+            entries.files
+        );
+    }
+}

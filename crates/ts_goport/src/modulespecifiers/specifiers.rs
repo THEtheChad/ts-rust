@@ -2055,10 +2055,13 @@ mod tests {
     use crate::modulespecifiers::symlinks::KnownSymlinks;
     use std::sync::Arc;
 
-    /// A host that answers only the case sensitivity and the current
-    /// directory, the reads of the "exports" directory match.
+    /// A host that answers only the case sensitivity, the current
+    /// directory and the redirect targets: the reads of the "exports"
+    /// directory match and of the module path order. It has no symlink
+    /// cache and no project references.
     struct CaseHost {
         use_case_sensitive_file_names: bool,
+        redirect_targets: Vec<String>,
     }
 
     impl crate::frontend::outputpaths::OutputPathsHost for CaseHost {
@@ -2083,7 +2086,7 @@ mod tests {
 
     impl ModuleSpecifierGenerationHost for CaseHost {
         fn get_symlink_cache(&self) -> Option<Rc<KnownSymlinks>> {
-            unreachable!()
+            None
         }
         fn common_source_directory(&self) -> String {
             unreachable!()
@@ -2109,10 +2112,10 @@ mod tests {
             &self,
             _path: &tspath::Path,
         ) -> Option<Arc<SourceOutputAndProjectReference>> {
-            unreachable!()
+            None
         }
         fn get_redirect_targets(&self, _path: &tspath::Path) -> Vec<String> {
-            unreachable!()
+            self.redirect_targets.clone()
         }
         fn get_source_of_project_reference_if_output_included(&self, _file: Node) -> String {
             unreachable!()
@@ -2159,6 +2162,7 @@ mod tests {
     fn exports_directory_target_tests_rooted_paths_like_go() {
         let host = CaseHost {
             use_case_sensitive_file_names: false,
+            redirect_targets: Vec::new(),
         };
         for (target, want) in [
             ("./\u{17f}rc/", ""),
@@ -2215,5 +2219,42 @@ mod tests {
             ),
             "extensionless package entrypoint should match the declaration file"
         );
+    }
+
+    // Lane B5 (B3 risk 8): Go getAllModulePathsWorker sorts the paths of a
+    // directory with comparePathsByRedirect (specifiers.go:228), whose last
+    // key is `CaseSensitivity.CompareFilePaths`. Two encoded dynamic names
+    // that differ only in case keep their case there, so "PKG" comes first
+    // whichever of the two is the imported file and whichever host. Go
+    // answers from `TestB5ModuleSpecifierProbe` at 3e9236361fa9 (200 runs
+    // each, one order; `scripts/perf-rearch/b5_go_probes.sh`).
+    #[test]
+    fn dynamic_redirect_module_path_order_like_go() {
+        let root = "^/~ts-uri~/mem/auth/";
+        let want = [
+            format!("{root}node_modules/PKG/index.d.ts"),
+            format!("{root}node_modules/pkg/index.d.ts"),
+        ];
+        for use_case_sensitive_file_names in [false, true] {
+            for (imported, redirect) in [("pkg", "PKG"), ("PKG", "pkg")] {
+                let host = CaseHost {
+                    use_case_sensitive_file_names,
+                    redirect_targets: vec![format!("{root}node_modules/{redirect}/index.d.ts")],
+                };
+                let paths = get_all_module_paths(
+                    &get_info(&format!("{root}src/main.ts"), &host),
+                    &format!("{root}node_modules/{imported}/index.d.ts"),
+                    &host,
+                    &CompilerOptions::default(),
+                    &UserPreferences::default(),
+                    ModuleSpecifierOptions::default(),
+                );
+                let names: Vec<&str> = paths.iter().map(|p| p.file_name.as_str()).collect();
+                assert_eq!(
+                    names, want,
+                    "imported {imported}, case-sensitive {use_case_sensitive_file_names}"
+                );
+            }
+        }
     }
 }
