@@ -86,6 +86,33 @@ H8 owns `vendor/lspdiff`, so this lane does not commit the edit there. The patch
 `SESSION_SOURCES` (client.mjs, scenario.mjs), so it resets the Go evidence of every watch
 scenario: the gate needs a Go fill (`--go-refill`) of them once it is applied.
 
+## Verification (`starve-repro.sh`, 2026-11-10)
+
+H8's harness at `b214cfb3d`, without and with the barrier. Each harness got a private Go cache
+(`B4_GO_CACHE`), filled unstarved. The starved runs pin the server to CPU 7, which 6 busy loops
+share, so the third open takes 1.1 to 3.9 s:
+
+| harness | server (starved) | runs | load refreshes | coalesced (`Delaying`) |
+| --- | --- | --- | --- | --- |
+| base | tsc-rs d46699197 | 10 | 12 ×2, 11 ×7, 10 ×1 | in every short run |
+| base | Go oracle | 4 | 11 ×4 | 1 per run |
+| barrier | Go oracle | 8 | 12 ×8 | none |
+| barrier | tsc-rs d46699197 | 50 | 12 ×50 | none |
+
+The unstarved Go fills sent 12 in all 16 runs. In the barrier runs every other item matched as
+well (55 MATCH, 1 GO-BROKEN `end watch ids` as in H8's runs), except one run in the 50.
+
+A residual race of the same class (the client cannot see the server's work in flight) is still
+open. ATA's first install for a project calls npm twice (`types-registry`, then the typings). On a
+starved CPU, the server's work between those calls (loading the registry, discovery) can take
+longer than `ATA_IDLE_MS`. The npm-idle wait then ends, and the next open's ATA installs the same
+typings again: one extra `@types/jsdom @types/ws` call in the load's npm list (1 of the 50 runs,
+`rs-nondet`). Go would do the same, since its ATA goroutine for the next snapshot does not wait for
+the first one either. Nothing on the LSP stream marks the end of an ATA request. The client turns
+`workDoneProgress` off, Go logs nothing for an install that succeeded, and its progress has a
+display delay of its own. So the fix needs a new signal (for example progress on, waiting for each
+"Installing types" to end) or a longer idle window. That is for H8 or root to choose.
+
 ## The tsc-rs test
 
 `crates/ts_goport/tests/go_baselines/project_lsp/refresh_sequence_test.rs` pins Go's calls for a
