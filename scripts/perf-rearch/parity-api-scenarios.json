@@ -1453,6 +1453,37 @@
      "build": ""
     }
    ]
+  },
+  {
+   "name": "build-symlink-monorepo",
+   "about": "B7 (B3 risk 7, ts#64519): the CLI tier's symlink-monorepo fixture as a disk fixture. b opened with and without preserveSymlinks: the project service uses the sources of its references, so a with preserveSymlinks reaches a's sources through the builder's resolveSymlink (realpathDtsToSource); a scoped package, a nested pnpm symlink, a paths mapping to a's source and an import of a's built d.ts; then the solution built twice (cold, then up to date)",
+   "disk": "@fixture:symlink-monorepo",
+   "openProjects": [
+    "@ROOT@/packages/b/tsconfig.json",
+    "@ROOT@/packages/b/tsconfig.preserve.json"
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "getDeclarationDiagnostics",
+    "emitToString"
+   ],
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
+    }
+   ]
   }
  ]
 }

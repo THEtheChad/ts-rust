@@ -6,9 +6,11 @@ usage: parity_cli.py --rs CMD --out DIR [--go BIN] [--tier quick|full] [--jobs N
 
 --rs is the binary under test, or a command split at spaces (`node .../tsc` for the js mode).
 Projects and configs come from --projects (default parity-projects.json next to this file); a
-project's first existing "dirs" entry is used, and a project with none is SKIP. Each config runs
-the variants below (VARIANTS); quick runs the items the quick manifest names
-(parity-quick-manifest.json "cli", parity_modes.py):
+project's first existing "dirs" entry is used, and a project with none is SKIP. A synthetic project
+names a "fixture" of parity-fixtures.json instead: it is written once to a read-only
+content-addressed dir (parity_inputs.fixture_tree, under the snapshot store's cli-fixtures/), which
+is then its project dir. Each config runs the variants below (VARIANTS); quick runs the items the
+quick manifest names (parity-quick-manifest.json "cli", parity_modes.py):
 
   noemit      -p CFG --noEmit --pretty false
   emit        -p CFG --noEmit false --pretty false   (every written file compared)
@@ -22,6 +24,14 @@ the variants below (VARIANTS); quick runs the items the quick manifest names
   showconfig  --showConfig
   build       -b CFG --verbose --pretty false, run twice (cold, then up to date); only configs
               with "build": true
+
+Opt-in variants run only on the configs whose "variants" list names them (the synthetic fixtures;
+on the real projects their output would be megabytes):
+
+  build-edit     -b CFG --verbose --explainFiles --traceResolution --pretty false, run twice: cold,
+                 then after the config's "edit" ({"file": path from the project dir, "append":
+                 text}: the file with the text appended, written into the overlay's upper dir)
+  explain-trace  -p CFG --noEmit --explainFiles --traceResolution --pretty false
 
 Every side of an item runs on a fresh overlay of the project's snapshot (lane H4: parity_inputs.Inputs,
 a read-only copy of the tree made once per content) mounted at the project's own path (unshare -rm,
@@ -129,7 +139,17 @@ VARIANTS = {
     'pretty': ('plain', ['--noEmit', '--pretty', 'true']),
     'showconfig': ('plain', ['--showConfig']),
     'build': ('build', ['--verbose', '--pretty', 'false']),
+    'build-edit': ('build-edit', ['--verbose', '--explainFiles', '--traceResolution', '--pretty', 'false']),
+    'explain-trace': ('plain', ['--noEmit', '--explainFiles', '--traceResolution', '--pretty', 'false']),
 }
+# Run only on the configs whose "variants" list names them (see the top comment).
+OPT_IN = {'build-edit', 'explain-trace'}
+# The kinds that run twice on one overlay, and the -b kinds.
+TWO_RUNS = ('incr', 'build', 'build-edit')
+BUILD_KINDS = ('build', 'build-edit')
+FIXTURES = HERE / 'parity-fixtures.json'
+FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o555, 0o444
+FIXTURE_MTIME = 978307200  # 2001-01-01: older than anything a build writes
 # -b --verbose starts each message with the wall clock: "06:12:55 PM - " (--pretty false) or
 # "[6:12:55 PM] " (pretty).
 CLOCK_RE = re.compile(rb'^(?:\[\d{1,2}:\d{2}:\d{2}(?: [AP]M)?\] |\d{1,2}:\d{2}:\d{2}(?: [AP]M)? - )', re.M)
@@ -159,11 +179,25 @@ def expand(p):
     return Path(os.path.expanduser(p))
 
 
+def fixture_root(name):
+    """The project dir of the synthetic project `name` of parity-fixtures.json (made when there is
+    none; inputs.SnapshotError when the one there is not exactly the fixture)."""
+    spec = json.loads(FIXTURES.read_text())
+    if set(spec) != {'about', 'fixtures'} or name not in spec['fixtures']:
+        raise ValueError(f'{FIXTURES}: no fixture {name!r} (the top level is exactly {{about, fixtures}})')
+    tree, _ = inputs.fixture_tree(spec['fixtures'][name], inputs.SNAPSHOTS / 'cli-fixtures', FIXTURE_DIR_MODE,
+                                  FIXTURE_FILE_MODE, FIXTURE_MTIME, name)
+    return tree
+
+
 def load_projects(path):
     spec = json.loads(Path(path).read_text())
     out = []
     for p in spec['projects']:
-        root = next((expand(d) for d in p['dirs'] if (expand(d) / p.get('marker', 'package.json')).exists()), None)
+        if 'fixture' in p:
+            root = fixture_root(p['fixture'])
+        else:
+            root = next((expand(d) for d in p['dirs'] if (expand(d) / p.get('marker', 'package.json')).exists()), None)
         out.append({**p, 'root': root})
     return out
 
@@ -239,7 +273,7 @@ class Item:
     def args(self):
         kind, extra = VARIANTS[self.variant]
         cfg = self.config['config']
-        if kind == 'build':
+        if kind in BUILD_KINDS:
             return ['-b', cfg, *extra]
         if kind in ('emit', 'incr'):
             return ['-p', cfg, '--noEmit', 'false', *extra]
@@ -249,7 +283,7 @@ class Item:
         """One side on a fresh overlay: one or two runs (incr, build), each a Run with the files it wrote.
         A two-run side during which the wall clock stepped runs again (see the top comment)."""
         kind = VARIANTS[self.variant][0]
-        if kind not in ('incr', 'build'):
+        if kind not in TWO_RUNS:
             return self.run_side_once(cmd, kind)
         for _ in range(CLOCK_ATTEMPTS):
             before = clock_offset()
@@ -271,9 +305,11 @@ class Item:
         cwd = Path(snap.label) / self.config.get('cwd', '.')
         before = {}
         runs = []
-        for k in range(2 if kind in ('incr', 'build') else 1):
+        for k in range(2 if kind in TWO_RUNS else 1):
             if k:
                 time.sleep(0.02)  # mtime granularity between the cold and the second run
+            if k and kind == 'build-edit':
+                self.edit(snap, upper, work)
             code, out, err, secs = execute([*OVERLAY, str(snap.path), str(upper), str(work), snap.label, str(cwd),
                                             *cmd, *self.args()], self.scratch)
             changed = self.inputs.check(root)
@@ -281,7 +317,7 @@ class Item:
                 raise inputs.SnapshotError(changed)
             if self.variant == 'extdiag':
                 out = mask_stats(out)
-            if kind == 'build':
+            if kind in BUILD_KINDS:
                 out = CLOCK_RE.sub(b'<clock> - ', out)
             now = tree_of(upper)
             runs.append(Run(code, out, err, {f: sha256_file(upper / f) if v[0] >= 0 else 'deleted'
@@ -289,6 +325,19 @@ class Item:
             before = now
         self.attempts.append((cmd, runs))
         return runs
+
+    def edit(self, snap, upper, work):
+        """The config's edit between the two runs of build-edit: the text appended to the file (a path
+        from the project dir) through the overlay, as a user's editor would write it."""
+        edit = self.config['edit']
+        rel = Path(edit['file'])
+        if rel.is_absolute() or '..' in rel.parts:
+            raise ValueError(f'edit {rel}: not a path inside the project')
+        code, _, err, _ = execute([*OVERLAY, str(snap.path), str(upper), str(work), snap.label, snap.label,
+                                   'sh', '-c', 'printf %s "$1" >> "$2"', 'edit', edit['append'], str(rel)],
+                                  self.scratch, timeout=60)
+        if code != 0:
+            raise RuntimeError(f'edit {rel}: exit {code}: {err[-300:]!r}')
 
 
 def clear(d):
@@ -510,7 +559,9 @@ def main():
     for p in projects:
         for c in p['configs']:
             for v, (kind, _) in VARIANTS.items():
-                if kind == 'build' and not c.get('build'):
+                if v == 'build' and not c.get('build'):
+                    continue
+                if v in OPT_IN and v not in c.get('variants', []):
                     continue
                 if v in c.get('skipVariants', []):
                     continue

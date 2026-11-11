@@ -66,7 +66,6 @@ import hashlib
 import json
 import os
 import re
-import stat
 import sys
 import time
 from collections import Counter
@@ -84,6 +83,7 @@ HERE = Path(__file__).resolve().parent
 HOME = Path.home()
 STATE = session.STATE
 SCENARIOS = HERE / 'parity-api-scenarios.json'
+FIXTURES = HERE / 'parity-fixtures.json'  # synthetic projects shared with the CLI tier ("disk": "@fixture:<name>")
 GO = HOME / '.local/bin/tsgo-oracle-3e9236361fa9'
 GO_RUNS = 2
 CACHE_VERSION = 1  # bump when the form of a cached Go session changes
@@ -111,6 +111,19 @@ def _expand_texts(value, texts):
     return value
 
 
+def _expand_fixture(sc, path):
+    """The scenario with a `"disk": "@fixture:<name>"` replaced by that synthetic project of
+    parity-fixtures.json (shared with the CLI tier), so the scenario's key holds its files."""
+    disk = sc.get('disk') if isinstance(sc, dict) else None
+    if not isinstance(disk, str):
+        return sc
+    m = re.fullmatch(r'@fixture:([a-z0-9-]+)', disk)
+    fixtures = json.loads(FIXTURES.read_text()).get('fixtures', {})
+    if not m or m.group(1) not in fixtures:
+        raise ArtifactError(f'{path}: {sc.get("name")}: disk {disk!r} names no fixture of {FIXTURES.name}')
+    return {**sc, 'disk': fixtures[m.group(1)]}
+
+
 def load_scenarios(path=SCENARIOS):
     """[scenario] of the scenarios file, each validated and with its shared texts expanded. Strict: a
     malformed file stops the tier (no scenario runs on a guess)."""
@@ -126,6 +139,7 @@ def load_scenarios(path=SCENARIOS):
     out, seen = [], set()
     for sc in data['scenarios']:
         sc = _expand_texts(sc, texts)
+        sc = _expand_fixture(sc, path)
         try:
             session.validate(sc)
         except session.ScenarioError as e:
@@ -176,54 +190,14 @@ def command_identity(cmd):
 def fixture_snapshot(sc):
     """(dir, content hash) of the scenario's disk fixture as a read-only content-addressed copy, made once
     and checked against the scenario every time (inputs.SnapshotError when it is not exactly that)."""
-    files = sc['disk']
-    h = inputs.json_hash(files)[:24]
-    tree = STATE / 'snapshots/api' / f'{h}-m{session.FIXTURE_DIR_MODE:o}{session.FIXTURE_FILE_MODE:o}' / 'tree'
-    if not tree.exists():
-        tmp = tree.parent / f'tmp-{os.getpid()}-{time.monotonic_ns()}'
-        tmp.mkdir(parents=True)
-        for rel, v in files.items():
-            p = tmp / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(v, dict):
-                os.symlink(v['symlink'], p)
-            else:
-                p.write_text(v)
-        for top, dirs, fs in os.walk(tmp, topdown=False):
-            for x in fs + dirs:
-                q = os.path.join(top, x)
-                if not os.path.islink(q):
-                    os.chmod(q, session.FIXTURE_DIR_MODE if os.path.isdir(q) else session.FIXTURE_FILE_MODE)
-                os.utime(q, (FIXED_MTIME, FIXED_MTIME), follow_symlinks=False)
-        os.chmod(tmp, session.FIXTURE_DIR_MODE)
-        os.utime(tmp, (FIXED_MTIME, FIXED_MTIME))
-        try:
-            tmp.rename(tree)
-        except OSError:  # another tier made it at the same time
-            inputs.remove_tree(tmp)
-    check_fixture(tree, files)
-    return tree, h
+    return inputs.fixture_tree(sc['disk'], STATE / 'snapshots/api', session.FIXTURE_DIR_MODE,
+                               session.FIXTURE_FILE_MODE, FIXED_MTIME)
 
 
 def check_fixture(tree, files):
     """Raises inputs.SnapshotError unless tree holds exactly files (bytes, link targets, names, the fixture
     modes, the fixed mtime)."""
-    seen = {}
-    for top, dirs, fs in os.walk(tree):
-        for x in dirs + fs:
-            p = os.path.join(top, x)
-            st = os.lstat(p)
-            link = stat.S_ISLNK(st.st_mode)
-            want = None if link else session.FIXTURE_DIR_MODE if stat.S_ISDIR(st.st_mode) else session.FIXTURE_FILE_MODE
-            if (want is not None and stat.S_IMODE(st.st_mode) != want) or int(st.st_mtime) != FIXED_MTIME:
-                raise inputs.SnapshotError(f'{p}: another mode or mtime than the fixture\'s')
-            if link:
-                seen[os.path.relpath(p, tree)] = {'symlink': os.readlink(p)}
-            elif not stat.S_ISDIR(st.st_mode):
-                seen[os.path.relpath(p, tree)] = Path(p).read_bytes() if stat.S_ISREG(st.st_mode) else None
-    want = {k: v if isinstance(v, dict) else v.encode() for k, v in files.items()}
-    if seen != want:
-        raise inputs.SnapshotError(f'{tree} is not its scenario\'s fixture: {sorted(set(seen) ^ set(want))[:5] or "bytes differ"}')
+    inputs.check_fixture(tree, files, session.FIXTURE_DIR_MODE, session.FIXTURE_FILE_MODE, FIXED_MTIME)
 
 
 def material(sc, fixture_hash, ancestors, go_sha):
@@ -514,6 +488,7 @@ def find_scenario(spec):
         sc = json.loads(Path(spec).read_text())
         if set(sc) == {'about', 'version', 'texts', 'scenarios'}:  # a scenarios file of one scenario
             sc = _expand_texts(sc['scenarios'][0], sc['texts'])
+        sc = _expand_fixture(sc, spec)
         session.validate(sc)
         return sc
     found = [s for s in load_scenarios() if s['name'] == spec]
