@@ -364,10 +364,8 @@ impl NewProgram {
     /// The directory that the program's paths resolve against: the config
     /// file's directory, or the current directory without a config file
     /// (`ParsedCommandLine.BaseDirectory()`, which is
-    /// `ParsedCommandLine::get_current_directory` here).
-    // PORT: a hand-built `ParsedCommandLine` with no current directory (the
-    // compiler test harness until its ts#64159 part, harnessutil.go:208)
-    // gives the host's current directory, as N did.
+    /// `ParsedCommandLine::get_current_directory` here; see
+    /// `config_base_directory`).
     pub fn base_directory(&self) -> String {
         config_base_directory(&self.opts.config, &**self.host())
     }

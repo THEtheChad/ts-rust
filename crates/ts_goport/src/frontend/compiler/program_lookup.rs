@@ -1013,7 +1013,7 @@ pub fn source_file_may_be_emitted(
     json_file_may_be_emitted(
         source_file.file_name(),
         options,
-        &host.get_current_directory(),
+        &host.base_directory(),
         host.use_case_sensitive_file_names(),
     )
 }
@@ -1028,10 +1028,11 @@ pub fn source_file_may_be_emitted(
 // under it keeps its name and is not emitted. The comparison is
 // `CaseSensitivity.CompareFilePaths`: an encoded dynamic name compares
 // case-sensitively.
+// `base_directory` is the host's `BaseDirectory()` (Go emitter.go:525).
 pub fn json_file_may_be_emitted(
     file_name: &str,
     options: &CompilerOptions,
-    current_directory: &str,
+    base_directory: &str,
     use_case_sensitive_file_names: bool,
 ) -> bool {
     // Json file is not emitted if outDir is not specified
@@ -1045,16 +1046,16 @@ pub fn json_file_may_be_emitted(
             &get_common_source_directory(
                 options,
                 Vec::new,
-                current_directory,
+                base_directory,
                 use_case_sensitive_file_names,
                 None,
             ),
-            current_directory,
+            base_directory,
         );
         let output_path = get_source_file_path_in_new_dir_worker(
             file_name,
             &options.out_dir,
-            current_directory,
+            base_directory,
             &common_dir,
             use_case_sensitive_file_names,
         );

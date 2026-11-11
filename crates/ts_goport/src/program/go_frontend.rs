@@ -1166,6 +1166,7 @@ fn build_program(
     drop(previous);
     let program_state = ProgramState {
         cwd: intern_program_str(&cwd),
+        base_directory: intern_program_str(&np.base_directory()),
         use_case_sensitive_file_names,
         common_source_directory: Some(common_source_directory),
         alias_resolver: false,
