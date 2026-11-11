@@ -2559,70 +2559,81 @@ them, lspdiff alone): "before" is `--e2e-only --harness <git archive 06a4344b9>`
 | 7 | a timing variation exempts unrelated home damage forever: storage and history were one answer, and a Go variant exempted all of it (`lspdiff.mjs:388`, `:491`) | two items, judged path by path: storage strict to this fill's Go runs; writes exempt only on the paths where Go varies, recorded per path | her synthetic case: a Go that writes P in about half of its runs, a tsc-rs that writes P and Q, now and in a later fill through the record; control: P alone | GO-BROKEN (her `home-variants`, `home-prior-variants`); the controls MATCH or fail | DIFF on Q only; P alone GO-BROKEN; storage P DIFF against a fill without it |
 | cost | the lsp tier 460 s → 641 s (round 1) | `scan` plus plain `JSON.parse`; `rawNumbers` marks | (below) | | |
 
-The round 1 controls pass on this head (`H8 SELFTEST OK`: 21 unit, 38 end to end); the ones on the home
+The round 1 controls pass on this head (`H8 SELFTEST OK`: 21 unit, 39 end to end); the ones on the home
 read the new items (`session storage` for a persistent write, `session writes` for a transient one).
 
 ### Go and JS evidence
 
-Every lsp key changed (the sources, `CACHE_VERSION` 4), so every Go fill and Go-variant record started
-empty. The refill, on `tsgo-head-865385add-rel` (the rebuilt head; B2's crates), ran under the gate
-lock (`scratch/h8/fill.sh`): a full fill (`runs/h8b-lsp-fill-1`, 805 s, Go 4 runs per session, 8 on
-hono and query), then two `--go-refill` fills of each session where Go races (hono-f12-p6,
-umami-f12-p6, second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12;
-`runs/h8b-lsp-refill-<session>-<k>`), then a full run judged with all of it (`runs/h8b-lsp-fill-2`,
-592 s; the end of it overlapped the machine's task-cap incident of 13:01 to 13:21 CST, and root checked
-it against the runs before: no fork error, the same results).
+Round 1's refill is kept as it was (`runs/h8b-lsp-fill-{1,2}` and the refills; the end of it overlapped the
+machine's task-cap incident of 13:01 to 13:21 CST, and root checked it: no fork error, the same results).
+Round 2 changed keyed sources (the init and its storage module, `json.mjs`, the stand-in npm, the
+scripts; `CACHE_VERSION` 5), so every lsp Go fill and variant record started empty again, and this is
+the one refill of round 2: on `tsgo-head-865385add-rel` (the head's crates; B2), under the heavy-run rule
+(`flock ~/.cache/ts-rust-heavy.lock`, `app-batch.slice`, `TasksMax=24000`, then the gate's lock;
+`scratch/h8/fill.sh`), 23:56 to 00:54 UTC: a full fill (`runs/h8r2-lsp-fill-1`, 626 s, Go 4 runs per
+session, 8 on hono and query), two `--go-refill` fills of each session where Go races (hono-f12-p6,
+umami-f12-p6, second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12), then a full
+run judged with all of it (`runs/h8r2-lsp-fill-2`, 676 s).
 
-- **fill-2 against `base-current`** (`runs/b2-29e23ede3-full`, 2,629 MATCH and 29 GO-BROKEN): 2,655
-  MATCH and 29 GO-BROKEN. Every base item has the same status, and the GO-BROKEN set is the base's (hono
-  23, umami 5, watch-hono 1). The 26 more MATCH are the new items, all MATCH: `initialize` and `session
-  home` of each of the 13 sessions (tsc-rs's initialize answer and home equal Go's everywhere).
-- **The first fill alone** had `hono-f12-p6/0295` references MATCH (GO-BROKEN in the base: one Go run
-  in 8 gave another order); with the refills it is GO-BROKEN again. No other item moved.
-- **Go-variant records:** in every session the requests with more than one recorded Go answer are the
-  same as in the base's records (hono-f12-p6 23, umami-f12-p6 5, watch-hono-f12 1, all others 0). Each
-  record has two more requests (the initialize answer and the home); neither varied in any fill. No
-  session's Go answers vary in a new way, and none stopped varying.
+- **Against `base-current`** (`runs/b2-29e23ede3-full`, 2,629 MATCH and 29 GO-BROKEN): fill-1 2,681
+  MATCH and 29 GO-BROKEN; every base item has its base status, the GO-BROKEN set is the base's (hono 23,
+  umami 5, watch-hono 1), and the 52 more items are the new ones, all MATCH (`initialize`, `session
+  messages`, `session storage` and `session writes` of each of the 13 sessions: tsc-rs's initialize
+  answer, its messages through EOF, its storage and every write it made equal Go's everywhere).
+- **One DIFF in fill-2, not in any other run:** `watch-hono-f12/0016 load server messages`, rs-schedule:
+  tsc-rs's run with `GOPORT_PARSE_THREADS=1` sent one `workspace/diagnostic/refresh` fewer at the load
+  checkpoint than its run 1 (two refreshes after ATA's two installs were one). Go's 8 runs agreed; the
+  same session was MATCH in fill-1, both refills and the gate. A timing-dependent coalescing of refreshes
+  in tsc-rs, seen once in 4 runs of the session (12 tsc-rs runs); not this lane's code, and not excused.
+- **Go-variant records** (round 2 against the base's): the unstable request sets (requests with more
+  than one recorded Go answer) are unchanged in every session: hono-f12-p6 23, umami-f12-p6 5,
+  watch-hono-f12 1, every other session 0. The answer-hash sets are identical on every stable request
+  (2,620 common requests); on the 25 unstable ones (hono 19 of its 23, umami 5, watch-hono 1) they differ:
+  the base's records hold the answer orders of many more fills (32 against 5 on hono), and Go's races give
+  other orders in each fill, so neither set is a subset of the other there (round 2 holds 24 orders of a
+  hono `references` answer where the base holds 16). The new requests (the initialize answer, the
+  messages, and one key per written path: 171 on watch-ts-pattern-f12, 1,842 on watch-hono-f12, ATA's
+  typings) never varied in any fill.
 - **JS:** the JS keys changed too. No session had a DIFF of a refereed kind, so no JS replay was needed.
-  `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly the
-  calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
+  Round 1's `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly
+  the calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
 
 ### Gate run
 
 `parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref t3/harden-lsp-parity-harness`
-(harness `31c3e1d44`; base `runs/b2-29e23ede3-full`), `runs/h8-head-865385add-full`, 35 min (22:26 to
-23:01 UTC, load 8 to 50), under the heavy-run lock: **PARITY OK**. 187,337 items compared (185,606 base
-items a full run must have), 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not good, 0
-crashes on good items, 36 grandfathered (the fuzz entries, exactly as pinned), 0 stale, 0 recovered,
-none newly good by a referee. cli 170 MATCH; tests 140,001 PASS, 1,731 IGNORED, 1 FLAKY
-(`project_lsp::resolveahead_test::load_view::a_view_held_by_a_worker_goes_when_the_worker_returns`,
-failed, then passed alone); lsp 2,655 MATCH, 29 GO-BROKEN (the base's 29; the 26 new items MATCH); api
-49 MATCH; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus
-12,727 MATCH.
+(harness `b64de20d5`; base `runs/b2-29e23ede3-full`), `runs/h8r2-head-865385add-full`, 23 min (01:31 to
+01:54 UTC, load 1 to 16), under the heavy-run rule: **PARITY OK**. 187,337 base items compared (185,606 a
+full run must have), 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not good (the 52 new lsp
+items all MATCH), 0 crashes on good items, 36 grandfathered (the fuzz entries, exactly as pinned), 0
+stale, 0 recovered, none newly good by a referee. cli 170 MATCH; tests 140,001 PASS, 1,731 IGNORED, 1
+FLAKY (`tsctests::contentmapper_watch::content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error`,
+failed, then passed alone); lsp 2,681 MATCH, 29 GO-BROKEN (the base's 29); api 49 MATCH; fuzz 29,955
+MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12,727 MATCH. Round 1's gate
+(`runs/h8-head-865385add-full`, harness `31c3e1d44`) was PARITY OK too.
 
 ### Cost
 
-| | base (`b2-29e23ede3-full`) | H8 (`h8-head-865385add-full`) |
-|---|---|---|
-| lsp tier wall | 460 s | 641 s |
-| of it: tsc-rs's own runs, summed over sessions | 1,046 s | 978 s |
-| umami-f12-p6 (the longest session, so the tier's wall) | 434 s (tsc-rs 322 s) | 613 s (tsc-rs 299 s) |
-| any other session | 14 to 114 s | the same within 13 s, most a little less |
-| a server start and end (`/bin/true` under each sandbox, 20 runs) | 9.7 ms | 47.4 ms |
+| | base (`b2-29e23ede3-full`) | round 1 (`h8-head-865385add-full`) | round 2 (`h8r2-head-865385add-full`) |
+|---|---|---|---|
+| lsp tier wall | 460 s | 641 s | 235 s |
+| tsc-rs's own runs, summed over sessions | 1,046 s | 978 s | 733 s |
+| lspdiff's own time on umami-f12-p6 (session minus tsc-rs) | 112 s | 314 s | 44 s |
+| lspdiff's own time on any other session | 0.1 to 14 s | about the same | 0 to 3 s |
+| a server start and end (`/bin/true`, 20 runs) | 9.7 ms | 47.4 ms | about the same as round 1 |
 
-- **Where the time goes:** not the servers or the sandbox (+38 ms a process: two more Python starts
-  and the namespaces), but lspdiff's own reading of umami's logs (about 340 MB a run, 4 Go logs from the
-  cache and 8 more from the refills as priors, then every answer normalized per run): `parseKeep`'s
-  reviver makes a JSON parse about 7 times slower (one 340 MB log: 1.1 s plain, 7.7 s with it), and the
-  wire's duplicate-key scan costs about 4.6 s per tsc-rs run of umami. A cheap guard (plain parse where
-  no number could be non-canonical) does not help: 684 of 689 lines of the log have a timing float or a
-  digit run in a string. The fix is a faster number check in `json.mjs`, which is a session source, so
-  it means another full lsp refill; not done here.
-- **The other tiers** do not use this lane's code (api shares the init: 9 s against 5 s, the same 49
-  scenarios). The cli tier took 536 s against 212 s: the inputs' ctimes changed when root made
-  `projects/` read-only, so the snapshot check hashed them again.
-- **Self-tests:** `parity_h8_test.py --unit` a few seconds; the end-to-end controls about 10 minutes
-  (24 lsp sessions on ts-pattern).
+- **Round 2's changes:** `json.mjs` `scan` (one tokenizer pass, plain `JSON.parse` unless a number must
+  keep its text; on umami's 340 MB of answers a run: 2.8 s on the wire against 9.6 s of round 1's reviver
+  and duplicate scan, and 0.7 s against 5 s to read a cached log); lspdiff reads a prior Go log only when
+  the variant record lacks it (umami's 8 prior logs of 340 MB were read and normalized on every run) and
+  normalizes each answer once. The last two are not keyed and changed no Go fill.
+- **The tier's wall** also depends on the load: the gate ran at load 1 to 16, the base at 10 to 44 (its
+  tsc-rs runs of umami took 322 s, these 61 s). lspdiff's own time is the comparable part: lower than
+  the base's in every session.
+- **The sandbox:** +38 ms a server process (two more Python starts, the namespaces, the storage tmpfs and
+  its fanotify mark); the write record and the final listing are the init's, after the server ended.
+- **The other tiers:** the api tier shares the init and its storage (5 s, the same 49 scenarios); the cli,
+  fuzz and corpus tiers do not use this lane's code.
+- **Self-tests:** `parity_h8_test.py --unit` about 10 s; the end-to-end controls about 15 minutes.
 
 ## Files
 
