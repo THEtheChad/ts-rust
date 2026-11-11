@@ -80,61 +80,61 @@ fn test_get_root_length() {
 #[test]
 fn test_path_is_absolute() {
     // POSIX
-    assert_eq!(tspath::path_is_absolute("/path/to/file.ext"), true);
+    assert!(tspath::path_is_absolute("/path/to/file.ext"));
     // DOS
-    assert_eq!(tspath::path_is_absolute("c:/path/to/file.ext"), true);
+    assert!(tspath::path_is_absolute("c:/path/to/file.ext"));
     // URL
-    assert_eq!(tspath::path_is_absolute("file:///path/to/file.ext"), true);
+    assert!(tspath::path_is_absolute("file:///path/to/file.ext"));
     // Non-absolute
-    assert_eq!(tspath::path_is_absolute("path/to/file.ext"), false);
-    assert_eq!(tspath::path_is_absolute("./path/to/file.ext"), false);
+    assert!(!tspath::path_is_absolute("path/to/file.ext"));
+    assert!(!tspath::path_is_absolute("./path/to/file.ext"));
 }
 
 // Go: path_test.go:85 TestIsUrl
 #[test]
 fn test_is_url() {
-    assert_eq!(tspath::is_url("a"), false);
-    assert_eq!(tspath::is_url("/"), false);
-    assert_eq!(tspath::is_url("c:"), false);
-    assert_eq!(tspath::is_url("c:d"), false);
-    assert_eq!(tspath::is_url("c:/"), false);
-    assert_eq!(tspath::is_url("c:\\"), false);
-    assert_eq!(tspath::is_url("//server"), false);
-    assert_eq!(tspath::is_url("//server/share"), false);
-    assert_eq!(tspath::is_url("\\\\server"), false);
-    assert_eq!(tspath::is_url("\\\\server\\share"), false);
+    assert!(!tspath::is_url("a"));
+    assert!(!tspath::is_url("/"));
+    assert!(!tspath::is_url("c:"));
+    assert!(!tspath::is_url("c:d"));
+    assert!(!tspath::is_url("c:/"));
+    assert!(!tspath::is_url("c:\\"));
+    assert!(!tspath::is_url("//server"));
+    assert!(!tspath::is_url("//server/share"));
+    assert!(!tspath::is_url("\\\\server"));
+    assert!(!tspath::is_url("\\\\server\\share"));
 
-    assert_eq!(tspath::is_url("file:///path"), true);
-    assert_eq!(tspath::is_url("file:///c:"), true);
-    assert_eq!(tspath::is_url("file:///c:d"), true);
-    assert_eq!(tspath::is_url("file:///c:/path"), true);
-    assert_eq!(tspath::is_url("file://server"), true);
-    assert_eq!(tspath::is_url("file://server/path"), true);
-    assert_eq!(tspath::is_url("http://server"), true);
-    assert_eq!(tspath::is_url("http://server/path"), true);
+    assert!(tspath::is_url("file:///path"));
+    assert!(tspath::is_url("file:///c:"));
+    assert!(tspath::is_url("file:///c:d"));
+    assert!(tspath::is_url("file:///c:/path"));
+    assert!(tspath::is_url("file://server"));
+    assert!(tspath::is_url("file://server/path"));
+    assert!(tspath::is_url("http://server"));
+    assert!(tspath::is_url("http://server/path"));
 }
 
 // Go: path_test.go:108 TestIsRootedDiskPath
 #[test]
 fn test_is_rooted_disk_path() {
-    assert_eq!(tspath::is_rooted_disk_path("a"), false);
-    assert_eq!(tspath::is_rooted_disk_path("/"), true);
-    assert_eq!(tspath::is_rooted_disk_path("c:"), true);
-    assert_eq!(tspath::is_rooted_disk_path("c:d"), false);
-    assert_eq!(tspath::is_rooted_disk_path("c:/"), true);
-    assert_eq!(tspath::is_rooted_disk_path("c:\\"), true);
-    assert_eq!(tspath::is_rooted_disk_path("//server"), true);
-    assert_eq!(tspath::is_rooted_disk_path("//server/share"), true);
-    assert_eq!(tspath::is_rooted_disk_path("\\\\server"), true);
-    assert_eq!(tspath::is_rooted_disk_path("\\\\server\\share"), true);
-    assert_eq!(tspath::is_rooted_disk_path("file:///path"), false);
-    assert_eq!(tspath::is_rooted_disk_path("file:///c:"), false);
-    assert_eq!(tspath::is_rooted_disk_path("file:///c:d"), false);
-    assert_eq!(tspath::is_rooted_disk_path("file:///c:/path"), false);
-    assert_eq!(tspath::is_rooted_disk_path("file://server"), false);
-    assert_eq!(tspath::is_rooted_disk_path("file://server/path"), false);
-    assert_eq!(tspath::is_rooted_disk_path("http://server"), false);
-    assert_eq!(tspath::is_rooted_disk_path("http://server/path"), false);
+    assert!(!tspath::is_rooted_disk_path("a"));
+    assert!(tspath::is_rooted_disk_path("/"));
+    assert!(tspath::is_rooted_disk_path("c:"));
+    assert!(!tspath::is_rooted_disk_path("c:d"));
+    assert!(tspath::is_rooted_disk_path("c:/"));
+    assert!(tspath::is_rooted_disk_path("c:\\"));
+    assert!(tspath::is_rooted_disk_path("//server"));
+    assert!(tspath::is_rooted_disk_path("//server/share"));
+    assert!(tspath::is_rooted_disk_path("\\\\server"));
+    assert!(tspath::is_rooted_disk_path("\\\\server\\share"));
+    assert!(!tspath::is_rooted_disk_path("file:///path"));
+    assert!(!tspath::is_rooted_disk_path("file:///c:"));
+    assert!(!tspath::is_rooted_disk_path("file:///c:d"));
+    assert!(!tspath::is_rooted_disk_path("file:///c:/path"));
+    assert!(!tspath::is_rooted_disk_path("file://server"));
+    assert!(!tspath::is_rooted_disk_path("file://server/path"));
+    assert!(!tspath::is_rooted_disk_path("http://server"));
+    assert!(!tspath::is_rooted_disk_path("http://server/path"));
 }
 
 // Go: path_test.go:130 TestGetDirectoryPath

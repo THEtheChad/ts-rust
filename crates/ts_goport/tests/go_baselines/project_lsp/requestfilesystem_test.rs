@@ -2907,7 +2907,7 @@ fn windows_paths_resolve_symlinks_case_insensitively() {
 #[test]
 fn case_insensitive_symlink_matching_handles_unicode_byte_length_changes() {
     let base = tracking(from_map(&[], false));
-    let base_fs: Rc<dyn Fs> = base.clone();
+    let base_fs: Rc<dyn Fs> = base;
     let file_system = nil_error(new_request_file_system(
         &RequestFileSystem {
             kind: Kind::FULL,

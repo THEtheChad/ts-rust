@@ -543,7 +543,7 @@ pub fn run_cases(
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)[index] = Some(result);
                     let count = finished.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 500 == 0 {
+                    if count.is_multiple_of(500) {
                         eprintln!("{label}: {count}/{total} cases");
                     }
                 }
@@ -594,7 +594,7 @@ pub fn run_cases(
         std::fs::write(&path, text).unwrap_or_else(|err| panic!("cannot write {path}: {err}"));
     }
 
-    slowest.sort_by(|a, b| b.0.cmp(&a.0));
+    slowest.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (elapsed, key) in slowest.iter().take(5) {
         eprintln!("slow: {:.1}s {key}", elapsed.as_secs_f64());
     }

@@ -604,7 +604,10 @@ fn run_js_reference(texts: &[&str]) -> Option<Vec<Vec<JsTuple>>> {
             }
             ']' => {
                 if depth == 2 {
-                    assert!(nums.len() % 3 == 0, "unexpected node output: {text}");
+                    assert!(
+                        nums.len().is_multiple_of(3),
+                        "unexpected node output: {text}"
+                    );
                     out.push(
                         nums.chunks(3)
                             .map(|c| (c[0] as i32, c[1] as u32, c[2] as u32))

@@ -323,7 +323,7 @@ child_test! {
 		}"#
                 .to_string(),
             ),
-            ("/home/project/node_modules/mapper/package.json".to_string(), mapper.clone()),
+            ("/home/project/node_modules/mapper/package.json".to_string(), mapper),
             ("/home/project/main.ts".to_string(), "export {};".to_string()),
         ];
         // Parallel parsing reads the mapper project identity while another file initializes it.
@@ -1552,7 +1552,7 @@ child_test! {
         );
         for (p, old) in [
             (path(BOX_PATH), old_helpers),
-            (supplemental_path.clone(), old_supplemental_helpers),
+            (supplemental_path, old_supplemental_helpers),
         ] {
             let new = helpers(&new_program, &p);
             assert_ne!(new, old, "{p:?}");

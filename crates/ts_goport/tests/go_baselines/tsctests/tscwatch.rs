@@ -994,11 +994,8 @@ fn no_emit_watch_test_input(
                     sys.write_file_no_error(TSCONFIG, &to_tsconfig("", &option_string));
                 }
             }),
-            new_tsc_edit("no emit run when error", {
-                let option_string = option_string.clone();
-                move |sys: &TestSys| {
-                    sys.write_file_no_error(TSCONFIG, &to_tsconfig(no_emit_opt, &option_string));
-                }
+            new_tsc_edit("no emit run when error", move |sys: &TestSys| {
+                sys.write_file_no_error(TSCONFIG, &to_tsconfig(no_emit_opt, &option_string));
             }),
         ],
         ..Default::default()

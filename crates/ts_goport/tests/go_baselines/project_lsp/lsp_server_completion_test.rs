@@ -247,7 +247,7 @@ child_test! {
             &lsproto::TEXT_DOCUMENT_DID_CHANGE_INFO,
             lsproto::DidChangeTextDocumentParams {
                 text_document: lsproto::VersionedTextDocumentIdentifier {
-                    uri: b_uri.clone(),
+                    uri: b_uri,
                     version: 2,
                 },
                 content_changes: vec![lsproto::TextDocumentContentChangePartialOrWholeDocument {

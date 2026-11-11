@@ -1460,7 +1460,7 @@ child_test! {
         assert!(ok);
         let get_locale_fr = fr.clone();
         *utils.client().get_locale_func.borrow_mut() = Some(Box::new(move || get_locale_fr.clone()));
-        let code_lens_fr = fr.clone();
+        let code_lens_fr = fr;
         *utils.client().refresh_code_lens_func.borrow_mut() = Some(Box::new(move |ctx: &ts_goport::gostd::Context| {
             assert_eq!(locale::from_context(ctx), code_lens_fr);
             Ok(())
@@ -2079,12 +2079,9 @@ child_test! {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let (session, _, reads) = session_with_pending_warm();
         let busy_reads = Arc::new(AtomicUsize::new(0));
-        {
-            let busy_reads = busy_reads.clone();
-            session
-                .warm_auto_import_preempt
-                .set_busy(Box::new(move || busy_reads.fetch_add(1, Ordering::SeqCst) > 0));
-        }
+        session
+            .warm_auto_import_preempt
+            .set_busy(Box::new(move || busy_reads.fetch_add(1, Ordering::SeqCst) > 0));
         let returned = exit_unless_returned_in_60_s();
         session.wait_for_background_tasks();
         returned.store(true, Ordering::SeqCst);

@@ -39,7 +39,7 @@ child_test! {
                     collected
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(params.clone());
+                        .push(params);
                     if is_end {
                         // Signal once; later ends are dropped.
                         let _ = end_tx.try_send(());

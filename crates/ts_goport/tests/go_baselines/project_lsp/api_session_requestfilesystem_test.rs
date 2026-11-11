@@ -784,7 +784,7 @@ fn snapshot_file_system_layers_preserve_incremental_state(base_kind: Kind) {
     let ctx = bg();
     let mut params = open_projects(&["/a/tsconfig.json", "/b/tsconfig.json"], None);
     if base_kind.0 != "host" {
-        params.file_system = Some(request_file_system(base_kind.clone(), &file_entries));
+        params.file_system = Some(request_file_system(base_kind, &file_entries));
     }
     let base = nil_error(session.handle_create_snapshot(&ctx, &params));
     let base_snapshot = snapshot_of(&session, base.snapshot);
@@ -880,7 +880,7 @@ fn snapshot_file_system_layers_preserve_incremental_state(base_kind: Kind) {
     let restored = nil_error(session.handle_create_snapshot(
         &ctx,
         &CreateSnapshotParams {
-            snapshot_request_changes_params: params.snapshot_request_changes_params.clone(),
+            snapshot_request_changes_params: params.snapshot_request_changes_params,
             ..Default::default()
         },
     ));
