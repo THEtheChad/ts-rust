@@ -313,7 +313,7 @@ in order (seen on a low-load run). Go runs 4 times when a scenario's cache entry
 | `watch-narrow-umami-f12` | full | `watch` on umami with the workspace folder at `umami/src` |
 | `second-project-query` | full | query: `query-core` loads (diagnostics, hover, completion), then a `react-query` file opens: a second tsconfig project's first load with the session's caches warm (diagnostics, hover, definition into query-core, references, completion), then auto-import completion and resolves in it |
 | `ata-overlay` | quick, full | fixture `ata-small` (JS files in no tsconfig, so an inferred project with type acquisition on) with ATA on against a private typings cache and the stand-in npm (see "ATA in the watch scenarios"): the first load and ATA's registry and typings installs, the refreshes they cause, an overlay (`src/ghost.js`, not on disk) whose import makes ATA install more typings, closing the overlay, and the inferred project's watchers unregistered when the last file closes |
-| `prefs` | quick, full | fixture `prefs-small` (lane B6; `vendor/lspdiff/prefs.mjs`, see "User preferences"): odd preferences in the initialization options, then 17 `workspace/didChangeConfiguration` steps, each with a checkpoint (the inlay-hint, code-lens and diagnostic refreshes it causes) and the requests that read the preferences: inlay hints, hover, auto-import completions and their resolves, an import-statement completion, two quick fixes, organize imports, formatting (document, range, on type), diagnostics, JSX attribute, class member, object literal, optional chain and JSDoc completions, code lens, workspace symbols and rename |
+| `prefs` | quick, full | fixture `prefs-small` (lane B6; `vendor/lspdiff/prefs.mjs`, see "User preferences"): odd preferences in the initialization options, then `workspace/didChangeConfiguration` parse steps, each with a checkpoint (the inlay-hint, code-lens and diagnostic refreshes it causes) and the requests that read the preferences (inlay hints, hovers, auto-import completions and their resolves, an import-statement completion, quick fixes, implement interface, organize imports, formatting, diagnostics, JSX attribute, class member, object literal, optional chain and JSDoc completions, code lens, workspace symbols, rename), then 50 one-preference probes |
 
 Go dedupes watchers per glob (`watchRegistry.Acquire`), and inside the workspace it covers the
 project with one `<root>/**/*` glob, plus `bundled:///libs/**/*` and `node_modules/**/*`. With the
@@ -335,39 +335,68 @@ second-project, so quick compares directly against a full base.
 a DIFF of a refereed kind can be JS-AGREES, decided by JS tsserver 6.0.3. See "JS tsserver as the
 LSP referee".
 
-### User preferences (lane B6, 2026-11-11)
+### User preferences (lane B6, 2026-11-11; round 2)
 
-The `prefs` session pins how a server parses its preferences: Go at the pin uses generated code
-(`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-rs ported in
+The `prefs` session pins how a server parses its preferences and what they change. Go at the pin uses
+generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-rs ported in
 `ls/lsutil/userpreferences_generated.rs`.
-- **What it sends.** The initialization options (Go `RequestConfiguration` parses them as the `js/ts`
+- **Parse steps.** The initialization options (Go `RequestConfiguration` parses them as the `js/ts`
   section) hold a key in its flat, `unstable` and nested forms. They also hold wrong types
   (`"includeInlayParameterNameHints": 1`, an array for `importModuleSpecifierPreference`, a string for a
   boolean), `"quotePreference": "bogus"`, an unknown key, null on a path and an int beyond 32 bits.
-  The `didChangeConfiguration` steps then cover:
+  The `didChangeConfiguration` steps then cover, each with a checkpoint and the whole battery:
   - the precedence of `javascript` < `typescript` < `js/ts`, and of flat < `unstable` < nested in one section;
   - null on raw names, nested paths, fallback paths and whole sections;
   - wrong types, and sections that are not objects;
-  - every value of every enum preference, in both cases, then unknown strings;
-  - unknown keys and sections, then the off switches;
-  - ints beyond 32 and 64 bits, `locale` and `customConfigFileName`;
-  - the `editor` section, settings that are not an object, and null settings.
+  - a negative `baseIndentSize`, in a step of its own (Go's formatter panics: `strings: negative Repeat
+    count`, an InternalError answer), so the formatter probes of the other steps answer;
+  - unknown enum strings, unknown keys and sections, then the off switches;
+  - ints beyond 32 and 64 bits: `maximumHoverLength` 1e19 (Go converts it to the minimum int) and
+    1844674407370955264 over a 1,100-character literal (Go's cutoff `max * 10` wraps to 1024);
+    `tabSize` 4294967296 with tabs (0 tabs and 4 spaces at column 4) and −4294967292 (Go panics), through
+    implement interface;
+  - `locale` and `customConfigFileName`, the `editor` section, settings that are not an object, null settings.
+- **Probes (round 2).** 50 preferences, one at a time: every value of each (enums: each value, every other
+  one upper-cased; booleans: true and false), each followed by the requests that read it (`PROBES` in
+  `prefs.mjs`). A probe's steps wait for quiet, with one checkpoint at its end. `validate.enabled` and
+  `reportStyleChecksAsWarnings` schedule a debounced diagnostics refresh, so they take a checkpoint after
+  every value. The fixture is built so each probe bites:
+  - a second project owns `OtherOwnedSymbol` (`workspaceSymbols.scope`);
+  - a file whose import is single-quoted with a `.js` ending (`auto` quote style and ending);
+  - `src/lib` is a package of its own, used from inside and outside it (`project-relative`);
+  - names that collate apart only under the natural or Unicode presets (`Éclair`, `eclair`, `Beta`,
+    `beta`, `a2`, `a10`);
+  - a class with a constructor, whose implemented members the change tracker indents through the smart
+    indenter (`indentStyle`).
+
+  Go's auto-import registry keeps its module specifiers until the exclude regexes change
+  (`registry.go`), so the quote and specifier probes send a new regex that excludes nothing with every
+  value. `scripts/perf-rearch/prefs_sensitivity.py <go log>` checks a Go log: every value of a probe must
+  answer differently from every other value. The exception is a group the probe declares alike with Go's
+  reason (`caseFirst` `default` = `lower`: Go's default case is lower-first). It prints `SENSITIVITY OK`
+  or `SENSITIVITY FAIL`.
 - **Keyed alone.** `client.mjs`, `scenario.mjs` and `fixtures.mjs` are in every session's key, so the
   scenario and its fixture live in `prefs.mjs`. It registers them into `SCENARIOS` and `FIXTURES` when
   `lspdiff.mjs` imports it, and it is in this session's key only (`parity_lsp.py`: the session's
-  `sources`). Adding it reset no other session's Go fill.
+  `sources`). Changing it refills this session alone.
 - **The initialization options.** `client.mjs` `initializeParams` sends its exported
   `userPreferences` object, so `runPrefsScenario` swaps that object's contents for the length of the
   run. Two cases can't be sent this way: options that are not an object, and a `workspace/configuration`
   answer (`client.mjs` answers every server request with null). Both need the shared sources.
-- **The probe** (Go fill `runs/b6-prefs-base-d155ce0d5`, Go 4 runs, tsc-rs 3 runs):
-  - On the base (`d155ce0d5`): 494 MATCH and 1 DIFF, `lsp/prefs/0006 init src/long.ts hover`. Go keeps
-    `maximumHoverLength: 4294967306` (Go `int` is 64 bits) and shows the whole type; tsc-rs's `i32`
-    wrapped it to 10 and truncated the hover.
-  - With the port: 495 MATCH.
-- **Go's own answers it pins:** `format.baseIndentSize: -2` panics Go's formatter (`strings: negative
-  Repeat count`, an InternalError answer to formatting and organize imports), and tsc-rs answers the
-  same.
+- **Cost.** About 117 s per server run (900 answers), so the session adds to the lsp tier: about 6 minutes
+  in full (3 tsc-rs runs, beside the other sessions) and 2 in quick.
+- **Results.**
+  - Round 1, base `d155ce0d5`: 1 DIFF, the init hover. `maximumHoverLength` 4294967306 wrapped in an
+    `i32` to 10.
+  - Round 2 (Go fill `go-cache/<go>/lsp/prefs-2d68d01524481e63b5f71c4e`, sources `fd053d9c43eb`;
+    every one of its 4 Go logs is `SENSITIVITY OK`, all 50 probes): 902 answers.
+    - Base `d155ce0d5`: 7 DIFF (`runs/b6r2-prefs-base-d155ce0d5`): the two init hovers, implement
+      interface with and without a constructor at `indentStyle` 4294967296 (an `i32` wraps it to 0, none),
+      the hover cutoff, and both wide tab sizes.
+    - Round 1 `1867f09aa`: 3 DIFF (`runs/b6r2-prefs-r1-1867f09aa`): the hover cutoff (capped at `i32::MAX`,
+      whose `* 10` wrapped), and both wide tab sizes (an `i32` wrapped 4294967296 to 0 and
+      −4294967292 to 4).
+    - Round 2 head: 902 MATCH (`runs/b6r2-prefs-r2-head`, 3 tsc-rs runs).
 
 ### fuzz: fixed-seed difffuzz batch (`parity_fuzz.py`, `vendor/difffuzz`)
 
