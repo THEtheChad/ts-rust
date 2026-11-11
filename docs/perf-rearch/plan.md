@@ -2046,3 +2046,7 @@ once a **reconciliation step** is built and tested.
     go_baselines tests (jsnum, astnav_tokens) fail through the wrapper.
     They pass when run directly, as `parity_tests.py` does. This is the
     same failure B4 put down to the unit's environment.
+- **T1 started:**
+  - the wrapper's memory guard should measure real memory (cgroup
+    `MemoryMax`) instead of `ulimit -v`, so node runs;
+  - `parity_grandfather.py regen --drop-recovered`.
