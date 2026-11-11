@@ -219,13 +219,20 @@ an edit of the fixture is a new key. An api scenario can use the same fixture as
 `packages/d` (reached through a nested symlink, `packages/b/node_modules/d ->
 node_modules/.pnpm/d@1.0.0/node_modules/d -> packages/d`), and `packages/b`, which references all
 three through `node_modules` symlinks, with `paths` `a-src/*` to a's sources, and imports `a`, `a`'s
-built `a/dist/index`, `a-src/inner`, `@scope/c` and `d`. `packages/b/tsconfig.preserve.json` is the
+built `a/dist/index`, `a-src/inner`, `a-built/inner` (a `paths` mapping to a's built d.ts through the
+symlink, B7 round 2), `@scope/c` and `d`. `packages/b/tsconfig.preserve.json` is the
 same with `preserveSymlinks`. Items: `solution/build` (`-b` of all five configs, cold then up to date),
 `solution/build-edit` (the edit appends an export to `a/src/index.ts`, so a, b and b-preserve rebuild
 through the symlinked `.d.ts`), `b-preserve/explain-trace` (the unbuilt tree: TS2307 and TS6305 through
 the symlinks and the `paths` redirect). The api scenario `build-symlink-monorepo` opens both b configs
 in the project service, which uses the sources of references, so b-preserve reaches a's sources
-through the builder's `resolveSymlink` (`realpathDtsToSource`), a path no CLI run takes.
+through the builder's `resolveSymlink` (`realpathDtsToSource`), a path no CLI run takes. It queries
+both projects, builds the solution twice, and then (`afterBuild`, round 2) updates the same session's
+snapshot: once with every file invalidated (`fileNotifications.invalidateAll`, `ensurePrograms`) and the
+queries again over the built tree, then with b closed and b's source edited through a layer, so that
+b-preserve's program is updated in place and reports TS2322 for a's `Inner` (through the redirect)
+assigned to a string. b is closed for the edit because Go writes `changedProjects`, a map, in random
+order: with two changed projects its answer's bytes vary (Go-unstable, seen in the tier).
 
 ### tests: cargo suites and TestLocal (`parity_tests.py`)
 
@@ -399,8 +406,9 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   `parity_api_session.py` sends `initialize`, `createSnapshot`, then for each project of the answer, in
   its order, `getSourceFileNames`, `getConfigFileNames`, the seven diagnostics methods, `emitToString`
   and `emit`; then the scenario's updates (`updateSnapshot` on the current snapshot, the requests again,
-  `release` of the replaced one) and build steps (`createBuildOrchestrator`, `build`, `buildReferences`,
-  `cleanBuild`, `disposeBuildOrchestrator`). It then closes stdin. The server must exit 0 by itself
+  `release` of the replaced one), build steps (`createBuildOrchestrator`, `build`, `buildReferences`,
+  `cleanBuild`, `disposeBuildOrchestrator`) and the updates after the build (`afterBuild`, lane B7: the
+  same as updates, on the session's snapshot). It then closes stdin. The server must exit 0 by itself
   within 10 s, and both its output streams must reach EOF.
 - **Filesystems.** A request filesystem is `kind: "full"` (Go's `requestfilesystem` makes it canonical
   and total; with it `emit` returns the contents instead of writing), rooted at `/parity-api/<scenario>`,
@@ -496,7 +504,7 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   host that says `useCaseSensitiveFileNames: false`, it emits `out/x.js` and `out/y.js`, as Go does
   (`scratch/h7/js_c2.cjs`).
 - **quick** runs the 22 scenarios the quick manifest names (`"api"`, manifest version 2), tsc-rs once;
-  **full** runs all 50, tsc-rs twice.
+  **full** runs all 52, tsc-rs twice.
 - `parity_api.py probe <bin> <scenario>` runs one session in the sandbox and prints its transcript, so
   `diff <(parity_api.py probe <Go> X) <(parity_api.py probe <tsc-rs> X)` reproduces an item (it replaces
   B3's `b3_api_probe.py`). `parity_api.py list [quick]` lists the scenarios, `key X` prints a key's
@@ -2207,7 +2215,7 @@ tier ("api: API sessions" above) and its scenario corpus, and pins every differe
 known-bad tracking entry for the fix lane B2. Round 2 answers Astra's review of round 1 (`6e97777e6`,
 REJECT, `reviews/2026-11-10-astra-h7.md`).
 
-### The corpus (`parity-api-scenarios.json`, 50 scenarios (49 from lane H7, 1 from B7); quick: the 22 marked q)
+### The corpus (`parity-api-scenarios.json`, 52 scenarios (49 from lane H7, 3 from B7); quick: the 22 marked q)
 
 | group | scenarios | covers |
 |---|---|---|
@@ -2221,9 +2229,10 @@ REJECT, `reviews/2026-11-10-astra-h7.md`).
 | outDir and rootDir by case, overwrites | `case-json-overwrite-insensitive` (q), `case-json-overwrite-sensitive`, `case-js-overwrite-insensitive` (q), `case-js-overwrite-sensitive`, `js-overwrite` (q), `case-outdir-rootdir-insensitive` | B3 c1b: a JSON output that would overwrite its input on an insensitive host; `allowJs` outputs that would overwrite their inputs (TS5055), with and without a case-only `outDir`; TypeScript outputs into a case-only `outDir` with maps |
 | request filesystem | `case-duplicate-files-insensitive`, `case-import-casing-insensitive`, `symlink-dir`, `relative-names` | `A.ts` and `a.ts` in one insensitive filesystem (Go refuses the duplicate), an import whose casing differs, a request-filesystem symlink, file names relative to `--cwd` |
 | emit kinds | `json-module` (q), `decl-maps` (q), `errors-and-libs`, `composite-program` | a JSON module with declarations; declaration and source maps with `sourceRoot` and `mapRoot`; a full filesystem without `noLib` (no bundled libs) plus type and syntax errors; `composite` with a `tsBuildInfoFile` through `createPrograms` |
+| base directory (lane B7) | `programs-config-path-base-directory` | a `createPrograms` program whose options name a `configFilePath` in `pkg/`: its base directory is still the session's, so the automatic type directive `foo` and the lib replacement of `es5` resolve from there (Go fileloader.go:279, :980) |
 | snapshot updates (round 2) | `update-reconfigure-emit` (q), `update-file-change-emit`, `update-mixed-dirs-insensitive` (q) | repeated emits with changed options (`reconfigurePrograms`: declarations, maps, another `outDir`), `release` of the replaced snapshot and a second `release` of it (an error answer); a new full filesystem with an edit and a new file; D2 after an update |
 | layer filesystems (round 2) | `layer-emit-disk` (q), `layer-emit-mixed-dirs`, `layer-emit-mixed-dirs-insensitive` (q) | a `layer` filesystem over a disk fixture: a file only in the layer importing one only on disk, and `emit` writing through the host filesystem into the fixture; D2 on that writing path |
-| build orchestrator (disk fixtures) | `build-composite` (q), `build-clean`, `build-references`, `build-dispose`, `build-mixed-dirs`, `build-mixed-dirs-insensitive` (q), `build-symlink-references`, `build-symlink-references-insensitive`, `build-symlink-monorepo` (lane B7) | a composite project built twice (cold, then up to date) with maps and `tsconfig.tsbuildinfo`; build then `cleanBuild`; a solution with two composite projects, a type error and `buildReferences`; build, `disposeBuildOrchestrator`, then build and dispose on the disposed one (error answers); the c2 tree as a composite config project on both case settings; B3 risk 7 (project-reference symlink redirects): a pnpm-style monorepo where `packages/b` references `packages/a` and imports it through `node_modules/a -> ../../a`; B7's `symlink-monorepo` fixture (scoped, nested symlink, `preserveSymlinks`, `paths`), whose preserveSymlinks project reaches a's sources through `resolveSymlink` |
+| build orchestrator (disk fixtures) | `build-composite` (q), `build-clean`, `build-references`, `build-dispose`, `build-mixed-dirs`, `build-mixed-dirs-insensitive` (q), `build-symlink-references`, `build-symlink-references-insensitive`, `build-symlink-monorepo`, `build-paths-base-directory` (lane B7) | a composite project built twice (cold, then up to date) with maps and `tsconfig.tsbuildinfo`; build then `cleanBuild`; a solution with two composite projects, a type error and `buildReferences`; build, `disposeBuildOrchestrator`, then build and dispose on the disposed one (error answers); the c2 tree as a composite config project on both case settings; B3 risk 7 (project-reference symlink redirects): a pnpm-style monorepo where `packages/b` references `packages/a` and imports it through `node_modules/a -> ../../a`; B7's `symlink-monorepo` fixture (scoped, nested symlink, `preserveSymlinks`, `paths`), whose preserveSymlinks project reaches a's sources through `resolveSymlink`, queried again after the build; `paths` added by the orchestrator's compilerOptions to a config below the session's directory, resolved from the config's base directory (Go fileloader.go:347) |
 
 B3 risks 2 (D1), 3, 4, 5, 7, 10, 12, 13 and 15 each have a scenario. Risks 3 to 5 do not show yet: on
 Linux D2 makes the emit side case-sensitive, so tsc-rs takes the case-sensitive path and gives Go's
