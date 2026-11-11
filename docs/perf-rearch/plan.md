@@ -2005,3 +2005,18 @@ once a **reconciliation step** is built and tested.
   of redirect candidates), 9, 11 (realpath differing only in case) and 14
   (overlay listing, `İ.ts` against `i.ts`). Each test must fail with its
   fix reverted.
+- **H9 round 2 done** (head `73db30179`, gate on `fafe6a374`).
+  - **The fixes:**
+    - 1: the notification deadline is a harness ERROR;
+    - 2: Go's progress lifecycle is enforced (create always comes before
+      begin at the pin);
+    - 3: Go's fixed progress payloads are checked, and a broken rule
+      becomes a DIFF on that side;
+    - 4: Go has no deterministic ATA completion signal, so `parity.md`
+      states the residual bound in place of the load-independent claim.
+    - Both test weaknesses are fixed.
+  - **Controls:** each fails on `3195ad922` and passes on the head.
+  - **Gate:** `runs/h9r2-fafe6a374-full` PARITY OK, 0 lost. 3 lsp runs,
+    with all session and server messages MATCH.
+  - **lsp time:** 233 s.
+  - **Astra recheck** running (round 2 of 3).
