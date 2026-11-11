@@ -719,20 +719,8 @@ pub fn resolve_symbol_reference_for_checker(
 // Go: compiler/program.go:151 (*Program).BaseDirectory (ts#64159)
 // The directory that a request's relative file name is rooted against
 // (Go `DocumentIdentifier.ToFileName(program.BaseDirectory())`).
-// PORT: the Rust program has no BaseDirectory yet (program-core lane). Go
-// returns `ParsedCommandLine.BaseDirectory()`: the config file's
-// directory, else the current directory. The Rust command line keeps it
-// in `compare_paths_options.current_directory` (bump D config summary-2,
-// rule R1); an empty one is the program's current directory.
 pub fn program_base_directory(program: &compiler::NewProgram) -> String {
-    let base_directory = &program
-        .command_line()
-        .compare_paths_options
-        .current_directory;
-    if base_directory.is_empty() {
-        return program.get_current_directory();
-    }
-    base_directory.clone()
+    program.base_directory()
 }
 
 // Go: api/session.go:205 symbolOwnerFile (ts#64518, ts#64691)
