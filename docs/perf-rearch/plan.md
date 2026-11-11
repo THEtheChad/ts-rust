@@ -1870,3 +1870,25 @@ once a **reconciliation step** is built and tested.
       history;
     - Astra's fast JSON tokenizer, so that one lsp refill covers
       everything.
+- **H8 round 2 finished** (head `95006241b`).
+  - **Findings:** all 7 fixed, each with a control.
+  - **Shared storage module:** `parity_sandbox_storage.py`, used by both
+    tiers. Per session it puts storage on its own tmpfs, records every
+    write through a fanotify filesystem mark, and lists storage with one
+    shared lister.
+  - **Message coverage:** the `session messages` item compares every
+    server-to-client message through EOF.
+  - **Hardened ATA:** the stand-in npm reads a fixed read-only config and
+    checks each file's sha256.
+  - **Path-by-path judging:** final storage and writes are judged per path.
+  - **Fast JSON tokenizer.**
+  - **lsp tier:** 235 s, against 460 s at the base and 641 s in round 1.
+  - **Gate:** `runs/h8r2-head-865385add-full` PARITY OK (lsp 2,681 MATCH,
+    29 GO-BROKEN).
+  - **Astra recheck:** running.
+  - **It found a tsc-rs nondeterminism:** `watch-hono-f12/0016 load server
+    messages`, where one `workspace/diagnostic/refresh` is missing in 1 of
+    4 runs (`GOPORT_PARSE_THREADS=1`). Go never varies there.
+    - **Lane B4 started:** write a Go note, find the root cause, fix it the
+      Go way, add a test that fails on the base and never on the head, and
+      check sibling notifications.
