@@ -2651,7 +2651,19 @@ no new request (initialize, messages, per-path writes) varied in any fill.
 
 ### Gate run
 
-Round 3: see "Round 3 gate run" below. Round 2's:
+**Round 3 (the last):** `parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref
+t3/harden-lsp-parity-harness` (harness `22c476832`; base `runs/b2-29e23ede3-full`),
+`runs/h8r3b-head-865385add-full`, 22 min (06:28 to 06:51 UTC, load 1 to 17), under the heavy-run rule:
+**PARITY OK**. 187,337 base items compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not
+good (the 52 new lsp items all MATCH), 0 crashes on good items, 36 grandfathered (as pinned), 0 stale, 0
+recovered, none newly good by a referee. cli 170 MATCH; tests 140,002 PASS, 1,731 IGNORED, no FLAKY; lsp
+2,681 MATCH, 29 GO-BROKEN (the base's 29; `watch-hono-f12/0016`, lane B4's flake, did not show) in 232 s;
+api 49 MATCH; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus
+12,727 MATCH. A run before it on round 3's first record (`runs/h8r3-head-865385add-full`) was stopped in
+its fuzz tier after api showed 3 DIFF (rs-nondet on the build scenarios: the copy-up race of the first
+version of finding 1's fix, above); it is not evidence.
+
+Round 2's:
 
 `parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref t3/harden-lsp-parity-harness`
 (harness `b64de20d5`; base `runs/b2-29e23ede3-full`), `runs/h8r2-head-865385add-full`, 23 min (01:31 to
