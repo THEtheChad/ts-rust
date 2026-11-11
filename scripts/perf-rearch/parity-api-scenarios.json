@@ -1484,6 +1484,76 @@
      "build": ""
     }
    ]
+  },
+  {
+   "name": "build-paths-base-directory",
+   "about": "B7 round 2 (Astra's B7 finding 1, Go fileloader.go:347): the build orchestrator's compilerOptions add paths (no pathsBasePath) to a config in pkg/, a directory below the session's; Go resolves the paths against the config's base directory (pkg/src/value.ts), not the session's",
+   "disk": {
+    "pkg/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"noLib\": true, \"types\": []}, \"files\": [\"main.ts\", \"src/value.ts\", \"globals.d.ts\"]}\n",
+    "pkg/globals.d.ts": "@GLOBALS@",
+    "pkg/main.ts": "import { value } from \"alias\";\nexport const v: number = value;\n",
+    "pkg/src/value.ts": "export const value = 1;\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/pkg/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "paths": {
+        "alias": [
+         "./src/value"
+        ]
+       }
+      }
+     }
+    },
+    {
+     "build": ""
+    },
+    {
+     "build": ""
+    }
+   ]
+  },
+  {
+   "name": "programs-config-path-base-directory",
+   "about": "B7 round 2 (Go fileloader.go:279, :980): a synthetic program whose options name a configFilePath in pkg/; its base directory is still the session's, so Go resolves the automatic type directive 'foo' and the lib replacement of es5 from the root (both missing), not from pkg/ (where both are)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/pkg/main.ts": "export const v: number = 1;\n",
+     "@ROOT@/pkg/node_modules/foo/package.json": "{\"name\": \"foo\", \"types\": \"index.d.ts\"}\n",
+     "@ROOT@/pkg/node_modules/foo/index.d.ts": "declare const fooGlobal: number;\n",
+     "@ROOT@/pkg/node_modules/@typescript/lib-es5/package.json": "{\"name\": \"@typescript/lib-es5\", \"types\": \"index.d.ts\"}\n",
+     "@ROOT@/pkg/node_modules/@typescript/lib-es5/index.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/pkg/main.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "configFilePath": "@ROOT@/pkg/tsconfig.json",
+      "types": [
+       "foo"
+      ],
+      "lib": [
+       "es5"
+      ],
+      "libReplacement": true
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames",
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics"
+   ]
   }
  ]
 }
