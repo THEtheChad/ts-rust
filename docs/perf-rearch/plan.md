@@ -2087,3 +2087,25 @@ once a **reconciliation step** is built and tested.
 - **B7 started (B3 F4):** check tsc-rs's symlink handling in
   project-reference mapping against Go's builder (`resolveSymlink`,
   `realpathDtsToSource`), with a symlinked-monorepo `-b` parity project.
+- **B7 done; Astra review running.** No difference from Go: 7 CLI
+  scenarios and the API transcripts MATCH before and after.
+  - **Ported:** Go's ts#64519 shape (`ProjectReferenceFileMapperBuilder`
+    with `resolve_symlink`), as a structural commit. The old
+    `get_source_to_dts_if_symlink` and the mapper's host and loader are
+    deleted.
+  - **New harness feature:** synthetic cli fixtures
+    (`parity-fixtures.json`, read-only, content-addressed), plus a
+    symlinked pnpm monorepo with 3 cli items and 1 api item. No earlier
+    item set `preserveSymlinks`, and the negative control (an empty
+    `resolve_symlink`) DIFFs on 3 items.
+  - **Gate:** `runs/20261111-112730-full-95b2a4d419` PARITY OK, 0 lost;
+    icount single-threaded flat.
+- **W3 started:** the last complexity targets (14 port-bloat rows with
+  Δ ≥ 10, 24 own-code functions over 25), following w2-brief. B6's and
+  B7's files are excluded.
+- **B7 review: REJECT** (`reviews/2026-11-11-astra-b7.md`).
+  - **Finding 1:** a real difference from Go that predates B7. The
+    builder's resolution host uses the host directory, not the config's
+    base, so a programmatic `paths` without `pathsBasePath` gives TS2307.
+  - **Finding 2:** the api scenario queries nothing after the build.
+  - The refactor itself is confirmed faithful. Round 2 sent.
