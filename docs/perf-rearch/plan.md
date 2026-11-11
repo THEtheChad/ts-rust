@@ -2103,3 +2103,9 @@ once a **reconciliation step** is built and tested.
 - **W3 started:** the last complexity targets (14 port-bloat rows with
   Δ ≥ 10, 24 own-code functions over 25), following w2-brief. B6's and
   B7's files are excluded.
+- **B7 review: REJECT** (`reviews/2026-11-11-astra-b7.md`).
+  - **Finding 1:** a real difference from Go that predates B7. The
+    builder's resolution host uses the host directory, not the config's
+    base, so a programmatic `paths` without `pathsBasePath` gives TS2307.
+  - **Finding 2:** the api scenario queries nothing after the build.
+  - The refactor itself is confirmed faithful. Round 2 sent.
