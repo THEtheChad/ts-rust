@@ -2050,3 +2050,19 @@ once a **reconciliation step** is built and tested.
   - the wrapper's memory guard should measure real memory (cgroup
     `MemoryMax`) instead of `ulimit -v`, so node runs;
   - `parity_grandfather.py regen --drop-recovered`.
+- **H9 round 3 done; merged.** Root accepts it without a further Astra
+  round, as decided.
+  - **Finding 1:** progress transport is checked (create is a request,
+    `$/progress` a notification).
+  - **Finding 2:** progress rules are judged per server, before the
+    comparison. A tsc-rs break is a DIFF whatever Go did; a break by Go
+    alone is GO-BROKEN with the rule named.
+  - **Root's rerun** of the H8 self-test (all `h9r3` controls: transport,
+    go-only, rs-only, both, go-varies, go-varies-rs-bad) and the H4 JS
+    self-test: all OK, each status as reported.
+  - **Refill;** no real item changed status. **Gate:**
+    `runs/h9r3-ab7be7932-full` PARITY OK, 0 lost. 3 lsp runs, with all
+    session and server messages MATCH; lsp time 234 s.
+  - **base-current** moved to `h9r3-ab7be7932-full`.
+  - **The review loop:** round 1 had 4 findings, round 2 had 2, both
+    narrower, and none reopened.
