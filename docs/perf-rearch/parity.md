@@ -293,6 +293,7 @@ in order (seen on a low-load run). Go runs 4 times when a scenario's cache entry
 | `watch-narrow-umami-f12` | full | `watch` on umami with the workspace folder at `umami/src` |
 | `second-project-query` | full | query: `query-core` loads (diagnostics, hover, completion), then a `react-query` file opens: a second tsconfig project's first load with the session's caches warm (diagnostics, hover, definition into query-core, references, completion), then auto-import completion and resolves in it |
 | `ata-overlay` | quick, full | fixture `ata-small` (JS files in no tsconfig, so an inferred project with type acquisition on) with ATA on against a private typings cache and the stand-in npm (see "ATA in the watch scenarios"): the first load and ATA's registry and typings installs, the refreshes they cause, an overlay (`src/ghost.js`, not on disk) whose import makes ATA install more typings, closing the overlay, and the inferred project's watchers unregistered when the last file closes |
+| `prefs` | quick, full | fixture `prefs-small` (lane B6; `vendor/lspdiff/prefs.mjs`, see "User preferences"): odd preferences in the initialization options, then 17 `workspace/didChangeConfiguration` steps, each with a checkpoint (the inlay-hint, code-lens and diagnostic refreshes it causes) and the requests that read the preferences: inlay hints, hover, auto-import completions and their resolves, an import-statement completion, two quick fixes, organize imports, formatting (document, range, on type), diagnostics, JSX attribute, class member, object literal, optional chain and JSDoc completions, code lens, workspace symbols and rename |
 
 Go dedupes watchers per glob (`watchRegistry.Acquire`), and inside the workspace it covers the
 project with one `<root>/**/*` glob, plus `bundled:///libs/**/*` and `node_modules/**/*`. With the
@@ -313,6 +314,40 @@ second-project, so quick compares directly against a full base.
 **Referees.** An answer after a Go crash or timeout, or where Go's runs differ, is GO-BROKEN, and
 a DIFF of a refereed kind can be JS-AGREES, decided by JS tsserver 6.0.3. See "JS tsserver as the
 LSP referee".
+
+### User preferences (lane B6, 2026-11-11)
+
+The `prefs` session pins how a server parses its preferences: Go at the pin uses generated code
+(`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-rs ported in
+`ls/lsutil/userpreferences_generated.rs`.
+- **What it sends.** The initialization options (Go `RequestConfiguration` parses them as the `js/ts`
+  section) hold a key in its flat, `unstable` and nested forms. They also hold wrong types
+  (`"includeInlayParameterNameHints": 1`, an array for `importModuleSpecifierPreference`, a string for a
+  boolean), `"quotePreference": "bogus"`, an unknown key, null on a path and an int beyond 32 bits.
+  The `didChangeConfiguration` steps then cover:
+  - the precedence of `javascript` < `typescript` < `js/ts`, and of flat < `unstable` < nested in one section;
+  - null on raw names, nested paths, fallback paths and whole sections;
+  - wrong types, and sections that are not objects;
+  - every value of every enum preference, in both cases, then unknown strings;
+  - unknown keys and sections, then the off switches;
+  - ints beyond 32 and 64 bits, `locale` and `customConfigFileName`;
+  - the `editor` section, settings that are not an object, and null settings.
+- **Keyed alone.** `client.mjs`, `scenario.mjs` and `fixtures.mjs` are in every session's key, so the
+  scenario and its fixture live in `prefs.mjs`. It registers them into `SCENARIOS` and `FIXTURES` when
+  `lspdiff.mjs` imports it, and it is in this session's key only (`parity_lsp.py`: the session's
+  `sources`). Adding it reset no other session's Go fill.
+- **The initialization options.** `client.mjs` `initializeParams` sends its exported
+  `userPreferences` object, so `runPrefsScenario` swaps that object's contents for the length of the
+  run. Two cases can't be sent this way: options that are not an object, and a `workspace/configuration`
+  answer (`client.mjs` answers every server request with null). Both need the shared sources.
+- **The probe** (Go fill `runs/b6-prefs-base-d155ce0d5`, Go 4 runs, tsc-rs 3 runs):
+  - On the base (`d155ce0d5`): 494 MATCH and 1 DIFF, `lsp/prefs/0006 init src/long.ts hover`. Go keeps
+    `maximumHoverLength: 4294967306` (Go `int` is 64 bits) and shows the whole type; tsc-rs's `i32`
+    wrapped it to 10 and truncated the hover.
+  - With the port: 495 MATCH.
+- **Go's own answers it pins:** `format.baseIndentSize: -2` panics Go's formatter (`strings: negative
+  Repeat count`, an InternalError answer to formatting and organize imports), and tsc-rs answers the
+  same.
 
 ### fuzz: fixed-seed difffuzz batch (`parity_fuzz.py`, `vendor/difffuzz`)
 
@@ -3094,7 +3129,8 @@ there was one refill, as in round 1 (`scratch/h9/r3/fill.sh`, 14:15 to 15:08 UTC
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
-  `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm, the only npm a
+  `fixtures.mjs` the watch-small and ata-small fixtures; `prefs.mjs` the user-preference scenario and its
+  fixture (lane B6, keyed for its own session only); `ata-npm/` the stand-in npm, the only npm a
   server can run; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
   the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process (under the shared init) and
   its session result, `json.mjs` the strict JSON reader of the wire,
