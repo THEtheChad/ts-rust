@@ -2154,3 +2154,7 @@ once a **reconciliation step** is built and tested.
   - **Astra recheck** running (round 2 of 3). Root's own question for it:
     is closing b, to avoid Go's randomly ordered changed-projects map, more
     honest than sorting that map on both sides?
+- **B7 recheck: REJECT,** with 1 finding (`reviews/2026-11-11-astra-b7-r2.md`):
+  declaration emit's module specifiers still use the process directory for
+  `paths` (`ProgramHost::base_directory`), giving `"../shared/value"`
+  where Go writes `"alias"`. Round 3 sent, the last.
