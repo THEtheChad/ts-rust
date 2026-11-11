@@ -604,4 +604,44 @@ mod tests {
         assert!(package_json_paths_are_equal("/p/A", "/p/a", false));
         assert!(!package_json_paths_are_equal("/p/A", "/p/a", true));
     }
+
+    // Lane B5 (B3 risk 8): the sign of Go `comparePathsByRedirect`, which
+    // decides the order of the candidate module paths. An encoded dynamic
+    // name compares case-sensitively, so "PKG" sorts before "pkg" on either
+    // host; a disk name folds case on a case-insensitive host. Go answers
+    // from `TestB5ModuleSpecifierProbe` at 3e9236361fa9
+    // (`scripts/perf-rearch/b5_go_probes.sh`).
+    #[test]
+    fn redirect_sort_direction_like_go() {
+        let module_path = |file_name: &str| ModulePath {
+            file_name: file_name.to_string(),
+            is_in_node_modules: true,
+            is_redirect: false,
+        };
+        let dyn_upper = "^/~ts-uri~/mem/auth/node_modules/PKG/index.d.ts";
+        let dyn_lower = "^/~ts-uri~/mem/auth/node_modules/pkg/index.d.ts";
+        let disk_upper = "/repo/node_modules/PKG/index.d.ts";
+        let disk_lower = "/repo/node_modules/pkg/index.d.ts";
+        for (a, b, sensitive, want) in [
+            (dyn_upper, dyn_lower, false, -1),
+            (dyn_upper, dyn_lower, true, -1),
+            (dyn_lower, dyn_upper, false, 1),
+            (dyn_lower, dyn_upper, true, 1),
+            (disk_upper, disk_lower, false, 0),
+            (disk_upper, disk_lower, true, -1),
+        ] {
+            let got = compare_paths_by_redirect(&module_path(a), &module_path(b), sensitive);
+            assert_eq!(got, want, "{a} vs {b}, case-sensitive {sensitive}");
+        }
+        // Go `slices.SortFunc(pathsInDirectory, comparePaths)`
+        // (specifiers.go:228): either input order gives "PKG" first.
+        for input in [[dyn_lower, dyn_upper], [dyn_upper, dyn_lower]] {
+            let mut paths: Vec<ModulePath> = input.iter().map(|f| module_path(f)).collect();
+            crate::gostd::slices::sort_func(&mut paths, |a, b| {
+                compare_paths_by_redirect(a, b, false)
+            });
+            let names: Vec<&str> = paths.iter().map(|p| p.file_name.as_str()).collect();
+            assert_eq!(names, [dyn_upper, dyn_lower], "from {input:?}");
+        }
+    }
 }

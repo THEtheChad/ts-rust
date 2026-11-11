@@ -552,6 +552,98 @@ fn test_resolved_entrypoint_carries_path() {
     assert_eq!(entrypoint.resolved_path, expected);
 }
 
+// Lane B5 (B3 risk 11): Go getOriginalAndResolvedFileName (resolver.go:1416)
+// compares the file name with its realpath by
+// `CaseSensitivity.CompareFilePaths`. An encoded dynamic name keeps its case
+// there, so a realpath that differs only in case is a different file even on
+// a case-insensitive host: the answer is the realpath, with the file name as
+// the original path. A disk name folds case, and the file name stays. Both
+// callers are covered: module names (createResolvedModuleHandlingSymlink,
+// resolver.go:1361) and type reference directives (resolver.go:1405). The
+// realpath gives "PKG" for "pkg" and "TPKG" for "tpkg". Go answers from
+// `TestB5RealpathProbe` at 3e9236361fa9 (`scripts/perf-rearch/b5_go_probes.sh`).
+#[test]
+fn test_realpath_differing_only_in_case_like_go() {
+    for (root, use_case_sensitive_file_names, upper) in [
+        ("^/~ts-uri~/mem/auth/", false, true),
+        ("^/~ts-uri~/mem/auth/", true, true),
+        ("/repo/", false, false),
+        ("/repo/", true, true),
+    ] {
+        let files = [
+            (format!("{root}src/main.ts"), ""),
+            (
+                format!("{root}node_modules/pkg/package.json"),
+                r#"{"name":"pkg","types":"index.d.ts"}"#,
+            ),
+            (
+                format!("{root}node_modules/pkg/index.d.ts"),
+                "export const x: number;",
+            ),
+            (
+                format!("{root}node_modules/@types/tpkg/package.json"),
+                r#"{"name":"@types/tpkg","types":"index.d.ts"}"#,
+            ),
+            (
+                format!("{root}node_modules/@types/tpkg/index.d.ts"),
+                "declare const y: number;",
+            ),
+        ];
+        let fs = wrapvfs_wrap(
+            vfstest::from_map(
+                files.iter().map(|(name, text)| (name.as_str(), *text)),
+                use_case_sensitive_file_names,
+            ),
+            Replacements {
+                realpath: Some(Box::new(|path: &str| {
+                    path.replacen("/node_modules/pkg/", "/node_modules/PKG/", 1)
+                        .replacen("/@types/tpkg/", "/@types/TPKG/", 1)
+                })),
+                ..Default::default()
+            },
+        );
+        let resolver = new_resolver_over(fs, root, (*bundler_options()).clone());
+        let containing_file = format!("{root}src/main.ts");
+        let context = format!("{root}, case-sensitive {use_case_sensitive_file_names}");
+
+        let (module, _, _) =
+            resolver.resolve_module_name("pkg", &containing_file, ModuleKind::ES_NEXT, None);
+        let file_name = format!("{root}node_modules/pkg/index.d.ts");
+        let realpath = format!("{root}node_modules/PKG/index.d.ts");
+        let (resolved, original) = if upper {
+            (realpath.as_str(), file_name.as_str())
+        } else {
+            (file_name.as_str(), "")
+        };
+        assert_eq!(module.resolved_file_name, resolved, "module, {context}");
+        assert_eq!(module.original_path, original, "module, {context}");
+        assert_eq!(module.resolved_path.0, resolved, "module path, {context}");
+
+        let (directive, _) = resolver.resolve_type_reference_directive(
+            "tpkg",
+            &containing_file,
+            ModuleKind::ES_NEXT,
+            None,
+        );
+        let file_name = format!("{root}node_modules/@types/tpkg/index.d.ts");
+        let realpath = format!("{root}node_modules/@types/TPKG/index.d.ts");
+        let (resolved, original) = if upper {
+            (realpath.as_str(), file_name.as_str())
+        } else {
+            (file_name.as_str(), "")
+        };
+        assert_eq!(
+            directive.resolved_file_name, resolved,
+            "directive, {context}"
+        );
+        assert_eq!(directive.original_path, original, "directive, {context}");
+        assert_eq!(
+            directive.resolved_path.0, resolved,
+            "directive path, {context}"
+        );
+    }
+}
+
 // Go: module/resolver_test.go:427 TestResolveDynamicPackageJSONPath (ts#64544)
 #[test]
 fn test_resolve_dynamic_package_json_path() {
@@ -1828,6 +1920,10 @@ struct MockModuleSpecifierGenerationHost {
     // embeds Go's mock and answers these two).
     global_typings_cache_location: String,
     redirect_targets: Vec<String>,
+    // Not in Go's mock (it answers ""): the directories that hold a
+    // package.json, for lane B5's probe host (`b5Host`, which embeds Go's
+    // mock and answers the nearest one).
+    package_json_directories: Vec<String>,
 }
 
 impl OutputPathsHost for MockModuleSpecifierGenerationHost {
@@ -1894,8 +1990,19 @@ impl ModuleSpecifierGenerationHost for MockModuleSpecifierGenerationHost {
         }
         true // Mock implementation
     }
-    fn get_nearest_ancestor_directory_with_package_json(&self, _dirname: &str) -> String {
-        String::new()
+    /// The longest of `package_json_directories` that is `dirname` or holds
+    /// it, as `b5Host` answers ("" when none does, as Go's mock).
+    fn get_nearest_ancestor_directory_with_package_json(&self, dirname: &str) -> String {
+        self.package_json_directories
+            .iter()
+            .filter(|d| {
+                dirname
+                    .strip_prefix(d.as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+            })
+            .max_by_key(|d| d.len())
+            .cloned()
+            .unwrap_or_default()
     }
     fn get_package_json_info(&self, _pkg_json_path: &str) -> Option<Arc<InfoCacheEntry>> {
         None
@@ -1928,6 +2035,7 @@ fn mock_host(symlink_cache: KnownSymlinks) -> MockModuleSpecifierGenerationHost 
         file_exists_calls: RefCell::new(Vec::new()),
         global_typings_cache_location: String::new(),
         redirect_targets: Vec::new(),
+        package_json_directories: Vec::new(),
     }
 }
 
@@ -2203,6 +2311,157 @@ fn get_module_specifier_prefers_relative_over_dot_dot_paths_result() {
         });
     }
     t.finish();
+}
+
+// Lane B5 (B3 risk 8): the module specifier that declaration emit gets
+// (Go GetModuleSpecifier, specifiers.go:1369) is the first node_modules
+// specifier in the order of getAllModulePathsWorker, which sorts with
+// comparePathsByRedirect (`CaseSensitivity.CompareFilePaths`). The imported
+// file and its redirect target differ only in the case of the package
+// directory. Encoded dynamic names keep their case, so "PKG" sorts first on
+// either host, whichever is the imported file. Disk names on a
+// case-insensitive host compare equal, and Go's order then comes from its
+// map: either specifier. Go answers from `TestB5ModuleSpecifierProbe` at
+// 3e9236361fa9, 200 runs each (`scripts/perf-rearch/b5_go_probes.sh`).
+// PORT: it runs in a child process, because the importing file must be
+// published (see `parse_type_script_published`).
+#[test]
+fn test_module_specifier_of_redirects_differing_only_in_case() {
+    super::childprog::in_child(
+        module_path!(),
+        "test_module_specifier_of_redirects_differing_only_in_case",
+        module_specifier_of_redirects_differing_only_in_case,
+    );
+}
+
+fn module_specifier_of_redirects_differing_only_in_case() {
+    use ts_goport::modulespecifiers::{ModuleSpecifierOptions, get_module_specifier};
+
+    let file =
+        super::parsetestutil::parse_type_script_published("export {};\n", false /*jsx*/);
+    let options = CompilerOptions {
+        module: ModuleKind::COMMON_JS,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    // (root, case-sensitive, Go's specifiers)
+    let cases: &[(&str, bool, &[&str])] = &[
+        ("^/~ts-uri~/mem/auth/", false, &["PKG"]),
+        ("^/~ts-uri~/mem/auth/", true, &["PKG"]),
+        ("/repo/", false, &["PKG", "pkg"]),
+        ("/repo/", true, &["PKG"]),
+    ];
+    for &(root, use_case_sensitive_file_names, want) in cases {
+        for (imported, redirect) in [("pkg", "PKG"), ("PKG", "pkg")] {
+            let host = MockModuleSpecifierGenerationHost {
+                current_dir: root.to_string(),
+                use_case_sensitive_file_names,
+                redirect_targets: vec![format!("{root}node_modules/{redirect}/index.d.ts")],
+                ..mock_host(KnownSymlinks::new(root, use_case_sensitive_file_names))
+            };
+            let got = get_module_specifier(
+                &options,
+                &host,
+                file,
+                &format!("{root}src/main.ts"),
+                "",
+                &format!("{root}node_modules/{imported}/index.d.ts"),
+                ModuleSpecifierOptions::default(),
+            );
+            assert!(
+                want.contains(&got.as_str()),
+                "{root}, imported {imported}, case-sensitive {use_case_sensitive_file_names}: \
+                 got {got:?}, Go gives one of {want:?}"
+            );
+        }
+    }
+}
+
+// Lane B5 (B3 risk 9): with importModuleSpecifierPreference
+// "project-relative", Go getLocalModuleSpecifier keeps a `paths` specifier
+// when the importing and imported files have different nearest package.json
+// directories (specifiers.go:616, packageJsonPathsAreEqual with
+// `CaseSensitivity.ComparePaths`), and gives the relative path when they are
+// the same. "packages/a" and "packages/A" are different packages when they
+// are encoded dynamic names, on either host; on disk they are one package on
+// a case-insensitive host. Go answers from `TestB5ModuleSpecifierProbe` at
+// 3e9236361fa9 (`scripts/perf-rearch/b5_go_probes.sh`).
+// PORT: it runs in a child process, because the importing file must be
+// published (see `parse_type_script_published`).
+#[test]
+fn test_project_relative_specifier_across_packages_differing_only_in_case() {
+    super::childprog::in_child(
+        module_path!(),
+        "test_project_relative_specifier_across_packages_differing_only_in_case",
+        project_relative_specifier_across_packages_differing_only_in_case,
+    );
+}
+
+fn project_relative_specifier_across_packages_differing_only_in_case() {
+    use indexmap::IndexMap;
+    use ts_goport::modulespecifiers::{
+        ImportModuleSpecifierPreference, ModuleSpecifierOptions, UserPreferences,
+        update_module_specifier,
+    };
+
+    let file =
+        super::parsetestutil::parse_type_script_published("export {};\n", false /*jsx*/);
+    let preferences = UserPreferences {
+        import_module_specifier_preference: ImportModuleSpecifierPreference::ProjectRelative,
+        ..Default::default()
+    };
+    // (root, case-sensitive, source package, target package, Go's specifier)
+    let cases = [
+        ("^/~ts-uri~/mem/auth/", false, "a", "A", "@lib/x"),
+        ("^/~ts-uri~/mem/auth/", false, "a", "a", "../x"),
+        ("^/~ts-uri~/mem/auth/", false, "a", "b", "@lib/x"),
+        ("^/~ts-uri~/mem/auth/", true, "a", "A", "@lib/x"),
+        ("^/~ts-uri~/mem/auth/", true, "a", "a", "../x"),
+        ("^/~ts-uri~/mem/auth/", true, "a", "b", "@lib/x"),
+        ("/repo/", false, "a", "A", "../x"),
+        ("/repo/", false, "a", "a", "../x"),
+        ("/repo/", false, "a", "b", "@lib/x"),
+        ("/repo/", true, "a", "A", "@lib/x"),
+        ("/repo/", true, "a", "a", "../x"),
+        ("/repo/", true, "a", "b", "@lib/x"),
+    ];
+    for (root, use_case_sensitive_file_names, source, target, want) in cases {
+        let mut paths = IndexMap::new();
+        paths.insert(
+            "@lib/*".to_string(),
+            Some(vec![format!("./packages/{target}/*")]),
+        );
+        let options = CompilerOptions {
+            module: ModuleKind::COMMON_JS,
+            target: ScriptTarget::ES2020,
+            paths: Some(paths),
+            paths_base_path: root.to_string(),
+            ..Default::default()
+        };
+        let host = MockModuleSpecifierGenerationHost {
+            current_dir: root.to_string(),
+            use_case_sensitive_file_names,
+            package_json_directories: vec![
+                format!("{root}packages/{source}"),
+                format!("{root}packages/{target}"),
+            ],
+            ..mock_host(KnownSymlinks::new(root, use_case_sensitive_file_names))
+        };
+        let got = update_module_specifier(
+            &options,
+            &host,
+            file,
+            &format!("{root}packages/{source}/src/main.ts"),
+            "",
+            &format!("{root}packages/{target}/x.ts"),
+            &preferences,
+            ModuleSpecifierOptions::default(),
+        );
+        assert_eq!(
+            got, want,
+            "{root}, {source} to {target}, case-sensitive {use_case_sensitive_file_names}"
+        );
+    }
 }
 
 // Go: modulespecifiers/specifiers_test.go:411 TestProcessEndingChecksRootedFilePath (ts#64159)
