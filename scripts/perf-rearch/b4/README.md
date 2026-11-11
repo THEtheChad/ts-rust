@@ -68,12 +68,29 @@ Reproduced with `starve-repro.sh` (one CPU, 6 busy loops):
 The server logs show `Delaying scheduled diagnostics refresh...` after the slow open (3 to 4 s)
 in every short run, Go's and tsc-rs's.
 
-## Fix: a barrier in lspdiff (`lspdiff-barrier.patch`)
+## Fix: a barrier in lspdiff (`lspdiff-barrier.patch`, `apply-barrier.py`)
 
-`client.mjs` counts the notifications it sends (didOpen, didChange, didClose, didSave,
-didChangeWatchedFiles, didChangeConfiguration) and the `handled method '<m>'` lines each server
-logs. `caughtUp()` waits until every sent one is handled. `Script.settle` calls it first, so the
-quiet and npm windows start after the server's work for the step has started. A server that
-died or hangs is not waited for, and its next request reports the crash or timeout as before.
-The patch is against H8's `95006241b` (H8 owns `vendor/lspdiff`). It changes `SESSION_SOURCES`,
-so it resets the Go evidence of every watch scenario: a Go fill is needed when it is applied.
+`client.mjs` gets `NotificationBarrier`, which counts the notifications the client sends
+(didOpen, didChange, didClose, didSave, didChangeWatchedFiles, didChangeConfiguration) and the
+`handled method '<m>' in` / `error handling method '<m>':` lines each server logs for a
+notification (a request's line carries its id). `LspClient.caughtUp()` waits until every sent
+notification is handled. `Script.settle` (scenario.mjs) calls it first, so the quiet and npm windows
+start after the server's work for the step has started. A server that died or hangs is not waited
+for: its next request reports the crash or timeout as before (a tsc-rs failure, not a harness
+error). `h4-selftest.mjs` gets the probe client's `caughtUp` and two "b4" checks: that a scenario
+wait calls the barrier before its windows, and the barrier's counting.
+
+`apply-barrier.py <scripts/perf-rearch>` makes these edits by anchor text, and the patch is its
+output on H8's round-3 head `b214cfb3d` (`git apply --check` passes; the selftest passes with it).
+H8 owns `vendor/lspdiff`, so this lane does not commit the edit there. The patch changes
+`SESSION_SOURCES` (client.mjs, scenario.mjs), so it resets the Go evidence of every watch
+scenario: the gate needs a Go fill (`--go-refill`) of them once it is applied.
+
+## The tsc-rs test
+
+`crates/ts_goport/tests/go_baselines/project_lsp/refresh_sequence_test.rs` pins Go's calls for a
+load and the file events after it, with the LSP's 500 ms debounce: one refresh per open (each with
+its ATA progress), one for two back-to-back opens, none after the request that applies the ATA
+state, one per relevant watch event, one for two events in one window, none for an irrelevant one,
+and none when a didChange follows the event. It runs at the default parse threads and at
+`GOPORT_PARSE_THREADS=1`. tsc-rs already matches Go here, so it passes on the base too.
