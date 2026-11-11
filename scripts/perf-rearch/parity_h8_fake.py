@@ -321,4 +321,10 @@ if mode == 'child-stderr':  # a child that holds only stderr open after the serv
         os.close(n)
         time.sleep(20)
         os._exit(0)
-sys.exit(code)
+# Lane H9 round 3: end without the interpreter's finalization. The pump thread (a daemon) can be inside a read of
+# stdin when the server exits, and CPython then aborts at shutdown ("could not acquire lock for <stdin> at
+# interpreter shutdown, possibly due to daemon threads"): a SIGABRT of the fake, not of anything it tests (once in
+# the round 3 self-test, mode go). Every write has been flushed (emit).
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(code & 0xFF)
