@@ -968,6 +968,11 @@ fn job_result<R>(receiver: JobReceiver<R>) -> JobResult<R> {
 /// `VersionTables` (`with_tables`), which a release frees.
 pub(crate) struct ProgramState {
     cwd: &'static str,
+    /// Go `Program.BaseDirectory()` (`config_base_directory` of the
+    /// program's config): what the emit host gives as its `BaseDirectory()`
+    /// (compiler/emitHost.go:106). An alias resolver program's is its
+    /// resolver's current directory (Go aliasresolver.go:69).
+    base_directory: &'static str,
     use_case_sensitive_file_names: bool,
     /// Go `Program.CommonSourceDirectory`. The Go frontend sets it when it
     /// builds the program; an alias resolver program has none.
@@ -1588,6 +1593,7 @@ pub fn new_alias_resolver_program(
     }));
     let program_state = ProgramState {
         cwd: intern_program_str(current_directory),
+        base_directory: intern_program_str(current_directory),
         use_case_sensitive_file_names,
         common_source_directory: None,
         alias_resolver: true,
@@ -3244,6 +3250,12 @@ pub fn get_current_directory() -> &'static str {
     state().cwd
 }
 
+// Go: compiler/program.go:151 BaseDirectory (ts#64159): the config file's
+// directory, or the current directory without a config file.
+pub fn base_directory() -> &'static str {
+    state().base_directory
+}
+
 // Go: compiler/program.go:265 UseCaseSensitiveFileNames
 pub fn use_case_sensitive_file_names() -> bool {
     state().use_case_sensitive_file_names
@@ -3906,7 +3918,7 @@ fn source_file_may_be_emitted_worker(
     json_file_may_be_emitted(
         &info.file_name,
         options,
-        get_current_directory(),
+        base_directory(),
         use_case_sensitive_file_names(),
     )
 }

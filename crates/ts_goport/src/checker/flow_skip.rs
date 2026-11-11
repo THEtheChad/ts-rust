@@ -2478,8 +2478,8 @@ impl Checker {
         }
     }
 
-    /// Records one loop turn of `get_type_at_flow_node` (verify mode).
-    #[cold]
+    /// Records one loop turn of `get_type_at_flow_node` (verify mode), when
+    /// a verify is recording.
     pub(crate) fn flow_skip_record(&mut self, flow: FlowNodeId, depth: i32) {
         if let Some(recording) = self.flow_skip.recording.as_deref_mut() {
             recording.visited.push(flow);

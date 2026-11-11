@@ -1044,14 +1044,10 @@ pub fn get_extends_config_path(
         return (extended_config_path, errors);
     }
     // If the path isn't a rooted or relative path, resolve like a module
-    let resolver_host: Rc<dyn ResolutionHost> = Rc::new(ResolverHost {
-        fs: host.fs(),
-        current_directory: host.get_current_directory(),
-    });
     let resolved = resolve_config(
         &extended_config,
         &combine_paths(base_path, &["tsconfig.json"]),
-        resolver_host,
+        host.fs(),
     );
     if resolved.is_resolved() {
         return (resolved.resolved_file_name, errors);
@@ -1327,30 +1323,6 @@ pub trait ParseConfigHost {
             &*self.fs(),
             extra_extensions,
         )
-    }
-}
-
-// Go: tsoptions/tsconfigparsing.go:720 resolverHost (at 673a5f17d713; removed by ts#64159)
-// PORT: Go embeds the ParseConfigHost interface. This keeps its `FS()` and
-// `GetCurrentDirectory()` values, because `ResolutionHost` returns borrows.
-pub struct ResolverHost {
-    pub fs: Rc<dyn Fs>,
-    pub current_directory: String,
-}
-
-impl ResolverHost {
-    // Go: tsoptions/tsconfigparsing.go:724 (*resolverHost).Trace (at 673a5f17d713;
-    // removed by ts#64159)
-    pub fn trace(&self, _msg: &str) {}
-}
-
-impl ResolutionHost for ResolverHost {
-    fn fs(&self) -> &dyn Fs {
-        &*self.fs
-    }
-
-    fn get_current_directory(&self) -> &str {
-        &self.current_directory
     }
 }
 

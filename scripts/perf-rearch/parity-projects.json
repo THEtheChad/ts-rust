@@ -1,5 +1,5 @@
 {
-  "about": "Projects of the parity CLI tier (parity_cli.py). The first existing dir of each project is used (it must hold package.json): the baseline lane's ~/.cache/perf-rearch/projects/<name> (scripts/perf-rearch/setup-projects.sh there), else the parity lane's dirs (scripts/perf-rearch/prepare-parity-projects.sh); both are at the same pinned commits. label: item name part; cwd: relative to the project dir; config: relative to cwd; (the quick tier's items are parity-quick-manifest.json's); build: also run -b on it; skipVariants: variants not run on the config.",
+  "about": "Projects of the parity CLI tier (parity_cli.py). The first existing dir of each project is used (it must hold package.json): the baseline lane's ~/.cache/perf-rearch/projects/<name> (scripts/perf-rearch/setup-projects.sh there), else the parity lane's dirs (scripts/perf-rearch/prepare-parity-projects.sh); both are at the same pinned commits. label: item name part; cwd: relative to the project dir; config: relative to cwd; (the quick tier's items are parity-quick-manifest.json's); build: also run -b on it; skipVariants: variants not run on the config. fixture: a synthetic project of parity-fixtures.json, used in place of dirs (made once into a read-only content-addressed dir); variants: the opt-in variants the config runs (build-edit, explain-trace); edit: the change build-edit makes between its two runs ({file: path from the project dir, append: text}).",
   "projects": [
     {
       "name": "ts-pattern",
@@ -219,6 +219,51 @@
           "label": "runtime",
           "cwd": "packages/svelte",
           "config": "tsconfig.runtime.json"
+        }
+      ]
+    },
+    {
+      "name": "symlink-monorepo",
+      "fixture": "symlink-monorepo",
+      "configs": [
+        {
+          "label": "solution",
+          "config": "tsconfig.json",
+          "build": true,
+          "variants": [
+            "build-edit"
+          ],
+          "edit": {
+            "file": "packages/a/src/index.ts",
+            "append": "export const edited: number = 5;\n"
+          },
+          "skipVariants": [
+            "noemit",
+            "emit",
+            "decl",
+            "incr",
+            "listfiles",
+            "extdiag",
+            "pretty",
+            "showconfig"
+          ]
+        },
+        {
+          "label": "b-preserve",
+          "config": "packages/b/tsconfig.preserve.json",
+          "variants": [
+            "explain-trace"
+          ],
+          "skipVariants": [
+            "noemit",
+            "emit",
+            "decl",
+            "incr",
+            "listfiles",
+            "extdiag",
+            "pretty",
+            "showconfig"
+          ]
         }
       ]
     }

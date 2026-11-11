@@ -26,6 +26,8 @@ A scenario (parity-api-scenarios.json) is:
   build         a list of build-orchestrator steps: {"create": {rootNames, cwd?, compilerOptions?,
                 buildOptions?}} first, then {"build": project}, {"buildReferences": project},
                 {"clean": project} and {"dispose": null} in any order
+  afterBuild    updates as in `updates`, made after the build steps on the same session's snapshot
+                (so the programs see what the build wrote, and reuse what they can)
 In every string, @ROOT@ is the scenario's root: VIRTUAL/<name> for an in-memory scenario (a path that does
 not exist in the sandbox), SCRATCH/<name>/root for a scenario with a disk fixture. The server runs with
 --cwd @ROOT@. Dynamic names (^/~ts-uri~/...) are written out as they are.
@@ -104,7 +106,8 @@ FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o755, 0o644
 # and signal lines; Rust's panic and stack overflow; an abort.
 CRASH_RE = re.compile(r"^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at "
                       r"|.*has overflowed its stack|Aborted\b|.*core dumped)")
-SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'updates', 'build'}
+SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'updates', 'build',
+                 'afterBuild'}
 BUILD_STEPS = {'create': 'createBuildOrchestrator', 'build': 'build', 'buildReferences': 'buildReferences',
                'clean': 'cleanBuild', 'dispose': 'disposeBuildOrchestrator'}
 
@@ -178,7 +181,7 @@ def validate(sc):
     for r in sc.get('requests') or []:
         if r not in PER_PROJECT:
             raise ScenarioError(f'{name}: unknown request {r}')
-    for u in sc.get('updates') or []:
+    for u in (sc.get('updates') or []) + (sc.get('afterBuild') or []):
         if not isinstance(u, dict) or set(u) - {'changes', 'requests', 'release'} or 'changes' not in u:
             raise ScenarioError(f'{name}: an update is {{changes, requests?, release?}}')
         if (u['changes'].get('fileSystem') or {}).get('host'):
@@ -195,6 +198,8 @@ def validate(sc):
         raise ScenarioError(f'{name}: the build steps start with create')
     if build and disk is None:
         raise ScenarioError(f'{name}: the build orchestrator uses the host filesystem: give a disk fixture')
+    if sc.get('afterBuild') and not build:
+        raise ScenarioError(f'{name}: afterBuild needs build steps')
 
 
 def server_args(sc):
@@ -508,17 +513,7 @@ class Session:
             if snap is not None:
                 sid, projects = _result(snap, 'snapshot'), _projects(snap)
                 self.per_project(sid, projects, sc.get('requests'))
-        for u in sc.get('updates') or []:
-            if sid is None:
-                break
-            got = self.ask('updateSnapshot', {'snapshot': sid, 'changes': expand(u['changes'], root)})
-            if got is None:
-                break
-            old, sid = sid, _result(got, 'snapshot')
-            projects = _projects(got) or projects
-            self.per_project(sid, projects, u.get('requests'))
-            if u.get('release'):
-                self.ask('release', {'snapshot': old})
+        sid, projects = self.updates(sid, projects, sc.get('updates'))
         orchestrator = None
         for step in sc.get('build') or []:
             (kind, arg), = step.items()
@@ -529,6 +524,23 @@ class Session:
                 self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator})
             else:
                 self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator, **({'project': expand(arg, root)} if arg else {})})
+        self.updates(sid, projects, sc.get('afterBuild'))
+
+    def updates(self, sid, projects, updates):
+        """updateSnapshot for each update on the current snapshot, its requests per project, and the
+        release of the replaced snapshot when it asks: the (snapshot, projects) it ends with."""
+        for u in updates or []:
+            if sid is None:
+                break
+            got = self.ask('updateSnapshot', {'snapshot': sid, 'changes': expand(u['changes'], self.root)})
+            if got is None:
+                break
+            old, sid = sid, _result(got, 'snapshot')
+            projects = _projects(got) or projects
+            self.per_project(sid, projects, u.get('requests'))
+            if u.get('release'):
+                self.ask('release', {'snapshot': old})
+        return sid, projects
 
     def end(self):
         if self.failure and self.failure[0] == 'timeout':

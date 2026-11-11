@@ -330,16 +330,10 @@ impl Checker {
         // flowcost1: a static file's flow nodes come from the walk's cache
         // (`FlowState::flow_data`).
         let mut flow_data_guard = None;
-        // flowskip1 verify mode: record each loop turn (read once per call;
-        // a nested verify restores the recording before it returns).
-        #[cfg(feature = "diagnostics")]
-        let recording = self.flow_skip.recording.is_some();
         loop {
+            // flowskip1 verify mode: record each loop turn.
             #[cfg(feature = "diagnostics")]
-            if recording {
-                let depth = f.depth;
-                self.flow_skip_record(flow, depth);
-            }
+            self.flow_skip_record(flow, f.depth);
             let flow_data = f.flow_data(flow, &mut flow_data_guard);
             let flags = flow_data.flags;
             if flags.intersects(FlowFlags::SHARED) {
