@@ -2109,3 +2109,52 @@ once a **reconciliation step** is built and tested.
     base, so a programmatic `paths` without `pathsBasePath` gives TS2307.
   - **Finding 2:** the api scenario queries nothing after the build.
   - The refactor itself is confirmed faithful. Round 2 sent.
+- **B6 done; Astra review running.** Head `1867f09aa`, merges cleanly.
+  - **The probe:** the new lsp `prefs` session (495 answers). The base had
+    1 DIFF (`maximumHoverLength` 4294967306 wrapped in an `i32`); the head
+    is 495 MATCH. The other odd inputs already matched.
+  - **The port:** Go's generated parser and serializer
+    (`userpreferences_generated.rs`) in place of the reflective one. The
+    hand-written ports equal Go's complexity. Production code −1,557 lines.
+  - **Gate:** `runs/b6-1867f09aa-full` PARITY OK, with lsp 3,176 MATCH.
+  - **icount, LSP keyed load:** +0.30%, inside 1.1% spread (p = 0.14);
+    the CLI control is flat.
+  - **Backlog from B6:**
+    - non-object init options and `workspace/configuration` answers need a
+      shared-source change, so do them with the next all-session refill;
+    - fold the 3 copies of the amd64 `float64_to_int` (jsnum,
+      parsing_helpers, userpreferences_generated) together with the
+      `core.rs` and lib-blob change;
+    - formatter sizes stay `i32` (Go's `int`), which can't be probed
+      without Go allocating gigabytes.
+- **B6 review: REJECT** (`reviews/2026-11-11-astra-b6.md`). The 83/74/83
+  lists, precedence and omission rules are confirmed.
+  - **The findings:**
+    - the hover cap's ×10 wrap;
+    - formatter sizes still `i32` (observable: `tabSize` 2^32);
+    - `i64` serialized through `f64`;
+    - empty against nil slices in `MarshalJSONTo`;
+    - 2 vacuous or masked probes.
+  - All 5 to fix, and fold the amd64 conversion into one helper. Round 2
+    sent.
+- **B7 round 2 done** (head `0a79603a1`). It found 2 real differences from
+  Go, both through the API, both now items: DIFF on `4ae5301b0`, MATCH on
+  the head.
+  - `build-paths-base-directory`: a programmatic `paths` gave TS2307.
+  - `programs-config-path-base-directory`: automatic types and lib
+    replacement resolved from the host directory.
+  - **The fix:** the loader, its resolver and the parse workers use the
+    config's base directory everywhere Go uses `Config.BaseDirectory()`.
+    The call-site table is in `cleanup/b7.md`.
+  - **The api `afterBuild` step:** after the builds, a query over the built
+    tree, then a same-session edit that crosses the redirect (TS2322).
+  - **Gate:** `runs/20261111-131608-full-bb2f2974a5` PARITY OK; api 52
+    MATCH, all refilled because the driver changed every api key.
+  - **icount:** single-threaded flat.
+  - **Astra recheck** running (round 2 of 3). Root's own question for it:
+    is closing b, to avoid Go's randomly ordered changed-projects map, more
+    honest than sorting that map on both sides?
+- **B7 recheck: REJECT,** with 1 finding (`reviews/2026-11-11-astra-b7-r2.md`):
+  declaration emit's module specifiers still use the process directory for
+  `paths` (`ProgramHost::base_directory`), giving `"../shared/value"`
+  where Go writes `"alias"`. Round 3 sent, the last.
