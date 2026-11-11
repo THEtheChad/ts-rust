@@ -1266,16 +1266,15 @@ impl FileLoader {
         self.root_tasks.push(Rc::new(RefCell::new(root_task)));
     }
 
+    /// Go `p.opts.Config.BaseDirectory()` (`config_base_directory`).
+    pub fn base_directory(&self) -> String {
+        config_base_directory(&self.opts.config, &*self.host)
+    }
+
     // Go: fileloader.go:278 (*fileLoader).addAutomaticTypeDirectiveTasks
     pub fn add_automatic_type_directive_tasks(&mut self) {
-        let compiler_options = self.opts.config.compiler_options();
-        let containing_directory = if !compiler_options.config_file_path.is_empty() {
-            get_directory_path(&compiler_options.config_file_path)
-        } else {
-            self.host.get_current_directory()
-        };
         let containing_file_name =
-            combine_paths(&containing_directory, &[INFERRED_TYPES_CONTAINING_FILE]);
+            combine_paths(&self.base_directory(), &[INFERRED_TYPES_CONTAINING_FILE]);
         self.root_tasks.push(Rc::new(RefCell::new(ParseTask {
             normalized_file_path: containing_file_name,
             is_for_automatic_type_directive: true,
@@ -1299,8 +1298,9 @@ impl FileLoader {
             ModeAwareCache::default();
         let mut type_resolutions_trace: Vec<DiagAndArgs> = Vec::new();
         let mut p_diagnostics: Vec<Rc<ProcessingDiagnostic>> = Vec::new();
-        // PORT: Go passes the compiler host as a `module.ResolutionHost`.
-        let host = CompilerResolutionHost::new(self.host.clone());
+        // Go: module.GetAutomaticTypeDirectiveNames(options,
+        // p.opts.Config.BaseDirectory(), p.host.FS()) (fileloader.go:293).
+        let host = CompilerResolutionHost::new(self.host.clone(), self.base_directory());
         let host: &dyn ResolutionHost = &host;
         let automatic_type_directive_names =
             get_automatic_type_directive_names(self.opts.config.compiler_options(), host);
@@ -2537,11 +2537,7 @@ impl FileLoader {
             && name != "lib.d.ts"
         {
             let library_name = get_library_name_from_lib_file_name(name);
-            let resolve_from = get_inferred_library_name_resolve_from(
-                self.opts.config.compiler_options(),
-                &self.host.get_current_directory(),
-                name,
-            );
+            let resolve_from = get_inferred_library_name_resolve_from(&self.base_directory(), name);
             let (resolution, trace) = self.resolve_library(&library_name, &resolve_from);
             if resolution.is_resolved() {
                 path = resolution.resolved_file_name.clone();
@@ -2731,18 +2727,9 @@ pub fn get_library_name_from_lib_file_name(lib_file_name: &str) -> String {
 }
 
 // Go: fileloader.go:1034 getInferredLibraryNameResolveFrom
-pub fn get_inferred_library_name_resolve_from(
-    options: &CompilerOptions,
-    current_directory: &str,
-    lib_file_name: &str,
-) -> String {
-    let containing_directory = if !options.config_file_path.is_empty() {
-        get_directory_path(&options.config_file_path)
-    } else {
-        current_directory.to_string()
-    };
+pub fn get_inferred_library_name_resolve_from(base_directory: &str, lib_file_name: &str) -> String {
     combine_paths(
-        &containing_directory,
+        base_directory,
         &[&format!("__lib_node_modules_lookup_{lib_file_name}__.ts")],
     )
 }

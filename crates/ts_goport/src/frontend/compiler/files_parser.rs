@@ -2799,6 +2799,10 @@ impl PrefetchConfig {
 /// program resolver.
 struct WorkerResolveConfig {
     options: CompilerOptions,
+    /// The resolver's base directory: Go `opts.Config.BaseDirectory()`, the
+    /// current directory of the loader's resolution host
+    /// (`config_base_directory`).
+    base_directory: String,
     typings_location: String,
     project_name: String,
     /// Go `opts.Config.ContentMapperExtensions()`, the resolver's extra
@@ -2875,6 +2879,7 @@ impl WorkerResolveConfig {
         }
         Some(WorkerResolveConfig {
             options: (**options).clone(),
+            base_directory: loader.base_directory(),
             typings_location: loader.opts.typings_location.clone(),
             project_name: loader.opts.project_name.clone(),
             extra_extensions: loader.content_mapper_extensions.clone(),
@@ -2888,18 +2893,21 @@ impl WorkerResolveConfig {
     /// The config of the early pool of `config` (`start_default_lib_prefetch`):
     /// `of_loader` of a tsc loader with no project references, no content
     /// mappers and a new shared resolution cache. `None` when such a loader
-    /// shares no resolution cache (`process_all_program_files`).
+    /// shares no resolution cache (`process_all_program_files`), and for a
+    /// hand-built config with no base directory.
     fn of_config(config: &ParsedCommandLine) -> Option<Self> {
         let options = config.compiler_options();
         if !super::file_loader::workers_resolve_imports(options)
             || options.trace_resolution == Tristate::True
             || config.has_project_references()
             || !config.content_mappers().is_empty()
+            || config.get_current_directory().is_empty()
         {
             return None;
         }
         Some(WorkerResolveConfig {
             options: (**options).clone(),
+            base_directory: config.get_current_directory().to_string(),
             typings_location: String::new(),
             project_name: String::new(),
             extra_extensions: Vec::new(),
@@ -2919,6 +2927,7 @@ impl WorkerResolveConfig {
         };
         shared
             && self.options == other.options
+            && self.base_directory == other.base_directory
             && self.typings_location == other.typings_location
             && self.project_name == other.project_name
             && self.extra_extensions == other.extra_extensions
@@ -4307,7 +4316,7 @@ impl WorkerResolverSlot {
             None => WorkerResolver::new(
                 config,
                 resolver_fs,
-                &shared.config.current_directory,
+                &config.base_directory,
                 shared.stats.host.get().is_some(),
             ),
         });

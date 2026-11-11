@@ -578,15 +578,15 @@ impl ProjectReferenceFileMapperBuilder {
     // PORT: Go `&projectReferenceFileMapperBuilder{projectReferenceFileMapper:
     // ..., host: &compilerResolutionHost{host: p.host, baseDirectory:
     // p.opts.Config.BaseDirectory()}}` (fileloader.go:342
-    // addProjectReferenceTasks). The port has no config base directory:
-    // `CompilerResolutionHost` keeps the host's current directory.
+    // addProjectReferenceTasks).
     #[must_use]
     pub fn new(opts: &ProgramConfig, host: Rc<dyn CompilerHost>) -> Self {
+        let base_directory = config_base_directory(&opts.config, &*host);
         ProjectReferenceFileMapperBuilder {
             project_reference_file_mapper: Rc::new(RefCell::new(ProjectReferenceFileMapper::new(
                 opts,
             ))),
-            host: Rc::new(CompilerResolutionHost::new(host)),
+            host: Rc::new(CompilerResolutionHost::new(host, base_directory)),
         }
     }
 
@@ -707,10 +707,11 @@ impl ProjectReferenceFileMapperBuilder {
 // projectreferencedtsfakinghost.go
 // ---------------------------------------------------------------------------
 
-/// A `CompilerHost` used as a `module.ResolutionHost`.
-// PORT: Go passes the `CompilerHost` interface value where a
-// `module.ResolutionHost` is expected. `ResolutionHost` returns borrowed
-// values, so this keeps the host's `FS()` and current directory.
+// Go: fileloader.go:149 compilerResolutionHost
+/// A `CompilerHost` used as a `module.ResolutionHost`, with the program's
+/// base directory as its current directory.
+// PORT: `ResolutionHost` returns borrowed values, so this keeps the host's
+// `FS()`.
 pub struct CompilerResolutionHost {
     pub host: Rc<dyn CompilerHost>,
     pub fs: Rc<dyn Fs>,
@@ -718,14 +719,14 @@ pub struct CompilerResolutionHost {
 }
 
 impl CompilerResolutionHost {
+    /// Go `&compilerResolutionHost{host: host, baseDirectory: base_directory}`.
     #[must_use]
-    pub fn new(host: Rc<dyn CompilerHost>) -> Self {
+    pub fn new(host: Rc<dyn CompilerHost>, base_directory: String) -> Self {
         let fs = host.fs();
-        let current_directory = host.get_current_directory();
         CompilerResolutionHost {
             host,
             fs,
-            current_directory,
+            current_directory: base_directory,
         }
     }
 }
