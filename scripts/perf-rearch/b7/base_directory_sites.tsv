@@ -1,0 +1,157 @@
+# Go site (tsc/internal at the pin)	Go expression	Rust counterpart	status	reason
+api/session.go:669	Session.GetCurrentDirectory()	api/session_p1.rs get_current_directory	n/a	definition
+api/session.go:670	s.snapshotHost.GetCurrentDirectory()	api/session_p1.rs self.snapshot_host.get_current_directory()	correct	session directory, both
+api/session.go:674	currentDirectory() wrapper	callers call get_current_directory()	n/a	wrapper not ported; the same session directory
+api/session.go:815	file.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:1412	CurrentDirectory: s.currentDirectory()	api/session_p1.rs self.get_current_directory()	correct	session directory
+api/session.go:1424	PrepareAutoImports.ToURI(s.GetCurrentDirectory())	api/session_p1.rs to_uri(&self.get_current_directory())	correct	session directory
+api/session.go:1431	NewForUpdate(…, s.GetCurrentDirectory())	api/session_p1.rs self.get_current_directory()	correct	session directory
+api/session.go:1477	PrepareAutoImports.ToURI(s.GetCurrentDirectory())	api/session_p1.rs to_uri(&self.get_current_directory())	correct	session directory
+api/session.go:1487	NewForUpdate(…, s.GetCurrentDirectory())	api/session_p1.rs self.get_current_directory()	correct	session directory
+api/session.go:1666	file.ToURI(s.GetCurrentDirectory())	api/session_p1.rs to_uri(&self.get_current_directory())	correct	session directory
+api/session.go:1861	ParseBuildCommandLine(…, buildSys.GetCurrentDirectory())	api/session_p1.rs parse_build_command_line(…, build_sys)	correct	the build system's directory (params.cwd or the session's)
+api/session.go:1953	currentDirectory = s.GetCurrentDirectory()	api/session_p1.rs self.get_current_directory()	correct	session directory fallback
+api/session.go:1976	apiBuildSystem.GetCurrentDirectory()	api/session_p1.rs ApiBuildSystem current_directory	n/a	accessor of the field set at :1953
+api/session.go:2365	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:2412	PathKeyForFileName(params.File.ToFileName(program.BaseDirectory()))	api/session_p1.rs program_base_directory	correct	program base (the key of a rooted name)
+api/session.go:2492	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:2678	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:2707	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:2729	file.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:2749	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:3024	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:3051	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:3235	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory	correct	program base
+api/session.go:3258	params.File.ToFileName(program.BaseDirectory())	api/session_p1.rs program_base_directory (the new program)	correct	program base
+api/session.go:5157	file.ToURI(s.GetCurrentDirectory())	api/session_p2.rs to_uri(&self.get_current_directory())	correct	session directory
+api/session.go:5254	cwd := s.GetCurrentDirectory()	api/session_p2.rs self.get_current_directory()	correct	session directory
+api/session.go:5401	file.ToFileName(program.BaseDirectory())	api/session_p2.rs program_base_directory	correct	program base
+api/session.go:5424	params.File.ToFileName(program.BaseDirectory())	api/session_p2.rs program_base_directory	correct	program base
+api/session.go:5490	params.File.ToFileName(program.BaseDirectory())	api/session_p2.rs program_base_directory	correct	program base
+api/session.go:5511	params.File.ToFileName(program.BaseDirectory())	api/session_p2.rs program_base_directory	correct	program base
+api/module_resolution.go:42	callbackModuleResolver.BaseDirectory()	none (Rust's Resolver has no base_directory)	n/a	no counterpart; nothing in Rust asks a resolver for its base
+api/module_resolution.go:43	p.fallbackResolver.BaseDirectory()	none	n/a	as :42
+api/module_resolution.go:238	currentDirectory: s.GetCurrentDirectory()	api/module_resolution.rs self.get_current_directory()	correct	session directory
+api/module_resolution.go:290	compileModuleResolutionSpec(…, s.GetCurrentDirectory())	api/module_resolution.rs self.get_current_directory()	correct	session directory
+api/module_resolution.go:340	ContainingDirectory.ToFileName(s.GetCurrentDirectory())	api/module_resolution.rs cwd = self.get_current_directory()	correct	session directory
+api/module_resolution.go:375	callbackModuleResolver{currentDirectory: s.GetCurrentDirectory()}	api/module_resolution.rs current_directory: cwd	correct	session directory
+api/proto.go:276	comment	api/proto.rs	n/a	comment
+api/proto.go:277	InitializeResponse.CurrentDirectory	api/proto.rs current_directory	n/a	field
+api/proto.go:1035	ProjectResponse.CurrentDirectory	api/proto.rs current_directory	n/a	field
+api/proto.go:1080	CurrentDirectory: p.CurrentDirectory()	api/proto.rs p.current_directory	correct	the project's directory, set as in Go (project.rs)
+api/server.go:94	CurrentDirectory: s.options.Cwd	api/server.rs self.options.cwd	correct	the server's --cwd
+project/project.go:304	sessionOptions.CurrentDirectory (resolution glob mapper)	project/project.rs session_options.current_directory	correct	session directory as the workspace
+project/project.go:322	sessionOptions.CurrentDirectory (watched files)	project/project.rs session_options.current_directory	correct	session directory; Rust's extra to_path base only roots rooted names
+project/project.go:328	Project.CurrentDirectory()	project/project.rs current_directory	n/a	accessor (config dir, or session directory for inferred and synthetic)
+project/configfileregistrybuilder.go:228	workspaceDirectory := sessionOptions.CurrentDirectory	project/configfileregistrybuilder.rs session_options.current_directory	correct	session directory
+project/session.go:69	SessionOptions.CurrentDirectory	project/session.rs current_directory	n/a	field
+project/session.go:259	comment	project/session.rs	n/a	comment
+project/session.go:260	Session.GetCurrentDirectory()	project/session.rs get_current_directory	n/a	definition
+project/session.go:261	s.options.CurrentDirectory	project/session.rs self.options.current_directory	correct	session directory
+project/session.go:2046	project.DisplayName(s.options.CurrentDirectory)	project/session.rs display_name(&s.options.current_directory)	correct	session directory
+project/snapshot.go:309	Snapshot.GetCurrentDirectory()	project/snapshot.rs get_current_directory	n/a	definition
+project/snapshot.go:310	s.host.GetCurrentDirectory()	project/snapshot.rs self.host.get_current_directory()	correct	session directory
+project/snapshot.go:669	store.options.CurrentDirectory (auto-import clone)	project/snapshot.rs store.options.current_directory	correct	session directory, carried by the clone host
+project/snapshothost.go:188	SnapshotHost.GetCurrentDirectory()	project/snapshothost.rs get_current_directory	n/a	definition
+project/snapshothost.go:189	s.options.CurrentDirectory	project/snapshothost.rs self.options.current_directory	correct	session directory
+project/projectcollectionbuilder.go:850	sessionOptions.CurrentDirectory (typings globs)	project/projectcollectionbuilder.rs session_options.current_directory	correct	session directory; Rust's extra to_path base only roots rooted names
+project/projectcollectionbuilder.go:1315	newSyntheticProject(…, sessionOptions.CurrentDirectory)	project/projectcollectionbuilder.rs session_options.current_directory	correct	a synthetic project's directory and base
+project/projectcollectionbuilder.go:1403	NewInferredProject(sessionOptions.CurrentDirectory, …)	project/projectcollectionbuilder.rs session_options.current_directory	correct	the inferred project's directory and base
+project/projectcollectionbuilder.go:1496	DisplayName(sessionOptions.CurrentDirectory)	project/projectcollectionbuilder.rs display_name(&self.session_options.current_directory)	correct	session directory
+project/ata/ata.go:72	resolutionHost.GetCurrentDirectory()	project/ata/ata.rs current_directory	n/a	accessor
+lsp/server.go:1771	CurrentDirectory: cwd	lsp/server.rs current_directory: cwd	correct	workspace directory, chosen in the same order
+execute/tsc.go:57	ParseBuildCommandLine(…, sys.GetCurrentDirectory())	execute/execute_tsc.rs parse_build_command_line(…, SystemParseConfigHost)	correct	process directory
+execute/tsc.go:63	ParseCommandLine(…, sys.GetCurrentDirectory())	execute/execute_tsc.rs parse_command_line(…, SystemParseConfigHost)	correct	process directory
+execute/tsc.go:68	ToRootedFilePath(input, sys.GetCurrentDirectory()) (fmtMain)	none	n/a	fmtMain is not ported (unused in Go)
+execute/tsc.go:70	ToRootedFilePath(output, sys.GetCurrentDirectory()) (fmtMain)	none	n/a	as :68
+execute/tsc.go:183	findConfigFile(sys.GetCurrentDirectory(), …)	execute/execute_tsc.rs sys.get_current_directory()	correct	process directory
+execute/tsc.go:195	TS5081 with sys.GetCurrentDirectory()	execute/execute_tsc.rs sys.get_current_directory()	correct	process directory
+execute/tsc/compile.go:27	System.GetCurrentDirectory()	execute/tsc/compile.rs get_current_directory	n/a	interface method
+execute/tsc/init.go:19	sys.GetCurrentDirectory()	execute/tsc/init.rs sys.get_current_directory()	correct	process directory
+execute/tsc/init.go:20	ResolveFile("tsconfig.json")	execute/tsc/init.rs combine_paths(cwd, tsconfig.json)	correct	process directory
+execute/tsc/emit.go:156	ExplainFiles(…, sys.GetCurrentDirectory())	execute/tsc/emit.rs explain_files_relative_to(…, sys.get_current_directory())	correct	process directory
+execute/tsc/diagnostics.go:17	CurrentDirectory: sys.GetCurrentDirectory()	execute/tsc/diagnostics.rs sys.get_current_directory()	correct	process directory
+execute/build/orchestrator.go:988	opts.Sys.GetCurrentDirectory()	execute/build/orchestrator.rs opts.sys.get_current_directory()	correct	the build system's directory
+execute/watcher.go:226	Realpath(w.config.BaseDirectory()) (no-config watch)	execute/watcher.rs realpath(self.config.get_current_directory())	fixed	was the process directory, the same value without a config; now the base (b349d58b0)
+diagnosticwriter/diagnosticwriter.go:206	FormattingOptions.CurrentDirectory	execute/tsc/diagnostics.rs compare_paths_options	n/a	field
+diagnosticwriter/diagnosticwriter.go:421	formatFileNameRelativeTo(…, formatOpts.CurrentDirectory)	execute/tsc/diagnostics.rs convert_to_relative_path(…, compare_paths_options)	correct	format options' directory (process)
+diagnosticwriter/diagnosticwriter.go:560	formatFileNameRelativeTo(…, formatOpts.CurrentDirectory)	execute/tsc/diagnostics.rs convert_to_relative_path	correct	format options' directory
+diagnosticwriter/diagnosticwriter.go:580	formatFileNameRelativeTo(…, formatOpts.CurrentDirectory)	execute/tsc/diagnostics.rs convert_to_relative_path	correct	format options' directory
+ls/autoimport/util.go:319	resolutionHost.GetCurrentDirectory()	ls/autoimport/util.rs current_directory	n/a	accessor
+core/compileroptions.go:140	comment	options.rs	n/a	comment
+ls/autoimport/registry.go:1050	PathKey(program.BaseDirectory())	ls/autoimport/registry.rs program.base_directory()	correct	program base (ts#64159 R1)
+ls/autoimport/registry.go:1261	PathKey(program.BaseDirectory())	ls/autoimport/registry.rs program.base_directory()	correct	program base (R1)
+ls/string_completions.go:722	GetPathsBasePath(program.BaseDirectory())	ls/string_completions.rs program.base_directory()	correct	program base (R1)
+ls/string_completions.go:945	GetEffectiveTypeRoots(program.BaseDirectory())	ls/string_completions.rs program.base_directory()	correct	program base (R1)
+ls/sourcedefinition.go:154	sourceDefResolutionHost.GetCurrentDirectory()	ls/sourcedefinition.rs CompilerResolutionHost current_directory	n/a	accessor
+ls/sourcedefinition.go:172	sourceDefResolutionHost{currentDirectory: program.BaseDirectory()}	ls/sourcedefinition.rs current_directory: program.base_directory()	correct	program base (R1)
+ls/autoimport/aliasresolver.go:69	aliasResolver.BaseDirectory()	ls/autoimport/aliasresolver.rs get_current_directory	n/a	definition
+ls/autoimport/aliasresolver.go:70	r.moduleResolver.BaseDirectory()	ls/autoimport/aliasresolver.rs self.host.get_current_directory()	correct	the resolver host's directory, the store's (snapshot.go:669), as Go's resolver base
+compiler/projectreferencedtsfakinghost.go:24	currentDirectory: host.GetCurrentDirectory()	compiler/project_references.rs host.get_current_directory()	correct	the builder host's directory, the config base since 1fbe71329
+compiler/projectreferencedtsfakinghost.go:38	comment	compiler/project_references.rs	n/a	comment
+compiler/projectreferencedtsfakinghost.go:39	projectReferenceDtsFakingHost.GetCurrentDirectory()	compiler/project_references.rs get_current_directory	n/a	accessor
+modulespecifiers/types.go:57	ModuleSpecifierGenerationHost.BaseDirectory()	modulespecifiers/types.rs base_directory	n/a	interface method; ProgramHost overrides it since 049abdd54
+compiler/program.go:151	Program.BaseDirectory()	compiler/program_new.rs NewProgram::base_directory	n/a	definition
+compiler/program.go:152	p.opts.Config.BaseDirectory()	compiler/program_new.rs config_base_directory	correct	config base
+compiler/program.go:155	Program.GetCurrentDirectory()	compiler/program_new.rs get_current_directory	n/a	definition
+compiler/program.go:156	p.BaseDirectory()	compiler/program_new.rs self.base_directory()	correct	config base
+compiler/program.go:193	compilerResolutionHost{…, p.BaseDirectory()} (newResolver)	the loader's resolver, kept by the program	fixed	its host is the builder's, the config base since 1fbe71329
+compiler/program.go:1185	GetPathsBasePath(p.GetCurrentDirectory())	compiler/verify.rs self.get_current_directory()	correct	config base
+compiler/program.go:1252	GetComputedCommonSourceDirectory(…, p.BaseDirectory())	compiler/verify.rs base directory	correct	config base (R1)
+compiler/program.go:1846	GetCommonSourceDirectory(…, p.BaseDirectory())	compiler/program_lookup.rs self.get_current_directory(); program/go_frontend.rs p.get_current_directory()	correct	config base
+tsoptions/showconfig.go:62	BaseDirectory().ResolveFile("tsconfig.json")	tsoptions/show_config.rs normalized against get_current_directory()	correct	the command line's base
+module/resolver.go:359	DefaultResolver.BaseDirectory()	none	n/a	no counterpart (Rust reads the host's directory)
+module/resolver.go:373	baseDirectory := host.GetCurrentDirectory()	module resolver host.get_current_directory()	correct	the resolver's host decides it; each host is in this table
+module/resolver.go:2316	fileSystemResolutionHost.GetCurrentDirectory()	module/resolver_p2.rs FileSystemResolutionHost	fixed	ResolveConfig's host is the containing file's directory (was the parse host's; 9e7a4f5f6; no output change: empty options)
+modulespecifiers/specifiers.go:524	host.BaseDirectory()	modulespecifiers/specifiers.rs host.base_directory()	fixed	ProgramHost gave the process directory: declaration emit wrote "../shared/value" for "alias" (049abdd54; api item build-decl-paths-base-directory)
+modulespecifiers/specifiers.go:593	host.BaseDirectory() (no config path)	modulespecifiers/specifiers.rs host.base_directory()	fixed	as :524
+compiler/fileloader.go:158	compilerResolutionHost.GetCurrentDirectory()	compiler/project_references.rs CompilerResolutionHost	n/a	accessor; it holds the base since 1fbe71329
+compiler/fileloader.go:279	Config.BaseDirectory().ResolveFile(InferredTypesContainingFile)	compiler/file_loader.rs base_directory()	fixed	was the config path's directory or the host's (1fbe71329; api item programs-config-path-base-directory)
+compiler/fileloader.go:293	GetAutomaticTypeDirectiveNames(…, Config.BaseDirectory(), …)	compiler/file_loader.rs base_directory()	fixed	was the host's directory (1fbe71329)
+compiler/fileloader.go:347	compilerResolutionHost{…, Config.BaseDirectory()}	compiler/project_references.rs ProjectReferenceFileMapperBuilder::new	fixed	was the host's directory (1fbe71329; api item build-paths-base-directory)
+compiler/fileloader.go:980	getInferredLibraryNameResolveFrom(Config.BaseDirectory(), …)	compiler/file_loader.rs base_directory()	fixed	was the config path's directory or the host's (1fbe71329; programs-config-path-base-directory)
+module/staticresolver.go:91	StaticResolver.BaseDirectory()	none	n/a	no counterpart (as resolver.go:359)
+module/staticresolver.go:92	r.fallback.BaseDirectory()	none	n/a	as :91
+tsoptions/contentmappers.go:31	contentMapperResolutionHost.GetCurrentDirectory()	tsoptions/content_mappers.rs ContentMapperResolutionHost	fixed	the containing file's directory (was the parse host's; 9e7a4f5f6; no output change: empty options)
+module/types.go:16	ResolutionHost.GetCurrentDirectory()	module/types.rs get_current_directory	n/a	interface method
+module/types.go:20	Resolver.BaseDirectory()	none	n/a	interface method with no Rust counterpart
+compiler/emitHost.go:26	EmitHost.BaseDirectory()	none (Rust's emit hosts are the program state)	n/a	interface method
+compiler/emitHost.go:106	emitHost.BaseDirectory()	program.rs base_directory() (ProgramState.base_directory)	fixed	added in 049abdd54
+compiler/emitHost.go:107	host.program.BaseDirectory()	program/go_frontend.rs np.base_directory()	fixed	as :106
+compiler/emitter.go:421	mapRoot.ResolveDirectory(CommonSourceDirectory, BaseDirectory)	emitter/emitter.rs get_source_map_directory	correct	a relative mapRoot resolves against the common source directory, a rooted one is used as it is; the base matters only for a Windows drive-relative root (not checked); b7/maproot_probe.sh matches Go from two directories
+compiler/emitter.go:473	SourceFileMayBeEmittedHost.BaseDirectory()	none	n/a	interface method
+compiler/emitter.go:525	GetCommonSourceDirectory(…, host.BaseDirectory(), …) (JSON check)	compiler/program_lookup.rs, program.rs json_file_may_be_emitted(…, base)	fixed	took the host's directory (049abdd54; no output change: read only with rootDir or a config path)
+tsoptions/parsedcommandline.go:199	GetCommonSourceDirectory(…, p.BaseDirectory(), …)	tsoptions/parsed_command_line.rs self.get_current_directory()	correct	the command line's base
+tsoptions/parsedcommandline.go:219	ParsedCommandLine.BaseDirectory()	tsoptions/parsed_command_line.rs get_current_directory	n/a	definition
+tsoptions/parsedcommandline.go:499	ToRootedPath(include, p.BaseDirectory())	tsoptions/parsed_command_line.rs to_path(include, self.get_current_directory())	correct	the command line's base
+tsoptions/parsedcommandline.go:558	getFileNamesFromConfigSpecs(…, p.BaseDirectory(), …)	tsoptions/parsed_command_line.rs self.get_current_directory()	correct	the command line's base
+testrunner/compiler_runner.go:255	harnessConfig currentdirectory	test harness	n/a	test code (not shipped)
+testrunner/compiler_runner.go:256	harnessConfig currentdirectory	test harness	n/a	test code
+testrunner/test_case_parser.go:52	rawCurrentDirectory	test harness	n/a	test code
+testrunner/test_case_parser.go:61	rawCurrentDirectory	test harness	n/a	test code
+testrunner/test_case_parser.go:62	rawCurrentDirectory	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:59	result.CurrentDirectory()	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:205	result.CurrentDirectory()	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:228	result.CurrentDirectory()	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:243	harnessSettings.CurrentDirectory	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:245	harnessSettings.CurrentDirectory	test harness	n/a	test code
+testutil/tsbaseline/js_emit_baseline.go:258	declarationCurrentDirectory	test harness	n/a	test code
+testutil/tsbaseline/type_symbol_baseline.go:293	Program().BaseDirectory()	test harness	n/a	test code
+testutil/tsbaseline/type_symbol_baseline.go:299	Program().BaseDirectory()	test harness	n/a	test code
+testutil/tsbaseline/sourcemap_baseline.go:99	result.CurrentDirectory()	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:71	HarnessOptions.CurrentDirectory	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:105	CurrentDirectory: currentDirectory	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:209	tsconfig.BaseDirectory()	test harness	n/a	test code (config_base_directory's empty-base fallback is for its Rust port)
+testutil/harnessutil/harnessutil.go:210	tsconfig.BaseDirectory()	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:395	harnessOptions.CurrentDirectory	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:631	config.BaseDirectory()	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:695	harnessOptions.CurrentDirectory	test harness	n/a	test code
+testutil/harnessutil/harnessutil.go:878	CompilationResult.CurrentDirectory()	test harness	n/a	test code
+testutil/projecttestutil/projecttestutil.go:262	CurrentDirectory: wd	test harness	n/a	test code
+testutil/projecttestutil/projecttestutil.go:312	CurrentDirectory: "/"	test harness	n/a	test code
+execute/tsctests/sys.go:228	TestSys.GetCurrentDirectory()	test harness	n/a	test code
+execute/tsctests/sys.go:586	s.GetCurrentDirectory()	test harness	n/a	test code
+execute/tsctests/sys.go:592	s.GetCurrentDirectory()	test harness	n/a	test code
+execute/tsctests/sys.go:598	s.GetCurrentDirectory()	test harness	n/a	test code
+execute/tsctests/runner.go:79	sys.GetCurrentDirectory()	test harness	n/a	test code
+fourslash/fourslash.go:217	CurrentDirectory: rootDir	test harness	n/a	test code
