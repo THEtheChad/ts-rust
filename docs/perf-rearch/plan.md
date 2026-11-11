@@ -2191,3 +2191,4 @@ once a **reconciliation step** is built and tested.
     - the remaining rows are defensible (Astra reproduced all 23 Go values).
   - **Root fixed `w3.md`'s counts:** 23 stdlib rows, not 21; 6 residue
     rows plus 3 others.
+  - **base-current** moved to `w3-ccdaa34b4-full`, which contains every merge through W3.
