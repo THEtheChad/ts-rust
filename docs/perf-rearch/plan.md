@@ -2066,3 +2066,8 @@ once a **reconciliation step** is built and tested.
   - **base-current** moved to `h9r3-ab7be7932-full`.
   - **The review loop:** round 1 had 4 findings, round 2 had 2, both
     narrower, and none reopened.
+- **B6 started (B3 F3):** probe LSP preferences with odd values against Go,
+  port Go's generated parser and serializer
+  (`userpreferences_generated.go`) in place of the reflective one, and keep
+  the probe as a permanent lsp battery. F4 (the symlinked-monorepo mapper)
+  follows when a slot frees.
