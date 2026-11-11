@@ -134,7 +134,8 @@ t = {str(SCRATCH / 'rec')!r}; os.makedirs(t, exist_ok=True)
 assert ctypes.CDLL(None).mount(b'tmpfs', t.encode(), b'tmpfs', 0, None) == 0
 storage.make_home(t + '/home', 0); os.makedirs(t + '/ovl0/upper'); os.makedirs(t + '/ovl0/work')
 r = storage.Recorder(t, 1); r.start()
-os.makedirs(t + '/home/new/deep'); open(t + '/home/new/deep/f', 'w').write('x'); os.unlink(t + '/home/new/deep/f')
+os.makedirs(t + '/home/new/deep'); time.sleep(0.3)  # the reader names the new dirs (the race is round 3's test)
+open(t + '/home/new/deep/f', 'w').write('x'); os.unlink(t + '/home/new/deep/f')
 open(t + '/home/__proto__', 'w').write('y'); open(t + '/ovl0/work/tmp', 'w').write('z'); open(t + '/ovl0/upper/in', 'w').write('w')
 os.rename(t + '/home/new', t + '/home/moved'); open(t + '/home/moved/deep/g', 'w').write('g')
 time.sleep(0.3); print(json.dumps(r.finish()))
@@ -186,6 +187,39 @@ time.sleep(0.3); print(json.dumps(r.finish()))
           last.get('done') and last.get('code') == 1 and 'error' in last, last)
     subprocess.run(['chmod', '-R', 'u+rwx', str(t)])
     shutil.rmtree(t)
+    # Round 3 (Astra's recheck), finding 1: events in dirs gone before they are read (the record's reader
+    # not started yet, so every dir is gone when it reads) get distinct identities, never ?/f twice.
+    rec3 = subprocess.run(['unshare', '-rm', sys.executable, '-I', '-c', f"""
+import json, os, sys, ctypes
+sys.path.insert(0, {str(HERE)!r})
+import parity_sandbox_storage as storage
+t = {str(SCRATCH / 'rec3')!r}; os.makedirs(t, exist_ok=True)
+assert ctypes.CDLL(None).mount(b'tmpfs', t.encode(), b'tmpfs', 0, None) == 0
+storage.make_home(t + '/home', 0)
+r = storage.Recorder(t, 0)
+for d in ('A', 'B'):
+    os.mkdir(t + '/home/' + d); open(t + '/home/' + d + '/f', 'w').write('x'); os.unlink(t + '/home/' + d + '/f'); os.rmdir(t + '/home/' + d)
+print(json.dumps(r.finish()))
+"""], capture_output=True, text=True)
+    try:
+        unresolved = [k for k in json.loads(rec3.stdout)['writes'] if k.startswith('?')]
+    except ValueError:
+        unresolved = [rec3.stderr[-300:]]
+    check('round 3 finding 1: two files in dirs gone before their events are read are two distinct unresolved paths, never ?/f',
+          len(unresolved) == 2 and len(set(unresolved)) == 2 and all(k.endswith('/f') and not k.startswith('?/') for k in unresolved), unresolved)
+    # finding 6: xattrs (name and value hash) and hard-link groups in the listing
+    d6 = Path(tempfile.mkdtemp(prefix='xl-', dir=SCRATCH))
+    (d6 / 'a').write_text('same')
+    os.link(d6 / 'a', d6 / 'b')
+    (d6 / 'c').write_text('same')
+    os.setxattr(d6 / 'c', 'user.probe', b'one')
+    l6 = storage.walk(str(d6))
+    check('round 3 finding 6: two names of one inode are one link group, a separate file is not',
+          l6['a'].endswith('; links 2 group 0') and l6['b'].endswith('; links 2 group 0') and 'links' not in l6['c'], l6)
+    check('round 3 finding 6: an xattr is listed by name and value hash', '; xattr user.probe=' in l6['c'], l6)
+    os.setxattr(d6 / 'c', 'user.probe', b'two')
+    check('round 3 finding 6: another xattr value is another listing', storage.walk(str(d6))['c'] != l6['c'])
+    shutil.rmtree(d6)
     import parity_sandbox_init as init
     r = subprocess.run(['/usr/bin/python3', '-I', str(HERE / 'parity_sandbox_init.py'), 'launch',
                         json.dumps({'report': 1, 'mounts': [{'bind': '/etc', 'at': '/etc/x', 'rw': True}], 'expose': [], 'mtime': 0,
@@ -193,6 +227,11 @@ time.sleep(0.3); print(json.dumps(r.finish()))
     check('init: a mount point outside the hidden dirs (it would be made on the host) is a setup failure',
           r.returncode == 125 and 'hidden dir' in r.stdout and not os.path.exists('/etc/x'), (r.returncode, r.stdout, r.stderr))
     check('init: the hidden dirs cover the user\'s files and the host state dirs', {'/home', '/tmp', '/run', '/dev/shm'} <= set(init.HIDDEN))
+    rw = subprocess.run(['/usr/bin/python3', '-I', str(HERE / 'parity_sandbox_init.py'), 'launch',
+                         json.dumps({'report': 1, 'home': str(SCRATCH / 'h3home'), 'mounts': [{'bind': str(SCRATCH), 'at': str(SCRATCH / 'rwbind'), 'rw': True}],
+                                     'expose': [], 'mtime': 0, 'cmd': ['/bin/true']})], capture_output=True, text=True)
+    check('round 3 finding 2: a writable bind of a host dir (outside the recorded storage) is a setup failure',
+          rw.returncode == 125 and 'setup' in rw.stdout, (rw.returncode, rw.stdout[-300:], rw.stderr[-300:]))
     check('key: the sandbox init and json.mjs are session sources (a change resets every Go fill)',
           {'../../parity_sandbox_init.py', 'json.mjs'} <= set(parity_lsp.SESSION_SOURCES))
     check('key: the ancestors keyed are the ones a server sees (none in a hidden dir)',
@@ -275,18 +314,21 @@ EXPECT = {  # mode -> (what a good harness shows, a test on the items)
 }
 
 
-def lspdiff(tag, go, rs, extra=()):
-    """The harness's lspdiff alone (sandboxed, as parity_lsp.py runs it) on a one-file project: its items."""
+def lspdiff(tag, go, rs, extra=(), scenario=None):
+    """The harness's lspdiff alone (sandboxed, as parity_lsp.py runs it) on a one-file project, or on a fixture
+    scenario: its items."""
     proj = SCRATCH / 'project'
     proj.mkdir(parents=True, exist_ok=True)
     (proj / 'a.ts').write_text('export const foo = 1;\nfoo;\n')
+    root = SCRATCH / f'fixture-{tag}' if scenario else proj
     out = SCRATCH / f'lspdiff-{tag}'
     shutil.rmtree(out, ignore_errors=True)
     (SCRATCH / 'home').mkdir(exist_ok=True)
     env = {**os.environ, 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
-                                                         'mounts': [{'lower': str(proj), 'target': str(proj)}]})}
-    r = subprocess.run(['node', str(HARNESS / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(proj), '--file', 'a.ts', '--positions', '1',
-                        '--go', go, '--rs', rs, '--out', str(out), '--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1', *extra],
+                                                         'mounts': [] if scenario else [{'lower': str(proj), 'target': str(proj)}]})}
+    r = subprocess.run(['node', str(HARNESS / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root), '--file', 'a.ts', '--positions', '1',
+                        '--go', go, '--rs', rs, '--out', str(out), '--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1', *extra,
+                        *(['--scenario', scenario] if scenario else [])],
                        env=env, capture_output=True, text=True, timeout=600)
     files = list(out.glob('*/items.json'))
     return {f'{x["i"]:04d} {x["step"]}': x for x in json.loads(files[0].read_text())} if files else {}, r.stdout + r.stderr
@@ -300,6 +342,26 @@ def finding1():
         items, log = lspdiff(f'f1-{mode}', GO, f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {mode} {GO} -')
         check(f'finding 1 ({mode}, lspdiff as an ordinary user): session end DIFF rsFailure input, session storage DIFF',
               item('session end', rsFailure='input')(items) and item('session storage')(items), short(items, log))
+
+
+def round3():
+    """Astra's round 2 recheck (review-h8r2-astra), one control per finding root took (1, 2, 3, 4, 6), as she
+    ran them: lspdiff alone, her fakes as parity_h8_fake.py modes. Each must not be MATCH; the ATA control
+    session must be."""
+    fake('pass')
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    cases = [('finding 1: files in two dirs made and removed at once never share an unresolved path', 'path-go', 'path-rs', None, 'session writes'),
+             ('finding 2: a write into the stand-in npm\'s log dir, removed at once, is recorded', 'go', 'ata-log-transient', 'ata-overlay', 'session writes'),
+             ('finding 3: NODE_OPTIONS of the server does not reach the stand-in npm', 'go', 'npm-env', 'ata-overlay', None),
+             ('finding 4: a diagnostic "bad watcher 999." is not "bad watcher 1."', 'mask-go', 'mask-rs', None, 'session messages'),
+             ('finding 6: an xattr of another value', 'xattr-good', 'xattr-bad', None, 'session storage'),
+             ('finding 6: two names of one inode where Go has two files', 'links-good', 'links-bad', None, 'session storage')]
+    for name, go, rs, scenario, step in cases:
+        items, log = lspdiff(f'r3-{rs}', sh(go), sh(rs), scenario=scenario)
+        ok = any(k.endswith(' ' + step) and v['status'] == 'DIFF' for k, v in items.items()) if step else bool(bad(items))
+        check(f'round 3 {name}: {step + " DIFF" if step else "a DIFF"}', items and ok, short(items, log))
+    items, log = lspdiff('r3-control', sh('go'), sh('go'), scenario='ata-overlay')
+    check('round 3 control: the ATA scenario with the same fake on both sides: every item MATCH', items and not bad(items), short(items, log))
 
 
 def finding7():
@@ -366,6 +428,8 @@ def e2e():
         finding1()
     if not only or 'finding7' in only:
         finding7()
+    if not only or 'round3' in only:
+        round3()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
     # dir is new: ERROR, and nothing of it cached.
     unexec = SCRATCH / f'unexec-go-{"new" if NEW else "old"}'

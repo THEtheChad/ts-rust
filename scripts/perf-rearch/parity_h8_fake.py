@@ -38,6 +38,41 @@ if mode == 'vary-extra':
     open(HOME + '/tmp/Q', 'w').write('unrelated damage')
 if mode == 'vary-only':
     open(HOME + '/tmp/P', 'w').write('legitimate, timing-dependent')
+# Astra's round 2 recheck (~/.cache/perf-rearch/scratch/review-h8r2-astra/: fake-more.py, fake-probes.py,
+# fake-env.py), as she wrote them: Go's side is the `-go` mode, tsc-rs's the other.
+if mode.startswith('links-'):  # finding 6: two names of one inode where Go writes two files
+    a, b = HOME + '/tmp/a', HOME + '/tmp/b'
+    open(a, 'w').write('same')
+    if mode == 'links-bad':
+        os.link(a, b)
+    open(b, 'w').write('same')
+if mode.startswith('xattr-'):  # finding 6: an extended attribute of another value
+    os.setxattr(HOME + '/tmp', 'user.probe', b'good' if mode == 'xattr-good' else b'bad')
+if mode.startswith('path-'):  # finding 1: a file made and removed in A (Go) or in B (tsc-rs), both dirs removed at once
+    for sub in ['A', 'B']:
+        d = HOME + '/tmp/' + sub
+        os.mkdir(d)
+        if (sub == 'A' and mode == 'path-go') or (sub == 'B' and mode == 'path-rs'):
+            open(d + '/f', 'w').write('data')
+            os.unlink(d + '/f')
+        os.rmdir(d)
+if mode.startswith('mmap-'):  # out of scope (documented): a change through a writable mapping, put back
+    import mmap
+    open(HOME + '/tmp/cache', 'wb').write(b'original')
+    if mode == 'mmap-bad':
+        with open(HOME + '/tmp/cache', 'r+b') as f:
+            m = mmap.mmap(f.fileno(), 0)
+            m[:] = b'corrupt!'
+            m.flush()
+            m[:] = b'original'
+            m.flush()
+            m.close()
+if mode == 'ata-log-transient':  # finding 2: a write into the stand-in npm's log dir, removed at once
+    open('/run/lspdiff-ata/log/extra', 'w').write('unexpected write')
+    os.unlink('/run/lspdiff-ata/log/extra')
+if mode == 'npm-env':  # finding 3: node of the stand-in npm told to run other code first
+    subprocess.run(['npm', 'install', 'not-in-the-store@latest'], env={**os.environ, 'NODE_OPTIONS': '--import=data:text/javascript,process.exit(0)'},
+                   check=True, stdout=subprocess.DEVNULL)
 if mode == 'ata-unlogged':  # Astra's fake-extra.py: its own npm call, with the log pointed nowhere
     loc = os.environ['HOME'] + '/.cache/extra-install'
     os.makedirs(loc)
@@ -169,6 +204,10 @@ for body in frames(p.stdout):
     if method == 'shutdown' and mode == 'shutdown-result':
         body = body.replace(b'"result":null', b'"result":12345')
     extra = None
+    if method == 'shutdown' and mode.startswith('mask-'):  # finding 4: a diagnostic text that looks like a watcher id
+        extra = json.dumps({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {
+            'uri': 'file:///a.ts', 'diagnostics': [{'message': 'bad watcher ' + ('1' if mode == 'mask-go' else '999') + '. result'}]}}).encode()
+        out.write(b'Content-Length: %d\r\n\r\n' % len(extra) + extra)
     if method == 'shutdown' and mode == 'late-diag':
         extra = b'{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///bogus.ts","diagnostics":[{"message":"late bogus error"}]}}'
     if (method == 'shutdown' and mode == 'late-request') or (method == 'initialize' and mode == 'request'):
