@@ -6,7 +6,7 @@ usage: parity_grandfather.py check [FILE]
        parity_grandfather.py evidence BIN --mode quick|full --out RUN [--from FILE] [--add ITEM ...]
                                       [--only REGEX]
        parity_grandfather.py regen --full RUN [--quick RUN] [--old RUN] [--from FILE] [--out FILE]
-                                   [--add ITEM=REASON ...] [--only REGEX]
+                                   [--add ITEM=REASON ...] [--only REGEX] [--drop-recovered]
 
 An entry excuses its item (parity_compare.py) only while the item fails exactly as recorded:
   status, rsFailure   the item's status (DIFF) and how tsc-rs failed: crash, timeout, or null for
@@ -61,6 +61,15 @@ an older format is read for its item ids and reasons only) from the rows a full 
 the quick manifest names, a quick run) recorded, and refuses an item whose row lacks the evidence,
 is not a DIFF with an rsFailure, or has attempts that differ. --old RUN prints, per item, whether the
 recorded outcome kinds and Go's panic line agree with an older run's rows.
+
+--drop-recovered (regen): remove, instead of refusing, each entry whose item is good in the --full run
+(a good status of parity_compare.GOOD: MATCH, a referee status GO-BROKEN, GO-PARTITION or JS-AGREES,
+PASS or FLAKY, without a tsc-rs failure), and print each removed entry with the status and detail
+that recovered it and the entry's old reason. That is the stale entry the gate reports as `good now:
+remove the entry`. Only an item the --full run has is removed: an item it lacks (not run) is never
+removed, and regen refuses it as before. A recovered item that a --quick run has as not good is an
+error (the runs disagree). With --only, only the items it matches are candidates. Without the option,
+regen is unchanged: a recovered item is not a DIFF, so regen refuses it.
 
 --only REGEX (both): only the items it matches. evidence runs only them; regen rebuilds only them and
 keeps every other entry of --from byte for byte. That is how a lane adds entries (--add) without
@@ -222,6 +231,26 @@ def _entry(item, row, quick_row, reason, evidence):
             'attempt': prints[0], 'attempts': attempts, 'evidence': evidence}
 
 
+def _drop_recovered(listed, full, quick, args):
+    """--drop-recovered: remove from `listed` (in place) each item that --only selects and the --full run has
+    with a good status and no tsc-rs failure; {item: why} of the removed ones. An item the run lacks stays."""
+    from parity_compare import GOOD, rs_failure  # parity_compare imports this module
+    dropped = {}
+    for item in sorted(listed):
+        row = full.get(item)
+        if (args.only and not re.search(args.only, item)) or row is None:
+            continue
+        if row.get('status') not in GOOD or rs_failure(row):
+            continue
+        q = quick.get(item)
+        if q is not None and (q.get('status') not in GOOD or rs_failure(q)):
+            raise ArtifactError(f'{item}: {row["status"]} in the --full run but {q.get("status")} in the --quick run')
+        detail = (row.get('detail') or '').replace('\n', ' ')[:200]
+        dropped[item] = (f'{row["status"]} in {Path(args.full).name}{f" ({detail})" if detail else ""}; '
+                         f'the entry was {listed.pop(item).get("reason", "")!r}')
+    return dropped
+
+
 def regen(args):
     src = Path(args.src)
     old = json.loads(src.read_text())
@@ -237,6 +266,9 @@ def regen(args):
         raise ArtifactError('--full must be a full run and --quick a quick run')
     if args.quick and quick_meta.get('rsSha') != full_meta.get('rsSha'):
         raise ArtifactError('the quick and full evidence runs are of different binaries')
+    dropped = _drop_recovered(listed, full, quick, args) if args.drop_recovered else {}
+    for item, why in dropped.items():
+        print(f'dropped {item}: {why}')
     manifest = working_manifest()
     kept = {}
     if args.only:  # every other entry as it is: only from a file of this version, validated whole first
@@ -262,7 +294,8 @@ def regen(args):
     out = {'about': ABOUT, 'version': VERSION, 'items': items}
     validate(out, 'regen')
     Path(args.out).write_text(json.dumps(out, indent=1) + '\n')
-    print(f'{len(items) - len(kept)} entries from {evidence}{f", {len(kept)} kept as they were" if kept else ""} -> {args.out}')
+    print(f'{len(items) - len(kept)} entries from {evidence}{f", {len(kept)} kept as they were" if kept else ""}'
+          f'{f", {len(dropped)} recovered dropped" if args.drop_recovered else ""} -> {args.out}')
     if args.old:
         olds, _ = _rows(args.old)
         for item, e in items.items():
@@ -347,6 +380,8 @@ def main():
     r.add_argument('--from', dest='src', default=str(GRANDFATHERED))
     r.add_argument('--out', default=str(GRANDFATHERED))
     r.add_argument('--only', help='REGEX: rebuild only the items it matches; keep every other entry as it is')
+    r.add_argument('--drop-recovered', action='store_true',
+                   help='remove the entries whose item is good in the --full run (each printed), instead of refusing them')
     args = ap.parse_args()
     try:
         if args.cmd == 'check':
