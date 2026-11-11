@@ -2071,3 +2071,19 @@ once a **reconciliation step** is built and tested.
   (`userpreferences_generated.go`) in place of the reflective one, and keep
   the probe as a permanent lsp battery. F4 (the symlinked-monorepo mapper)
   follows when a slot frees.
+- **T1 done; merged.**
+  - **`regen --drop-recovered`:** it reuses the gate's `GOOD` and
+    `rs_failure`. It never drops an entry whose item wasn't run, and it
+    has 17 self-test checks. The dry run dropped 0 of 36.
+  - **The node failures aren't the wrapper's.**
+    - `~/.cargo/config.toml`'s runner `LD_PRELOAD=libd3d12core.so`
+      (for lightcraft's GPU tests) adds 64 KiB of TLS to every thread.
+      Node's 32 KiB inspector thread then fails with EINVAL.
+    - `ulimit -v` is not involved, so the wrapper is unchanged.
+    - **Workaround:** `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=env`.
+    - **Real fix:** move the runner into lightcraft's own
+      `.cargo/config.toml`. That is a machine-wide file and another
+      project's, so it is **asked of Chad**.
+- **B7 started (B3 F4):** check tsc-rs's symlink handling in
+  project-reference mapping against Go's builder (`resolveSymlink`,
+  `realpathDtsToSource`), with a symlinked-monorepo `-b` parity project.
