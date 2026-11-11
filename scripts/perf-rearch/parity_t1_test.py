@@ -16,7 +16,7 @@ recovered. regen then runs on run dirs made of those rows:
   only       an entry outside --only stays byte for byte even when its item recovered;
   quick      a recovered item that the --quick run has as not good is an error.
 Each check prints `ok` or `FAIL`; the last line is `T1 SELFTEST OK` or `T1 SELFTEST FAIL: ...`.
-About 5 seconds.
+Under a second.
 """
 import argparse
 import contextlib
