@@ -1456,7 +1456,7 @@
   },
   {
    "name": "build-symlink-monorepo",
-   "about": "B7 (B3 risk 7, ts#64519): the CLI tier's symlink-monorepo fixture as a disk fixture. b opened with and without preserveSymlinks: the project service uses the sources of its references, so a with preserveSymlinks reaches a's sources through the builder's resolveSymlink (realpathDtsToSource); a scoped package, a nested pnpm symlink, a paths mapping to a's source and an import of a's built d.ts; then the solution built twice (cold, then up to date)",
+   "about": "B7 (B3 risk 7, ts#64519): the CLI tier's symlink-monorepo fixture as a disk fixture. b opened with and without preserveSymlinks, before any build: the project service uses the sources of its references, so b-preserve reaches a's sources through the builder's resolveSymlink (realpathDtsToSource); a scoped package, a nested pnpm symlink, paths to a's source and to a's built d.ts through the symlink, and an import of a's built d.ts. Then the solution is built twice (cold, then up to date), and the same session updates its snapshot (afterBuild): with every file invalidated, the program again over the real built d.ts files (file names, diagnostics, emit); then with b's source edited (a layer) to assign a's Inner (through wrap and the a-built path) to a string, the semantic diagnostics across the redirect (TS2322), the replaced snapshot released",
    "disk": "@fixture:symlink-monorepo",
    "openProjects": [
     "@ROOT@/packages/b/tsconfig.json",
@@ -1482,6 +1482,47 @@
     },
     {
      "build": ""
+    }
+   ],
+   "afterBuild": [
+    {
+     "changes": {
+      "fileNotifications": {
+       "invalidateAll": true
+      },
+      "ensurePrograms": true
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getProgramDiagnostics",
+      "getSemanticDiagnostics",
+      "getDeclarationDiagnostics",
+      "emitToString"
+     ]
+    },
+    {
+     "changes": {
+      "fileSystem": {
+       "kind": "layer",
+       "files": {
+        "@ROOT@/packages/b/src/index.ts": "import { a, wrap, type Inner } from \"a\";\nimport { a as aBuilt } from \"a/dist/index\";\nimport { inner } from \"a-src/inner\";\nimport { inner as builtInner } from \"a-built/inner\";\nimport { c } from \"@scope/c\";\nimport { d } from \"d\";\nexport const b: Inner = wrap(a + aBuilt + inner.v + builtInner.v + c + d);\nexport const crossed: string = wrap(builtInner.v);\n"
+       }
+      },
+      "fileNotifications": {
+       "changed": [
+        "@ROOT@/packages/b/src/index.ts"
+       ]
+      },
+      "ensurePrograms": true,
+      "closeProjects": [
+       "@ROOT@/packages/b/tsconfig.json"
+      ]
+     },
+     "requests": [
+      "getSourceFileNames",
+      "getSemanticDiagnostics"
+     ],
+     "release": true
     }
    ]
   },
