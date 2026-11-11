@@ -2137,3 +2137,20 @@ once a **reconciliation step** is built and tested.
     - 2 vacuous or masked probes.
   - All 5 to fix, and fold the amd64 conversion into one helper. Round 2
     sent.
+- **B7 round 2 done** (head `0a79603a1`). It found 2 real differences from
+  Go, both through the API, both now items: DIFF on `4ae5301b0`, MATCH on
+  the head.
+  - `build-paths-base-directory`: a programmatic `paths` gave TS2307.
+  - `programs-config-path-base-directory`: automatic types and lib
+    replacement resolved from the host directory.
+  - **The fix:** the loader, its resolver and the parse workers use the
+    config's base directory everywhere Go uses `Config.BaseDirectory()`.
+    The call-site table is in `cleanup/b7.md`.
+  - **The api `afterBuild` step:** after the builds, a query over the built
+    tree, then a same-session edit that crosses the redirect (TS2322).
+  - **Gate:** `runs/20261111-131608-full-bb2f2974a5` PARITY OK; api 52
+    MATCH, all refilled because the driver changed every api key.
+  - **icount:** single-threaded flat.
+  - **Astra recheck** running (round 2 of 3). Root's own question for it:
+    is closing b, to avoid Go's randomly ordered changed-projects map, more
+    honest than sorting that map on both sides?
