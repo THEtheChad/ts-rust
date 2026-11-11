@@ -269,7 +269,7 @@ await part("go variants", async () => {
 await part("finding 11", async () => {
   const { PLUMBING } = await import(join(LSPDIFF, "settings.mjs"));
   const reads = [];
-  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs"]) {
+  for (const f of ["client.mjs", "fixtures.mjs", "lspdiff.mjs", "prefs.mjs", "project.mjs", "referee.mjs", "sandbox.mjs", "scenario.mjs", "session.mjs", "tsserver.mjs", "ata-npm/fake-npm.mjs"]) {
     for (const m of readFileSync(join(LSPDIFF, f), "utf8").matchAll(/process\.env\.((?:LSPDIFF|ATA)_\w+)|process\.env\[["'`]((?:LSPDIFF|ATA)_\w+)/g)) reads.push(`${f}:${m[1] ?? m[2]}`);
   }
   const stray = reads.filter((r) => !PLUMBING.includes(r.split(":")[1]));

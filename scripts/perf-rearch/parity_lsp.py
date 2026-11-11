@@ -110,8 +110,9 @@ def std(project):
     return {'name': f'{project}-f12-p6', 'project': project, 'files': 12, 'positions': 6}
 
 
-def scen(name, scenario, project=FIXTURE, files=12):
-    return {'name': name, 'project': project, 'files': files, 'scenario': scenario}
+def scen(name, scenario, project=FIXTURE, files=12, sources=()):
+    """sources: lspdiff modules besides SESSION_SOURCES that script this session only (in its key alone)."""
+    return {'name': name, 'project': project, 'files': files, 'scenario': scenario, **({'sources': list(sources)} if sources else {})}
 
 
 QUICK = [std('umami'), std('ts-pattern'),
@@ -121,7 +122,9 @@ QUICK = [std('umami'), std('ts-pattern'),
 FULL = QUICK[:2] + [std('hono')] + QUICK[2:] + [
     scen('watch-umami-f12', 'watch', 'umami'), scen('watch-narrow-umami-f12', 'watch-narrow', 'umami'),
     scen('watch-hono-f12', 'watch', 'hono'),
-    scen('second-project-query', 'second-project', 'query')]
+    scen('second-project-query', 'second-project', 'query'),
+    # Lane B6: odd user preferences (vendor/lspdiff/prefs.mjs).
+    scen('prefs', 'prefs', sources=('prefs.mjs',))]
 
 
 def sessions(tier):
@@ -427,8 +430,11 @@ def main():
         except inputs.SnapshotError as e:
             return {f'lsp/{name}': {'status': 'ERROR', 'detail': f'no snapshot: {e}'}}, None, f'lsp {name}: ERROR {e}'
         runs_go = go_runs(sess)
-        material = session_material(sess, root, project_snap, typings, src_sha, info, node, [f'g{runs_go}'], up_state)
-        js_material = session_material(sess, root, project_snap, typings, js_src_sha, info, node, (), up_state)
+        own = tuple(sess.get('sources', ()))  # this session's own scripting modules (lane B6)
+        sess_src_sha = scenario_sources_sha(own) if own else src_sha
+        sess_js_src_sha = scenario_sources_sha(('tsserver.mjs', *own)) if own else js_src_sha
+        material = session_material(sess, root, project_snap, typings, sess_src_sha, info, node, [f'g{runs_go}'], up_state)
+        js_material = session_material(sess, root, project_snap, typings, sess_js_src_sha, info, node, (), up_state)
         key = f'{name}-{inputs.json_hash(material)[:24]}'
         js_key = f'{name}-{inputs.json_hash(js_material)[:24]}'
         go_dir = HOME / f'.cache/perf-rearch/parity/go-cache/{go_sha}'
