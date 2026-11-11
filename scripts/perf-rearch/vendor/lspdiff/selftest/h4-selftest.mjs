@@ -20,6 +20,11 @@ import vm from "node:vm";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LSPDIFF = join(HERE, "..");
+// client.mjs progressFindings (lane H9 round 2), for the probe of scenario.mjs checkpoint; a no-op where it is missing.
+let PROGRESS_FINDINGS = () => [];
+try {
+  PROGRESS_FINDINGS = (await import(join(LSPDIFF, "client.mjs"))).progressFindings ?? PROGRESS_FINDINGS;
+} catch {}
 const ROOT = join(homedir(), `.cache/perf-rearch/parity/scratch/h4-lsp-selftest-${process.pid}`);
 const fails = [];
 const check = (name, ok, got = "") => {
@@ -304,6 +309,7 @@ function scriptProbe(npmLog, now, alive = true, progress = () => []) {
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
     PROGRESS_METHODS: new Set(["$/progress", "window/workDoneProgress/create"]),
+    progressFindings: PROGRESS_FINDINGS,
     maskId: (id) => id,
     ATA_DIR: "/run/lspdiff-ata",
     SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000, LSPDIFF_PROGRESS_DEADLINE_MS: 60000 },
@@ -394,9 +400,9 @@ await part("h9", async () => {
     `settles ${during.settles}`);
   // With ATA on, the progress barrier comes before the npm-idle window, and the floor still holds.
   clock = 0;
-  const ata = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 2000 ? OPEN : []));
+  const ata = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 500 ? OPEN : []));
   const ataWaited = await ata.script.settle(300, "probe");
-  check("h9: with ATA on, the wait ends after the progress and after the npm-idle floor", ata.settles[0] >= 2000 && ataWaited >= 1500, `settles ${ata.settles}, waited ${ataWaited}`);
+  check("h9: with ATA on, the wait ends after the progress (0.5 s) and only after the npm-idle floor (1.5 s)", ata.settles[0] >= 500 && ataWaited >= 1500, `settles ${ata.settles}, waited ${ataWaited}`);
   // A progress that never ends: the run fails as a harness error at LSPDIFF_PROGRESS_DEADLINE_MS, never a success.
   clock = 0;
   const never = scriptProbe(() => "", () => (clock += 1000), false, () => OPEN);
@@ -413,20 +419,18 @@ await part("h9", async () => {
   // closes it, an end of a token never begun is ignored.
   const { ProgressBarrier, initializeParams } = await import(join(LSPDIFF, "client.mjs"));
   const b = new ProgressBarrier();
-  b.update({ token: 1, value: { kind: "begin", title: "Loading", message: "Project a" } });
-  b.update({ token: "1", value: { kind: "begin", title: "Loading" } });
-  b.update({ token: 1, value: { kind: "report", message: "Installing types for b" } });
-  b.update({ token: "other", value: { kind: "end" } });
+  const ok = [b.create({ token: 1 }), b.create({ token: "1" }), b.update({ token: 1, value: { kind: "begin", title: "Loading", message: "Project a" } })];
+  ok.push(b.update({ token: "1", value: { kind: "begin", title: "Loading" } }), b.update({ token: 1, value: { kind: "report", message: "Installing types for b" } }));
   const both = b.pending().join("; ");
-  b.update({ token: "1", value: { kind: "end" } });
+  ok.push(b.update({ token: "1", value: { kind: "end" } }));
   const one = b.pending().join("; ");
-  b.update({ token: 1, value: { kind: "end" } });
-  check("h9: the progress barrier keeps each token begun until its end",
-    both === '1 Loading: Installing types for b; "1" Loading' && one === "1 Loading: Installing types for b" && b.pending().length === 0, JSON.stringify({ both, one, last: b.pending() }));
+  ok.push(b.update({ token: 1, value: { kind: "end" } }));
+  check("h9: the progress barrier keeps each token from its create until its end (1 and \"1\" are two tokens)",
+    ok.every((x) => x === null) && both === '1 Loading: Installing types for b; "1" Loading' && one === "1 Loading: Installing types for b" && b.pending().length === 0, JSON.stringify({ ok, both, one, last: b.pending() }));
   // The progress messages are the barrier's signal, never compared: a checkpoint keeps them in its entry's
   // `progress` (not compared) and out of "server messages"; "session messages" leaves them out too.
-  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: "t" } };
-  const begin = { kind: "notification", method: "$/progress", params: { token: "t", value: { kind: "begin", title: "Loading" } } };
+  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: "tsgo-loading-1" } };
+  const begin = { kind: "notification", method: "$/progress", params: { token: "tsgo-loading-1", value: { kind: "begin", title: "Loading", message: "Project 'a'" } } };
   const refresh = { kind: "request", method: "workspace/diagnostic/refresh" };
   const cp = scriptProbe(() => "", () => 0, false);
   Object.assign(cp.script, { ata: undefined, seen: 0, active: new Map(), registered: new Map(), ids: [] });
@@ -439,6 +443,76 @@ await part("h9", async () => {
     JSON.stringify(sm?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && sm?.progress?.length === 2 && JSON.stringify(tail.result) === '[{"request":"workspace/diagnostic/refresh","params":null}]',
     JSON.stringify({ sm, tail: tail.result }));
   const caps = (watch) => initializeParams("/x", { watch }).capabilities.window.workDoneProgress;
+  // ---- round 2 (Astra's H9 review) ----
+  // Finding 1: caughtUp has three outcomes; a deadline with notifications unhandled is a harness error.
+  const { LspClient, NotificationBarrier, progressPayloadErrors } = await import(join(LSPDIFF, "client.mjs"));
+  const behind = new NotificationBarrier();
+  behind.send("textDocument/didOpen");
+  let overdue = null;
+  try {
+    await LspClient.prototype.caughtUp.call({ dead: null, barrier: behind }, 60);
+  } catch (e) {
+    overdue = e;
+  }
+  const deadWait = await LspClient.prototype.caughtUp.call({ dead: "server exited (1)", barrier: behind }, 60).then(() => "resolved", (e) => `rejected: ${e.message}`);
+  const caught = new NotificationBarrier();
+  caught.send("textDocument/didOpen");
+  caught.log("handled method 'textDocument/didOpen' in 1ms");
+  const upWait = await LspClient.prototype.caughtUp.call({ dead: null, barrier: caught }, 60).then(() => "resolved", (e) => `rejected: ${e.message}`);
+  check("h9 r2 finding 1: a notification unhandled at the deadline is a harness error naming what is behind; a dead server and a caught-up one resolve",
+    overdue?.harness === true && /textDocument\/didOpen 0\/1 handled/.test(overdue.message) && deadWait === "resolved" && upWait === "resolved", JSON.stringify({ overdue: overdue?.message, harness: overdue?.harness, deadWait, upWait }));
+  // Finding 2: each lifecycle break of Go's progress.go is refused (LspClient breaks the protocol on it).
+  const life = (steps) => {
+    const pb = new ProgressBarrier();
+    for (const [op, params] of steps) {
+      const why = op === "create" ? pb.create(params) : pb.update(params);
+      if (why) return why;
+    }
+    return null;
+  };
+  const T = "tsgo-loading-1";
+  const cr = ["create", { token: T }];
+  const bg = ["update", { token: T, value: { kind: "begin", title: "Loading", message: "Project 'a'" } }];
+  const rp = ["update", { token: T, value: { kind: "report", message: "Project 'a'" } }];
+  const en = ["update", { token: T, value: { kind: "end" } }];
+  const cases = {
+    "a second begin on an active token": life([cr, bg, bg]),
+    "a begin on a token never created": life([bg]),
+    "a report on a token never created": life([rp]),
+    "an end on a token never created": life([en]),
+    "a report with no active begin": life([cr, rp]),
+    "an end with no active begin": life([cr, en]),
+    "a begin on an ended token": life([cr, bg, en, bg]),
+    "a token created twice": life([cr, cr]),
+  };
+  const good = life([cr, bg, rp, en]);
+  check("h9 r2 finding 2: every lifecycle break is refused, Go's sequence (create, begin, report, end) is not",
+    good === null && Object.values(cases).every((x) => typeof x === "string"), JSON.stringify({ good, cases }));
+  // Finding 3: the payload rules Go fixes (progress.go), whatever the timing.
+  const P = (value, token = T) => progressPayloadErrors("$/progress", { token, value });
+  const fine = [P({ kind: "begin", title: "Loading", message: "Installing types for 'x'" }), P({ kind: "report", message: "Project 'tsconfig.json'" }), P({ kind: "end" }),
+    progressPayloadErrors("window/workDoneProgress/create", { token: T })];
+  const broken = {
+    title: P({ kind: "begin", title: "Wrong title", message: "Project 'a'" }),
+    beginNoMessage: P({ kind: "begin", title: "Loading" }),
+    beginExtra: P({ kind: "begin", title: "Loading", message: "Project 'a'", percentage: 1 }),
+    reportText: P({ kind: "report", message: "Working" }),
+    endMessage: P({ kind: "end", message: "done" }),
+    token: P({ kind: "end" }, "h9-1"),
+    createExtra: progressPayloadErrors("window/workDoneProgress/create", { token: T, x: 1 }),
+  };
+  check("h9 r2 finding 3: Go's payloads pass; a wrong title, missing or extra fields, another text, another token form are each a finding",
+    fine.every((x) => x.length === 0) && Object.values(broken).every((x) => x.length > 0), JSON.stringify({ fine, broken }));
+  const cp2 = scriptProbe(() => "", () => 0, false);
+  Object.assign(cp2.script, { ata: undefined, seen: 0, active: new Map(), registered: new Map(), ids: [] });
+  const wrong = { kind: "notification", method: "$/progress", params: { token: T, value: { kind: "begin", title: "Wrong title", message: "Project 'a'" } } };
+  cp2.script.client.events = [{ ...create, params: { token: T } }, wrong, refresh];
+  await cp2.script.checkpoint("load");
+  const sm2 = cp2.script.log.find((e) => e.step === "load server messages");
+  const tail2 = messagesEntry({ events: [{ ...create, params: { token: T } }, wrong] });
+  check("h9 r2 finding 3: a broken rule joins the compared lists (checkpoint and session messages)",
+    JSON.stringify(sm2?.result) === '[{"request":"workspace/diagnostic/refresh"},{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]' && JSON.stringify(tail2.result) === '[{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]',
+    JSON.stringify({ sm2: sm2?.result, tail2: tail2.result }));
   check("h9: the watch scenarios advertise window.workDoneProgress, the standard sessions do not", caps(true) === true && caps(false) === false, `${caps(true)} ${caps(false)}`);
 });
 

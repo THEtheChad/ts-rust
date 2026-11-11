@@ -15,7 +15,8 @@
 //                           checkpoint, stable-sorted by uri
 //   "<cp> server messages"  method server/messages: every other server request and notification but the
 //                           log (window/logMessage) and the work-done progress (client.mjs PROGRESS_METHODS,
-//                           kept in the entry's `progress`, not compared), in order; with ATA on, then its npm calls
+//                           kept in the entry's `progress`, not compared), in order; with ATA on, then its npm calls;
+//                           then each payload rule of Go's progress a message broke ({ progress: <rule> })
 // A checkpoint first waits (Script.settle) until the server has handled every notification sent (lane B4),
 // every work-done progress it began has ended (lane H9), and it has been quiet for LSPDIFF_SETTLE_MS (default
 // 1000) with no request pending: registrations come from the servers' background queues after an answer.
@@ -55,7 +56,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROGRESS_METHODS, fileUri } from "./client.mjs";
+import { PROGRESS_METHODS, fileUri, progressFindings } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
 import { TYPED, maskId, messagesEntry, startServer } from "./session.mjs";
@@ -321,7 +322,7 @@ class Script {
     const events = [];
     const pushed = [];
     const other = [];
-    const progress = []; // not compared (client.mjs PROGRESS_METHODS); kept in the log for diagnosis
+    const progress = []; // not compared (client.mjs PROGRESS_METHODS); kept in the log, and its payload rules checked
     const before = new Set(this.activeKeys());
     for (const e of fresh) {
       if (PROGRESS_METHODS.has(e.method)) {
@@ -368,6 +369,9 @@ class Script {
     // (ata-overlay reports them at every ataIdle as items of their own). They are part of this item, not
     // one of their own, so the items of a scenario keep their indices.
     if (this.ata) other.push(...this.npmReport().map((call) => ({ ata: call })));
+    // Every payload rule of Go's progress that a message broke (client.mjs progressFindings; lane H9 round 2):
+    // none for a server that keeps them, whether or not it showed a progress.
+    other.push(...progressFindings(fresh.filter((e) => PROGRESS_METHODS.has(e.method))));
     entry("server messages", "server/messages", other, 0, progress.length ? { progress } : {});
   }
 

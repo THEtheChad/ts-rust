@@ -7,9 +7,8 @@
 # the H8 review (~/.cache/perf-rearch/scratch/review-h8-astra/: proxy-root.py's home-proto,
 # within-request, late-diag, shutdown-result, input-root-hide and input-root-mode; fake-extra.py's request,
 # late-request and ata-unlogged), and the synthetic case of her finding 7 (vary, vary-extra, none).
-# Lane H9: progress-0, progress-late and progress-never send a work-done progress of their own for every
-# didOpen (create and begin before the server sees the open; end at once, after 4 s, or never), then a
-# publishDiagnostics marker after the end.
+# Lane H9: the progress-* modes send a work-done progress of their own for every didOpen (PROGRESS_END
+# below), and silent-open drops the server's "handled method 'textDocument/didOpen'" log lines.
 # usage: python3 parity_h8_fake.py MODE GO TYPINGS [server args]; OUTSIDE_LIST is replaced by the self-test.
 # GO `-`: no Go behind it; the fake answers itself (initialize with no capabilities, every other request
 # with null), as Astra's fake-extra.py does.
@@ -164,7 +163,14 @@ def frame(msg):
     return json.dumps(msg, separators=(',', ':')).encode()
 
 
-PROGRESS_END = {'progress-0': 0, 'progress-late': 4, 'progress-never': None}
+# Lane H9: the progress modes. The payloads are Go's (lsp/progress.go): token tsgo-loading-<n>, begin { title
+# "Loading", message "Installing types for '<x>'" }, end { }. progress-0, -late and -never end at once, after 4 s
+# or never; progress-title begins with "Wrong title" (round 2, finding 3); the others break the lifecycle Go keeps
+# (round 2, finding 2): twobegin (a second begin on the token), nocreate (begin without create), report-nobegin
+# and end-nobegin (created, then a report or end with no begin), end-uncreated (an end on a token never created),
+# nobegin (created, never begun).
+PROGRESS_END = {'progress-0': 0, 'progress-late': 4, 'progress-never': None, 'progress-title': 0, 'progress-twobegin': 0, 'progress-nocreate': 0,
+                'progress-report-nobegin': None, 'progress-end-nobegin': None, 'progress-end-uncreated': None, 'progress-nobegin': None}
 opens = [0]
 
 
@@ -172,17 +178,30 @@ def progress_open(uri):
     """Lane H9: a work-done progress around a didOpen, as Go's for ATA: create and begin before the server
     sees the open, then the end (at once, after 4 s or never), then a publishDiagnostics marker."""
     opens[0] += 1
-    token = 'h9-fake-%d' % opens[0]
-    emit(frame({'jsonrpc': '2.0', 'id': 'h9-create-%d' % opens[0], 'method': 'window/workDoneProgress/create', 'params': {'token': token}}))
-    emit(frame({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': token, 'value': {'kind': 'begin', 'title': 'Loading', 'message': 'fake work'}}}))
+    token = 'tsgo-loading-%d' % opens[0]
+
+    def note(kind, **fields):
+        emit(frame({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': token, 'value': {'kind': kind, **fields}}}))
+    if mode not in ('progress-nocreate', 'progress-end-uncreated'):
+        emit(frame({'jsonrpc': '2.0', 'id': 'h9-create-%d' % opens[0], 'method': 'window/workDoneProgress/create', 'params': {'token': token}}))
+    if mode in ('progress-end-uncreated', 'progress-end-nobegin'):
+        note('end')
+    if mode == 'progress-report-nobegin':
+        note('report', message="Installing types for 'fake'")
+    marker = lambda: emit(frame({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {'uri': uri, 'diagnostics': [{'message': 'after the progress'}]}}))  # noqa: E731
+    if mode in ('progress-end-uncreated', 'progress-end-nobegin', 'progress-report-nobegin', 'progress-nobegin'):
+        marker()  # as progress-0 does: the lifecycle break is the only difference
+        return
+    for _ in range(2 if mode == 'progress-twobegin' else 1):
+        note('begin', title='Wrong title' if mode == 'progress-title' else 'Loading', message="Installing types for 'fake'")
     delay = PROGRESS_END[mode]
     if delay is None:
         return
 
     def end():
         time.sleep(delay)
-        emit(frame({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': token, 'value': {'kind': 'end'}}}))
-        emit(frame({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {'uri': uri, 'diagnostics': [{'message': 'after the progress'}]}}))
+        note('end')
+        marker()
     threading.Thread(target=end, daemon=True).start()
 
 
@@ -214,6 +233,8 @@ threading.Thread(target=pump, daemon=True).start()
 answers = 0
 for body in frames(p.stdout):
     msg = json.loads(body)
+    if mode == 'silent-open' and b"handled method 'textDocument/didOpen' in" in body:
+        continue  # lane H9 round 2: a server that handles its opens without saying so
     method = methods.get(msg.get('id')) if 'method' not in msg else None
     if method:
         answers += 1

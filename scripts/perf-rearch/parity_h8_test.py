@@ -30,7 +30,9 @@ escape) with every other mode:
                 storage-root chmod probes, on the home): session home DIFF
   exec failure  unexec-go (Astra's: a Go that cannot be exec'd): ERROR, and nothing cached
   progress      lane H9 (h9()): a work-done progress that ends 4 s after each didOpen: MATCH on every item
-                against one that ends at once; one that never ends: a harness error, the session ERROR
+                against one that ends at once; one that never ends: a harness error, the session ERROR;
+                round 2: opens never logged as handled (ERROR), each break of Go's progress lifecycle (a
+                protocol DIFF), a begin titled "Wrong title" (a server messages DIFF)
 It takes the gate's lock (the tier's paths are fixed) and uses the real Go cache.
 """
 import fcntl
@@ -403,23 +405,44 @@ def finding7():
 
 
 def h9():
-    """Lane H9: the progress barrier (vendor/lspdiff scenario.mjs Script.progressEnded). The fake's modes
-    progress-0, progress-late and progress-never send a work-done progress of their own around every didOpen,
-    then a publishDiagnostics marker after its end. On pkgjson-overlay (ATA off: the waits are the barriers
-    and the quiet windows alone), with the self server on both sides: an end 4 s late against one at once
-    must be MATCH on every item (each wait lasts until the end, so each marker is in the same checkpoint; a
-    harness without the barrier ends the waits first and the markers move: a DIFF). A progress that never
-    ends is a harness error: lspdiff exits 3 with no items (LSPDIFF_PROGRESS_DEADLINE_MS 5 s here), and
-    through the tier, in front of the real Go, the session is ERROR, never MATCH."""
+    """Lane H9: the barriers of a scenario's waits (vendor/lspdiff scenario.mjs Script.settle, client.mjs). The fake's
+    progress-* modes send a work-done progress of their own around every didOpen, with Go's payloads unless the mode
+    breaks one, then a publishDiagnostics marker after its end; silent-open drops the server's handled lines of its
+    opens. All on pkgjson-overlay (ATA off: the waits are the barriers and the quiet windows alone), the self server
+    behind both sides, Go's side progress-0:
+      late             an end 4 s late: MATCH on every item (each wait lasts until the end; a harness without the
+                       barrier ends the waits first and the markers move: a DIFF)
+      never            a progress that never ends: a harness error (lspdiff exit 3, no items); through the tier in
+                       front of the real Go: the session ERROR
+    Round 2 (Astra's H9 review):
+      silent-open      finding 1: handled lines missing past LSPDIFF_REQUEST_TIMEOUT_MS: a harness error, exit 3
+      lifecycle        finding 2: twobegin, nocreate, report-nobegin, end-nobegin, end-uncreated, nobegin: each a
+                       protocol failure of tsc-rs's side (a DIFF with rsFailure crash, the rule named)
+      title            finding 3: a begin titled "Wrong title": a DIFF of a server messages item"""
     fake('pass')
     sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
-    items, log = lspdiff('h9-late', sh('progress-0'), sh('progress-late'), scenario='pkgjson-overlay')
-    check('h9: a progress that ends 4 s late: every item MATCH (each wait lasts until the end)', items and not bad(items), short(items, log))
-    items, log = lspdiff('h9-never', sh('progress-0'), sh('progress-never'), scenario='pkgjson-overlay', env={'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
+    run = lambda tag, rs, env=None: lspdiff(tag, sh('progress-0'), sh(rs), scenario='pkgjson-overlay', env=env)  # noqa: E731
+    counts = lambda items: dict(__import__('collections').Counter(v['status'] for v in items.values()))  # noqa: E731
+    items, log = run('h9-late', 'progress-late')
+    check('h9: a progress that ends 4 s late: every item MATCH (each wait lasts until the end)',
+          items and all(v['status'] == 'MATCH' for v in items.values()), f'{counts(items)} {short(items, log)}')
+    items, log = run('h9-never', 'progress-never', {'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
     check('h9: a progress that never ends: a harness error (lspdiff exit 3), no items', not items and 'harness error' in log and 'did not end' in log, short(items, log))
     items, log = tier(fake('progress-never'), session='pkgjson-overlay')
     check('h9: a progress that never ends, through the tier in front of the real Go: the session is ERROR, not MATCH',
           items and all(v['status'] == 'ERROR' for v in items.values()), short(items, log))
+    items, log = run('h9-silent', 'silent-open', {'LSPDIFF_REQUEST_TIMEOUT_MS': '5000'})
+    check('h9 r2 finding 1: opens handled without their log line past the deadline: a harness error (exit 3) naming what is behind, '
+          'never MATCH or DIFF', not items and 'harness error' in log and 'textDocument/didOpen' in log and 'handled' in log, f'{counts(items)} {short(items, log)}')
+    for mode, rule in [('progress-twobegin', 'already begun'), ('progress-nocreate', 'never created'), ('progress-report-nobegin', 'no active begin'),
+                       ('progress-end-nobegin', 'no active begin'), ('progress-end-uncreated', 'never created'), ('progress-nobegin', 'not begun in 5000 ms')]:
+        items, log = run(f'h9-{mode}', mode, {'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
+        check(f'h9 r2 finding 2: {mode}: a protocol failure of tsc-rs ({rule}): a DIFF with rsFailure crash',
+              items and any(v['status'] == 'DIFF' and v.get('rsFailure') == 'crash' for v in items.values()) and rule in log, f'{counts(items)} {short(items, log)}')
+    items, log = run('h9-title', 'progress-title')
+    check('h9 r2 finding 3: a begin titled "Wrong title": a server messages DIFF (no crash)',
+          items and any(k.endswith(' server messages') and v['status'] == 'DIFF' for k, v in items.items()) and not any(v.get('rsFailure') for v in items.values()),
+          f'{counts(items)} {short(items, log)}')
 
 
 def e2e():

@@ -54,42 +54,107 @@ export class NotificationBarrier {
   }
 }
 
-// Lane H9: the work-done progress a server has begun and not ended, by token. The watch scenarios advertise
-// window.workDoneProgress (initializeParams), so both servers report their background work through it (Go
-// lsp/progress.go projectLoadingProgress, and tsc-rs's port lsp/progress.rs): ATA's "Installing types for
-// <project>" (project/session.go triggerATAForUpdatedProjects, around InstallTypings) and a program's
-// "Project <name>" (projectcollectionbuilder.go). Each reaches the client as window/workDoneProgress/create,
-// then $/progress begin, reports, and end, on one token while any of them runs. ATA's npm calls of one
-// request are thus inside one begin/end pair, and Script.settle waits for it (lane B4's residual race: a
-// first install spent more than ATA_IDLE_MS between its two npm calls and the npm-idle wait ended).
-// Go shows a progress only after it has run for 250 ms (cmd/tsc/lsp.go ProgressDelay), so work shorter
-// than that never begins one: progress is a signal of work in flight, never proof that none is coming.
-// For the same reason the progress messages are no output to compare (PROGRESS_METHODS): whether one shows
-// depends on the time the work took (umami's program load, near 250 ms, began a progress in 1 of 4 Go runs).
+// Lane H9: the work-done progress of a server, by token. The watch scenarios advertise window.workDoneProgress
+// (initializeParams), so both servers report their background work through it (Go lsp/progress.go
+// projectLoadingProgress, and tsc-rs's port lsp/progress.rs): ATA's "Installing types for '<project>'"
+// (project/session.go triggerATAForUpdatedProjects, around InstallTypings) and a program's "Project '<name>'"
+// (projectcollectionbuilder.go). Go keeps one token while its group of active operations is nonempty, and
+// shows it only once the group has run 250 ms (cmd/tsc/lsp.go ProgressDelay): window/workDoneProgress/create,
+// then $/progress begin, reports, and end. ATA's npm calls of one request are thus inside one begin/end pair,
+// and Script.settle waits for it (lane B4's residual race: a first install spent more than ATA_IDLE_MS between
+// its two npm calls and the npm-idle wait ended). Work shorter than 250 ms never shows: progress is a signal
+// of work in flight, never proof that none is coming.
+//
+// The lifecycle Go keeps (progress.go run, at the pin) is enforced (round 2): every token is created once
+// (tokenID++ makes a new one per group, :141), its create comes before its begin (:146, :186), it has one
+// begin (:203, after `begun` is false), and reports and its end come only while it is begun (:166, :173, :210).
+// A message that breaks it is a protocol failure (LspClient #broken: the run ends there, a crash of that
+// server). A token created and not begun in LSPDIFF_PROGRESS_DEADLINE_MS is one too (Go sends the begin right
+// after the create, in the same step).
 export class ProgressBarrier {
   constructor() {
-    this.open = new Map(); // token (as JSON) -> { title, message }
+    this.tokens = new Map(); // token (as JSON) -> { state: "created" | "begun" | "ended", title, message }
   }
 
-  // The params of a $/progress notification.
+  // The params of a window/workDoneProgress/create request: null, or why it breaks the lifecycle.
+  create(params) {
+    const token = JSON.stringify(params?.token ?? null);
+    if (this.tokens.has(token)) return `work-done progress token ${token} created again`;
+    this.tokens.set(token, { state: "created" });
+    return null;
+  }
+
+  // The params of a $/progress notification: null, or why it breaks the lifecycle.
   update(params) {
     const token = JSON.stringify(params?.token ?? null);
     const v = params?.value ?? {};
-    if (v.kind === "begin") this.open.set(token, { title: v.title, message: v.message });
-    else if (v.kind === "report" && this.open.has(token) && v.message !== undefined) this.open.get(token).message = v.message;
-    else if (v.kind === "end") this.open.delete(token);
+    const t = this.tokens.get(token);
+    const kind = JSON.stringify(v.kind);
+    if (!t) return `$/progress ${kind} on token ${token}, which was never created`;
+    if (v.kind === "begin") {
+      if (t.state !== "created") return `$/progress "begin" on token ${token}, which is ${t.state === "begun" ? "already begun" : "ended"}`;
+      Object.assign(t, { state: "begun", title: v.title, message: v.message });
+    } else if (v.kind === "report" || v.kind === "end") {
+      if (t.state !== "begun") return `$/progress ${kind} on token ${token} with no active begin (${t.state})`;
+      if (v.kind === "end") t.state = "ended";
+      else if (v.message !== undefined) t.message = v.message;
+    } else return `$/progress of kind ${kind} on token ${token}`;
+    return null;
   }
 
-  // The progress begun and not ended ("<token> <title>: <message>").
+  // The progress created or begun and not ended ("<token> <title>: <message>", or "<token> (created)").
   pending() {
-    return [...this.open].map(([token, { title, message }]) => `${token} ${title}${message ? `: ${message}` : ""}`);
+    return [...this.tokens].filter(([, t]) => t.state !== "ended").map(([token, t]) => (t.state === "created" ? `${token} (created, not begun)` : `${token} ${t.title}${t.message ? `: ${t.message}` : ""}`));
   }
 }
 
-// The work-done progress messages (ProgressBarrier): the barrier's signal only, left out of every compared
-// message list (scenario.mjs checkpoint "server messages", session.mjs "session messages") and kept in the
-// checkpoint's log entry as `progress`, which is not compared.
+// The work-done progress messages (ProgressBarrier). Whether one shows, in which order and on which token number
+// depends on how long the work took (umami's program load, near 250 ms, began a progress in 1 of 4 Go runs), so
+// they are left out of every compared message list (scenario.mjs checkpoint "server messages", session.mjs
+// "session messages") and kept in the checkpoint's log entry as `progress`, which is not compared. What Go fixes
+// in each payload is checked instead (progressPayloadErrors), and every rule a message breaks joins the
+// compared list.
 export const PROGRESS_METHODS = new Set(["$/progress", "window/workDoneProgress/create"]);
+
+const keysAre = (o, want) => !!o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).sort().join(",") === [...want].sort().join(",");
+// The token: fmt.Sprintf("tsgo-loading-%d", tokenID), tokenID from 1 (progress.go:141-142).
+const TOKEN = /^tsgo-loading-[1-9][0-9]*$/;
+// The two texts a progress message has: diagnostics Installing_types_for_0 (95203) and Project_0 (95204), English
+// (the client sends no locale; progress.go localize). Their argument is a project's display name; which projects
+// show a progress depends on the time their work took, so it is not checked against Go's run (a project Go loaded
+// in under 250 ms has no Go progress to compare with: a false DIFF from timing).
+const MESSAGE = /^(?:Installing types for|Project) '[^]*'$/;
+
+// The rules a progress message breaks, of those Go fixes at the pin whatever the timing (lane H9 round 2; Go
+// lsp/progress.go and lsproto's omitzero fields):
+//   create   params exactly { token }, the token as above (serverProgressReporter.createWorkDoneProgress :46-50)
+//   $/progress params exactly { token, value } (sendProgress :52-56)
+//   begin    value exactly { kind, title, message }: title the localized "Loading" (diagnostics 95202, :202-206),
+//            message one of the two texts (beginOrReport's text, a loading key)
+//   report   value exactly { kind, message }, the message one of the two texts (:175-179, :210-213)
+//   end      value exactly { kind } (:167-169)
+export function progressPayloadErrors(method, params) {
+  const out = [];
+  const token = params?.token;
+  if (method === "window/workDoneProgress/create") {
+    if (!keysAre(params, ["token"])) out.push(`create params with keys ${Object.keys(params ?? {})}`);
+  } else if (!keysAre(params, ["token", "value"])) out.push(`$/progress params with keys ${Object.keys(params ?? {})}`);
+  if (typeof token !== "string" || !TOKEN.test(token)) out.push(`token ${JSON.stringify(token)}, not tsgo-loading-<n>`);
+  if (method !== "$/progress") return out;
+  const v = params?.value ?? {};
+  const fields = { begin: ["kind", "title", "message"], report: ["kind", "message"], end: ["kind"] }[v.kind];
+  if (!fields) return [...out, `value of kind ${JSON.stringify(v.kind)}`];
+  if (!keysAre(v, fields)) out.push(`${v.kind} with fields ${Object.keys(v).sort()}, not ${[...fields].sort()}`);
+  if (v.kind === "begin" && v.title !== "Loading") out.push(`begin title ${JSON.stringify(v.title)}, not "Loading"`);
+  if (v.kind !== "end" && !(typeof v.message === "string" && MESSAGE.test(v.message))) out.push(`${v.kind} message ${JSON.stringify(v.message)}, not "Installing types for '{0}'" or "Project '{0}'"`);
+  return out;
+}
+
+// The compared form of a list of progress events: the rules broken, each once, sorted ([] for a server that keeps
+// them, whatever progress it showed).
+export function progressFindings(events) {
+  return [...new Set(events.flatMap((e) => progressPayloadErrors(e.method, e.params)))].sort().map((rule) => ({ progress: rule }));
+}
 
 const MAX_HEADER_LINE = 256;
 const MAX_HEADERS = 4;
@@ -137,6 +202,7 @@ export class LspClient {
     this.lastMessageAt = performance.now();
     this.barrier = new NotificationBarrier(); // caughtUp
     this.progress = new ProgressBarrier(); // scenario.mjs Script.progressEnded
+    this.unbegun = new Map(); // a created progress token -> its timer: not begun in LSPDIFF_PROGRESS_DEADLINE_MS breaks the protocol
     this.buf = Buffer.alloc(0);
     this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
@@ -154,6 +220,7 @@ export class LspClient {
         p.reject(new Error(`${this.dead} during ${p.method}${panic ? `: ${panic}` : ""}`));
       }
       this.pending.clear();
+      for (const timer of this.unbegun.values()) clearTimeout(timer);
     });
   }
 
@@ -194,6 +261,7 @@ export class LspClient {
       const why = envelopeError(msg, this.pending);
       if (why) return this.#broken(`not a JSON-RPC 2.0 message: ${why}`);
       this.#onMessage(msg, !exact);
+      if (this.malformed) return; // the message broke the protocol (a progress lifecycle): nothing after it counts
     }
   }
 
@@ -206,6 +274,7 @@ export class LspClient {
       p.reject(new Error(`${this.dead} during ${p.method}`));
     }
     this.pending.clear();
+    for (const timer of this.unbegun.values()) clearTimeout(timer);
     this.server.kill();
   }
 
@@ -222,12 +291,25 @@ export class LspClient {
       return;
     }
     if (msg.method === "window/logMessage") this.barrier.log(msg.params?.message);
-    if (msg.method === "$/progress") this.progress.update(msg.params);
+    if (msg.method === "$/progress") {
+      const why = this.progress.update(msg.params);
+      if (why) return this.#broken(why);
+      if (msg.params?.value?.kind === "begin") clearTimeout(this.unbegun.get(JSON.stringify(msg.params.token)));
+    }
     this.notifications.push({ method: msg.method, params: msg.params, at });
     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
   }
 
   #onServerRequest(msg, raw) {
+    if (msg.method === "window/workDoneProgress/create") {
+      const why = this.progress.create(msg.params);
+      if (why) return this.#broken(why);
+      const token = JSON.stringify(msg.params?.token ?? null);
+      const ms = SETTINGS.LSPDIFF_PROGRESS_DEADLINE_MS;
+      const timer = setTimeout(() => this.#broken(`work-done progress token ${token} created and not begun in ${ms} ms`), ms);
+      timer.unref?.();
+      this.unbegun.set(token, timer);
+    }
     // workspace/configuration is never asked: initialize does not advertise it.
     // registerCapability, unregisterCapability, window/workDoneProgress/create, refresh requests: accept
     // with null (the answer of a successful registration, and of a progress token created).
@@ -278,13 +360,22 @@ export class LspClient {
   }
 
   // Resolves once the server has handled every notification of BARRIER_METHODS sent so far
-  // (NotificationBarrier), at most `maxMs`. A server that died or hangs is not waited for: the next
-  // request reports its crash or timeout, as before (a tsc-rs failure, not a harness error).
+  // (NotificationBarrier). Three outcomes (lane H9 round 2):
+  //   caught up        resolves with the time waited;
+  //   the server died  resolves as well: the next request reports its crash or timeout, as before (a tsc-rs
+  //                    failure, not a harness error);
+  //   `maxMs` passed   (LSPDIFF_REQUEST_TIMEOUT_MS) with notifications still unhandled: rejects as a harness error
+  //                    naming what is behind (lspdiff exits 3: the session is ERROR), never a pass of the barrier.
+  // A server that handles a notification and does not log it, or takes that long, cannot be paced, so its
+  // session has no verdict.
   async caughtUp(maxMs = REQUEST_TIMEOUT_MS) {
     const start = performance.now();
     for (;;) {
       const waited = performance.now() - start;
-      if (this.dead || waited >= maxMs || this.barrier.behind().length === 0) return waited;
+      if (this.dead || this.barrier.behind().length === 0) return waited;
+      if (waited >= maxMs) {
+        throw Object.assign(new Error(`the server did not log the handling of every notification sent in ${maxMs} ms: ${this.barrier.behind().join("; ")} handled`), { harness: true });
+      }
       await new Promise((r) => setTimeout(r, 10));
     }
   }

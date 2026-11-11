@@ -2707,7 +2707,9 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12
 ## Progress barrier (lane H9, 2026-11-11)
 
 **Goal:** lspdiff paces a watch scenario the same way on every run, so that no debounced server message
-(Go's and tsc-rs's 500 ms `workspace/diagnostic/refresh`) depends on the host's load.
+(Go's and tsc-rs's 500 ms `workspace/diagnostic/refresh`) depends on the host's load. The pacing is
+load-independent only within a bound: no signal marks the end of an ATA worker, so a worker starved past
+the npm-idle floor can still change it ("Round 2", finding 4).
 
 ### What changed in lspdiff
 
@@ -2737,16 +2739,18 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12
   is not waited for.
 - **Progress is the waits' signal only, not compared.** `create` and `$/progress` are left out of every
   `<cp> server messages` and of `session messages` (`client.mjs` `PROGRESS_METHODS`). Each checkpoint's
-  log entry keeps them in a `progress` field, which is not compared.
+  log entry keeps them in a `progress` field, which is not compared. Round 2 adds what Go fixes in them:
+  their lifecycle (a protocol failure when broken) and their payload (a compared finding when broken).
 - **B4's tools.** `b4/harness-copy.sh` builds the scratch harness copy that `starve-repro.sh` needs
   (B4_RS_RUNS, B4_GO_CACHE, server logs). `starve-repro.sh` also counts duplicate npm installs and
   `Delaying scheduled diagnostics refresh` lines per run.
 
 ### Why progress is not compared (Go's own nondeterminism)
 
-Go shows a progress only after the work has run for 250 ms (`cmd/tsc/lsp.go` `ProgressDelay`). Before that
-the token exists but nothing is sent. So whether a progress appears, and on which token number, depends on
-how long the work took:
+Go shows a progress only after its group of operations has run for 250 ms (`cmd/tsc/lsp.go`
+`ProgressDelay`). It takes the group's token when the set of active operations goes from empty to nonempty
+(`lsp/progress.go:139-142`), but sends nothing until the delay fires. So whether a progress appears, and on
+which token number, depends on how long the work took:
 
 - **Unstarved, in all watch scenarios** (`scratch/h9/exp1`; Go 4 runs, 8 on hono; tsc-rs 3 runs). The ATA
   installs agree in every run of both servers: `Installing types for '<project>'` on the same tokens and at
@@ -2759,9 +2763,10 @@ how long the work took:
   after `tsgo-loading-4` was 16 in 4 runs and 6 in the other 4). tsc-rs gave two sequences in 50 runs (one
   run had no progress for the first program load). Both servers vary with the load, Go included.
 
-The token numbers also show why progress cannot replace the npm-idle window. Go numbers every start of a
-progress, shown or not. On hono's load the tokens go from 3 to 17: 13 starts were never shown. Most are ATA
-requests of the inferred project that ran no npm call and ended in under 250 ms. Each still schedules one of
+The token numbers also show why progress cannot replace the npm-idle window. Go takes a new token number
+for every group of operations (each time its set of active operations becomes nonempty), shown or not. On
+hono's load the tokens go from 3 to 17: 13 groups were never shown. Most are ATA requests of the inferred
+project that ran no npm call and ended in under 250 ms. Each still schedules one of
 the load's 12 refreshes, 500 ms later. Nothing on the stream marks them, so the `ATA_IDLE_MS` floor of
 every wait stays (lane ND2): it covers both the work that has not yet run 250 ms and the work that never
 shows. The progress barrier covers what the floor could not: an ATA request whose npm calls are more than
@@ -2845,6 +2850,89 @@ shows. The progress barrier covers what the floor could not: an ATA request whos
 - **Cost:** the lsp tier's wall time was 298 s in the gate (its load rose to 16 while it ran), then 240.9 s
   and 239.5 s in the two extra runs (load 1 to 8). The base's gate tier took 232 s, so the barriers cost
   about 8 s (3%) on a quiet host. Most of a scenario's time is still the `ATA_IDLE_MS` floor of its waits.
+
+### Round 2: Astra's review (`reviews/2026-11-11-astra-h9.md`, REJECT of `3195ad922`)
+
+All four findings are in the threat model; root's decisions are in the review file.
+
+**Finding 1: `caughtUp()` passed its deadline as if caught up.** It now has three outcomes:
+- caught up: it resolves;
+- the server died: it resolves, and the next request reports the crash or timeout, as before;
+- `LSPDIFF_REQUEST_TIMEOUT_MS` passed with a notification still unhandled: it rejects as a harness error
+  naming what is behind (`textDocument/didOpen 11/12 handled`). lspdiff exits 3 and the session is ERROR.
+
+A server that handles a notification without logging it cannot be paced, so its session has no verdict.
+
+**Finding 2: the progress lifecycle.** At the pin, Go never sends a progress without its `create`:
+- the token is new for each group (`progress.go:141-142`);
+- `create` comes first in both paths (`:146` with no delay, `:186` when the delay fires), and the begin
+  follows in the same step (`:152-153`, `:187`);
+- `begun` allows one begin (`:200-209`);
+- a report goes only on a token that has begun (`:173`, and `delayFired` implies `begun`), and so does an
+  end (`:166`);
+- a token is never used again after `token = ""` (`:172`).
+
+`client.mjs` `ProgressBarrier` keeps each token's state (created, begun, ended). Go's rule, no stricter, is
+enforced through the protocol-failure path (`#broken`: the run ends, a crash of that server; for tsc-rs a
+DIFF with `rsFailure` crash):
+- a second begin, or a begin on an ended token;
+- a begin, report or end on a token never created;
+- a report or end with no active begin;
+- a token created twice;
+- a token created and not begun within `LSPDIFF_PROGRESS_DEADLINE_MS`.
+
+A begun progress that never ends stays a harness error (round 1).
+
+**Finding 3: the payload Go fixes.** Every progress message is checked (`client.mjs`
+`progressPayloadErrors`). Each rule it breaks joins the compared list of its checkpoint (and of `session
+messages`) as `{ progress: <rule> }`. Each rule is listed once, so a server that keeps the rules adds
+nothing, whatever progress it showed. The rules, at the pin (`lsp/progress.go` and lsproto's `omitzero`
+fields):
+
+| message | rule | Go |
+| --- | --- | --- |
+| `create` | params exactly `{ token }` | `serverProgressReporter.createWorkDoneProgress`, `:46-50` |
+| `$/progress` | params exactly `{ token, value }` | `sendProgress`, `:52-56` |
+| any | the token is `tsgo-loading-<n>`, n from 1 | `:141-142` |
+| begin | value exactly `{ kind, title, message }`; title `Loading` (diagnostics 95202, English: the client sends no locale) | `beginOrReport`, `:202-206` |
+| report | value exactly `{ kind, message }` | `:175-179`, `:210-213` |
+| end | value exactly `{ kind }` | `:167-169` |
+| begin, report | the message is `Installing types for '{0}'` (95203) or `Project '{0}'` (95204) | the loading keys, `project/session.go:2048`, `projectcollectionbuilder.go:1502` |
+
+Not checked:
+- **The `{0}`** (a project's display name). Which projects show a progress depends on the time their work
+  took, so "a name Go also showed" would be a false DIFF from timing.
+- **Occurrence, order and token numbers** (round 1).
+
+**Finding 4: no completion signal for ATA.** Go queues the ATA worker on the background queue
+(`session.go:2027-2030`) before it calls `ProgressStart` (`:2048`).
+- **No log line marks a worker's start or end.** The worker's logs (`ATA:: ...`, "Triggering ATA for
+  project") go into a log tree of its request. That tree is printed only when a later snapshot adopts the
+  result (`DidUpdateATAState`), or on a failure (`:2056-2059`).
+- **"Scheduling new diagnostics refresh..."** (`scheduleDiagnosticsRefresh`, `:519-521`) is logged only
+  when the result differs.
+- **So a worker whose result is unchanged leaves no trace at all.** tsc-rs ports the same logs, and adding
+  one would change its output. The wait therefore keeps the npm-idle floor.
+
+The assumption the pacing rests on, then: every ATA worker that a step's notification queued must show
+itself before the wait ends. That means one of these happens within `ATA_IDLE_MS` (1.5 s) of the wait's
+start:
+- it starts an npm call (the stand-in npm's log);
+- it runs 250 ms (a progress begins);
+- it ends with no change.
+
+If its result changes, the refresh it schedules (500 ms later) must arrive before the wait's last quiet
+window ends. A worker that the scheduler keeps from running for longer than that, with nothing visible, can
+still finish after the wait. Its refresh then falls into the next step's debounce window, in Go and in
+tsc-rs alike. The bound held in every starved run above: 12 busy loops on the server's CPU, with the
+third open taking 2.0 to 4.1 s, gave 12 refreshes in 58 of 58 head runs. Harder starvation can break it. The
+claim is "load-independent within that bound", not "independent of load".
+
+**Test weaknesses fixed.**
+- `parity_h8_test.py` `h9()` now requires MATCH on every item of the late-progress control.
+- The npm-floor check of `h4-selftest.mjs` uses a progress of 0.5 s, shorter than the 1.5 s floor.
+
+H9R2_EVIDENCE
 
 ## Files
 
