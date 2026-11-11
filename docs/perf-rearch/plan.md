@@ -2253,3 +2253,10 @@ once a **reconciliation step** is built and tested.
     probes, and root trims after the recheck. Prefs also moves to the full
     tier only, unless a quick-tier reason holds.
   - **Astra recheck** running (round 2 of 3).
+- **B6 recheck: REJECT,** with 2 findings (`reviews/2026-11-11-astra-b6-r2.md`):
+  - a 2^62 indent aborts tsc-rs where Go's `makeslice` limit gives a
+    recoverable InternalError;
+  - `prefs_sensitivity.py` doesn't sort completion items.
+
+  Round 3 sent, the last. It also trims the battery per Astra's redundancy
+  list and moves prefs to the full tier only.
