@@ -1906,3 +1906,32 @@ once a **reconciliation step** is built and tested.
   - **Round 3 sent,** the last under the cap. After it, root decides
     without a further Astra round, unless a finding is inside the threat
     model.
+- **B4 done; merged `9513cf308`.** The refresh-count variation is **not a
+  tsc-rs bug**: Go coalesces the same refreshes when it is starved
+  (`scripts/perf-rearch/b4/README.md`).
+  - **Cause:** lspdiff's `settle` can't see a `didOpen` that is still
+    being handled. A slow open queues the next ones, their ATA results land
+    inside one 500 ms debounce window, and one refresh is lost.
+  - **Repro, one starved CPU:** base harness, tsc-rs 8 of 10 short and Go 4
+    of 4 short; with the barrier, Go 8 of 8 and tsc-rs 50 of 50 send 12.
+  - **Merged:** a test pinning Go's refresh sequence
+    (`project_lsp::refresh_sequence_test`, 0 of 50 failures under load) and
+    the lspdiff barrier patch, not yet applied. No production change; the
+    `tsgo` binary is byte-identical. Gate
+    `runs/20261110-230324-full-c554d48991` PARITY OK.
+  - **Residual race:** in 1 of 50 barrier runs, ATA's npm idle window ended
+    mid-install, and the typings were installed twice. Go would do the
+    same.
+  - **Root's decision:**
+    - Keep H8's round 3 closed. Its refill and gate are already running.
+    - After H8 merges, lane **H9** applies the barrier to `vendor/lspdiff`
+      and removes the patch and its applier.
+    - **Fix the ATA race with a real signal, not a longer window:** enable
+      work-done progress in the client, and make `settle` wait until every
+      ATA progress `begin` has its `end`. Compare the progress messages if
+      Go and tsc-rs agree on them; otherwise use them only as the barrier
+      signal and say so in `parity.md`.
+    - Then one refill, and 3 lsp-tier runs with every `session messages`
+      item MATCH.
+  - **No Astra review of B4:** it ships a test and docs only. The barrier is
+    reviewed in H9.
