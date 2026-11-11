@@ -443,9 +443,14 @@ await part("h9", async () => {
     JSON.stringify(sm?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && sm?.progress?.length === 2 && JSON.stringify(tail.result) === '[{"request":"workspace/diagnostic/refresh","params":null}]',
     JSON.stringify({ sm, tail: tail.result }));
   const caps = (watch) => initializeParams("/x", { watch }).capabilities.window.workDoneProgress;
-  // ---- round 2 (Astra's H9 review) ----
+  check("h9: the watch scenarios advertise window.workDoneProgress, the standard sessions do not", caps(true) === true && caps(false) === false, `${caps(true)} ${caps(false)}`);
+});
+
+// ---- lane H9 round 2 (Astra's H9 review, reviews/2026-11-11-astra-h9.md): one part per finding, so that each
+// check fails on its own on a harness without the fix ---------------------------------------------------------
+await part("h9r2-finding1", async () => {
   // Finding 1: caughtUp has three outcomes; a deadline with notifications unhandled is a harness error.
-  const { LspClient, NotificationBarrier, progressPayloadErrors } = await import(join(LSPDIFF, "client.mjs"));
+  const { LspClient, NotificationBarrier } = await import(join(LSPDIFF, "client.mjs"));
   const behind = new NotificationBarrier();
   behind.send("textDocument/didOpen");
   let overdue = null;
@@ -461,6 +466,10 @@ await part("h9", async () => {
   const upWait = await LspClient.prototype.caughtUp.call({ dead: null, barrier: caught }, 60).then(() => "resolved", (e) => `rejected: ${e.message}`);
   check("h9 r2 finding 1: a notification unhandled at the deadline is a harness error naming what is behind; a dead server and a caught-up one resolve",
     overdue?.harness === true && /textDocument\/didOpen 0\/1 handled/.test(overdue.message) && deadWait === "resolved" && upWait === "resolved", JSON.stringify({ overdue: overdue?.message, harness: overdue?.harness, deadWait, upWait }));
+});
+
+await part("h9r2-finding2", async () => {
+  const { ProgressBarrier } = await import(join(LSPDIFF, "client.mjs"));
   // Finding 2: each lifecycle break of Go's progress.go is refused (LspClient breaks the protocol on it).
   const life = (steps) => {
     const pb = new ProgressBarrier();
@@ -488,6 +497,14 @@ await part("h9", async () => {
   const good = life([cr, bg, rp, en]);
   check("h9 r2 finding 2: every lifecycle break is refused, Go's sequence (create, begin, report, end) is not",
     good === null && Object.values(cases).every((x) => typeof x === "string"), JSON.stringify({ good, cases }));
+});
+
+await part("h9r2-finding3", async () => {
+  const { progressPayloadErrors } = await import(join(LSPDIFF, "client.mjs"));
+  const { messagesEntry } = await import(join(LSPDIFF, "session.mjs"));
+  const T = "tsgo-loading-1";
+  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: T } };
+  const refresh = { kind: "request", method: "workspace/diagnostic/refresh" };
   // Finding 3: the payload rules Go fixes (progress.go), whatever the timing.
   const P = (value, token = T) => progressPayloadErrors("$/progress", { token, value });
   const fine = [P({ kind: "begin", title: "Loading", message: "Installing types for 'x'" }), P({ kind: "report", message: "Project 'tsconfig.json'" }), P({ kind: "end" }),
@@ -513,7 +530,6 @@ await part("h9", async () => {
   check("h9 r2 finding 3: a broken rule joins the compared lists (checkpoint and session messages)",
     JSON.stringify(sm2?.result) === '[{"request":"workspace/diagnostic/refresh"},{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]' && JSON.stringify(tail2.result) === '[{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]',
     JSON.stringify({ sm2: sm2?.result, tail2: tail2.result }));
-  check("h9: the watch scenarios advertise window.workDoneProgress, the standard sessions do not", caps(true) === true && caps(false) === false, `${caps(true)} ${caps(false)}`);
 });
 
 // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------
