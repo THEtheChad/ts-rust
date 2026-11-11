@@ -256,7 +256,7 @@ with no request pending, then adds five items for what arrived since the last ch
 | `<cp> watch delta` | `watch/delta` | the registrations added and removed since the last checkpoint, sorted: the net effect, free of order |
 | `<cp> watch active` | `watch/active` | every registration in force after the checkpoint, sorted |
 | `<cp> publishDiagnostics` | `publishDiagnostics` | the pushed diagnostics, stable-sorted by uri |
-| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, …) and notification, with payload, in order. `window/logMessage`, the server's log with timings, is left out, and so is the work-done progress (`window/workDoneProgress/create`, `$/progress`; lane H9: whether one shows depends on how long the work took, so it is the waits' signal only, kept in the entry's `progress` field, not compared). With ATA on, the list ends with the npm calls ATA made since the last checkpoint (`{ ata: { args, code } }`, package names sorted, the calls sorted; lane H5) |
+| `<cp> server messages` | `server/messages` | every other request (`workspace/diagnostic/refresh`, `workspace/inlayHint/refresh`, `workspace/semanticTokens/refresh`, `workspace/codeLens/refresh`, …) and notification, with payload, in order. `window/logMessage`, the server's log with timings, is left out, and so is the work-done progress (`window/workDoneProgress/create`, `$/progress`; lane H9: whether one shows depends on how long the work took, so it is the waits' signal only, kept in the entry's `progress` field, not compared). The rules Go fixes in a progress (its transport, lifecycle and payload) are judged per server (lane H9, rounds 2 and 3): a tsc-rs that breaks one makes a DIFF, a Go that breaks one makes the item GO-BROKEN. With ATA on, the list ends with the npm calls ATA made since the last checkpoint (`{ ata: { args, code } }`, package names sorted, the calls sorted; lane H5) |
 
 Normalization: the project root is `<root>`, as for answers. Registration ids are
 `<name> watcher <n>.<i>`, and the `<n>` comes from a process-wide counter (Go
@@ -2984,6 +2984,78 @@ there was one refill, as in round 1 (`scratch/h9/r2/fill.sh`, 11:57 to 12:51 UTC
 - **lsp wall:** 233.4 s in the gate, then 233.4 s and 233.1 s. The base's is 232 s.
 - **Starvation:** the wait is unchanged in round 2. `caughtUp` differs only once its deadline expires, and
   the payload and lifecycle checks do not wait. So the table above stands, and starvation was not run again.
+
+### Round 3: Astra's recheck (`reviews/2026-11-11-astra-h9-r2.md`, REJECT of `73db30179`)
+
+Both findings are in scope; everything else of round 2 was confirmed fixed.
+
+**Finding 1: a progress on the wrong transport vanished.** Her sequence was a create request, a begin, a
+report *sent as a request with an id*, then an end. The report got a null answer and was filtered out:
+MATCH. Go sends `window/workDoneProgress/create` as a request (`sendClientRequestFireAndForget`,
+`progress.go:47`) and `$/progress` as a notification (`sendNotification`, `:53`).
+- `client.mjs` `#onMessage` now checks the transport before dispatch and before any filtering. A
+  progress message of the wrong type still updates the lifecycle tracking.
+- Then it ends the run through the protocol-failure path. For tsc-rs that is a DIFF with `rsFailure`
+  crash; for Go, GO-BROKEN.
+
+**Finding 2: rule violations were compared as output, not attributed.** In round 2, a broken rule joined
+the compared message list. So a Go that broke it made a correct tsc-rs a DIFF; both breaking it was a
+MATCH; and a varying Go was GO-BROKEN, which hid a tsc-rs that broke it too.
+- Now the rules a run's progress breaks go into its entry's `progressRules`, which is not part of the
+  answer (`scenario.mjs` checkpoint, `session.mjs` `messagesEntry`).
+- `lspdiff.mjs` judges them per server, as part of step 1, right after tsc-rs's crash check and before
+  any comparison:
+  - **tsc-rs broke a rule** (any of its runs, the confirming run too): DIFF, the rule and the run named,
+    whatever Go did.
+  - **Else, a Go run broke a rule:** GO-BROKEN with the rule named (step 2, beside a Go crash or
+    disagreeing Go runs). tsc-rs is not blamed, and Go's break never counts in tsc-rs's favour.
+  - **Else:** the ordinary comparison.
+- No new status: both outcomes use the existing DIFF and GO-BROKEN.
+- Lifecycle and transport breaks already end the run that made them, so they are attributed by the crash
+  path: a tsc-rs crash is a DIFF before anything else, and a Go crash GO-BROKEN.
+
+**Controls** (`parity_h8_test.py` `h9r3()`, lspdiff alone on pkgjson-overlay, the self server behind both
+sides). The status of `load server messages`, on the round-2 head and on this one:
+
+| control | `73db30179` | `e3355751a` |
+| --- | --- | --- |
+| transport: her sequence, on tsc-rs's side | MATCH | DIFF, rsFailure crash (`$/progress sent as a request (id "h9-report-1")`) |
+| Go only breaks the rule (title `Wrong title`, 2 of 2 Go runs) | DIFF (counted against tsc-rs) | GO-BROKEN, "Go breaks its progress rules: go: …, go2: …" |
+| tsc-rs only | DIFF (as differing output, the rule not named) | DIFF, "tsc-rs breaks Go's progress rules: rs, rs2, rs-env1" |
+| both | MATCH | DIFF |
+| Go varies (4 of 8 runs), tsc-rs valid | GO-BROKEN ("Go runs differ") | GO-BROKEN, the 4 runs and the rule named |
+| Go varies (4 and 6 of 8 runs), tsc-rs breaks it | GO-BROKEN (tsc-rs's break hidden) | DIFF |
+
+`h4-selftest.mjs` part `h9r2-finding3` now checks that a broken rule is the entry's `progressRules` and
+out of the compared lists.
+
+**Self-tests on the head.** All OK.
+- `e3355751a`: H4 JS 61, H4 Python 36, H6 40, H7 111; referees `parity_referees_test.py` 122,
+  `referee-selftest.mjs` 48.
+- The first H8 run on `e3355751a` had 89 ok and 1 FAIL. That was H8's own round-3 ATA control (mode `go`
+  on both sides, which sends no progress). The fake's second tsc-rs run exited with SIGABRT, a race in the
+  fake proxy, not in what it tests: its pump thread (a daemon) can be inside a read of stdin when the
+  server exits, and CPython aborts at finalization. The proxy now ends with `os._exit` after flushing
+  (`ab7be7932`). H8 then passed whole on `ab7be7932`, 90 ok (the 6 `h9r3` controls included).
+
+**Refill, gate and lsp runs.** The keyed sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`), so
+there was one refill, as in round 1 (`scratch/h9/r3/fill.sh`, 14:15 to 15:08 UTC).
+- **Fills:** fill-1 (`runs/h9r3-lsp-fill-1`) and fill-2 (`runs/h9r3-lsp-fill-2`, 233.8 s) each gave
+  2,681 MATCH and 29 GO-BROKEN.
+- **No real session's item changed status because of the attribution.** All 2,710 lsp items have their
+  base status and their round-2 status, and no item has a progress-rule detail. Neither Go nor tsc-rs
+  broke a rule in any run.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current`, `runs/h9r3-ab7be7932-full`,
+  `checkoutHead` `ab7be7932`, harness clean, 15:09 to 15:32 UTC, load 1.2 to 13: **PARITY OK**.
+  - 187,389 items: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on good items,
+    36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9r3-ab7be7932-lsp-{2,3}`): each 2,681 MATCH and 29 GO-BROKEN, every item
+  at its base status. In all 3 runs every `session messages` item (13) and every `server messages` item
+  (73) is MATCH.
+- **lsp wall:** 234.4 s in the gate, then 233.7 s and 234.8 s. The base's is 232 s.
 
 ## Files
 
