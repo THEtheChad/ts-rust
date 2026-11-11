@@ -2001,3 +2001,7 @@ once a **reconciliation step** is built and tested.
       with the 300 ms wait restored, 0 of 1,000.
   - **The release `tsgo` is byte-identical.** Tests: plain 2,199 passed,
     with features 2,230 passed; parity tests tier 0 lost; GATING OK.
+- **B5 started:** direct tests for B2's path-case risks 8 (sort direction
+  of redirect candidates), 9, 11 (realpath differing only in case) and 14
+  (overlay listing, `İ.ts` against `i.ts`). Each test must fail with its
+  fix reverted.
