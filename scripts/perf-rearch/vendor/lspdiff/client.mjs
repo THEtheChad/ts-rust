@@ -17,6 +17,42 @@ import { SETTINGS } from "./settings.mjs";
 // A request the server does not answer in this time ends the run: the server is killed and the
 // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
 const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
+// The notifications whose handling LspClient.caughtUp waits for: the ones a scenario sends between
+// its waits.
+const BARRIER_METHODS = new Set(["textDocument/didOpen", "textDocument/didChange", "textDocument/didClose", "textDocument/didSave", "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration"]);
+// The log line of a handled notification; a request's line has its id after the method:
+// "handled method 'm' in 1.2ms", "error handling method 'm': e" (Go lsp/server.go
+// handleRequestOrNotification, and tsc-rs's port of it).
+const HANDLED_LOG = /^(?:handled|error handling) method '([^']+)'(?: in |: )/;
+
+// Lane B4: which sent notifications of BARRIER_METHODS the server has handled, by its log. Both
+// servers handle notifications one at a time, in order, on their dispatch loop, and log one such line
+// when the handler returns. A notification has no answer, so a wait on the stream's quiet alone can
+// end while the server still handles the last one; the next step's notifications then queue behind it
+// and their background work runs back to back: ATA's results, each scheduling a refresh that a 500 ms
+// debounce coalesces (watch-hono-f12's load: 10 to 12 refreshes on a starved CPU, Go and tsc-rs alike).
+export class NotificationBarrier {
+  constructor() {
+    this.sent = new Map();
+    this.handled = new Map();
+  }
+
+  // A notification the client sends.
+  send(method) {
+    if (BARRIER_METHODS.has(method)) this.sent.set(method, (this.sent.get(method) ?? 0) + 1);
+  }
+
+  // A window/logMessage text of the server.
+  log(message) {
+    const m = HANDLED_LOG.exec(message ?? "");
+    if (m) this.handled.set(m[1], (this.handled.get(m[1]) ?? 0) + 1);
+  }
+
+  // The methods with sent notifications the server has not logged yet ("<method> <handled>/<sent>").
+  behind() {
+    return [...this.sent].filter(([m, n]) => (this.handled.get(m) ?? 0) < n).map(([m, n]) => `${m} ${this.handled.get(m) ?? 0}/${n}`);
+  }
+}
 const MAX_HEADER_LINE = 256;
 const MAX_HEADERS = 4;
 const MAX_FRAME = 256 << 20;
@@ -61,6 +97,7 @@ export class LspClient {
     // The watch scenarios (scenario.mjs) read registrations and publishDiagnostics from it.
     this.events = [];
     this.lastMessageAt = performance.now();
+    this.barrier = new NotificationBarrier(); // caughtUp
     this.buf = Buffer.alloc(0);
     this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
@@ -145,6 +182,7 @@ export class LspClient {
       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, ...(raw ? { rawNumbers: true } : {}) });
       return;
     }
+    if (msg.method === "window/logMessage") this.barrier.log(msg.params?.message);
     this.notifications.push({ method: msg.method, params: msg.params, at });
     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
   }
@@ -195,7 +233,20 @@ export class LspClient {
   }
 
   notify(method, params) {
+    this.barrier.send(method);
     this.#write({ jsonrpc: "2.0", method, params });
+  }
+
+  // Resolves once the server has handled every notification of BARRIER_METHODS sent so far
+  // (NotificationBarrier), at most `maxMs`. A server that died or hangs is not waited for: the next
+  // request reports its crash or timeout, as before (a tsc-rs failure, not a harness error).
+  async caughtUp(maxMs = REQUEST_TIMEOUT_MS) {
+    const start = performance.now();
+    for (;;) {
+      const waited = performance.now() - start;
+      if (this.dead || waited >= maxMs || this.barrier.behind().length === 0) return waited;
+      await new Promise((r) => setTimeout(r, 10));
+    }
   }
 
   cancel(id) {

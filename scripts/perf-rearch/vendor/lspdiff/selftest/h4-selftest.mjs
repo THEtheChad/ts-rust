@@ -314,9 +314,11 @@ function scriptProbe(npmLog, now, alive = true) {
   const settles = [];
   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
   // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
-  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, inside: (p) => p } };
+  // caughtUp (lane B4): the windows that settle had opened when each barrier wait began.
+  const caught = [];
+  script.client = { settle: async () => settles.push(now()), caughtUp: async () => caught.push(settles.length), server: { alive: () => alive, inside: (p) => p } };
   script.log = [];
-  return { script, settles, reads: () => reads };
+  return { script, settles, caught, reads: () => reads };
 }
 
 // ---- lane ND2: the scenarios' waits cover ATA's npm calls ----------------------------------------
@@ -341,6 +343,33 @@ await part("nd2", async () => {
   off.script.ata = undefined;
   const quick = await off.script.settle(300, "probe");
   check("nd2: with ATA off, a scenario wait is the server's quiet window alone", off.reads() === 0 && quick < 1500, `reads ${off.reads()}, waited ${quick}`);
+});
+
+// ---- lane B4: a scenario wait starts when the server has handled the notifications sent -----------
+await part("b4", async () => {
+  // Every wait first waits for the barrier, before any of its quiet or npm windows.
+  let clock = 0;
+  const probe = scriptProbe(() => "", () => (clock += 100), false);
+  await probe.script.settle(300, "probe");
+  check("b4: a scenario wait waits for the server to have handled its notifications before its windows", probe.caught.length === 1 && probe.caught[0] === 0 && probe.settles.length >= 1, `caught ${probe.caught}, settles ${probe.settles}`);
+  // The barrier counts the notifications sent and the server's log lines of handled ones.
+  const { NotificationBarrier } = await import(join(LSPDIFF, "client.mjs"));
+  const b = new NotificationBarrier();
+  b.send("textDocument/didOpen");
+  b.send("textDocument/didOpen");
+  b.send("$/cancelRequest"); // not waited for
+  b.send("workspace/didChangeWatchedFiles");
+  const first = b.behind().join("; ");
+  b.log("handled method 'textDocument/didOpen' in 3.1ms");
+  b.log("handled method 'textDocument/diagnostic' (4) in 1ms"); // a request's line
+  b.log("handled method 'textDocument/didOpen' (7) in 1ms"); // with an id: not a notification
+  b.log("Processed 1 file changes in 85µs");
+  const second = b.behind().join("; ");
+  b.log("handled method 'textDocument/didOpen' in 1.2s");
+  b.log("error handling method 'workspace/didChangeWatchedFiles': boom");
+  check("b4: the barrier is behind until each notification sent has its handled (or error) log line, requests' lines aside",
+    first === "textDocument/didOpen 0/2; workspace/didChangeWatchedFiles 0/1" && second === "textDocument/didOpen 1/2; workspace/didChangeWatchedFiles 0/1" && b.behind().length === 0,
+    JSON.stringify({ first, second, last: b.behind() }));
 });
 
 // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------

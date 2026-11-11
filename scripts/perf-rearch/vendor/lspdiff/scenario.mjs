@@ -249,6 +249,9 @@ class Script {
   // the stream alone ended before or during that call at random (lane ND2), so the next answers and
   // refreshes depended on npm's time and the host's load, for Go and tsc-rs alike.
   async settle(ms, label) {
+    // First the server must have handled every notification sent (client.mjs caughtUp, lane B4): the
+    // windows below then start after its work for them has started.
+    await this.client.caughtUp();
     const start = performance.now();
     for (let since = start; ; since = -Infinity) {
       await this.client.settle(ms);
