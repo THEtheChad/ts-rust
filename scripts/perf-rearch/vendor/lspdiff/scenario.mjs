@@ -54,7 +54,7 @@ import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
-import { TYPED, messagesEntry, startServer } from "./session.mjs";
+import { TYPED, maskId, messagesEntry, startServer } from "./session.mjs";
 import { SANDBOXED, SERVER_PATH, serverHome } from "./sandbox.mjs";
 import { createHash } from "node:crypto";
 
@@ -205,10 +205,11 @@ class Script {
   }
 
   // ATA's npm calls so far, from the stand-in npm's log (ata-npm/fake-npm.mjs): every call writes a
-  // start line and, when its work is done, a done line with the same pid.
+  // start line and, when its work is done, a done line with the same pid. The log is on the server's
+  // recorded storage (the plumbing dir), read through the sandbox's init (sandbox.mjs inside()).
   npmCalls() {
-    const file = this.ata.log;
-    return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+    const file = this.client.server.inside(`${ATA_DIR}/log/npm.log`);
+    return file && existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   }
 
   // Waits until ATA's npm is idle: every started call is done and its process has exited, and the log
@@ -344,10 +345,7 @@ class Script {
   }
 }
 
-// "<name> watcher <n>.<i>": n comes from a process-wide counter of watcher versions
-// (project/watch.go watcherID), which counts every WatchedFiles version the process made, so it
-// is masked in every item but "watch ids".
-const maskId = (id) => id.replace(/ watcher \d+\./, " watcher <n>.");
+// maskId: session.mjs (the registration ids' watcher counter, masked in every item but "watch ids").
 
 const SMALL_A = "src/a.ts";
 
@@ -637,8 +635,8 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   let ata;
   const here = dirname(fileURLToPath(import.meta.url));
   // What the server sees besides its project (sandbox.mjs binds): a fixture dir (read-only: the script
-  // writes it, the server only reads it), and with ATA on the stand-in npm, node, its store and the dir of
-  // its log (the one writable place outside the server's home; it must hold the log and nothing else).
+  // writes it, the server only reads it), and with ATA on the stand-in npm, node, its store and its config;
+  // its log is in the storage's plumbing dir, at ATA_DIR/log (every write to it recorded: lane H8 round 3).
   const binds = scenario.fixture ? [{ src: root }] : [];
   if (scenario.ata ?? true) {
     // ATA_DIR (lane H8 round 2): the stand-in npm's config, node and log dir at fixed paths, nothing in the
@@ -648,21 +646,20 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     if (typings === "frozen" && !(ataStore && ataManifest)) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store and --ata-manifest`);
     const dir = mkdtempSync(join(tmpdir(), "lspdiff-ata-"));
     if (typings === "fixture") writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
-    mkdirSync(join(dir, "log"));
-    ata = { dir, logDir: join(dir, "log"), log: join(dir, "log", "npm.log") };
+    ata = { dir };
     const store = typings === "fixture" ? join(dir, "store") : ataStore;
     const files = typings === "fixture"
       ? Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [k, createHash("sha256").update(v).digest("hex")]))
       : JSON.parse(readFileSync(ataManifest, "utf8")).files;
     writeFileSync(join(dir, "config.json"), JSON.stringify({ store, files, log: `${ATA_DIR}/log/npm.log`, delayMs: SETTINGS.ATA_NPM_DELAY_MS, cache: `${serverHome()}/.cache` }));
     binds.push({ src: join(here, "ata-npm") }, { src: store }, { src: join(dir, "config.json"), at: `${ATA_DIR}/config.json` },
-      { src: process.execPath, at: `${ATA_DIR}/node` }, { src: ata.logDir, at: `${ATA_DIR}/log`, rw: true });
+      { src: process.execPath, at: `${ATA_DIR}/node` }, { src: join(here, "ata-npm/fake-npm.mjs"), at: `${ATA_DIR}/fake-npm.mjs` });
     env = { ...env, PATH: `${join(here, "ata-npm")}:${SERVER_PATH}` };
   }
   if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
   try {
-    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true, binds });
+    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true, binds, ...(ata ? { plumbing: `${ATA_DIR}/log` } : {}) });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
     if (ata) rmSync(ata.dir, { recursive: true, force: true });
@@ -687,8 +684,6 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     const changes = fixtureChanges(root, s.expected);
     if (changes.length) Object.assign(session, { clean: false, why: [...session.why, `it changed the fixture: ${changes.slice(0, 5).join(", ")}`] });
   }
-  const plumbing = ata ? readdirSync(ata.logDir).filter((n) => n !== "npm.log") : [];
-  if (plumbing.length) Object.assign(session, { clean: false, why: [...session.why, `it wrote into the stand-in npm's log dir: ${plumbing.slice(0, 5).join(", ")}`] });
   if (serverLog) {
     const lines = client.events.filter((e) => e.method === "window/logMessage").map((e) => `[${(e.at / 1000).toFixed(3)}] ${e.params?.message}`);
     writeFileSync(serverLog, lines.join("\n") + "\n");

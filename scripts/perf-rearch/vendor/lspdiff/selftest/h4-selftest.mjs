@@ -302,6 +302,7 @@ function scriptProbe(npmLog, now, alive = true) {
     existsSync: () => true,
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
+    ATA_DIR: "/run/lspdiff-ata",
     SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
     setTimeout: (cb) => cb(),
     Error,
@@ -313,7 +314,7 @@ function scriptProbe(npmLog, now, alive = true) {
   const settles = [];
   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
   // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
-  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, mark: () => {} } };
+  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, inside: (p) => p } };
   script.log = [];
   return { script, settles, reads: () => reads };
 }
@@ -364,8 +365,8 @@ await part("h5", async () => {
     return f;
   };
   const npm = (args, cwd = typings, { env = {}, cfg = config() } = {}) => {
-    const bind = 'mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node && mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && mount --bind "$3" /run/lspdiff-ata/log && cd "$4" && shift 4 && exec "$@"';
-    const r = spawnSync("unshare", ["-rm", "sh", "-c", bind, "sh", cfg, process.execPath, logDir, cwd, join(LSPDIFF, "ata-npm/npm"), ...args], {
+    const bind = 'mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node /run/lspdiff-ata/fake-npm.mjs && mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && mount --bind "$3" /run/lspdiff-ata/log && mount --bind "$4" /run/lspdiff-ata/fake-npm.mjs && cd "$5" && shift 5 && exec "$@"';
+    const r = spawnSync("unshare", ["-rm", "sh", "-c", bind, "sh", cfg, process.execPath, logDir, join(LSPDIFF, "ata-npm/fake-npm.mjs"), cwd, join(LSPDIFF, "ata-npm/npm"), ...args], {
       env: { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: join(home, ".cache"), ...env },
       encoding: "utf8",
     });

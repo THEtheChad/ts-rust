@@ -165,13 +165,13 @@ time.sleep(0.3); print(json.dumps(r.finish()))
     (t / 'log').mkdir()
     (t / 'config.json').write_text(json.dumps({'store': str(store), 'files': files, 'log': '/run/lspdiff-ata/log/npm.log', 'delayMs': 0,
                                                 'cache': str(t / 'cache')}))
-    bind = ('mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node && '
-            'mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && mount --bind "$3" /run/lspdiff-ata/log && '
-            'cd "$4" && shift 4 && exec "$@"')
+    bind = ('mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node '
+            '/run/lspdiff-ata/fake-npm.mjs && mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && '
+            'mount --bind "$3" /run/lspdiff-ata/log && mount --bind "$4" /run/lspdiff-ata/fake-npm.mjs && cd "$5" && shift 5 && exec "$@"')
 
-    def npm(*a):  # the stand-in as the sandbox runs it: its config, node and log dir at /run/lspdiff-ata
+    def npm(*a):  # the stand-in as the sandbox runs it: its config, node, script and log dir at /run/lspdiff-ata
         return subprocess.run(['unshare', '-rm', 'sh', '-c', bind, 'sh', str(t / 'config.json'), os.path.realpath(shutil.which('node')),
-                               str(t / 'log'), str(loc), str(LSPDIFF / 'ata-npm/npm'), *a],
+                               str(t / 'log'), str(LSPDIFF / 'ata-npm/fake-npm.mjs'), str(loc), str(LSPDIFF / 'ata-npm/npm'), *a],
                               env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True).returncode
     rcs = [npm('install', a, '--save-dev') for a in ('types-registry@latest', '@types/x@latest')]
     modes = {p: oct(os.stat(loc / p).st_mode & 0o777) for p in ('node_modules/@types/x', 'node_modules/@types/x/index.d.ts')}

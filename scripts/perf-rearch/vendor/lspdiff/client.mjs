@@ -51,8 +51,8 @@ export function envelopeError(msg, pending) {
 export class LspClient {
   // cmd: [binary, ...args]. Server-to-client requests get a fixed answer, see onServerRequest. binds:
   // more host paths the server sees (sandbox.mjs).
-  constructor(cmd, { cwd, env, stderr, binds } = {}) {
-    this.server = new ServerProcess(cmd, { cwd, env, stderr, binds });
+  constructor(cmd, { cwd, env, stderr, binds, plumbing } = {}) {
+    this.server = new ServerProcess(cmd, { cwd, env, stderr, binds, plumbing });
     this.proc = this.server.proc;
     this.nextId = 1;
     this.pending = new Map(); // id -> { resolve, reject, method, start }

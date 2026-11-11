@@ -18,7 +18,9 @@
 // every run: ATA's typings location shows in answers), and the upper and work dirs of an overlay per
 // mount (lower: the input's read-only snapshot) at the input's own path. What else it needs is bound back
 // read-only at its own path (the files its command names: the binary, node, a script) or at the caller's
-// `at` (`binds`: a fixture dir, the stand-in npm's config, its store; an `rw` bind: the npm log's dir). The
+// `at` (`binds`: a fixture dir, the stand-in npm's config, node and script, its store). The only writable
+// places are on the recorded storage: the home, the overlays, and with `plumbing` the storage's plumbing
+// dir at that path (the stand-in npm's log; the harness reads it through inside(): lane H8 round 3). The
 // server itself has no privilege (a nested user namespace that owns nothing, no capability, uid 1000,
 // no_new_privs), no fd but 0, 1 and 2, and no network. When it ends, every process left in its namespace
 // is a survivor, a failure, and is killed. The init then reports (a file of this process's scratch dir):
@@ -106,9 +108,9 @@ const isFile = (p) => {
 
 export class ServerProcess {
   // cmd: [binary, ...args]; stderr: a stream that gets a copy of the server's stderr (--verbose);
-  // binds: [{ src, at, rw }] host paths the server needs besides its command's files, each seen at `at`
-  // (default: its own path) in the sandbox, read-only unless rw.
-  constructor(cmd, { cwd, env, stderr, binds = [] } = {}) {
+  // binds: [{ src, at }] host paths the server needs besides its command's files, each seen read-only at
+  // `at` (default: its own path) in the sandbox; plumbing: where it sees the storage's plumbing dir.
+  constructor(cmd, { cwd, env, stderr, binds = [], plumbing } = {}) {
     this.dir = SANDBOX ? join(SANDBOX.scratch, `${process.pid}-${++started}`) : mkdtempSync(join(tmpdir(), "lspdiff-server-"));
     this.killed = false;
     this.spawnError = null;
@@ -123,12 +125,12 @@ export class ServerProcess {
       const report = openSync(this.reportPath, "w", 0o600);
       const mounts = [
         ...SANDBOX.mounts.map((m) => ({ overlay: m.lower, at: m.target })),
-        ...binds.filter((b) => b.rw || b.at).map((b) => ({ bind: b.src, at: b.at ?? b.src, rw: !!b.rw })),
+        ...binds.filter((b) => b.at).map((b) => ({ bind: b.src, at: b.at, rw: false })),
       ];
       // Every word of the command that names a file is exec'd or read by its realpath, bound back.
       const words = cmd.map((w, i) => (i === 0 ? resolve(w) : w)).map((w) => (isFile(w) ? realpathSync(w) : w));
-      const expose = [...words.filter(isFile), ...binds.filter((b) => !b.rw && !b.at).map((b) => b.src)];
-      const spec = { report: 3, home: SANDBOX.home, mounts, expose, cwd: cwd ?? "/", mtime: FIXED_MTIME, cmd: words };
+      const expose = [...words.filter(isFile), ...binds.filter((b) => !b.at).map((b) => b.src)];
+      const spec = { report: 3, home: SANDBOX.home, ...(plumbing ? { plumbing } : {}), mounts, expose, cwd: cwd ?? "/", mtime: FIXED_MTIME, cmd: words };
       home = SANDBOX.home;
       argv = ["/usr/bin/python3", "-I", SANDBOX_INIT, "launch", JSON.stringify(spec)];
       stdio = [...stdio, report];
@@ -179,6 +181,18 @@ export class ServerProcess {
   kill() {
     this.killed = true;
     this.proc.kill("SIGKILL");
+  }
+
+  // The host's path of `path` as the sandbox shows it (through the init's /proc root: the plumbing dir is
+  // on the storage, which only the init can reach), or null when the init is gone or without the sandbox.
+  inside(path) {
+    if (!SANDBOX) return null;
+    try {
+      const init = readFileSync(`/proc/${this.proc.pid}/task/${this.proc.pid}/children`, "utf8").trim().split(/\s+/)[0];
+      return init ? `/proc/${init}/root${path}` : null;
+    } catch {
+      return null;
+    }
   }
 
   // The pids, in the server's PID namespace, of every process there that has not ended (the init's

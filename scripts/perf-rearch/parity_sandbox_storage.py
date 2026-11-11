@@ -20,8 +20,11 @@ tmpfs itself). Two views of it, both the init's, never the server's:
 Paths are relative to the storage: `home/<rel>` and `disk<k>/<rel>` (the upper dir of overlay k, so a
 write into the server's inputs); the overlay's own work dir is left out (overlayfs's copy-up names there
 come from a counter). A dir's events name it by its file handle; the recorder maps handles to paths as
-dirs are made (name_to_handle_at; open_by_handle_at is refused in a user namespace), and a dir already gone
-when its event is read is `?/<name>`: still a write, never dropped.
+dirs are made (name_to_handle_at; open_by_handle_at is refused in a user namespace). An event in a dir
+already gone when its event is read cannot be named (a temp dir made and removed at once): it is
+`?<nonce>.<n>/<name>`, n counting such events and the nonce new in every run, so no two such paths are
+ever the same, in one run or across runs, and each is a path no other run has (lane H8 round 3,
+finding 1: `?/<name>` made writes to A/f and B/f one path). Never dropped, never matched.
 """
 import ctypes
 import hashlib
@@ -53,9 +56,32 @@ def _describe_root(st):
     return f'not a dir: {stat.filemode(st.st_mode)}'
 
 
+def _extra(p, st, groups):
+    """What an entry is besides its type, mode and content (lane H8 round 3, finding 6): its extended
+    attributes (each name with the sha256 of its value) and, for an entry that more than one name links to,
+    its link count and its link group (the index, in walk order, of the first entry of that inode; never the
+    raw inode, which differs from run to run). '' for an entry with neither."""
+    out = []
+    if not stat.S_ISDIR(st.st_mode) and st.st_nlink > 1:
+        g = groups.setdefault((st.st_dev, st.st_ino), len(groups))
+        out.append(f'links {st.st_nlink} group {g}')
+    try:
+        names = sorted(os.listxattr(p, follow_symlinks=False))
+    except OSError as e:
+        names, out = [], [*out, f'xattrs unlistable {e.strerror}']
+    for n in names:
+        try:
+            v = hashlib.sha256(os.getxattr(p, n, follow_symlinks=False)).hexdigest()[:16]
+        except OSError as e:
+            v = f'unreadable {e.strerror}'
+        out.append(f'xattr {n}={v}')
+    return ''.join(f'; {x}' for x in out)
+
+
 def walk(top, texts=None):
     """{relative path: what it is} of a dir: every entry, none skipped, as "<sha256 16> <mode>" (a file),
-    "dir <mode>", "link <target>", "deleted" (an overlay whiteout: a deleted input) or "special <mode>".
+    "dir <mode>", "link <target>", "deleted" (an overlay whiteout: a deleted input) or "special <mode>",
+    then its extended attributes and its hard-link group where it has them (_extra).
     The root itself is entry "." (by lstat: a root the server made unreadable, or replaced, shows), every
     dir that cannot be listed is "unlistable <why>", an entry that cannot be stat'ed "unstatable <why>", a
     file that cannot be read "unreadable <why>". A root that does not exist gives no entries. texts: a dict
@@ -65,7 +91,8 @@ def walk(top, texts=None):
         root_st = os.lstat(top)
     except FileNotFoundError:
         return out
-    out['.'] = _describe_root(root_st)
+    groups = {}
+    out['.'] = _describe_root(root_st) + _extra(top, root_st, groups)
     if not stat.S_ISDIR(root_st.st_mode):
         return out
 
@@ -100,6 +127,7 @@ def walk(top, texts=None):
                 out[rel] = f'{hashlib.sha256(data).hexdigest()[:16]} {mode}'
                 if texts is not None and len(data) <= TEXT_MAX:
                     texts[rel] = data.decode('utf-8', 'replace')
+            out[rel] += _extra(p, st, groups)
     return dict(sorted(out.items()))
 
 
@@ -121,7 +149,9 @@ def skeleton_errors(home):
 
 
 def listing(root, overlays, texts=None):
-    """The storage's state: {'home': walk, 'disk': [walk of each upper dir], 'skeleton': deviations}."""
+    """The storage's state: {'home': walk, 'disk': [walk of each upper dir], 'skeleton': deviations}. The
+    plumbing dir (the stand-in npm's log: the harness's own, compared through its items) is not listed;
+    every write to it is in the write record."""
     return {'home': walk(os.path.join(root, 'home')), 'skeleton': skeleton_errors(os.path.join(root, 'home')),
             'disk': [walk(os.path.join(root, f'ovl{k}', 'upper'), texts) for k in range(overlays)]}
 
@@ -162,6 +192,7 @@ class Recorder:
         for d, subdirs, _ in os.walk(root):
             self._learn(os.path.relpath(d, root) if d != root else '')
         self.writes, self.overflow, self.stop, self.thread = {}, False, threading.Event(), None
+        self.nonce, self.unresolved = os.urandom(6).hex(), 0
         self.lock = threading.Lock()
 
     def _handle(self, rel):
@@ -212,12 +243,13 @@ class Recorder:
     def _event(self, mask, handle, name):
         parent = self.dirs.get(handle)
         if parent is None:
-            rel = f'?/{name}'
+            self.unresolved += 1
+            rel = f'?{self.nonce}.{self.unresolved}/{name}'
         else:
             rel = parent if name == '.' else (f'{parent}/{name}' if parent else name)
             if mask & FAN_ONDIR and mask & (FAN_CREATE | FAN_MOVED_TO) and name != '.':
                 self._learn(rel)
-        key = rel if rel.startswith('?/') else self._name(rel)
+        key = rel if parent is None else self._name(rel)
         if key is None:
             return
         ops = {v for k, v in OPS.items() if mask & k}

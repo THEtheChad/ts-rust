@@ -10,8 +10,12 @@ SPEC (JSON):
   control optional [r, w]: two pipe fds; each line "list" read from r is answered on w with one JSON line,
           the storage's listing at that moment (the api tier lists it after every request)
   home    where the server sees its private home (the storage's home/, with its skeleton), writable
+  plumbing optional: where the server sees the storage's plumbing/ dir, writable (the lsp tier's stand-in
+          npm writes its log there: on the storage, so in the write record, and read by the harness through
+          /proc/<this script>/root)
   mounts  in order, each one of
-            {"bind": src, "at": dst, "rw": bool}  src (a host file or dir) seen at dst
+            {"bind": src, "at": dst, "rw": false}  src (a host file or dir) seen read-only at dst (lane H8
+                    round 3: a writable location outside the recorded storage is refused)
             {"overlay": lower, "at": dst}  an overlay of the read-only lower at dst, its upper and work dirs
                     in the storage (ovl<k>/upper, ovl<k>/work for the k-th overlay): the server sees the
                     upper dir only through the overlay
@@ -56,6 +60,10 @@ Order (any failure is a setup failure: reported, exit 125, never a server result
      PID namespace may do and none of them can stop) and reaped and counted (`reaped`: whatever /proc
      showed, a process this script reaps after the server ended outlived it), and the exit is the
      server's (128 + signal for a signal).
+     Before the fork, every mount the server could write to is checked (/proc/self/mountinfo): it must be
+     on the storage's tmpfs (the home, the plumbing dir), one of the overlays, or /proc (its own entries
+     only, for drop()); any other writable mount is a setup failure (lane H8 round 3, finding 2: every
+     writable place is recorded, or read-only);
   7. after the survivors are killed (nothing writes any more): the write record drained, the storage listed.
 Report: {"setup": why} or {"status": the server's wait status, "survivors": [cmdline, ...], "reaped": n,
 "storage": its listing (with "texts": the upper dirs' files, for a diff report), "writes": {path: [ops]},
@@ -142,14 +150,14 @@ class Init:
         self.mount(None, '/', None, MS_REC | MS_PRIVATE)
         fd = lambda p: os.open(p, os.O_PATH)  # noqa: E731
         for m in mounts:
-            if set(m) not in ({'bind', 'at', 'rw'}, {'overlay', 'at'}) or not hidden(m['at']):
+            if not (set(m) == {'overlay', 'at'} or (set(m) == {'bind', 'at', 'rw'} and m['rw'] is False)) or not hidden(m['at']):
                 # a mount point outside the hidden dirs would be made on the host's own filesystem
                 self.done({'setup': f'not a bind or an overlay at a path in a hidden dir: {m}'}, 125)
         if not hidden(spec['home']):
             self.done({'setup': f'the home is not in a hidden dir: {spec["home"]}'}, 125)
         src = [fd(m['bind'] if 'bind' in m else m['overlay']) for m in mounts]
         exposed = {p: fd(p) for p in expose}
-        ats = [spec['home'], *[m['at'] for m in mounts]]
+        ats = [spec['home'], *([spec['plumbing']] if spec.get('plumbing') else []), *[m['at'] for m in mounts]]
         links = dict(x for p in [spec.get('cwd') or '/', *spec.get('expose', []), *ats] for x in links_along(p))
         for h in HIDDEN:
             if os.path.isdir(h) and not os.path.islink(h):
@@ -176,6 +184,10 @@ class Init:
         makedirs(f'{STAGE}/lower')
         makedirs(f'{STAGE}/storage')
         makedirs(spec['home'])
+        if spec.get('plumbing'):
+            if not hidden(spec['plumbing']):
+                self.done({'setup': f'the plumbing dir is not in a hidden dir: {spec["plumbing"]}'}, 125)
+            makedirs(spec['plumbing'])
         for m, s in zip(mounts, src):
             point(m['at'], s)
         for p, f in exposed.items():
@@ -194,6 +206,9 @@ class Init:
             for d in ('upper', 'work'):
                 os.makedirs(f'{st}/ovl{k}/{d}', 0o755)
         self.mount(f'{st}/home', spec['home'], None, MS_BIND)
+        if spec.get('plumbing'):
+            os.makedirs(f'{st}/plumbing', 0o755)
+            self.mount(f'{st}/plumbing', spec['plumbing'], None, MS_BIND)
         k = 0
         for m, s in zip(mounts, src):
             if 'bind' in m:
@@ -215,11 +230,35 @@ class Init:
         self.readonly('/', True)
         self.readonly('/proc', False, ro=False)  # the server's own uid_map, setgroups and user limit (drop(), step 5)
         self.readonly(spec['home'], False, ro=False)
+        if spec.get('plumbing'):
+            self.readonly(spec['plumbing'], False, ro=False)
         for m in mounts:
-            if m.get('rw', True):  # an rw bind, or an overlay
+            if 'overlay' in m:
                 self.readonly(m['at'], False, ro=False)
+        self.check_writable()
         for f in [*exposed.values(), *src]:
             os.close(f)
+
+    def check_writable(self):
+        """Step 6's check: every writable mount is on the storage (its tmpfs's device), one of the overlays
+        (an overlayfs at an overlay's `at`), or /proc. Anything else is a setup failure."""
+        dev = os.stat(f'/proc/self/fd/{self.storage_fd}').st_dev
+        storage_dev = f'{os.major(dev)}:{os.minor(dev)}'
+        overlays = {m['at'] for m in self.spec.get('mounts', []) if 'overlay' in m}
+        bad = []
+        with open('/proc/self/mountinfo') as f:
+            for line in f:
+                fields = line.split()
+                sep = fields.index('-')
+                majmin, point, opts, fstype = fields[2], fields[4], fields[5].split(','), fields[sep + 1]
+                if 'rw' not in opts:
+                    continue
+                point = point.replace('\\040', ' ')
+                if majmin == storage_dev or (fstype == 'overlay' and point in overlays) or (fstype == 'proc' and point == '/proc'):
+                    continue
+                bad.append(f'{point} ({fstype})')
+        if bad:
+            self.done({'setup': f'writable mounts outside the recorded storage: {bad[:5]}'}, 125)
 
     def drop(self):
         """In the forked server, before exec: give up every privilege over the sandbox, or say why not.
