@@ -2071,3 +2071,69 @@ once a **reconciliation step** is built and tested.
   (`userpreferences_generated.go`) in place of the reflective one, and keep
   the probe as a permanent lsp battery. F4 (the symlinked-monorepo mapper)
   follows when a slot frees.
+- **T1 done; merged.**
+  - **`regen --drop-recovered`:** it reuses the gate's `GOOD` and
+    `rs_failure`. It never drops an entry whose item wasn't run, and it
+    has 17 self-test checks. The dry run dropped 0 of 36.
+  - **The node failures aren't the wrapper's.**
+    - `~/.cargo/config.toml`'s runner `LD_PRELOAD=libd3d12core.so`
+      (for lightcraft's GPU tests) adds 64 KiB of TLS to every thread.
+      Node's 32 KiB inspector thread then fails with EINVAL.
+    - `ulimit -v` is not involved, so the wrapper is unchanged.
+    - **Workaround:** `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=env`.
+    - **Real fix:** move the runner into lightcraft's own
+      `.cargo/config.toml`. That is a machine-wide file and another
+      project's, so it is **asked of Chad**.
+- **B7 started (B3 F4):** check tsc-rs's symlink handling in
+  project-reference mapping against Go's builder (`resolveSymlink`,
+  `realpathDtsToSource`), with a symlinked-monorepo `-b` parity project.
+- **B7 done; Astra review running.** No difference from Go: 7 CLI
+  scenarios and the API transcripts MATCH before and after.
+  - **Ported:** Go's ts#64519 shape (`ProjectReferenceFileMapperBuilder`
+    with `resolve_symlink`), as a structural commit. The old
+    `get_source_to_dts_if_symlink` and the mapper's host and loader are
+    deleted.
+  - **New harness feature:** synthetic cli fixtures
+    (`parity-fixtures.json`, read-only, content-addressed), plus a
+    symlinked pnpm monorepo with 3 cli items and 1 api item. No earlier
+    item set `preserveSymlinks`, and the negative control (an empty
+    `resolve_symlink`) DIFFs on 3 items.
+  - **Gate:** `runs/20261111-112730-full-95b2a4d419` PARITY OK, 0 lost;
+    icount single-threaded flat.
+- **W3 started:** the last complexity targets (14 port-bloat rows with
+  Δ ≥ 10, 24 own-code functions over 25), following w2-brief. B6's and
+  B7's files are excluded.
+- **B7 review: REJECT** (`reviews/2026-11-11-astra-b7.md`).
+  - **Finding 1:** a real difference from Go that predates B7. The
+    builder's resolution host uses the host directory, not the config's
+    base, so a programmatic `paths` without `pathsBasePath` gives TS2307.
+  - **Finding 2:** the api scenario queries nothing after the build.
+  - The refactor itself is confirmed faithful. Round 2 sent.
+- **B6 done; Astra review running.** Head `1867f09aa`, merges cleanly.
+  - **The probe:** the new lsp `prefs` session (495 answers). The base had
+    1 DIFF (`maximumHoverLength` 4294967306 wrapped in an `i32`); the head
+    is 495 MATCH. The other odd inputs already matched.
+  - **The port:** Go's generated parser and serializer
+    (`userpreferences_generated.rs`) in place of the reflective one. The
+    hand-written ports equal Go's complexity. Production code −1,557 lines.
+  - **Gate:** `runs/b6-1867f09aa-full` PARITY OK, with lsp 3,176 MATCH.
+  - **icount, LSP keyed load:** +0.30%, inside 1.1% spread (p = 0.14);
+    the CLI control is flat.
+  - **Backlog from B6:**
+    - non-object init options and `workspace/configuration` answers need a
+      shared-source change, so do them with the next all-session refill;
+    - fold the 3 copies of the amd64 `float64_to_int` (jsnum,
+      parsing_helpers, userpreferences_generated) together with the
+      `core.rs` and lib-blob change;
+    - formatter sizes stay `i32` (Go's `int`), which can't be probed
+      without Go allocating gigabytes.
+- **B6 review: REJECT** (`reviews/2026-11-11-astra-b6.md`). The 83/74/83
+  lists, precedence and omission rules are confirmed.
+  - **The findings:**
+    - the hover cap's ×10 wrap;
+    - formatter sizes still `i32` (observable: `tabSize` 2^32);
+    - `i64` serialized through `f64`;
+    - empty against nil slices in `MarshalJSONTo`;
+    - 2 vacuous or masked probes.
+  - All 5 to fix, and fold the amd64 conversion into one helper. Round 2
+    sent.
