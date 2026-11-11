@@ -13,8 +13,12 @@
 //                           the order-free view, still compared when Go's event order is unstable
 //   "<cp> publishDiagnostics" method publishDiagnostics: the pushed diagnostics since the last
 //                           checkpoint, stable-sorted by uri
-// A checkpoint first waits until the server has been quiet for LSPDIFF_SETTLE_MS (default 1000)
-// with no request pending: registrations come from the servers' background queues after an answer.
+//   "<cp> server messages"  method server/messages: every other server request and notification but the
+//                           log (window/logMessage) and the work-done progress (client.mjs PROGRESS_METHODS,
+//                           kept in the entry's `progress`, not compared), in order; with ATA on, then its npm calls
+// A checkpoint first waits (Script.settle) until the server has handled every notification sent (lane B4),
+// every work-done progress it began has ended (lane H9), and it has been quiet for LSPDIFF_SETTLE_MS (default
+// 1000) with no request pending: registrations come from the servers' background queues after an answer.
 // Registration ids are kept as the servers send them ("<name> watcher <n>.<i>", n from a
 // process-wide counter): both counters are deterministic for one scenario (checked on Go, see
 // docs/perf-rearch/parity.md), so they are compared too.
@@ -51,7 +55,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { fileUri } from "./client.mjs";
+import { PROGRESS_METHODS, fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
 import { TYPED, maskId, messagesEntry, startServer } from "./session.mjs";
@@ -240,21 +244,43 @@ class Script {
     }
   }
 
-  // The scenario's waits (quiet, checkpoint, ataIdle): the server has been quiet for `ms` with no
-  // request pending and, with ATA on, ATA's npm is idle (npmIdle) and was for ATA_IDLE_MS since the
-  // wait began; after an npm wait the server must be quiet again, which takes the diagnostics refresh
-  // that ATA's result schedules. The LSP stream does not show ATA's npm: on ts-pattern the inferred
-  // project's `npm install types-registry@latest` starts up to about 0.6 s after the didOpen at load
-  // 90 and takes 0.3 to 1 s and more, and its result reaches the next request's snapshot. A wait on
-  // the stream alone ended before or during that call at random (lane ND2), so the next answers and
-  // refreshes depended on npm's time and the host's load, for Go and tsc-rs alike.
+  // Waits until every work-done progress the server began has ended (client.mjs ProgressBarrier, lane
+  // H9): ATA's install between its npm calls, a program's load. A progress that does not end within
+  // LSPDIFF_PROGRESS_DEADLINE_MS fails the run as a harness error (lspdiff exits 3: the session is
+  // ERROR), never a success; a server that died is not waited for (its next request reports it).
+  async progressEnded(label) {
+    const start = performance.now();
+    for (;;) {
+      const open = this.client.progress.pending();
+      if (!open.length || this.client.dead) return;
+      if (performance.now() - start > SETTINGS.LSPDIFF_PROGRESS_DEADLINE_MS) {
+        throw Object.assign(new Error(`a work-done progress did not end in ${SETTINGS.LSPDIFF_PROGRESS_DEADLINE_MS} ms at ${label}: ${open.join("; ")}`), { harness: true });
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  // The scenario's waits (quiet, checkpoint, ataIdle), in this order:
+  // 1. the server has handled every notification sent (client.mjs caughtUp, lane B4), so the windows
+  //    below start after its work for them has started;
+  // 2. every work-done progress it began has ended (progressEnded, lane H9);
+  // 3. it has been quiet for `ms` with no request pending, and no progress began meanwhile (else 2 again);
+  // 4. with ATA on, ATA's npm is idle (npmIdle) and was for ATA_IDLE_MS since the wait began; after an npm
+  //    wait it all runs again from 2, which takes the diagnostics refresh that ATA's result schedules.
+  // The LSP stream shows no ATA work that has not yet run 250 ms (Go's progress delay), and none of an ATA
+  // request that runs no npm call and ends sooner, though its result still schedules a refresh 500 ms
+  // later. On ts-pattern the inferred project's `npm install types-registry@latest` starts up to about 0.6 s
+  // after the didOpen at load 90, and its result reaches the next request's snapshot. A wait on the stream
+  // alone ended before or during that call at random (lane ND2), so the next answers and refreshes depended
+  // on npm's time and the host's load, for Go and tsc-rs alike: hence the ATA_IDLE_MS floor of step 4.
   async settle(ms, label) {
-    // First the server must have handled every notification sent (client.mjs caughtUp, lane B4): the
-    // windows below then start after its work for them has started.
     await this.client.caughtUp();
     const start = performance.now();
     for (let since = start; ; since = -Infinity) {
-      await this.client.settle(ms);
+      do {
+        await this.progressEnded(label);
+        await this.client.settle(ms);
+      } while (this.client.progress.pending().length && !this.client.dead);
       if (!this.ata || !(await this.npmIdle(label, since))) break;
     }
     return performance.now() - start;
@@ -295,8 +321,13 @@ class Script {
     const events = [];
     const pushed = [];
     const other = [];
+    const progress = []; // not compared (client.mjs PROGRESS_METHODS); kept in the log for diagnosis
     const before = new Set(this.activeKeys());
     for (const e of fresh) {
+      if (PROGRESS_METHODS.has(e.method)) {
+        progress.push({ [e.kind]: e.method, params: e.params });
+        continue;
+      }
       if (e.kind === "notification") {
         if (e.method === "textDocument/publishDiagnostics") pushed.push(e.params);
         // window/logMessage is the server's log (timings, snapshot dumps): not compared.
@@ -327,7 +358,7 @@ class Script {
     pushed.sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
     // An event that held a number kept as its text (client.mjs) marks every entry of the checkpoint.
     const raw = fresh.some((e) => e.raw);
-    const entry = (what, method, result, ms = 0) => this.log.push({ step: `${name} ${what}`, method, result, ...(raw ? { rawNumbers: true } : {}), ms });
+    const entry = (what, method, result, ms = 0, more = {}) => this.log.push({ step: `${name} ${what}`, method, result, ...(raw ? { rawNumbers: true } : {}), ms, ...more });
     entry("watch events", "watch/events", events, waited);
     entry("watch delta", "watch/delta", { added: delta.added.map(JSON.parse), removed: delta.removed.map(JSON.parse) });
     entry("watch active", "watch/active", after.map(JSON.parse));
@@ -337,7 +368,7 @@ class Script {
     // (ata-overlay reports them at every ataIdle as items of their own). They are part of this item, not
     // one of their own, so the items of a scenario keep their indices.
     if (this.ata) other.push(...this.npmReport().map((call) => ({ ata: call })));
-    entry("server messages", "server/messages", other);
+    entry("server messages", "server/messages", other, 0, progress.length ? { progress } : {});
   }
 
   // Every registration (watchers and other methods) as a sorted list of JSON keys, ids masked.

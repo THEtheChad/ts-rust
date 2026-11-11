@@ -7,6 +7,9 @@
 # the H8 review (~/.cache/perf-rearch/scratch/review-h8-astra/: proxy-root.py's home-proto,
 # within-request, late-diag, shutdown-result, input-root-hide and input-root-mode; fake-extra.py's request,
 # late-request and ata-unlogged), and the synthetic case of her finding 7 (vary, vary-extra, none).
+# Lane H9: progress-0, progress-late and progress-never send a work-done progress of their own for every
+# didOpen (create and begin before the server sees the open; end at once, after 4 s, or never), then a
+# publishDiagnostics marker after the end.
 # usage: python3 parity_h8_fake.py MODE GO TYPINGS [server args]; OUTSIDE_LIST is replaced by the self-test.
 # GO `-`: no Go behind it; the fake answers itself (initialize with no capabilities, every other request
 # with null), as Astra's fake-extra.py does.
@@ -134,7 +137,12 @@ while True:
     n = int(h.split(b':')[1]); f.readline(); m = json.loads(f.read(n))
     if m.get('method') == 'exit':
         break
-    if 'id' not in m or 'method' not in m:
+    if 'id' not in m:
+        b = json.dumps({'jsonrpc': '2.0', 'method': 'window/logMessage', 'params': {'type': 4, 'message': "handled method '%s' in 1us" % m.get('method')}},
+                       separators=(',', ':')).encode()
+        o.write(b'Content-Length: %d\\r\\n\\r\\n' % len(b) + b); o.flush()
+        continue
+    if 'method' not in m:
         continue
     b = json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': {'capabilities': {}} if m['method'] == 'initialize' else None},
                    separators=(',', ':')).encode()
@@ -142,6 +150,40 @@ while True:
 """
 p = subprocess.Popen([go, *args] if go != '-' else ['/usr/bin/python3', '-c', SELF_CODE], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 methods = {}  # request id -> method (the client's requests)
+out = sys.stdout.buffer
+out_lock = threading.Lock()  # the proxy's own messages (lane H9's progress) and the server's share stdout
+
+
+def emit(body):
+    with out_lock:
+        out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
+        out.flush()
+
+
+def frame(msg):
+    return json.dumps(msg, separators=(',', ':')).encode()
+
+
+PROGRESS_END = {'progress-0': 0, 'progress-late': 4, 'progress-never': None}
+opens = [0]
+
+
+def progress_open(uri):
+    """Lane H9: a work-done progress around a didOpen, as Go's for ATA: create and begin before the server
+    sees the open, then the end (at once, after 4 s or never), then a publishDiagnostics marker."""
+    opens[0] += 1
+    token = 'h9-fake-%d' % opens[0]
+    emit(frame({'jsonrpc': '2.0', 'id': 'h9-create-%d' % opens[0], 'method': 'window/workDoneProgress/create', 'params': {'token': token}}))
+    emit(frame({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': token, 'value': {'kind': 'begin', 'title': 'Loading', 'message': 'fake work'}}}))
+    delay = PROGRESS_END[mode]
+    if delay is None:
+        return
+
+    def end():
+        time.sleep(delay)
+        emit(frame({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': token, 'value': {'kind': 'end'}}}))
+        emit(frame({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {'uri': uri, 'diagnostics': [{'message': 'after the progress'}]}}))
+    threading.Thread(target=end, daemon=True).start()
 
 
 def frames(f):
@@ -159,13 +201,16 @@ def pump():
         msg = json.loads(body)
         if 'id' in msg and 'method' in msg:
             methods[msg['id']] = msg['method']
+        if mode in PROGRESS_END and msg.get('method') == 'textDocument/didOpen':
+            progress_open(msg['params']['textDocument']['uri'])
+        if 'id' in msg and 'method' not in msg and str(msg['id']).startswith('h9-create-'):
+            continue  # the client's answer to the proxy's own create
         p.stdin.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
         p.stdin.flush()
     p.stdin.close()
 
 
 threading.Thread(target=pump, daemon=True).start()
-out = sys.stdout.buffer
 answers = 0
 for body in frames(p.stdout):
     msg = json.loads(body)
@@ -191,8 +236,7 @@ for body in frames(p.stdout):
         if mode == 'extra-key':
             body = body.replace(b'{"jsonrpc":"2.0",', b'{"jsonrpc":"2.0","extra":1,', 1)
         if mode == 'stray-answer' and answers == 5:  # an answer to a request nobody sent
-            stray = b'{"jsonrpc":"2.0","id":999999,"result":null}'
-            out.write(b'Content-Length: %d\r\n\r\n' % len(stray) + stray)
+            emit(b'{"jsonrpc":"2.0","id":999999,"result":null}')
         if mode == 'home-transient' and answers == 5:
             open(HOME + '/tmp/transient', 'w').write('written and removed between two answers')
         if mode == 'home-transient' and answers == 6:
@@ -207,15 +251,14 @@ for body in frames(p.stdout):
     if method == 'shutdown' and mode.startswith('mask-'):  # finding 4: a diagnostic text that looks like a watcher id
         extra = json.dumps({'jsonrpc': '2.0', 'method': 'textDocument/publishDiagnostics', 'params': {
             'uri': 'file:///a.ts', 'diagnostics': [{'message': 'bad watcher ' + ('1' if mode == 'mask-go' else '999') + '. result'}]}}).encode()
-        out.write(b'Content-Length: %d\r\n\r\n' % len(extra) + extra)
+        emit(extra)
     if method == 'shutdown' and mode == 'late-diag':
         extra = b'{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///bogus.ts","diagnostics":[{"message":"late bogus error"}]}}'
     if (method == 'shutdown' and mode == 'late-request') or (method == 'initialize' and mode == 'request'):
         extra = b'{"jsonrpc":"2.0","id":"server-1","method":"workspace/applyEdit","params":{"edit":{"changes":{}}}}'
     if extra:
-        out.write(b'Content-Length: %d\r\n\r\n' % len(extra) + extra)
-    out.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
-    out.flush()
+        emit(extra)
+    emit(body)
 code = p.wait()
 if mode == 'input-root-hide':  # Astra's: output into the project, then its root unreadable
     open(os.getcwd() + '/unexpected.ts', 'w').write('unexpected compiler output')

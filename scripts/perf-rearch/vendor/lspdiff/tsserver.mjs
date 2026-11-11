@@ -468,6 +468,14 @@ export class TsserverClient {
     }
   }
 
+  // The barriers of a scenario's waits (scenario.mjs Script.settle; lanes B4 and H9): tsserver runs its
+  // commands in order and has no work-done progress in its protocol, so neither has anything to wait for.
+  async caughtUp() {
+    return 0;
+  }
+
+  progress = { pending: () => [] };
+
   async settle(quietMs = 1000, maxMs = 30000) {
     const start = performance.now();
     for (;;) {

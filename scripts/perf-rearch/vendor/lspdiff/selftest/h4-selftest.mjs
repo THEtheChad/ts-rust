@@ -281,10 +281,11 @@ await part("finding 11", async () => {
 
 // The Script waits of scenario.mjs (npmCalls, npmIdle, settle, ataIdle) in a context of their own:
 // `npmLog(polls)` gives the npm log's text at each read, `now()` the clock (ms); `alive`: whether a
-// logged npm process still runs (finding 11: always).
-function scriptProbe(npmLog, now, alive = true) {
+// logged npm process still runs (finding 11: always); `progress()`: the client's open work-done progress
+// (client.mjs ProgressBarrier pending; lane H9).
+function scriptProbe(npmLog, now, alive = true, progress = () => []) {
   const src = readFileSync(join(LSPDIFF, "scenario.mjs"), "utf8");
-  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async settle(ms, label) {", "async ataIdle(label) {", "npmReport() {"].map((head) => {
+  const methods = ["npmCalls() {", "async npmIdle(label, since) {", "async progressEnded(label) {", "async settle(ms, label) {", "async ataIdle(label) {", "npmReport() {", "async checkpoint(name) {", "activeKeys() {"].map((head) => {
     const at = src.indexOf(`\n  ${head}`);
     if (at < 0) throw new Error(`scenario.mjs has no ${head}`);
     return src.slice(at, src.indexOf("\n  }\n", at) + 4);
@@ -302,8 +303,10 @@ function scriptProbe(npmLog, now, alive = true) {
     existsSync: () => true,
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
+    PROGRESS_METHODS: new Set(["$/progress", "window/workDoneProgress/create"]),
+    maskId: (id) => id,
     ATA_DIR: "/run/lspdiff-ata",
-    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
+    SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000, LSPDIFF_PROGRESS_DEADLINE_MS: 60000 },
     setTimeout: (cb) => cb(),
     Error,
     Object,
@@ -316,7 +319,7 @@ function scriptProbe(npmLog, now, alive = true) {
   // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
   // caughtUp (lane B4): the windows that settle had opened when each barrier wait began.
   const caught = [];
-  script.client = { settle: async () => settles.push(now()), caughtUp: async () => caught.push(settles.length), server: { alive: () => alive, inside: (p) => p } };
+  script.client = { settle: async () => settles.push(now()), caughtUp: async () => caught.push(settles.length), progress: { pending: () => progress(settles.length) }, server: { alive: () => alive, inside: (p) => p } };
   script.log = [];
   return { script, settles, caught, reads: () => reads };
 }
@@ -370,6 +373,73 @@ await part("b4", async () => {
   check("b4: the barrier is behind until each notification sent has its handled (or error) log line, requests' lines aside",
     first === "textDocument/didOpen 0/2; workspace/didChangeWatchedFiles 0/1" && second === "textDocument/didOpen 1/2; workspace/didChangeWatchedFiles 0/1" && b.behind().length === 0,
     JSON.stringify({ first, second, last: b.behind() }));
+});
+
+// ---- lane H9: a scenario wait lasts until every work-done progress the server began has ended ------
+await part("h9", async () => {
+  const OPEN = ['"tsgo-loading-1" Loading: Installing types for /dev/null/inferred'];
+  // A progress that ends late (at 3 s, 100 ms per clock read): no quiet window opens before its end.
+  let clock = 0;
+  const late = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 3000 ? OPEN : []));
+  late.script.ata = undefined; // the quiet window alone besides the progress (ATA off)
+  const lateWaited = await late.script.settle(300, "probe");
+  check("h9: a progress whose end comes late: the wait's quiet window starts only after the end", late.settles.length >= 1 && late.settles[0] >= 3000 && lateWaited >= 3000,
+    `settles ${late.settles}, waited ${lateWaited}`);
+  // A progress that begins during the quiet window (after the first check) and ends at 5 s: the wait runs again.
+  clock = 0;
+  const during = scriptProbe(() => "", () => (clock += 100), false, (quiets) => (quiets >= 1 && clock < 5000 ? OPEN : []));
+  during.script.ata = undefined;
+  await during.script.settle(300, "probe");
+  check("h9: a progress begun during the quiet window: the wait waits for its end, then for quiet again", during.settles.length >= 2 && during.settles.at(-1) >= 5000,
+    `settles ${during.settles}`);
+  // With ATA on, the progress barrier comes before the npm-idle window, and the floor still holds.
+  clock = 0;
+  const ata = scriptProbe(() => "", () => (clock += 100), false, () => (clock < 2000 ? OPEN : []));
+  const ataWaited = await ata.script.settle(300, "probe");
+  check("h9: with ATA on, the wait ends after the progress and after the npm-idle floor", ata.settles[0] >= 2000 && ataWaited >= 1500, `settles ${ata.settles}, waited ${ataWaited}`);
+  // A progress that never ends: the run fails as a harness error at LSPDIFF_PROGRESS_DEADLINE_MS, never a success.
+  clock = 0;
+  const never = scriptProbe(() => "", () => (clock += 1000), false, () => OPEN);
+  let threw = null;
+  try {
+    await never.script.settle(300, "checkpoint load");
+  } catch (e) {
+    threw = e;
+  }
+  check("h9: a progress that never ends fails the run as a harness error (lspdiff exits 3: ERROR), with no quiet window passed",
+    !!threw && threw.harness === true && /did not end in 60000 ms at checkpoint load: "tsgo-loading-1" Loading: Installing types/.test(threw.message) && never.settles.length === 0,
+    threw ? threw.message : `no error; settles ${never.settles}`);
+  // The barrier: begin opens a token (by its JSON: 1 and "1" are two tokens), a report changes its message, end
+  // closes it, an end of a token never begun is ignored.
+  const { ProgressBarrier, initializeParams } = await import(join(LSPDIFF, "client.mjs"));
+  const b = new ProgressBarrier();
+  b.update({ token: 1, value: { kind: "begin", title: "Loading", message: "Project a" } });
+  b.update({ token: "1", value: { kind: "begin", title: "Loading" } });
+  b.update({ token: 1, value: { kind: "report", message: "Installing types for b" } });
+  b.update({ token: "other", value: { kind: "end" } });
+  const both = b.pending().join("; ");
+  b.update({ token: "1", value: { kind: "end" } });
+  const one = b.pending().join("; ");
+  b.update({ token: 1, value: { kind: "end" } });
+  check("h9: the progress barrier keeps each token begun until its end",
+    both === '1 Loading: Installing types for b; "1" Loading' && one === "1 Loading: Installing types for b" && b.pending().length === 0, JSON.stringify({ both, one, last: b.pending() }));
+  // The progress messages are the barrier's signal, never compared: a checkpoint keeps them in its entry's
+  // `progress` (not compared) and out of "server messages"; "session messages" leaves them out too.
+  const create = { kind: "request", method: "window/workDoneProgress/create", params: { token: "t" } };
+  const begin = { kind: "notification", method: "$/progress", params: { token: "t", value: { kind: "begin", title: "Loading" } } };
+  const refresh = { kind: "request", method: "workspace/diagnostic/refresh" };
+  const cp = scriptProbe(() => "", () => 0, false);
+  Object.assign(cp.script, { ata: undefined, seen: 0, active: new Map(), registered: new Map(), ids: [] });
+  cp.script.client.events = [create, begin, refresh];
+  await cp.script.checkpoint("load");
+  const sm = cp.script.log.find((e) => e.step === "load server messages");
+  const { messagesEntry } = await import(join(LSPDIFF, "session.mjs"));
+  const tail = messagesEntry({ events: [create, begin, refresh, { kind: "notification", method: "window/logMessage" }] });
+  check("h9: progress messages are left out of the compared message lists (checkpoint and session), and kept in the entry's progress",
+    JSON.stringify(sm?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && sm?.progress?.length === 2 && JSON.stringify(tail.result) === '[{"request":"workspace/diagnostic/refresh","params":null}]',
+    JSON.stringify({ sm, tail: tail.result }));
+  const caps = (watch) => initializeParams("/x", { watch }).capabilities.window.workDoneProgress;
+  check("h9: the watch scenarios advertise window.workDoneProgress, the standard sessions do not", caps(true) === true && caps(false) === false, `${caps(true)} ${caps(false)}`);
 });
 
 // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------

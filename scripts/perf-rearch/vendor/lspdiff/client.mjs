@@ -53,6 +53,44 @@ export class NotificationBarrier {
     return [...this.sent].filter(([m, n]) => (this.handled.get(m) ?? 0) < n).map(([m, n]) => `${m} ${this.handled.get(m) ?? 0}/${n}`);
   }
 }
+
+// Lane H9: the work-done progress a server has begun and not ended, by token. The watch scenarios advertise
+// window.workDoneProgress (initializeParams), so both servers report their background work through it (Go
+// lsp/progress.go projectLoadingProgress, and tsc-rs's port lsp/progress.rs): ATA's "Installing types for
+// <project>" (project/session.go triggerATAForUpdatedProjects, around InstallTypings) and a program's
+// "Project <name>" (projectcollectionbuilder.go). Each reaches the client as window/workDoneProgress/create,
+// then $/progress begin, reports, and end, on one token while any of them runs. ATA's npm calls of one
+// request are thus inside one begin/end pair, and Script.settle waits for it (lane B4's residual race: a
+// first install spent more than ATA_IDLE_MS between its two npm calls and the npm-idle wait ended).
+// Go shows a progress only after it has run for 250 ms (cmd/tsc/lsp.go ProgressDelay), so work shorter
+// than that never begins one: progress is a signal of work in flight, never proof that none is coming.
+// For the same reason the progress messages are no output to compare (PROGRESS_METHODS): whether one shows
+// depends on the time the work took (umami's program load, near 250 ms, began a progress in 1 of 4 Go runs).
+export class ProgressBarrier {
+  constructor() {
+    this.open = new Map(); // token (as JSON) -> { title, message }
+  }
+
+  // The params of a $/progress notification.
+  update(params) {
+    const token = JSON.stringify(params?.token ?? null);
+    const v = params?.value ?? {};
+    if (v.kind === "begin") this.open.set(token, { title: v.title, message: v.message });
+    else if (v.kind === "report" && this.open.has(token) && v.message !== undefined) this.open.get(token).message = v.message;
+    else if (v.kind === "end") this.open.delete(token);
+  }
+
+  // The progress begun and not ended ("<token> <title>: <message>").
+  pending() {
+    return [...this.open].map(([token, { title, message }]) => `${token} ${title}${message ? `: ${message}` : ""}`);
+  }
+}
+
+// The work-done progress messages (ProgressBarrier): the barrier's signal only, left out of every compared
+// message list (scenario.mjs checkpoint "server messages", session.mjs "session messages") and kept in the
+// checkpoint's log entry as `progress`, which is not compared.
+export const PROGRESS_METHODS = new Set(["$/progress", "window/workDoneProgress/create"]);
+
 const MAX_HEADER_LINE = 256;
 const MAX_HEADERS = 4;
 const MAX_FRAME = 256 << 20;
@@ -98,6 +136,7 @@ export class LspClient {
     this.events = [];
     this.lastMessageAt = performance.now();
     this.barrier = new NotificationBarrier(); // caughtUp
+    this.progress = new ProgressBarrier(); // scenario.mjs Script.progressEnded
     this.buf = Buffer.alloc(0);
     this.exited = this.server.exited;
     this.dead = null; // why the server is gone, once it is
@@ -183,14 +222,15 @@ export class LspClient {
       return;
     }
     if (msg.method === "window/logMessage") this.barrier.log(msg.params?.message);
+    if (msg.method === "$/progress") this.progress.update(msg.params);
     this.notifications.push({ method: msg.method, params: msg.params, at });
     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
   }
 
   #onServerRequest(msg, raw) {
     // workspace/configuration is never asked: initialize does not advertise it.
-    // registerCapability, unregisterCapability, workDoneProgress/create, refresh requests: accept with
-    // null (the answer of a successful registration).
+    // registerCapability, unregisterCapability, window/workDoneProgress/create, refresh requests: accept
+    // with null (the answer of a successful registration, and of a progress token created).
     this.events.push({ kind: "request", method: msg.method, params: msg.params, at: performance.now(), ...(raw ? { raw } : {}) });
     this.#write({ jsonrpc: "2.0", id: msg.id, result: null });
   }
@@ -320,7 +360,8 @@ export const userPreferences = {
 // support, and refresh support for diagnostics, semantic tokens, inlay hints and code lenses, as
 // VS Code does. Both servers then register their watch globs with the client
 // (client/registerCapability) instead of logging "file watching: disabled", and send refresh
-// requests after file-system events.
+// requests after file-system events. It also advertises window.workDoneProgress (lane H9), so both
+// servers report their background work (ProgressBarrier).
 //
 // ata: false turns automatic type acquisition off (disableAutomaticTypeAcquisition). With it on,
 // both servers start ATA for an inferred project in the background, and its first step runs
@@ -373,7 +414,9 @@ export function initializeParams(rootDir, { watch = false, ata = true } = {}) {
         },
         inlayHint: { resolveSupport: { properties: [] } },
       },
-      window: { workDoneProgress: false },
+      // The watch scenarios take work-done progress, as VS Code does: Script.settle waits for every
+      // progress begun to end (ProgressBarrier). The standard sessions have no waits and keep it off.
+      window: { workDoneProgress: watch },
     },
   };
   if (watch) {

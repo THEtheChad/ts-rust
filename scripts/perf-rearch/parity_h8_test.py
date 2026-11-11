@@ -29,6 +29,8 @@ escape) with every other mode:
                 home-skeleton (Astra's: tmp replaced by a file), home-root-hide, home-root-mode (her
                 storage-root chmod probes, on the home): session home DIFF
   exec failure  unexec-go (Astra's: a Go that cannot be exec'd): ERROR, and nothing cached
+  progress      lane H9 (h9()): a work-done progress that ends 4 s after each didOpen: MATCH on every item
+                against one that ends at once; one that never ends: a harness error, the session ERROR
 It takes the gate's lock (the tier's paths are fixed) and uses the real Go cache.
 """
 import fcntl
@@ -318,7 +320,7 @@ EXPECT = {  # mode -> (what a good harness shows, a test on the items)
 }
 
 
-def lspdiff(tag, go, rs, extra=(), scenario=None):
+def lspdiff(tag, go, rs, extra=(), scenario=None, env=None):
     """The harness's lspdiff alone (sandboxed, as parity_lsp.py runs it) on a one-file project, or on a fixture
     scenario: its items."""
     proj = SCRATCH / 'project'
@@ -328,7 +330,7 @@ def lspdiff(tag, go, rs, extra=(), scenario=None):
     out = SCRATCH / f'lspdiff-{tag}'
     shutil.rmtree(out, ignore_errors=True)
     (SCRATCH / 'home').mkdir(exist_ok=True)
-    env = {**os.environ, 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
+    env = {**os.environ, **(env or {}), 'LSPDIFF_SANDBOX': json.dumps({'scratch': str(SCRATCH / 'sandbox'), 'home': str(SCRATCH / 'home'),
                                                          'mounts': [] if scenario else [{'lower': str(proj), 'target': str(proj)}]})}
     r = subprocess.run(['node', str(HARNESS / 'vendor/lspdiff/lspdiff.mjs'), 'diff', '--project', str(root), '--file', 'a.ts', '--positions', '1',
                         '--go', go, '--rs', rs, '--out', str(out), '--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THREADS=1', *extra,
@@ -400,6 +402,26 @@ def finding7():
           and 'tmp/P' in detail(later, 'session storage'), short(later, log3))
 
 
+def h9():
+    """Lane H9: the progress barrier (vendor/lspdiff scenario.mjs Script.progressEnded). The fake's modes
+    progress-0, progress-late and progress-never send a work-done progress of their own around every didOpen,
+    then a publishDiagnostics marker after its end. On pkgjson-overlay (ATA off: the waits are the barriers
+    and the quiet windows alone), with the self server on both sides: an end 4 s late against one at once
+    must be MATCH on every item (each wait lasts until the end, so each marker is in the same checkpoint; a
+    harness without the barrier ends the waits first and the markers move: a DIFF). A progress that never
+    ends is a harness error: lspdiff exits 3 with no items (LSPDIFF_PROGRESS_DEADLINE_MS 5 s here), and
+    through the tier, in front of the real Go, the session is ERROR, never MATCH."""
+    fake('pass')
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    items, log = lspdiff('h9-late', sh('progress-0'), sh('progress-late'), scenario='pkgjson-overlay')
+    check('h9: a progress that ends 4 s late: every item MATCH (each wait lasts until the end)', items and not bad(items), short(items, log))
+    items, log = lspdiff('h9-never', sh('progress-0'), sh('progress-never'), scenario='pkgjson-overlay', env={'LSPDIFF_PROGRESS_DEADLINE_MS': '5000'})
+    check('h9: a progress that never ends: a harness error (lspdiff exit 3), no items', not items and 'harness error' in log and 'did not end' in log, short(items, log))
+    items, log = tier(fake('progress-never'), session='pkgjson-overlay')
+    check('h9: a progress that never ends, through the tier in front of the real Go: the session is ERROR, not MATCH',
+          items and all(v['status'] == 'ERROR' for v in items.values()), short(items, log))
+
+
 def e2e():
     lock = open(Path.home() / '.cache/perf-rearch/parity/.lock', 'w')  # the gate's lock: the tier's paths are fixed
     print('e2e: waiting for the gate lock', flush=True)
@@ -434,6 +456,8 @@ def e2e():
         finding7()
     if not only or 'round3' in only:
         round3()
+    if not only or 'h9' in only:
+        h9()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
     # dir is new: ERROR, and nothing of it cached.
     unexec = SCRATCH / f'unexec-go-{"new" if NEW else "old"}'
