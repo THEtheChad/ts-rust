@@ -55,8 +55,17 @@ jobs:
         run: |
           cargo run --locked --quiet -p ts_ast_codegen -- check crates/ts_goport/src/astdata/syntax_kind.rs
           cargo run --locked --quiet -p ts_ast_codegen -- check-ast crates/ts_goport/src/astdata/ast_generated.rs
-      # The packages of the revision quality step (candidate.sh): 0 warnings.
-      - run: cargo clippy --locked -p ts_goport -p goport_core -p goport_util -p goport_lsproto --all-targets -- -D warnings
+      # The packages of the revision quality step (candidate.sh): 0 warnings. --all-targets skips
+      # go_baselines (`test = false`) and overrides a --test beside it, so go_baselines runs alone.
+      - run: |
+          cargo clippy --locked -p ts_goport -p goport_core -p goport_util -p goport_lsproto --all-targets -- -D warnings
+          cargo clippy --locked -p ts_goport --test go_baselines -- -D warnings
+      # The same with the features of the test runs (parity_tests.py, the gate), which build
+      # plain_early_emit and the diagnostics and test-hooks code.
+      - name: clippy with the diagnostics and test-hooks features
+        run: |
+          cargo clippy --locked -p ts_goport -p goport_core -p goport_util -p goport_lsproto --all-targets --features ts_goport/diagnostics,ts_goport/test-hooks -- -D warnings
+          cargo clippy --locked -p ts_goport --test go_baselines --features ts_goport/diagnostics,ts_goport/test-hooks -- -D warnings
 
   test:
     name: test (${{ matrix.runner }})

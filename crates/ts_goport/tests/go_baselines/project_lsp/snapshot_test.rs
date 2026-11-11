@@ -53,7 +53,7 @@ child_test! {
                 },
                 APICreateProgramRequest {
                     root_file_names: vec!["/b.ts".to_string()],
-                    compiler_options: options.clone(),
+                    compiler_options: options,
                     ..Default::default()
                 },
             ],

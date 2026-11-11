@@ -119,7 +119,7 @@ fn apply(text: &str, edits: &[lsproto::TextEdit]) -> String {
             )
         })
         .collect();
-    ranged.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+    ranged.sort_by_key(|edit| std::cmp::Reverse((edit.0, edit.1)));
     let mut out = text.to_string();
     for (start, _, end, new_text) in ranged {
         out.replace_range(start..end, new_text);

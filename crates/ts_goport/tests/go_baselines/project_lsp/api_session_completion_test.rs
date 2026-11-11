@@ -186,7 +186,7 @@ child_test! {
             &ctx,
             &GetCompletionsAtPositionParams {
                 snapshot: snapshot_resp.snapshot,
-                project: proj.id.clone(),
+                project: proj.id,
                 file: doc(FILE_NAME),
                 position: CONTENT.len() as u32,
                 ..Default::default()
@@ -251,7 +251,7 @@ child_test! {
             &ctx,
             &GetCompletionsAtPositionParams {
                 snapshot: snapshot_resp.snapshot,
-                project: proj.id.clone(),
+                project: proj.id,
                 file: doc(FILE_NAME),
                 position: CONTENT.len() as u32,
                 ..Default::default()
@@ -316,7 +316,7 @@ fn complete_some_v(
         &ctx,
         &GetCompletionsAtPositionParams {
             snapshot: snapshot_resp.snapshot,
-            project: proj.id.clone(),
+            project: proj.id,
             file: doc(P_FILE),
             position: P_CONTENT.len() as u32,
             include_symbol: true,
@@ -393,7 +393,7 @@ fn is_prepared(snapshot: &ts_goport::project::Snapshot, file_uri: &str, file_nam
     autoimport::Registry::is_prepared_for_importing_file(
         registry.as_deref(),
         file_name,
-        &autoimport::ProjectID(proj.borrow().id().0.clone()),
+        &autoimport::ProjectID(proj.borrow().id().0),
         &snapshot.user_preferences(),
     )
 }
@@ -676,7 +676,7 @@ child_test! {
             &ctx,
             &GetCompletionsAtPositionParams {
                 snapshot: snapshot_resp.snapshot,
-                project: proj.id.clone(),
+                project: proj.id,
                 file: doc(FILE_NAME),
                 position: CONTENT.len() as u32,
                 include_symbol: true,

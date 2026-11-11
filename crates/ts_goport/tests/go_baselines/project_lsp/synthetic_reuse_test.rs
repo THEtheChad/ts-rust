@@ -386,10 +386,12 @@ fn verify_mode_checks_the_inferred_project_in_a_child_process() {
                 ],
             );
             let session = os_session(&p.dir());
-            let mut options = ts_goport::options::CompilerOptions::default();
-            options.jsx = ts_goport::flags::JsxEmit::REACT_JSX;
-            options.module = ts_goport::flags::ModuleKind::ES_NEXT;
-            options.module_resolution = ts_goport::flags::ModuleResolutionKind::BUNDLER;
+            let options = ts_goport::options::CompilerOptions {
+                jsx: ts_goport::flags::JsxEmit::REACT_JSX,
+                module: ts_goport::flags::ModuleKind::ES_NEXT,
+                module_resolution: ts_goport::flags::ModuleResolutionKind::BUNDLER,
+                ..Default::default()
+            };
             session
                 .did_change_compiler_options_for_inferred_projects(&bg(), Some(Rc::new(options)));
             let a = p.uri("a.tsx");

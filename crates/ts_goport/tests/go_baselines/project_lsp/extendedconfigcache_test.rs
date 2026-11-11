@@ -296,7 +296,7 @@ child_test! {
             .expect("config");
         let extended = config.extended_source_files();
         assert_eq!(extended.len(), 1);
-        assert_eq!((session.to_path)(&extended[0]), (session.to_path)("/project/shared.json"));
+        assert_eq!((session.to_path)(extended[0]), (session.to_path)("/project/shared.json"));
     }
 }
 

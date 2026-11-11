@@ -307,7 +307,7 @@ child_test! {
                 &CreateSnapshotParams {
                     snapshot_request_changes_params: SnapshotRequestChangesParams {
                         create_programs: Some(vec![Some(Default::default())]),
-                        reconfigure_programs: vec![Some(program.clone())],
+                        reconfigure_programs: vec![Some(program)],
                         ..Default::default()
                     },
                     ..Default::default()

@@ -1682,7 +1682,7 @@ impl OutputRecorder {
     fn write_file(&self) -> WriteFile {
         let inner = self.inner.clone();
         Arc::new(
-            move |path: &str, data: &str, _data: &mut WriteFileData| -> Result<(), String> {
+            move |path: &str, data: &str, _write_data: &mut WriteFileData| -> Result<(), String> {
                 let fs = osvfs_fs();
                 fs.write_file(path, data)
                     .map_err(|err| crate::support::iovfs::fs_error_text(&err))?;

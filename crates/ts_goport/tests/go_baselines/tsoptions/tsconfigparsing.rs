@@ -1289,7 +1289,7 @@ fn content_mapper_extension_validation_uses_host_case_sensitivity() {
                 json_text,
                 config_file_name: "tsconfig.json",
                 base_path: "/",
-                all_file_list: files.clone(),
+                all_file_list: files,
                 existing_options: run_external_code_options(),
             };
             let parsed = get_parsed_with_json_source_file_api(&config, &host, config.base_path);
@@ -1348,7 +1348,7 @@ fn content_mapper_compound_extension_validation() {
                         json_text,
                         config_file_name: "tsconfig.json",
                         base_path: "/",
-                        all_file_list: files.clone(),
+                        all_file_list: files,
                         existing_options: run_external_code_options(),
                     };
                     let parsed =
