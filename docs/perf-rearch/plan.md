@@ -1979,3 +1979,8 @@ once a **reconciliation step** is built and tested.
   - **Gate:** `runs/h9-df7a71ff3-full` PARITY OK, 0 lost. 3 lsp runs, with
     all 13 `session messages` and 73 `server messages` items MATCH.
   - **lsp time:** 240 s against 232 s (+3%).
+- **H9 review: REJECT** (`reviews/2026-11-11-astra-h9.md`). All four
+  findings are in scope. Fix 1 (fail closed on the notification deadline),
+  2 (progress lifecycle checks) and 3 (check Go's fixed progress payload, not
+  its occurrence). For 4, find a deterministic ATA completion signal, else
+  document the assumption. Fix both test weaknesses. Round 2 sent.
