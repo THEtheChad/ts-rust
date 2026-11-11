@@ -1339,37 +1339,15 @@ impl Checker {
             SyntaxKind::Identifier
             | SyntaxKind::PrivateIdentifier
             | SyntaxKind::PropertyAccessExpression
-            | SyntaxKind::QualifiedName
-            | SyntaxKind::ThisKeyword
-            | SyntaxKind::ThisType => {
-                // PORT: Go `fallthrough` from the name kinds into ThisKeyword, then into ThisType.
-                if matches!(
-                    kind,
-                    SyntaxKind::Identifier
-                        | SyntaxKind::PrivateIdentifier
-                        | SyntaxKind::PropertyAccessExpression
-                        | SyntaxKind::QualifiedName
-                ) && !is_this_in_type_query(node)
-                {
+            | SyntaxKind::QualifiedName => {
+                if !is_this_in_type_query(node) {
                     return self.get_symbol_of_name_or_property_access_expression(node);
                 }
-                if kind != SyntaxKind::ThisType {
-                    let container = self.get_this_container(
-                        node, false, /*includeArrowFunctions*/
-                        false, /*includeClassComputedPropertyName*/
-                    );
-                    if is_function_like(container) {
-                        let sig = self.get_signature_from_declaration(container);
-                        let this_parameter = self.sig(sig).this_parameter;
-                        if this_parameter.is_some() {
-                            return this_parameter;
-                        }
-                    }
-                    if is_in_expression_context(node) {
-                        let t = self.check_expression(node);
-                        return self.ty(t).symbol;
-                    }
-                }
+                // Go: fallthrough
+                self.get_symbol_at_this_keyword(node)
+            }
+            SyntaxKind::ThisKeyword => self.get_symbol_at_this_keyword(node),
+            SyntaxKind::ThisType => {
                 let t = self.get_type_from_this_type_node(node);
                 self.ty(t).symbol
             }
@@ -1387,59 +1365,44 @@ impl Checker {
                 }
                 SymbolId::NIL
             }
-            SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-            | SyntaxKind::NumericLiteral => {
-                // PORT: Go `fallthrough` from the string literal kinds into NumericLiteral.
-                if kind != SyntaxKind::NumericLiteral {
-                    // 1). import x = require("./mo/*gotToDefinitionHere*/d")
-                    // 2). External module name in an import declaration
-                    // 3). Require in Javascript
-                    // 4). type A = import("./f/*gotToDefinitionHere*/oo")
-                    if (is_external_module_import_equals_declaration(grand_parent)
-                        && get_external_module_import_equals_declaration_expression(grand_parent)
-                            == node)
-                        || ((parent.kind() == SyntaxKind::ImportDeclaration
-                            || parent.kind() == SyntaxKind::JsImportDeclaration
-                            || parent.kind() == SyntaxKind::ExportDeclaration)
-                            && get_external_module_name(parent) == node)
-                        || is_variable_declaration_initialized_to_require(grand_parent)
-                        || is_import_call(parent)
-                        || (is_literal_type_node(parent)
-                            && is_literal_import_type_node(grand_parent)
-                            && grand_parent.argument() == parent)
-                    {
-                        let import_attributes_type =
-                            self.get_import_attributes_type_for_module_specifier(node);
-                        return self.resolve_external_module_name(
-                            node,
-                            node,
-                            ignore_errors,
-                            import_attributes_type,
-                        );
-                    }
-                    if is_call_expression(parent)
-                        && is_bindable_object_define_property_call(parent)
-                        && parent.arguments().get(1) == node
-                    {
-                        return self.get_symbol_of_declaration(parent);
-                    }
-                }
-                // index access
-                let mut object_type = TypeId::NIL;
-                if is_element_access_expression(parent) {
-                    if parent.argument_expression() == node {
-                        object_type = self.get_type_of_expression(parent.expression());
-                    }
-                } else if is_literal_type_node(parent) && is_indexed_access_type_node(grand_parent)
+            SyntaxKind::StringLiteral | SyntaxKind::NoSubstitutionTemplateLiteral => {
+                // 1). import x = require("./mo/*gotToDefinitionHere*/d")
+                // 2). External module name in an import declaration
+                // 3). Require in Javascript
+                // 4). type A = import("./f/*gotToDefinitionHere*/oo")
+                if (is_external_module_import_equals_declaration(grand_parent)
+                    && get_external_module_import_equals_declaration_expression(grand_parent)
+                        == node)
+                    || ((parent.kind() == SyntaxKind::ImportDeclaration
+                        || parent.kind() == SyntaxKind::JsImportDeclaration
+                        || parent.kind() == SyntaxKind::ExportDeclaration)
+                        && get_external_module_name(parent) == node)
+                    || is_variable_declaration_initialized_to_require(grand_parent)
+                    || is_import_call(parent)
+                    || (is_literal_type_node(parent)
+                        && is_literal_import_type_node(grand_parent)
+                        && grand_parent.argument() == parent)
                 {
-                    object_type = self.get_type_from_type_node(grand_parent.object_type());
+                    let import_attributes_type =
+                        self.get_import_attributes_type_for_module_specifier(node);
+                    return self.resolve_external_module_name(
+                        node,
+                        node,
+                        ignore_errors,
+                        import_attributes_type,
+                    );
                 }
-
-                if object_type.is_some() {
-                    return self.get_property_of_type(object_type, node.text());
+                if is_call_expression(parent)
+                    && is_bindable_object_define_property_call(parent)
+                    && parent.arguments().get(1) == node
+                {
+                    return self.get_symbol_of_declaration(parent);
                 }
-                SymbolId::NIL
+                // Go: fallthrough
+                self.get_symbol_at_numeric_literal(node, parent, grand_parent)
+            }
+            SyntaxKind::NumericLiteral => {
+                self.get_symbol_at_numeric_literal(node, parent, grand_parent)
             }
             SyntaxKind::DefaultKeyword
             | SyntaxKind::FunctionKeyword
@@ -1504,6 +1467,56 @@ impl Checker {
             }
             _ => SymbolId::NIL,
         }
+    }
+
+    /// The `case ast.KindThisKeyword` arm of Go `getSymbolAtLocation`, with
+    /// its `fallthrough` into `case ast.KindThisType`. The name kinds fall
+    /// through into it too.
+    // Go: checker/checker.go:32242 getSymbolAtLocation
+    fn get_symbol_at_this_keyword(&mut self, node: Node) -> SymbolId {
+        let container = self.get_this_container(
+            node, false, /*includeArrowFunctions*/
+            false, /*includeClassComputedPropertyName*/
+        );
+        if is_function_like(container) {
+            let sig = self.get_signature_from_declaration(container);
+            let this_parameter = self.sig(sig).this_parameter;
+            if this_parameter.is_some() {
+                return this_parameter;
+            }
+        }
+        if is_in_expression_context(node) {
+            let t = self.check_expression(node);
+            return self.ty(t).symbol;
+        }
+        // Go: fallthrough
+        let t = self.get_type_from_this_type_node(node);
+        self.ty(t).symbol
+    }
+
+    /// The `case ast.KindNumericLiteral` arm of Go `getSymbolAtLocation`
+    /// (an index access), which the string literal kinds fall through into.
+    // Go: checker/checker.go:32242 getSymbolAtLocation
+    fn get_symbol_at_numeric_literal(
+        &mut self,
+        node: Node,
+        parent: Node,
+        grand_parent: Node,
+    ) -> SymbolId {
+        // index access
+        let mut object_type = TypeId::NIL;
+        if is_element_access_expression(parent) {
+            if parent.argument_expression() == node {
+                object_type = self.get_type_of_expression(parent.expression());
+            }
+        } else if is_literal_type_node(parent) && is_indexed_access_type_node(grand_parent) {
+            object_type = self.get_type_from_type_node(grand_parent.object_type());
+        }
+
+        if object_type.is_some() {
+            return self.get_property_of_type(object_type, node.text());
+        }
+        SymbolId::NIL
     }
 }
 

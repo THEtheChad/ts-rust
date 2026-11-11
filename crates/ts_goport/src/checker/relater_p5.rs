@@ -19,6 +19,12 @@ fn msg_eq(m: Option<&'static Message>, target: &'static Message) -> bool {
     m.is_some_and(|m| std::ptr::eq(m, target))
 }
 
+/// Whether `m` is one of `cases`: a Go `case A, B:` of a `switch` on a
+/// `*diagnostics.Message`.
+fn msg_in(m: Option<&'static Message>, cases: &[&'static Message]) -> bool {
+    m.is_some_and(|m| cases.iter().any(|&case| std::ptr::eq(m, case)))
+}
+
 impl Checker {
     // Go: checker/relater.go:3936 typeArgumentsRelatedTo
     pub fn type_arguments_related_to(
@@ -1886,13 +1892,11 @@ impl Checker {
         }
         let message = message.expect("message is set above");
         let chain_message = self.get_chain_message(r, 0);
-        if msg_eq(chain_message, diag::Object_literal_may_only_specify_known_properties_and_0_does_not_exist_in_type_1)
-            || msg_eq(chain_message, diag::Object_literal_may_only_specify_known_properties_but_0_does_not_exist_in_type_1_Did_you_mean_to_write_2)
+        if msg_in(chain_message, &[diag::Object_literal_may_only_specify_known_properties_and_0_does_not_exist_in_type_1, diag::Object_literal_may_only_specify_known_properties_but_0_does_not_exist_in_type_1_Did_you_mean_to_write_2])
         {
             // Suppress if next message is an excess property error
             return;
-        } else if msg_eq(chain_message, diag::Excessive_complexity_comparing_types_0_and_1)
-            || msg_eq(chain_message, diag::The_type_0_is_readonly_and_cannot_be_assigned_to_the_mutable_type_1)
+        } else if msg_in(chain_message, &[diag::Excessive_complexity_comparing_types_0_and_1, diag::The_type_0_is_readonly_and_cannot_be_assigned_to_the_mutable_type_1])
         {
             // Suppress if next message is an excessive complexity/stack depth message for source and target or a readonly
             // vs. mutable error for source and target
@@ -1907,8 +1911,7 @@ impl Checker {
             {
                 return;
             }
-        } else if msg_eq(chain_message, diag::Type_0_is_missing_the_following_properties_from_type_1_Colon_2_and_3_more)
-            || msg_eq(chain_message, diag::Type_0_is_missing_the_following_properties_from_type_1_Colon_2)
+        } else if msg_in(chain_message, &[diag::Type_0_is_missing_the_following_properties_from_type_1_Colon_2_and_3_more, diag::Type_0_is_missing_the_following_properties_from_type_1_Colon_2])
         {
             // Suppress if next message is a missing property message for source and target and we're not
             // reporting on conversion or interface implementation
@@ -1931,8 +1934,7 @@ impl Checker {
         if std::ptr::eq(message, diag::Types_of_property_0_are_incompatible) {
             // Suppress if next message is an excess property error
             let chain_message = self.get_chain_message(r, 0);
-            if msg_eq(chain_message, diag::Object_literal_may_only_specify_known_properties_and_0_does_not_exist_in_type_1)
-                || msg_eq(chain_message, diag::Object_literal_may_only_specify_known_properties_but_0_does_not_exist_in_type_1_Did_you_mean_to_write_2)
+            if msg_in(chain_message, &[diag::Object_literal_may_only_specify_known_properties_and_0_does_not_exist_in_type_1, diag::Object_literal_may_only_specify_known_properties_but_0_does_not_exist_in_type_1_Did_you_mean_to_write_2])
             {
                 return;
             }
@@ -1981,16 +1983,14 @@ impl Checker {
             // followed by a property incompatibility message for property 'y' into a single property incompatibility
             // message for 'x.y'
             let chain_message = self.get_chain_message(r, 1);
-            if msg_eq(chain_message, diag::Types_of_property_0_are_incompatible)
-                || msg_eq(
-                    chain_message,
+            if msg_in(
+                chain_message,
+                &[
+                    diag::Types_of_property_0_are_incompatible,
                     diag::The_types_of_0_are_incompatible_between_these_types,
-                )
-                || msg_eq(
-                    chain_message,
                     diag::The_types_returned_by_0_are_incompatible_between_these_types,
-                )
-            {
+                ],
+            ) {
                 let head = get_property_name_arg(&args[0]);
                 let arg: String;
                 {
