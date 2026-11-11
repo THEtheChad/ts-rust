@@ -2028,3 +2028,21 @@ once a **reconciliation step** is built and tested.
 
   Everything else from round 1 is confirmed. Round 3 sent, the last; root
   decides after it.
+- **B5 done; merged.** Direct tests for B2's risks 8 (sort sign and
+  order, then the d.ts specifier), 9 (project-relative across packages that
+  differ only in case), 11 (realpath differing only in case, for modules
+  and type references) and 14 (overlay listing; Go folds `İ` to `i` when
+  comparing names, never `ı`).
+  - **Go's answers:** from in-package probe tests on a scratch copy of the
+    pin (`scripts/perf-rearch/b5_go_probes.sh`). Where Go loops over a map,
+    each case ran 200–500 times, and the tests accept any answer Go gave.
+  - **Each revert** fails only its own risk's tests. No difference from Go
+    was found, so no production code changed.
+  - **The release `tsgo`:** sections and segments are identical. Only the
+    `.llvm.<N>` symbol suffixes and the build-id differ, because the crate
+    hash covers the test modules.
+  - **New backlog item:** `run-cargo-capped.sh:175`'s `ulimit -v` makes
+    node fail (`pthread_create: Invalid argument`), so the 14 node-backed
+    go_baselines tests (jsnum, astnav_tokens) fail through the wrapper.
+    They pass when run directly, as `parity_tests.py` does. This is the
+    same failure B4 put down to the unit's environment.
