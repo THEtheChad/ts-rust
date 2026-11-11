@@ -2813,6 +2813,39 @@ shows. The progress barrier covers what the floor could not: an ATA request whos
 - **The double install did not show in any run** (B4 saw it in 1 of 50). Its fix is shown by the
   `progress-late` control above, not by this table.
 
+### Refill, gate and cost
+
+- **Self-tests** (`df7a71ff3`'s harness, `6ad5bb93c`, under the heavy-run rule): all OK.
+  - H4: JS 57 ok, Python 36.
+  - H6 40, H7 111.
+  - H8 76 (unit and end to end, with `h9()`).
+  - Referees: `parity_referees_test.py` 122; `referee-selftest.mjs` 48.
+- **Refill.** The session sources changed (`client.mjs`, `scenario.mjs`, `session.mjs`, `settings.mjs`),
+  so every lsp key is new. The one refill followed H8's plan, on `tsgo-head-865385add-rel`
+  (`scratch/h9/fill.sh`, 09:07 to 09:56 UTC):
+  - fill-1 (`runs/h9-lsp-fill-1`, 637 s);
+  - two `--go-refill` fills of each session where Go races (hono-f12-p6, umami-f12-p6,
+    second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12);
+  - fill-2 (`runs/h9-lsp-fill-2`, 239 s).
+
+  fill-1 and fill-2 each gave 2,681 MATCH and 29 GO-BROKEN, every one of the 2,710 lsp items with its
+  status in the base. The GO-BROKEN set is the base's: hono 23, umami 5, watch-hono `end watch ids` 1.
+  Without progress in the compare, the umami `load server messages` items of the probe above are MATCH.
+- **Gate:** `parity.sh full tsgo-head-865385add-rel --base base-current` (`runs/h8r3b-head-865385add-full`),
+  `runs/h9-df7a71ff3-full`, `checkoutHead` `df7a71ff3`, harness clean, 10:03 to 10:26 UTC, load 1.7 to 16:
+  **PARITY OK**.
+  - 187,389 items compared: 0 lost, 0 not run, 0 known-bad not as pinned, 0 new not good, 0 crashes on
+    good items, 36 grandfathered (as pinned), 0 stale, 0 recovered, none newly good by a referee.
+  - cli 170 MATCH; tests 140,004 PASS, 1,731 IGNORED; api 49 MATCH; corpus 12,727 MATCH.
+  - lsp 2,681 MATCH, 29 GO-BROKEN (the base's).
+  - fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's).
+- **Two more lsp tiers** (`runs/h9-df7a71ff3-lsp-{2,3}`): 2,681 MATCH and 29 GO-BROKEN each, with no item
+  off its base status. In all 3 runs every `session messages` item (13) and every checkpoint `server
+  messages` item (73) is MATCH.
+- **Cost:** the lsp tier's wall time was 298 s in the gate (its load rose to 16 while it ran), then 240.9 s
+  and 239.5 s in the two extra runs (load 1 to 8). The base's gate tier took 232 s, so the barriers cost
+  about 8 s (3%) on a quiet host. Most of a scenario's time is still the `ATA_IDLE_MS` floor of its waits.
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
