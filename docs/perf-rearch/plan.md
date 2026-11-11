@@ -2127,3 +2127,13 @@ once a **reconciliation step** is built and tested.
       `core.rs` and lib-blob change;
     - formatter sizes stay `i32` (Go's `int`), which can't be probed
       without Go allocating gigabytes.
+- **B6 review: REJECT** (`reviews/2026-11-11-astra-b6.md`). The 83/74/83
+  lists, precedence and omission rules are confirmed.
+  - **The findings:**
+    - the hover cap's ×10 wrap;
+    - formatter sizes still `i32` (observable: `tabSize` 2^32);
+    - `i64` serialized through `f64`;
+    - empty against nil slices in `MarshalJSONTo`;
+    - 2 vacuous or masked probes.
+  - All 5 to fix, and fold the amd64 conversion into one helper. Round 2
+    sent.
