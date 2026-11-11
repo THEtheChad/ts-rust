@@ -2109,3 +2109,21 @@ once a **reconciliation step** is built and tested.
     base, so a programmatic `paths` without `pathsBasePath` gives TS2307.
   - **Finding 2:** the api scenario queries nothing after the build.
   - The refactor itself is confirmed faithful. Round 2 sent.
+- **B6 done; Astra review running.** Head `1867f09aa`, merges cleanly.
+  - **The probe:** the new lsp `prefs` session (495 answers). The base had
+    1 DIFF (`maximumHoverLength` 4294967306 wrapped in an `i32`); the head
+    is 495 MATCH. The other odd inputs already matched.
+  - **The port:** Go's generated parser and serializer
+    (`userpreferences_generated.rs`) in place of the reflective one. The
+    hand-written ports equal Go's complexity. Production code −1,557 lines.
+  - **Gate:** `runs/b6-1867f09aa-full` PARITY OK, with lsp 3,176 MATCH.
+  - **icount, LSP keyed load:** +0.30%, inside 1.1% spread (p = 0.14);
+    the CLI control is flat.
+  - **Backlog from B6:**
+    - non-object init options and `workspace/configuration` answers need a
+      shared-source change, so do them with the next all-session refill;
+    - fold the 3 copies of the amd64 `float64_to_int` (jsnum,
+      parsing_helpers, userpreferences_generated) together with the
+      `core.rs` and lib-blob change;
+    - formatter sizes stay `i32` (Go's `int`), which can't be probed
+      without Go allocating gigabytes.
