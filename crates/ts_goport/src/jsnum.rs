@@ -174,7 +174,8 @@ impl Number {
             let magnitude = e * go_math::log2(b.abs());
             if magnitude > 53.0 && magnitude <= go_math::log2(f64::MAX) {
                 // |b| >= 2 here, so the magnitude limit keeps e <= 1024.
-                let exact = BigInt::from(go_math::int64(b)).pow(go_math::int64(e) as u32);
+                let exact = BigInt::from(crate::gostd::conv::float64_to_int64(b))
+                    .pow(crate::gostd::conv::float64_to_int64(e) as u32);
                 return Self(big_float_to_f64(&exact, 256));
             }
         }
@@ -558,17 +559,6 @@ mod go_math {
         }
         // Go's constant `1/Ln2` is exact before it rounds: LOG2_E.
         log(frac) * std::f64::consts::LOG2_E + exp as f64
-    }
-
-    /// Go's `int64(x)` on amd64 (CVTTSD2SQ): a value out of range gives
-    /// `math.MinInt64`, where Rust's `as` saturates. In `exponentiate`, only
-    /// a base of exactly 2^63 is out of range.
-    pub(super) fn int64(x: f64) -> i64 {
-        if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&x) {
-            x as i64
-        } else {
-            i64::MIN
-        }
     }
 
     /// Go's `useFMA` (exp_amd64.go): `cpu.X86.HasAVX && cpu.X86.HasFMA`.
