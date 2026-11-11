@@ -1184,6 +1184,7 @@ fn build_program(
     drop(previous);
     let program_state = ProgramState {
         cwd: intern_program_str(&cwd),
+        base_directory: intern_program_str(&np.base_directory()),
         use_case_sensitive_file_names,
         common_source_directory: Some(common_source_directory),
         alias_resolver: false,
@@ -2061,8 +2062,8 @@ impl GoSharedState {
 
     // Go: compiler/program.go:237 GetParseFileRedirect
     // Go: compiler/projectreferencefilemapper.go:45 getParseFileRedirect
-    // PORT: after the load, so `getSourceToDtsIfSymlink` only reads
-    // `realpathDtsToSource`. None is the Go "".
+    // PORT: after the load: it reads `realpathDtsToSource`, which only the
+    // load's builder fills (`resolveSymlink`). None is the Go "".
     // PERF: with no project reference entries there is no redirect, and
     // the path is not made.
     pub(super) fn get_parse_file_redirect(&self, file_name: &str) -> Option<&str> {

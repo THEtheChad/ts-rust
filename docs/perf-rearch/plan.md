@@ -2158,3 +2158,105 @@ once a **reconciliation step** is built and tested.
   declaration emit's module specifiers still use the process directory for
   `paths` (`ProgramHost::base_directory`), giving `"../shared/value"`
   where Go writes `"alias"`. Round 3 sent, the last.
+- **W3 done; Astra review running.** Head `f24c08c9b`.
+  - **Port bloat:** 14 → 9 rows with Δ ≥ 10 (≥ 25: 2 → 1), including
+    `Scanner::scan` 258 → 222 (Go 224) and `get_symbol_at_location`
+    108 → 92 (Go 97). **Own code:** 24 → 23 over 25.
+  - **Left:**
+    - 5 port rows are Go's tagless-switch residue;
+    - `create_late_bound_index_signatures` (`core.IfElse` eagerness);
+    - `subtree_facts_of_data` (a hot match over Go's 72 methods);
+    - `update_indexes` (cancellation points);
+    - 21 own rows are stdlib and x/text ports within +6 of their Go.
+  - **Gate:** `runs/w3-ccdaa34b4-full` PARITY OK; icount single-threaded
+    at most +0.034%.
+  - **Root's decision on gorel** (W3 asked):
+    - score the stdlib and x/text ports against Go's own source, a real
+      correction;
+    - show tagless-switch residue as its own column rather than
+      subtracting it, so the raw Δ stays honest.
+
+    Both go to F6, which starts after B6 and B7 merge, since it edits
+    markers in their files.
+- **B8 started:** the `WORKER_FS` suspect. On a miss, checker workers ask
+  the OS disk, where Go asks the program's FS (LSP overlay, API virtual).
+  Probe, fix the Go way, measure.
+- **W3: Astra ACCEPT; merged.**
+  - **Confirmed:**
+    - the scanner change is exactly 8 `break 'sw` → `return` plus 12
+      continues, with the same state;
+    - fallthrough order is kept;
+    - `msg_in` and `new_object_type` are faithful;
+    - the lib-blob payloads are identical;
+    - the remaining rows are defensible (Astra reproduced all 23 Go values).
+  - **Root fixed `w3.md`'s counts:** 23 stdlib rows, not 21; 6 residue
+    rows plus 3 others.
+  - **base-current** moved to `w3-ccdaa34b4-full`, which contains every merge through W3.
+- **B7 round 3 done; merged.** Root accepts it without a further Astra
+  round, as decided.
+  - **The fix:** declaration emit's module specifiers use the program's
+    base. Item `api/build-decl-paths-base-directory`: Go writes
+    `import("alias").V`, tsc-rs on round-2 code `import("../shared/value").V`;
+    DIFF there, MATCH from `049abdd54`.
+  - **Root's checks:**
+    - the reproduction outputs (`scratch/b7/api-r3-{old,new}`);
+    - `base_directory_sites.py check` COMPLETE: 156 Go sites (76 correct,
+      13 fixed, 67 n/a);
+    - `parity_b7_test.py`: B7 SELFTEST OK (the changedProjects key sort).
+  - **Gate:** `runs/20261111-143822-full-114452a990` PARITY OK, 0 lost;
+    icount single-threaded flat.
+  - **base-current stays at W3's run,** because B7's gate predates W3. B7's
+    7 new items are protected by the new-not-good check. The next full
+    gate on the merged head becomes the base.
+- **Bug pattern** (Chad asked where the bugs come from). The real
+  differences found in this phase fall into three groups:
+  1. **Context taken from the process, not the program:** case
+     sensitivity (B2), base directory (B7), FS on workers (B8, suspected).
+  2. **Go semantics Rust types don't carry:** `int` width, nil against
+     empty, integers written through `f64` (B6).
+  3. **Stale pre-pin ports** (B3).
+
+  None was in checker logic. Groups 1 and 2 can be audited mechanically:
+  B2, B7 and B8 cover group 1.
+- **A1 started:** a read-only audit for group 2 (Go `int` ported to a
+  narrower type, nil against empty, integers through `f64`), ranked, with
+  fixes and tests suggested.
+- **A1 audit done** (`audits/a1-int-width-nil-empty.md`). The generated
+  `lsproto` layer (1,162 fields) and the API types (509) match Go
+  mechanically.
+  - **New findings, top 5:**
+    - A1: API `maxResponseBytesPerPage` as `i32`, so a large value fails
+      the batch;
+    - B1: an empty `TypeAcquisition.include/exclude` is lost in API output;
+    - A2: float→`int32` enum options saturate where Go wraps to
+      `i32::MIN`;
+    - A3: a `formatNodeForInsertion` position ≥ 2^31 panics;
+    - A5: the build-info reader wraps ids and `int32` fields where Go
+      rejects them or keeps them.
+  - **Lower ranks:** A4 and A6–A9, B1b and B2 (log lines only).
+  - **Lane B9** fixes them once B6 merges: A2 and A6 reuse B6's
+    `gostd/conv.rs` amd64 helper, and B6 owns `parsing_helpers.rs`.
+- **B6 round 2 done** (head `6fb96eb1e`). All 5 findings are fixed.
+  - **The fixes:**
+    - `i64` hover cap with `wrapping_mul`;
+    - `i64` formatter sizes, with Go's `strings.Repeat` panic text;
+    - integer tokens;
+    - `Option<Vec>` slices.
+    - The 3 amd64 conversions are folded into
+      `gostd::conv::float64_to_int64`; the lib blobs are byte-identical.
+  - **The prefs battery:** 50 one-preference probes, each shown to bite in
+    Go (`prefs_sensitivity.py`). DIFFs: base 7, round 1 3, round 2 0
+    (902 MATCH).
+  - **Gate:** `runs/b6r2-6fb96eb1e-full` PARITY OK; icount flat.
+  - **Cost:** the lsp tier goes from about 300 s to 573 s (prefs is about
+    117 s per server run). Astra's recheck is asked to list the redundant
+    probes, and root trims after the recheck. Prefs also moves to the full
+    tier only, unless a quick-tier reason holds.
+  - **Astra recheck** running (round 2 of 3).
+- **B6 recheck: REJECT,** with 2 findings (`reviews/2026-11-11-astra-b6-r2.md`):
+  - a 2^62 indent aborts tsc-rs where Go's `makeslice` limit gives a
+    recoverable InternalError;
+  - `prefs_sensitivity.py` doesn't sort completion items.
+
+  Round 3 sent, the last. It also trims the battery per Astra's redundancy
+  list and moves prefs to the full tier only.

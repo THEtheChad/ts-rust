@@ -1678,12 +1678,30 @@ pub fn extension_is_ok(extensions: Extensions, extension: &str) -> bool {
         || (extensions.intersects(Extensions::JSON) && extension == EXTENSION_JSON)
 }
 
+// Go: module/resolver.go:2307 fileSystemResolutionHost
+pub struct FileSystemResolutionHost {
+    pub fs: Rc<dyn Fs>,
+    pub current_directory: String,
+}
+
+impl ResolutionHost for FileSystemResolutionHost {
+    // Go: module/resolver.go:2312 (*fileSystemResolutionHost).FS
+    fn fs(&self) -> &dyn Fs {
+        &*self.fs
+    }
+
+    // Go: module/resolver.go:2316 (*fileSystemResolutionHost).GetCurrentDirectory
+    fn get_current_directory(&self) -> &str {
+        &self.current_directory
+    }
+}
+
 // Go: module/resolver.go:2320 ResolveConfig
-pub fn resolve_config(
-    module_name: &str,
-    containing_file: &str,
-    host: Rc<dyn ResolutionHost>,
-) -> ResolvedModule {
+pub fn resolve_config(module_name: &str, containing_file: &str, fs: Rc<dyn Fs>) -> ResolvedModule {
+    let host: Rc<dyn ResolutionHost> = Rc::new(FileSystemResolutionHost {
+        fs,
+        current_directory: get_directory_path(containing_file),
+    });
     let resolver = new_resolver(ResolverOptions {
         host: Some(host),
         compiler_options: Some(Rc::new(CompilerOptions {

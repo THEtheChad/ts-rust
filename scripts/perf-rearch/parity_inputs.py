@@ -33,6 +33,12 @@ the ctime) or content hash is no longer the one it had when the tier started. A 
 its items ERROR, and the tier discards its staged cache entries. Without inotify, `check(root)`
 after each process does the identity check instead.
 
+Fixtures. `fixture_tree(files, base, ...)` writes a synthetic project (a JSON map of relative path to
+text, or to {"symlink": relative target}) once into a content-addressed dir, base/<name-><hash>-m<dir
+mode><file mode>/tree, with fixed modes and a fixed mtime, and checks it against the map on every call
+(`check_fixture`). The api tier's disk fixtures (parity_api.py) and the CLI tier's synthetic projects
+(parity_cli.py, parity-fixtures.json) are made this way.
+
 `Stage` holds the cache entries a tier run makes until that run has verified clean: the tier writes
 them to ~/.cache/perf-rearch/parity/stage/<run>/ and publishes them (a rename into the cache) only
 at its end, when `verify()` found nothing; otherwise it discards them. Every entry carries the key
@@ -215,6 +221,60 @@ def _check_links(tree):
                 real = os.path.realpath(p)
                 if os.path.isabs(t) or not (real == top or real.startswith(top + '/')):
                     raise SnapshotError(f'symlink {os.path.relpath(p, tree)} -> {t} leaves the tree')
+
+
+def fixture_tree(files, base, dir_mode, file_mode, mtime, name=''):
+    """(tree, content hash) of a synthetic project: `files` ({relative path: text or {"symlink":
+    relative target}}) written once into base/<name-><hash>-m<modes>/tree with dir_mode, file_mode and
+    the mtime `mtime` on every entry, and checked against `files` every time (SnapshotError when the
+    tree is not exactly that)."""
+    h = json_hash(files)[:24]
+    tree = Path(base) / f'{name + "-" if name else ""}{h}-m{dir_mode:o}{file_mode:o}' / 'tree'
+    if not tree.exists():
+        tmp = tree.parent / f'tmp-{os.getpid()}-{time.monotonic_ns()}'
+        tmp.mkdir(parents=True)
+        for rel, v in files.items():
+            p = tmp / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(v, dict):
+                os.symlink(v['symlink'], p)
+            else:
+                p.write_text(v)
+        for top, dirs, fs in os.walk(tmp, topdown=False):
+            for x in fs + dirs:
+                q = os.path.join(top, x)
+                if not os.path.islink(q):
+                    os.chmod(q, dir_mode if os.path.isdir(q) else file_mode)
+                os.utime(q, (mtime, mtime), follow_symlinks=False)
+        os.chmod(tmp, dir_mode)
+        os.utime(tmp, (mtime, mtime))
+        try:
+            tmp.rename(tree)
+        except OSError:  # another tier made it at the same time
+            remove_tree(tmp)
+    check_fixture(tree, files, dir_mode, file_mode, mtime)
+    return tree, h
+
+
+def check_fixture(tree, files, dir_mode, file_mode, mtime):
+    """Raises SnapshotError unless tree holds exactly files (bytes, link targets, names, the modes, the
+    mtime)."""
+    seen = {}
+    for top, dirs, fs in os.walk(tree):
+        for x in dirs + fs:
+            p = os.path.join(top, x)
+            st = os.lstat(p)
+            link = stat.S_ISLNK(st.st_mode)
+            want = None if link else dir_mode if stat.S_ISDIR(st.st_mode) else file_mode
+            if (want is not None and stat.S_IMODE(st.st_mode) != want) or int(st.st_mtime) != mtime:
+                raise SnapshotError(f'{p}: another mode or mtime than the fixture\'s')
+            if link:
+                seen[os.path.relpath(p, tree)] = {'symlink': os.readlink(p)}
+            elif not stat.S_ISDIR(st.st_mode):
+                seen[os.path.relpath(p, tree)] = Path(p).read_bytes() if stat.S_ISREG(st.st_mode) else None
+    want = {k: v if isinstance(v, dict) else v.encode() for k, v in files.items()}
+    if seen != want:
+        raise SnapshotError(f'{tree} is not its fixture: {sorted(set(seen) ^ set(want))[:5] or "bytes differ"}')
 
 
 def snapshot(root):

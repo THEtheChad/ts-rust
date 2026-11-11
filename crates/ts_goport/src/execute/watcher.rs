@@ -526,8 +526,10 @@ impl Watcher {
         }
 
         // For no-config CLI mode, ensure CWD is watched
+        // Go: the command line's base directory (watcher.go:226, ts#64159),
+        // which without a config file is the current directory it was parsed in.
         if self.config.config_file.is_none() && desired_dirs.is_empty() {
-            let dir = self.sys.fs().realpath(&cwd);
+            let dir = self.sys.fs().realpath(self.config.get_current_directory());
             desired_dirs.insert(dir, false);
         }
 

@@ -4,22 +4,39 @@ use crate::contentmapper::{Manifest, is_valid_extension};
 use crate::frontend::prelude::*;
 use std::collections::BTreeMap;
 
+// Go: tsoptions/contentmappers.go:22 contentMapperResolutionHost (ts#64581)
+struct ContentMapperResolutionHost {
+    fs: Rc<dyn Fs>,
+    current_directory: String,
+}
+
+impl ResolutionHost for ContentMapperResolutionHost {
+    // Go: tsoptions/contentmappers.go:27 (*contentMapperResolutionHost).FS
+    fn fs(&self) -> &dyn Fs {
+        &*self.fs
+    }
+
+    // Go: tsoptions/contentmappers.go:31 (*contentMapperResolutionHost).GetCurrentDirectory
+    fn get_current_directory(&self) -> &str {
+        &self.current_directory
+    }
+}
+
 // Go: tsoptions/contentmappers.go:35 resolveContentMapperManifest (ts#64581)
 // resolveContentMapperManifest locates packageName in node_modules (walking up from the directory of
 // containingFile via node module resolution) and reads its package.json to produce the mapper's manifest
 // and package directory. It never executes the package. On failure it returns a diagnostic describing why
 // the mapper could not be resolved; on success the diagnostic is nil.
-// PORT: Go nil `*ast.Diagnostic` is `None`. Go passes the `ParseConfigHost`
-// as the resolution host; `ResolverHost` keeps its `FS()` and
-// `GetCurrentDirectory()` values, as for `extends`.
+// PORT: Go nil `*ast.Diagnostic` is `None`. Go takes the file system; this
+// takes the `ParseConfigHost` and uses its `FS()`.
 pub fn resolve_content_mapper_manifest(
     host: &dyn ParseConfigHost,
     containing_file: &str,
     package_name: &str,
 ) -> (Manifest, String, Option<Diagnostic>) {
-    let resolver_host: Rc<dyn ResolutionHost> = Rc::new(ResolverHost {
+    let resolver_host: Rc<dyn ResolutionHost> = Rc::new(ContentMapperResolutionHost {
         fs: host.fs(),
-        current_directory: host.get_current_directory(),
+        current_directory: get_directory_path(containing_file),
     });
     let resolver = new_resolver(ResolverOptions {
         host: Some(resolver_host),

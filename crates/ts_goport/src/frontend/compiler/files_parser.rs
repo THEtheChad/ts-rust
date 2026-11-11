@@ -124,8 +124,7 @@ impl ParseTask {
             )
         });
         let redirect = loader
-            .project_reference_file_mapper
-            .borrow()
+            .project_references
             .get_parse_file_redirect(&new_has_file_name(&self.normalized_file_path, &self.path));
         if !redirect.is_empty() {
             self.redirect(loader, &redirect);
@@ -654,8 +653,8 @@ fn set_prefetch_redirects(loader: &FileLoader, pool: &PrefetchPool) {
         return;
     }
     let redirects: FxHashMap<String, (String, Path)> = loader
-        .project_reference_file_mapper
-        .borrow()
+        .project_references
+        .mapper()
         .source_to_project_reference
         .values()
         .filter(|reference| !reference.output_dts.is_empty())
@@ -1699,7 +1698,12 @@ impl FilesParser {
             files: all_files,
             duplicate_source_files,
             files_by_path,
-            project_reference_file_mapper: Some(loader.project_reference_file_mapper.clone()),
+            project_reference_file_mapper: Some(
+                loader
+                    .project_references
+                    .project_reference_file_mapper
+                    .clone(),
+            ),
             resolved_modules: Arc::new(resolved_modules),
             type_resolutions_in_file: Rc::new(type_resolutions_in_file),
             source_file_meta_datas: Rc::new(source_file_meta_datas),
@@ -2795,6 +2799,10 @@ impl PrefetchConfig {
 /// program resolver.
 struct WorkerResolveConfig {
     options: CompilerOptions,
+    /// The resolver's base directory: Go `opts.Config.BaseDirectory()`, the
+    /// current directory of the loader's resolution host
+    /// (`config_base_directory`).
+    base_directory: String,
     typings_location: String,
     project_name: String,
     /// Go `opts.Config.ContentMapperExtensions()`, the resolver's extra
@@ -2849,7 +2857,7 @@ impl WorkerResolveConfig {
         let mut references = Vec::new();
         let mut redirects = FxHashMap::default();
         if shared.is_some() {
-            let mapper = loader.project_reference_file_mapper.borrow();
+            let mapper = loader.project_references.mapper();
             let mut index_of: FxHashMap<*const ParsedCommandLine, usize> = FxHashMap::default();
             // Go `getRedirectForResolution` tries the sources first, so a
             // source entry replaces an output entry of the same path.
@@ -2871,6 +2879,7 @@ impl WorkerResolveConfig {
         }
         Some(WorkerResolveConfig {
             options: (**options).clone(),
+            base_directory: loader.base_directory(),
             typings_location: loader.opts.typings_location.clone(),
             project_name: loader.opts.project_name.clone(),
             extra_extensions: loader.content_mapper_extensions.clone(),
@@ -2884,18 +2893,21 @@ impl WorkerResolveConfig {
     /// The config of the early pool of `config` (`start_default_lib_prefetch`):
     /// `of_loader` of a tsc loader with no project references, no content
     /// mappers and a new shared resolution cache. `None` when such a loader
-    /// shares no resolution cache (`process_all_program_files`).
+    /// shares no resolution cache (`process_all_program_files`), and for a
+    /// hand-built config with no base directory.
     fn of_config(config: &ParsedCommandLine) -> Option<Self> {
         let options = config.compiler_options();
         if !super::file_loader::workers_resolve_imports(options)
             || options.trace_resolution == Tristate::True
             || config.has_project_references()
             || !config.content_mappers().is_empty()
+            || config.get_current_directory().is_empty()
         {
             return None;
         }
         Some(WorkerResolveConfig {
             options: (**options).clone(),
+            base_directory: config.get_current_directory().to_string(),
             typings_location: String::new(),
             project_name: String::new(),
             extra_extensions: Vec::new(),
@@ -2915,6 +2927,7 @@ impl WorkerResolveConfig {
         };
         shared
             && self.options == other.options
+            && self.base_directory == other.base_directory
             && self.typings_location == other.typings_location
             && self.project_name == other.project_name
             && self.extra_extensions == other.extra_extensions
@@ -4303,7 +4316,7 @@ impl WorkerResolverSlot {
             None => WorkerResolver::new(
                 config,
                 resolver_fs,
-                &shared.config.current_directory,
+                &config.base_directory,
                 shared.stats.host.get().is_some(),
             ),
         });

@@ -1801,7 +1801,7 @@ impl Checker {
         // upon instantiation, would collapse all the placeholders to just 'string', and an assignment check might
         // succeed. That would be a pointless and confusing outcome.
         if !matches.is_empty() || target.texts.iter().all(|s| s.is_empty()) {
-            'outer: for (i, &target) in types.iter().enumerate() {
+            for (i, &target) in types.iter().enumerate() {
                 let source = if !matches.is_empty() {
                     matches[i]
                 } else {
@@ -1852,7 +1852,7 @@ impl Checker {
                                 }
                                 if !self.ty(matching_type).flags.intersects(TypeFlags::NEVER) {
                                     self.infer_from_types(n, matching_type, target);
-                                    continue 'outer;
+                                    continue;
                                 }
                             }
                         }

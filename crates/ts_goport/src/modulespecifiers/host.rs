@@ -329,6 +329,14 @@ impl ModuleSpecifierGenerationHost for ProgramHost {
         Some(known_symlinks)
     }
 
+    // Go: compiler/emitHost.go:106 emitHost.BaseDirectory (ts#64159): the
+    // program's base directory, the base of "paths" without pathsBasePath
+    // (modulespecifiers/specifiers.go:524) and the project directory without a
+    // config file (:593).
+    fn base_directory(&self) -> String {
+        crate::program::base_directory().to_string()
+    }
+
     fn common_source_directory(&self) -> String {
         crate::program::common_source_directory().to_string()
     }

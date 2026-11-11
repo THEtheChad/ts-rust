@@ -1,0 +1,35 @@
+{
+ "about": "Synthetic projects of the parity gate: each is a tree of files (text) and relative symlinks ({\"symlink\": target}), written once into a read-only content-addressed dir (parity_inputs.fixture_tree). The CLI tier's projects name one with \"fixture\" (parity-projects.json); an api scenario uses one as its disk fixture with \"disk\": \"@fixture:<name>\" (parity-api-scenarios.json).",
+ "fixtures": {
+  "symlink-monorepo": {
+   "package.json": "{\n  \"name\": \"symlink-monorepo\",\n  \"private\": true\n}\n",
+   "tsconfig.json": "{\n  \"files\": [],\n  \"references\": [\n    {\n      \"path\": \"packages/a\"\n    },\n    {\n      \"path\": \"packages/c\"\n    },\n    {\n      \"path\": \"packages/d\"\n    },\n    {\n      \"path\": \"packages/b\"\n    },\n    {\n      \"path\": \"packages/b/tsconfig.preserve.json\"\n    }\n  ]\n}\n",
+   "packages/a/package.json": "{\n  \"name\": \"a\",\n  \"version\": \"1.0.0\",\n  \"types\": \"dist/index.d.ts\"\n}\n",
+   "packages/a/tsconfig.json": "{\n  \"compilerOptions\": {\n    \"composite\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"target\": \"es2020\",\n    \"lib\": [\n      \"es2020\"\n    ],\n    \"types\": [],\n    \"strict\": true,\n    \"rootDir\": \"src\",\n    \"outDir\": \"dist\",\n    \"paths\": {\n      \"~a/*\": [\n        \"./src/*\"\n      ]\n    }\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+   "packages/a/src/index.ts": "import type { Inner } from \"~a/inner\";\nexport type { Inner };\nexport { inner } from \"./inner\";\nexport const a: number = 1;\nexport function wrap(v: number): Inner {\n  return { v };\n}\n",
+   "packages/a/src/inner.ts": "export interface Inner {\n  v: number;\n}\nexport const inner: Inner = { v: 2 };\n",
+   "packages/c/package.json": "{\n  \"name\": \"@scope/c\",\n  \"version\": \"1.0.0\",\n  \"exports\": {\n    \".\": {\n      \"types\": \"./types/index.d.ts\",\n      \"default\": \"./dist/index.js\"\n    }\n  }\n}\n",
+   "packages/c/tsconfig.json": "{\n  \"compilerOptions\": {\n    \"composite\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"target\": \"es2020\",\n    \"lib\": [\n      \"es2020\"\n    ],\n    \"types\": [],\n    \"strict\": true,\n    \"rootDir\": \"src\",\n    \"outDir\": \"dist\",\n    \"declarationDir\": \"types\"\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+   "packages/c/src/index.ts": "export const c = 3 as const;\n",
+   "packages/d/package.json": "{\n  \"name\": \"d\",\n  \"version\": \"1.0.0\",\n  \"types\": \"dist/index.d.ts\"\n}\n",
+   "packages/d/tsconfig.json": "{\n  \"compilerOptions\": {\n    \"composite\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"target\": \"es2020\",\n    \"lib\": [\n      \"es2020\"\n    ],\n    \"types\": [],\n    \"strict\": true,\n    \"rootDir\": \"src\",\n    \"outDir\": \"dist\"\n  },\n  \"include\": [\n    \"src\"\n  ]\n}\n",
+   "packages/d/src/index.ts": "export const d: number = 4;\n",
+   "node_modules/.pnpm/d@1.0.0/node_modules/d": {
+    "symlink": "../../../../packages/d"
+   },
+   "packages/b/package.json": "{\n  \"name\": \"b\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": {\n    \"a\": \"workspace:*\",\n    \"@scope/c\": \"workspace:*\",\n    \"d\": \"workspace:*\"\n  }\n}\n",
+   "packages/b/node_modules/a": {
+    "symlink": "../../a"
+   },
+   "packages/b/node_modules/@scope/c": {
+    "symlink": "../../../c"
+   },
+   "packages/b/node_modules/d": {
+    "symlink": "../../../node_modules/.pnpm/d@1.0.0/node_modules/d"
+   },
+   "packages/b/tsconfig.json": "{\n  \"compilerOptions\": {\n    \"composite\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"target\": \"es2020\",\n    \"lib\": [\n      \"es2020\"\n    ],\n    \"types\": [],\n    \"strict\": true,\n    \"rootDir\": \"src\",\n    \"outDir\": \"dist\",\n    \"paths\": {\n      \"a-src/*\": [\n        \"../a/src/*\"\n      ],\n      \"a-built/*\": [\n        \"./node_modules/a/dist/*\"\n      ]\n    }\n  },\n  \"include\": [\n    \"src\"\n  ],\n  \"references\": [\n    {\n      \"path\": \"../a\"\n    },\n    {\n      \"path\": \"../c\"\n    },\n    {\n      \"path\": \"../d\"\n    }\n  ]\n}\n",
+   "packages/b/tsconfig.preserve.json": "{\n  \"compilerOptions\": {\n    \"preserveSymlinks\": true,\n    \"outDir\": \"dist-preserve\",\n    \"tsBuildInfoFile\": \"dist-preserve/tsconfig.preserve.tsbuildinfo\"\n  },\n  \"extends\": \"./tsconfig.json\",\n  \"references\": [\n    {\n      \"path\": \"../a\"\n    },\n    {\n      \"path\": \"../c\"\n    },\n    {\n      \"path\": \"../d\"\n    }\n  ]\n}\n",
+   "packages/b/src/index.ts": "import { a, wrap, type Inner } from \"a\";\nimport { a as aBuilt } from \"a/dist/index\";\nimport { inner } from \"a-src/inner\";\nimport { inner as builtInner } from \"a-built/inner\";\nimport { c } from \"@scope/c\";\nimport { d } from \"d\";\nexport const b: Inner = wrap(a + aBuilt + inner.v + builtInner.v + c + d);\n"
+  }
+ }
+}

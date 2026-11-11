@@ -321,6 +321,20 @@ impl ProcessedFiles {
     }
 }
 
+/// Go `opts.Config.BaseDirectory()`: the directory that a program's paths
+/// resolve against, the config file's directory or, without a config file,
+/// the current directory of the command line or project.
+// PORT: a hand-built `ParsedCommandLine` with no current directory (the
+// compiler test harness until its ts#64159 part, harnessutil.go:208) gives
+// the host's current directory, as N did.
+pub fn config_base_directory(config: &ParsedCommandLine, host: &dyn CompilerHost) -> String {
+    let base_directory = config.get_current_directory();
+    if base_directory.is_empty() {
+        return host.get_current_directory();
+    }
+    base_directory.to_string()
+}
+
 impl NewProgram {
     // PORT: Go `p.resolver` and `p.projectReferenceFileMapper` are set by
     // `processAllProgramFiles`. `ProcessedFiles` holds them as `Option`, so
@@ -350,16 +364,10 @@ impl NewProgram {
     /// The directory that the program's paths resolve against: the config
     /// file's directory, or the current directory without a config file
     /// (`ParsedCommandLine.BaseDirectory()`, which is
-    /// `ParsedCommandLine::get_current_directory` here).
-    // PORT: a hand-built `ParsedCommandLine` with no current directory (the
-    // compiler test harness until its ts#64159 part, harnessutil.go:208)
-    // gives the host's current directory, as N did.
+    /// `ParsedCommandLine::get_current_directory` here; see
+    /// `config_base_directory`).
     pub fn base_directory(&self) -> String {
-        let base_directory = self.opts.config.get_current_directory();
-        if base_directory.is_empty() {
-            return self.host().get_current_directory();
-        }
-        base_directory.to_string()
+        config_base_directory(&self.opts.config, &**self.host())
     }
 
     // Go: program.go:155 (*Program).GetCurrentDirectory (ts#64159)
