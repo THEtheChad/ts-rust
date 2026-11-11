@@ -2221,3 +2221,18 @@ once a **reconciliation step** is built and tested.
 - **A1 started:** a read-only audit for group 2 (Go `int` ported to a
   narrower type, nil against empty, integers through `f64`), ranked, with
   fixes and tests suggested.
+- **A1 audit done** (`audits/a1-int-width-nil-empty.md`). The generated
+  `lsproto` layer (1,162 fields) and the API types (509) match Go
+  mechanically.
+  - **New findings, top 5:**
+    - A1: API `maxResponseBytesPerPage` as `i32`, so a large value fails
+      the batch;
+    - B1: an empty `TypeAcquisition.include/exclude` is lost in API output;
+    - A2: float→`int32` enum options saturate where Go wraps to
+      `i32::MIN`;
+    - A3: a `formatNodeForInsertion` position ≥ 2^31 panics;
+    - A5: the build-info reader wraps ids and `int32` fields where Go
+      rejects them or keeps them.
+  - **Lower ranks:** A4 and A6–A9, B1b and B2 (log lines only).
+  - **Lane B9** fixes them once B6 merges: A2 and A6 reuse B6's
+    `gostd/conv.rs` amd64 helper, and B6 owns `parsing_helpers.rs`.
