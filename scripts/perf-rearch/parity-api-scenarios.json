@@ -1595,6 +1595,36 @@
     "getProgramDiagnostics",
     "getSemanticDiagnostics"
    ]
+  },
+  {
+   "name": "build-decl-paths-base-directory",
+   "about": "B7 round 3 (Astra's B7 recheck, Go modulespecifiers/specifiers.go:524): declaration emit of a build of pkg/ from the session's directory, with paths (no pathsBasePath) added by the orchestrator's compilerOptions and rootDir ..; main.ts only re-exports make() of factory.ts, whose type V comes from \"alias\", so the declaration emit generates the specifier of V from the paths against the program's base directory (pkg/): \"alias\"",
+   "disk": {
+    "pkg/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"rootDir\": \"..\", \"outDir\": \"out\", \"noLib\": true, \"types\": []}, \"files\": [\"main.ts\", \"factory.ts\", \"../shared/value.ts\", \"globals.d.ts\"]}\n",
+    "pkg/globals.d.ts": "@GLOBALS@",
+    "shared/value.ts": "export class V {\n  x = 1;\n}\n",
+    "pkg/factory.ts": "import { V } from \"alias\";\nexport function make(): V {\n  return new V();\n}\n",
+    "pkg/main.ts": "import { make } from \"./factory\";\nexport const made = make();\n"
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/pkg/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "paths": {
+        "alias": [
+         "../shared/value"
+        ]
+       }
+      }
+     }
+    },
+    {
+     "build": ""
+    }
+   ]
   }
  ]
 }
