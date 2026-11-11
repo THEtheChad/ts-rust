@@ -1955,3 +1955,32 @@ once a **reconciliation step** is built and tested.
   - **base-current** moved to `h8r3b-head-865385add-full`.
   - **Next:** H9, the B4 barrier plus an ATA progress barrier, with one
     refill.
+- **Started:**
+  - **H9:** apply B4's barrier, add an ATA work-done-progress barrier in
+    place of the npm-idle window, check it under starvation, then one
+    refill and 3 lsp runs with `session messages` all MATCH.
+  - **Q9:**
+    - go_baselines clippy (about 87 errors), plus a CI clippy step for the
+      feature sets the gate tests;
+    - the root cause of the `build_watch_keeps_the_first_json_parse_of_a_cycle`
+      CRLF flake.
+- **H9 done; Astra review running.** Head `3195ad922` (gate on `df7a71ff3`).
+  - **The barriers:**
+    - B4's notification barrier is in lspdiff, and the patch is deleted;
+    - a work-done-progress barrier, with a 60 s deadline that makes the run
+      a harness ERROR;
+    - progress is left out of the compared streams, because Go only shows
+      one after 250 ms (`ProgressDelay`), so it depends on timing in Go.
+  - **npm-idle stays:** ATA runs that show no progress still schedule
+    refreshes.
+  - **Starvation (12 loops), load refreshes:** base Go 10–11 in all 8
+    runs, base tsc-rs 11 in 19 of 20; head Go 12 in 8 of 8, head tsc-rs 12
+    in 50 of 50.
+  - **Gate:** `runs/h9-df7a71ff3-full` PARITY OK, 0 lost. 3 lsp runs, with
+    all 13 `session messages` and 73 `server messages` items MATCH.
+  - **lsp time:** 240 s against 232 s (+3%).
+- **H9 review: REJECT** (`reviews/2026-11-11-astra-h9.md`). All four
+  findings are in scope. Fix 1 (fail closed on the notification deadline),
+  2 (progress lifecycle checks) and 3 (check Go's fixed progress payload, not
+  its occurrence). For 4, find a deterministic ATA completion signal, else
+  document the assumption. Fix both test weaknesses. Round 2 sent.
