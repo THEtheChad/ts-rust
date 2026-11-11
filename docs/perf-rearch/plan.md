@@ -1955,3 +1955,12 @@ once a **reconciliation step** is built and tested.
   - **base-current** moved to `h8r3b-head-865385add-full`.
   - **Next:** H9, the B4 barrier plus an ATA progress barrier, with one
     refill.
+- **Started:**
+  - **H9:** apply B4's barrier, add an ATA work-done-progress barrier in
+    place of the npm-idle window, check it under starvation, then one
+    refill and 3 lsp runs with `session messages` all MATCH.
+  - **Q9:**
+    - go_baselines clippy (about 87 errors), plus a CI clippy step for the
+      feature sets the gate tests;
+    - the root cause of the `build_watch_keeps_the_first_json_parse_of_a_cycle`
+      CRLF flake.
