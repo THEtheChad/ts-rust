@@ -168,8 +168,10 @@ def frame(msg):
 # or never; progress-title begins with "Wrong title" (round 2, finding 3); the others break the lifecycle Go keeps
 # (round 2, finding 2): twobegin (a second begin on the token), nocreate (begin without create), report-nobegin
 # and end-nobegin (created, then a report or end with no begin), end-uncreated (an end on a token never created),
-# nobegin (created, never begun).
-PROGRESS_END = {'progress-0': 0, 'progress-late': 4, 'progress-never': None, 'progress-title': 0, 'progress-twobegin': 0, 'progress-nocreate': 0,
+# nobegin (created, never begun). Round 3: report-request is Astra's sequence (create, begin, a report sent as a
+# request with an id, end); title-vary begins with "Wrong title" in about half of its runs (by the clock at start).
+VARY_WRONG = time.time_ns() // 1000 % 2 == 1
+PROGRESS_END = {'progress-report-request': 0, 'progress-title-vary': 0, 'progress-0': 0, 'progress-late': 4, 'progress-never': None, 'progress-title': 0, 'progress-twobegin': 0, 'progress-nocreate': 0,
                 'progress-report-nobegin': None, 'progress-end-nobegin': None, 'progress-end-uncreated': None, 'progress-nobegin': None}
 opens = [0]
 
@@ -193,7 +195,11 @@ def progress_open(uri):
         marker()  # as progress-0 does: the lifecycle break is the only difference
         return
     for _ in range(2 if mode == 'progress-twobegin' else 1):
-        note('begin', title='Wrong title' if mode == 'progress-title' else 'Loading', message="Installing types for 'fake'")
+        note('begin', title='Wrong title' if mode == 'progress-title' or (mode == 'progress-title-vary' and VARY_WRONG) else 'Loading',
+             message="Installing types for 'fake'")
+    if mode == 'progress-report-request':  # the wrong transport: a request, not a notification
+        emit(frame({'jsonrpc': '2.0', 'id': 'h9-report-%d' % opens[0], 'method': '$/progress',
+                    'params': {'token': token, 'value': {'kind': 'report', 'message': "Installing types for 'fake'"}}}))
     delay = PROGRESS_END[mode]
     if delay is None:
         return
@@ -222,8 +228,8 @@ def pump():
             methods[msg['id']] = msg['method']
         if mode in PROGRESS_END and msg.get('method') == 'textDocument/didOpen':
             progress_open(msg['params']['textDocument']['uri'])
-        if 'id' in msg and 'method' not in msg and str(msg['id']).startswith('h9-create-'):
-            continue  # the client's answer to the proxy's own create
+        if 'id' in msg and 'method' not in msg and str(msg['id']).startswith('h9-'):
+            continue  # the client's answer to the proxy's own create (or its report sent as a request)
         p.stdin.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
         p.stdin.flush()
     p.stdin.close()

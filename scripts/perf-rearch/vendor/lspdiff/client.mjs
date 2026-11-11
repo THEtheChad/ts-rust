@@ -112,8 +112,9 @@ export class ProgressBarrier {
 // depends on how long the work took (umami's program load, near 250 ms, began a progress in 1 of 4 Go runs), so
 // they are left out of every compared message list (scenario.mjs checkpoint "server messages", session.mjs
 // "session messages") and kept in the checkpoint's log entry as `progress`, which is not compared. What Go fixes
-// in each payload is checked instead (progressPayloadErrors), and every rule a message breaks joins the
-// compared list.
+// in each payload is checked instead (progressPayloadErrors): the rules a server's messages break go into the
+// entry's `progressRules`, which lspdiff.mjs judges per server before it compares the item (lane H9 round 3: a
+// tsc-rs that breaks one is a DIFF, a Go that does makes the item GO-BROKEN).
 export const PROGRESS_METHODS = new Set(["$/progress", "window/workDoneProgress/create"]);
 
 const keysAre = (o, want) => !!o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).sort().join(",") === [...want].sort().join(",");
@@ -150,10 +151,10 @@ export function progressPayloadErrors(method, params) {
   return out;
 }
 
-// The compared form of a list of progress events: the rules broken, each once, sorted ([] for a server that keeps
-// them, whatever progress it showed).
-export function progressFindings(events) {
-  return [...new Set(events.flatMap((e) => progressPayloadErrors(e.method, e.params)))].sort().map((rule) => ({ progress: rule }));
+// The rules a list of progress events breaks, each once, sorted ([] for a server that keeps them, whatever
+// progress it showed): a log entry's `progressRules` (scenario.mjs, session.mjs), judged by lspdiff.mjs.
+export function progressRules(events) {
+  return [...new Set(events.flatMap((e) => progressPayloadErrors(e.method, e.params)))].sort();
 }
 
 const MAX_HEADER_LINE = 256;
@@ -282,6 +283,15 @@ export class LspClient {
   #onMessage(msg, raw) {
     const at = performance.now();
     this.lastMessageAt = at;
+    // Lane H9 round 3: a progress message on the wrong transport. Go sends window/workDoneProgress/create as a
+    // request (sendClientRequestFireAndForget, progress.go:47) and $/progress as a notification (sendNotification,
+    // :53). Checked before dispatch, so it neither gets an answer nor is filtered out of the compared lists; the
+    // lifecycle tracking still sees it; then the run ends (a protocol failure of that server).
+    if (PROGRESS_METHODS.has(msg.method) && (msg.method === "$/progress") !== (msg.id === undefined)) {
+      if (msg.method === "$/progress") this.progress.update(msg.params);
+      else this.progress.create(msg.params);
+      return this.#broken(msg.method === "$/progress" ? `$/progress sent as a request (id ${JSON.stringify(msg.id)}), not a notification` : "window/workDoneProgress/create sent as a notification, not a request");
+    }
     if (msg.id !== undefined && msg.method !== undefined) return this.#onServerRequest(msg, raw);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);

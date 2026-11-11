@@ -1,6 +1,6 @@
 // The scripted differential session. Every request runs one at a time, so both servers
 // see exactly the same sequence and Go picks its checkers deterministically.
-import { LspClient, PROGRESS_METHODS, fileUri, initializeParams, progressFindings } from "./client.mjs";
+import { LspClient, PROGRESS_METHODS, fileUri, initializeParams, progressRules } from "./client.mjs";
 import { parseKeep } from "./json.mjs";
 import { endPosition, languageId, pickPositions, readText, rel } from "./project.mjs";
 import { TsserverClient } from "./tsserver.mjs";
@@ -49,16 +49,17 @@ export function maskRegistrations(method, params) {
 // Every server-to-client request and notification from event `from` through the end of the server's
 // output (call it after client.shutdown(), which waits for EOF), in order, with payloads; window/logMessage
 // (the server's log, with timings) and the work-done progress (client.mjs PROGRESS_METHODS: shown or not by
-// the time the work took) are left out, and the registration ids are masked (maskRegistrations); each payload
-// rule of Go's progress a message broke ends the list (client.mjs progressFindings, lane H9 round 2).
+// the time the work took) are left out, and the registration ids are masked (maskRegistrations). The payload rules
+// of Go's progress its messages broke are the entry's `progressRules` (client.mjs; not compared, judged per server
+// by lspdiff.mjs, lane H9 round 3).
 // The log's last entry, "session messages" (lane H8 round 2: a request or a notification a server sends
 // while it answers shutdown, or in a session without checkpoints, is compared too).
 export function messagesEntry(client, from = 0) {
   const events = client.events.slice(from).filter((e) => e.method !== "window/logMessage" && !PROGRESS_METHODS.has(e.method));
   const raw = events.some((e) => e.raw);
-  const findings = progressFindings(client.events.slice(from).filter((e) => PROGRESS_METHODS.has(e.method)));
-  const text = JSON.stringify([...events.map((e) => ({ [e.kind]: e.method, params: maskRegistrations(e.method, e.params ?? null) })), ...findings]);
-  return { step: "session messages", method: "server/messages", params: null, result: raw ? parseKeep(text) : JSON.parse(text), ...(raw ? { rawNumbers: true } : {}), ms: 0 };
+  const rules = progressRules(client.events.slice(from).filter((e) => PROGRESS_METHODS.has(e.method)));
+  const text = JSON.stringify(events.map((e) => ({ [e.kind]: e.method, params: maskRegistrations(e.method, e.params ?? null) })));
+  return { step: "session messages", method: "server/messages", params: null, result: raw ? parseKeep(text) : JSON.parse(text), ...(raw ? { rawNumbers: true } : {}), ms: 0, ...(rules.length ? { progressRules: rules } : {}) };
 }
 
 export function openFiles(client, files) {

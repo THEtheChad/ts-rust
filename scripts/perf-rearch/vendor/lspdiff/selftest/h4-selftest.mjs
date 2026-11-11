@@ -20,10 +20,12 @@ import vm from "node:vm";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LSPDIFF = join(HERE, "..");
-// client.mjs progressFindings (lane H9 round 2), for the probe of scenario.mjs checkpoint; a no-op where it is missing.
-let PROGRESS_FINDINGS = () => [];
+// client.mjs progressRules (lane H9 round 3; round 2's progressFindings before it), for the probe of scenario.mjs
+// checkpoint; a no-op where both are missing.
+let PROGRESS_RULES = () => [];
 try {
-  PROGRESS_FINDINGS = (await import(join(LSPDIFF, "client.mjs"))).progressFindings ?? PROGRESS_FINDINGS;
+  const c = await import(join(LSPDIFF, "client.mjs"));
+  PROGRESS_RULES = c.progressRules ?? c.progressFindings ?? PROGRESS_RULES;
 } catch {}
 const ROOT = join(homedir(), `.cache/perf-rearch/parity/scratch/h4-lsp-selftest-${process.pid}`);
 const fails = [];
@@ -309,7 +311,8 @@ function scriptProbe(npmLog, now, alive = true, progress = () => []) {
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
     PROGRESS_METHODS: new Set(["$/progress", "window/workDoneProgress/create"]),
-    progressFindings: PROGRESS_FINDINGS,
+    progressRules: PROGRESS_RULES,
+    progressFindings: PROGRESS_RULES,
     maskId: (id) => id,
     ATA_DIR: "/run/lspdiff-ata",
     SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000, LSPDIFF_PROGRESS_DEADLINE_MS: 60000 },
@@ -527,9 +530,13 @@ await part("h9r2-finding3", async () => {
   await cp2.script.checkpoint("load");
   const sm2 = cp2.script.log.find((e) => e.step === "load server messages");
   const tail2 = messagesEntry({ events: [{ ...create, params: { token: T } }, wrong] });
-  check("h9 r2 finding 3: a broken rule joins the compared lists (checkpoint and session messages)",
-    JSON.stringify(sm2?.result) === '[{"request":"workspace/diagnostic/refresh"},{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]' && JSON.stringify(tail2.result) === '[{"progress":"begin title \\"Wrong title\\", not \\"Loading\\""}]',
-    JSON.stringify({ sm2: sm2?.result, tail2: tail2.result }));
+  // Round 3: the rules broken are the entry's `progressRules`, judged per server by lspdiff.mjs, never part of the
+  // compared lists.
+  const RULE = 'begin title "Wrong title", not "Loading"';
+  check("h9 r3 finding 2: a broken rule is the entry's progressRules (checkpoint and session messages), out of the compared lists",
+    JSON.stringify(sm2?.result) === '[{"request":"workspace/diagnostic/refresh"}]' && JSON.stringify(sm2?.progressRules) === JSON.stringify([RULE])
+      && JSON.stringify(tail2.result) === "[]" && JSON.stringify(tail2.progressRules) === JSON.stringify([RULE]),
+    JSON.stringify({ sm2: [sm2?.result, sm2?.progressRules], tail2: [tail2.result, tail2.progressRules] }));
 });
 
 // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------

@@ -20,7 +20,10 @@
 //   1. tsc-rs's determinism: a tsc-rs run that crashed or timed out, or a later run that differs
 //      from the first (in its answer or in whether it was asked), makes a DIFF (detail "tsc-rs: ...",
 //      "rs-nondet", "rs-schedule"; rsFailure "crash" or "timeout" for the first);
-//   2. GO-BROKEN: a Go run crashed or timed out before the answer (client.mjs: a request without an
+//      Then (lane H9 round 3) the payload rules of Go's work-done progress (client.mjs progressPayloadErrors):
+//      a tsc-rs run whose entry broke one (`progressRules`, not part of the answer) makes a DIFF, whatever Go did;
+//   2. GO-BROKEN: a Go run broke a progress rule (named in the detail; tsc-rs broke none), or a Go run
+//      crashed or timed out before the answer (client.mjs: a request without an
 //      answer in LSPDIFF_REQUEST_TIMEOUT_MS ends the run), or Go's runs differ on it (the watch
 //      scenarios use 4 runs: Go's background tasks race as concurrent goroutines). A Go crash is
 //      cached ({run}.broken.json beside its log), a timeout is not;
@@ -562,6 +565,15 @@ if (mode === "diff") {
       diff(rsEnded.includes("rs") ? `tsc-rs: ${why("rs")}` : `rs-nondet: ${rsEnded.map((k) => why(k)).join("; ")}`, {}, { rsFailure: failureOf(broken[rsEnded[0]]) });
       continue;
     }
+    // Step 1b (lane H9 round 3): the payload rules of Go's progress (client.mjs progressPayloadErrors), judged per
+    // server before any comparison, from each run's own entry (`progressRules`, not part of the answer). A tsc-rs run
+    // that broke one makes the item a DIFF whatever Go did (Go breaking the same rule, or varying, never excuses it).
+    const rulesOf = (k) => aligned[k][p]?.progressRules ?? [];
+    const rsRules = rsNames.filter((k) => rulesOf(k).length);
+    if (rsRules.length) {
+      diff(`tsc-rs breaks Go's progress rules: ${rsRules.map((k) => `${k}: ${rulesOf(k).join("; ")}`).join(" | ")}`, { rules: Object.fromEntries(rsRules.map((k) => [k, rulesOf(k)])) });
+      continue;
+    }
     const r = at("rs", p, method);
     const nondet = [];
     for (let k = 2; k <= rsRuns; k++) if (at(`rs${k}`, p, method) !== r) nondet.push(`rs${k}`);
@@ -581,8 +593,12 @@ if (mode === "diff") {
     for (const [k, a] of goAnswers) groups.set(a, [...(groups.get(a) ?? []), k]);
     const goEnded = goNames.filter((k) => ended(k, p));
     const earlier = earlierOnly(p, method);
-    if (goEnded.length || groups.size > 1 || earlier.length) {
+    // A Go run that broke a progress rule (lane H9 round 3) is no evidence for this item: GO-BROKEN, the rule named,
+    // and tsc-rs (which broke none, step 1b) is not blamed.
+    const goRules = goNames.filter((k) => !ended(k, p) && rulesOf(k).length);
+    if (goEnded.length || groups.size > 1 || earlier.length || goRules.length) {
       const detail = [
+        goRules.length && `Go breaks its progress rules: ${goRules.map((k) => `${k}: ${rulesOf(k).join("; ")}`).join(" | ")}`,
         goEnded.length && goEnded.map((k) => why(k)).join("; "),
         groups.size > 1 && `Go runs differ (${[...groups.values()].map((g) => g.join(",")).join(" | ")})`,
         earlier.length && `Go answers vary across fills (${earlier.length} recorded variant${earlier.length === 1 ? "" : "s"} this fill did not give)`,
@@ -702,6 +718,12 @@ if (mode === "diff") {
       if (runLevel.has(it)) continue; // the run-level items (server, order, session)
       const p = it.i; // an answer's merged position (the initialize answer and the home: n and after)
       const cAns = c[p] ? answerOf(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd, c) ? null : NOT_ASKED;
+      const cRules = c[p]?.progressRules ?? []; // lane H9 round 3: the confirming run's progress rules count too
+      if (cRules.length) {
+        Object.assign(it, { status: "DIFF", detail: `tsc-rs breaks Go's progress rules: rs-confirm: ${cRules.join("; ")} (was ${it.status}${it.detail ? `: ${it.detail}` : ""})` });
+        agreeing.delete(it);
+        continue;
+      }
       if (cAns === at("rs", p, it.method)) continue;
       const what = cAns === null ? why("rs-confirm", confirm.broken) : cAns === NOT_ASKED ? "it was not asked this request" : "its answer differs from run 1";
       it.detail = `rs-nondet: the confirming tsc-rs run (made for the ${pending.length} GO-BROKEN or JS-AGREES items): ${what}${it.status === "MATCH" ? "" : ` (was ${it.status}${it.detail ? `: ${it.detail}` : ""})`}`;

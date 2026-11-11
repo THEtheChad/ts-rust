@@ -32,7 +32,9 @@ escape) with every other mode:
   progress      lane H9 (h9()): a work-done progress that ends 4 s after each didOpen: MATCH on every item
                 against one that ends at once; one that never ends: a harness error, the session ERROR;
                 round 2: opens never logged as handled (ERROR), each break of Go's progress lifecycle (a
-                protocol DIFF), a begin titled "Wrong title" (a server messages DIFF)
+                protocol DIFF), a begin titled "Wrong title" (a server messages DIFF); round 3 (h9r3()): a
+                progress on the wrong transport (a protocol DIFF), a progress rule broken by Go only
+                (GO-BROKEN), by tsc-rs only, by both, by a varying Go with tsc-rs valid (GO-BROKEN) or not (DIFF)
 It takes the gate's lock (the tier's paths are fixed) and uses the real Go cache.
 """
 import fcntl
@@ -445,6 +447,49 @@ def h9():
           f'{counts(items)} {short(items, log)}')
 
 
+def h9r3():
+    """Lane H9 round 3 (Astra's recheck, reviews/2026-11-11-astra-h9-r2.md), with lspdiff alone on pkgjson-overlay and
+    the self server behind both sides (each line prints the status of `load server messages`, where the opens'
+    progress is, on any harness):
+      transport        finding 1, her sequence: create, begin, a report sent as a request, end, on tsc-rs's side:
+                       a protocol failure (DIFF, rsFailure crash)
+      go-only          finding 2: every Go run begins with "Wrong title", tsc-rs keeps Go's rules: GO-BROKEN, the
+                       rule named (tsc-rs not blamed)
+      rs-only          tsc-rs breaks the rule, Go does not: DIFF, the rule named
+      both             both break it the same way: DIFF (tsc-rs breaks a rule; Go's doing it too never excuses it)
+      go-varies        Go breaks it in some of its 8 runs, tsc-rs keeps the rules: GO-BROKEN
+      go-varies-rs-bad Go varies, tsc-rs breaks it: DIFF (Go's variation never hides tsc-rs's own break)"""
+    fake('pass')
+    sh = lambda m: f'/usr/bin/python3 {SCRATCH / "fake_lsp.py"} {m} - -'  # noqa: E731
+    STEP = 'load server messages'
+
+    def run(tag, go, rs, go_runs=2):
+        for attempt in range(4):
+            items, log = lspdiff(f'h9r3-{tag}', sh(go), sh(rs), ['--go-runs', str(go_runs)], scenario='pkgjson-overlay')
+            go_logs = sorted((SCRATCH / f'lspdiff-h9r3-{tag}').glob('*/go*.jsonl'))
+            wrong = [('Wrong title' in f.read_text()) for f in go_logs]
+            if go != 'progress-title-vary' or (any(wrong) and not all(wrong)):  # a varying Go must have varied
+                break
+        it = next((v for k, v in items.items() if k.endswith(' ' + STEP)), {})
+        print(f'  h9r3 {tag}: {STEP} {it.get("status")} rsFailure={it.get("rsFailure")} detail={str(it.get("detail", ""))[:220]} '
+              f'(Go runs with Wrong title: {sum(wrong)} of {len(wrong)})', flush=True)
+        return items, it, log
+    items, it, log = run('transport', 'progress-0', 'progress-report-request')
+    check('h9 r3 finding 1: a report sent as a request (her sequence): a protocol failure of tsc-rs, DIFF rsFailure crash',
+          any(v['status'] == 'DIFF' and v.get('rsFailure') == 'crash' for v in items.values()) and 'sent as a request' in log, short(items, log))
+    _, it, log = run('go-only', 'progress-title', 'progress-0')
+    check('h9 r3 finding 2, Go only: GO-BROKEN, the rule named', it.get('status') == 'GO-BROKEN' and 'Go breaks its progress rules' in it.get('detail', '')
+          and 'Wrong title' in it.get('detail', ''), it)
+    _, it, log = run('rs-only', 'progress-0', 'progress-title')
+    check('h9 r3 finding 2, tsc-rs only: DIFF, the rule named', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+    _, it, log = run('both', 'progress-title', 'progress-title')
+    check('h9 r3 finding 2, both: DIFF (Go breaking it too does not excuse tsc-rs)', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+    _, it, log = run('go-varies', 'progress-title-vary', 'progress-0', go_runs=8)
+    check('h9 r3 finding 2, Go varies, tsc-rs valid: GO-BROKEN, the rule named', it.get('status') == 'GO-BROKEN' and 'Go breaks its progress rules' in it.get('detail', ''), it)
+    _, it, log = run('go-varies-rs-bad', 'progress-title-vary', 'progress-title', go_runs=8)
+    check('h9 r3 finding 2, Go varies, tsc-rs breaks the rule: DIFF', it.get('status') == 'DIFF' and "tsc-rs breaks Go's progress rules" in it.get('detail', ''), it)
+
+
 def e2e():
     lock = open(Path.home() / '.cache/perf-rearch/parity/.lock', 'w')  # the gate's lock: the tier's paths are fixed
     print('e2e: waiting for the gate lock', flush=True)
@@ -481,6 +526,8 @@ def e2e():
         round3()
     if not only or 'h9' in only:
         h9()
+    if not only or 'h9r3' in only:
+        h9r3()
     # Astra's non-executable Go (review-h7r2-astra/lsp/unexec), made unique to this harness so its cache
     # dir is new: ERROR, and nothing of it cached.
     unexec = SCRATCH / f'unexec-go-{"new" if NEW else "old"}'
