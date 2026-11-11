@@ -24,13 +24,13 @@ impl SemicolonPreference {
 }
 
 // Go: ls/lsutil/userpreferences_generated.go:43 EditorSettings
-// PORT: the Go sizes are `int` (64 bits); here they are `i32`, as in the
-// rest of the formatter (userpreferences_generated.rs).
+// PORT: the Go sizes are `int` (64 bits), and so is the formatter's
+// indentation arithmetic.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EditorSettings {
-    pub base_indent_size: i32,
-    pub indent_size: i32,
-    pub tab_size: i32,
+    pub base_indent_size: i64,
+    pub indent_size: i64,
+    pub tab_size: i64,
     pub new_line_character: String,
     pub convert_tabs_to_spaces: Tristate,
     pub indent_style: IndentStyle,
@@ -66,15 +66,14 @@ pub struct FormatCodeSettings {
 }
 
 // Go: ls/lsutil/formatcodeoptions.go:25 FromLSFormatOptions
-// PORT: Go takes `f` by value; this clones it. Go `int(uint32)` keeps every
-// value; the Rust `i32` field wraps above `i32::MAX`.
+// PORT: Go takes `f` by value; this clones it.
 pub fn from_ls_format_options(
     f: &FormatCodeSettings,
     opt: &crate::lsp::lsproto::FormattingOptions,
 ) -> FormatCodeSettings {
     let mut updated_settings = f.clone();
-    updated_settings.editor_settings.tab_size = opt.tab_size as i32;
-    updated_settings.editor_settings.indent_size = opt.tab_size as i32;
+    updated_settings.editor_settings.tab_size = i64::from(opt.tab_size);
+    updated_settings.editor_settings.indent_size = i64::from(opt.tab_size);
     updated_settings.editor_settings.convert_tabs_to_spaces = bool_to_tristate(opt.insert_spaces);
     if let Some(trim_trailing_whitespace) = opt.trim_trailing_whitespace {
         updated_settings.editor_settings.trim_trailing_whitespace =
@@ -102,8 +101,8 @@ impl FormatCodeSettings {
 pub fn get_default_format_code_settings() -> FormatCodeSettings {
     FormatCodeSettings {
         editor_settings: EditorSettings {
-            indent_size: crate::printer::get_default_indent_size(),
-            tab_size: crate::printer::get_default_indent_size(),
+            indent_size: i64::from(crate::printer::get_default_indent_size()),
+            tab_size: i64::from(crate::printer::get_default_indent_size()),
             new_line_character: "\n".to_string(),
             convert_tabs_to_spaces: Tristate::True,
             indent_style: IndentStyle::SMART,

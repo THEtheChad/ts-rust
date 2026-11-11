@@ -1,7 +1,9 @@
 use crate::ls::lsutil::prelude::*;
 
 use crate::flags_macros::go_enum;
-use crate::frontend::json::{JsonDecoder, JsonError, UnmarshalerFrom, json_unmarshal_decode};
+use crate::frontend::json::{
+    JsonDecoder, JsonError, MarshalerTo, UnmarshalerFrom, json_unmarshal_decode,
+};
 use crate::modulespecifiers::{
     ImportModuleSpecifierEndingPreference, ImportModuleSpecifierPreference,
 };
@@ -11,11 +13,8 @@ use std::borrow::Cow;
 // ts#64554 generates (`withConfig`, `applyRawPreferences`, `MarshalJSONTo`,
 // the `parsePreference<Type>` functions) are in `userpreferences_generated.rs`.
 // Go `any` is `LspAny` and Go `map[string]any` is `IndexMap<String, LspAny>`.
-// Go `nil` is `LspAny::Null`.
-//
-// PORT: Go `[]string` fields tell a nil slice from an empty one. Only
-// `MarshalJSONTo` (nil is skipped) sees the difference. A Rust `Vec` has no
-// nil, so an empty `Vec` counts as nil there.
+// Go `nil` is `LspAny::Null`. A Go `[]string` field is `Option<Vec<String>>`:
+// `MarshalJSONTo` skips a nil slice and writes an empty one as `[]`.
 
 // Go: ls/lsutil/userpreferences.go:16 NewDefaultUserPreferences
 pub fn new_default_user_preferences() -> UserPreferences {
@@ -95,8 +94,8 @@ pub struct UserPreferences {
     pub import_module_specifier_preference: ImportModuleSpecifierPreference, // !!!
     // Determines whether we import `foo/index.ts` as "foo", "foo/index", or "foo/index.js"
     pub import_module_specifier_ending: ImportModuleSpecifierEndingPreference, // !!!
-    pub auto_import_specifier_exclude_regexes: Vec<String>,                    // !!!
-    pub auto_import_file_exclude_patterns: Vec<String>,
+    pub auto_import_specifier_exclude_regexes: Option<Vec<String>>,            // !!!
+    pub auto_import_file_exclude_patterns: Option<Vec<String>>,
     pub auto_import_entrypoint_directory_search: Tristate,
     pub prefer_type_only_auto_imports: Tristate,
 
@@ -377,15 +376,43 @@ fn get_nested_value<'a>(config: &'a IndexMap<String, LspAny>, path: &str) -> Opt
     Some(current)
 }
 
+/// Go `any` in the config map of `MarshalJSONTo`: the values it holds.
+/// PORT: Go writes an `int` as an integer token; an `LspAny` number is an
+/// `f64`, which would round one past 2^53.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ConfigValue {
+    Bool(bool),
+    Int(i64),
+    String(String),
+    Strings(Vec<String>),
+    Map(IndexMap<String, ConfigValue>),
+}
+
+impl MarshalerTo for ConfigValue {
+    fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
+        match self {
+            ConfigValue::Bool(v) => v.marshal_json_to(enc),
+            ConfigValue::Int(v) => v.marshal_json_to(enc),
+            ConfigValue::String(v) => v.marshal_json_to(enc),
+            ConfigValue::Strings(v) => v.marshal_json_to(enc),
+            ConfigValue::Map(v) => v.marshal_json_to(enc),
+        }
+    }
+}
+
 // Go: ls/lsutil/userpreferences.go:162 setNestedValue
-pub(super) fn set_nested_value(config: &mut IndexMap<String, LspAny>, path: &str, value: LspAny) {
+pub(super) fn set_nested_value(
+    config: &mut IndexMap<String, ConfigValue>,
+    path: &str,
+    value: ConfigValue,
+) {
     let parts: Vec<&str> = path.split('.').collect();
     let mut current = config;
     for part in &parts[..parts.len() - 1] {
-        if !matches!(current.get(*part), Some(LspAny::Object(_))) {
-            current.insert(part.to_string(), LspAny::Object(IndexMap::new()));
+        if !matches!(current.get(*part), Some(ConfigValue::Map(_))) {
+            current.insert(part.to_string(), ConfigValue::Map(IndexMap::new()));
         }
-        let Some(LspAny::Object(next)) = current.get_mut(*part) else {
+        let Some(ConfigValue::Map(next)) = current.get_mut(*part) else {
             unreachable!("the map was just set")
         };
         current = next;
@@ -425,7 +452,8 @@ impl UserPreferences {
             import_module_specifier_ending: self.import_module_specifier_ending,
             auto_import_specifier_exclude_regexes: self
                 .auto_import_specifier_exclude_regexes
-                .clone(),
+                .clone()
+                .unwrap_or_default(),
         }
     }
 
@@ -436,7 +464,9 @@ impl UserPreferences {
         use_case_sensitive_file_names: bool,
     ) -> Option<crate::frontend::vfs::vfsmatch::SpecMatcher> {
         crate::frontend::vfs::vfsmatch::new_spec_matcher(
-            &self.auto_import_file_exclude_patterns,
+            self.auto_import_file_exclude_patterns
+                .as_deref()
+                .unwrap_or_default(),
             "",
             crate::frontend::vfs::vfsmatch::Usage::Exclude,
             use_case_sensitive_file_names,
@@ -447,7 +477,9 @@ impl UserPreferences {
     pub fn is_module_specifier_excluded(&self, module_specifier: &str) -> bool {
         crate::modulespecifiers::is_excluded_by_regex(
             module_specifier,
-            &self.auto_import_specifier_exclude_regexes,
+            self.auto_import_specifier_exclude_regexes
+                .as_deref()
+                .unwrap_or_default(),
         )
     }
 }
@@ -510,8 +542,6 @@ mod tests {
     }
 
     // Go: ls/lsutil/userpreferences_test.go:13 TestUserPreferencesParsingEdgeCases (ts#64554)
-    // PORT: "empty array is not nil" has no Rust subject (a Vec has no nil);
-    // the case is kept and checks the empty Vec.
     #[test]
     fn test_user_preferences_parsing_edge_cases() {
         type Expected = fn(&mut UserPreferences);
@@ -594,7 +624,7 @@ mod tests {
                     p.maximum_hover_length = 9;
                     p.format_code_settings.editor_settings.indent_style = IndentStyle::BLOCK;
                     p.auto_import_file_exclude_patterns =
-                        vec!["first".to_string(), "second".to_string()];
+                        Some(vec!["first".to_string(), "second".to_string()]);
                 },
             ),
             (
@@ -603,7 +633,7 @@ mod tests {
                     "autoImportFileExcludePatterns",
                     LspAny::Array(vec![]),
                 )]),
-                |p| p.auto_import_file_exclude_patterns = Vec::new(),
+                |p| p.auto_import_file_exclude_patterns = Some(Vec::new()),
             ),
             (
                 "invalid module specifier preference uses its default",
@@ -804,4 +834,52 @@ mod tests {
             IndentStyle(i64::MIN)
         );
     }
+
+    // Lane B6 round 2: `MarshalJSONTo` against Go's output at the pin (`json.Marshal`
+    // of the same values, a scratch Go test in ls/lsutil): nil slices are omitted,
+    // empty ones are `[]`, and an `int` is an integer token.
+    #[test]
+    fn test_user_preferences_marshal_matches_go() {
+        let marshal =
+            |p: &UserPreferences| crate::frontend::json::json_marshal(p, &[]).expect("marshal");
+        let strings = |v: &[&str]| Some(v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let zero = UserPreferences::default();
+        assert_eq!(marshal(&zero), ZERO);
+        let empty = UserPreferences {
+            auto_import_file_exclude_patterns: strings(&[]),
+            auto_import_specifier_exclude_regexes: strings(&[]),
+            ..UserPreferences::default()
+        };
+        assert_eq!(marshal(&empty), EMPTY_SLICES);
+        let slices = UserPreferences {
+            auto_import_file_exclude_patterns: strings(&["a"]),
+            auto_import_specifier_exclude_regexes: strings(&["^b", "c"]),
+            ..UserPreferences::default()
+        };
+        assert_eq!(marshal(&slices), SLICES);
+        for (input, want) in ROUND_TRIPS {
+            let mut parsed = UserPreferences::default();
+            crate::frontend::json::json_unmarshal(input.as_bytes(), &mut parsed, &[])
+                .expect("unmarshal");
+            assert_eq!(marshal(&parsed), *want, "{input}");
+        }
+    }
+
+    const ZERO: &str = r#"{"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const EMPTY_SLICES: &str = r#"{"preferences":{"autoImportFileExcludePatterns":[],"autoImportSpecifierExcludeRegexes":[],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const SLICES: &str = r#"{"preferences":{"autoImportFileExcludePatterns":["a"],"autoImportSpecifierExcludeRegexes":["^b","c"],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const ROUND_TRIPS: &[(&str, &str)] = &[
+        (
+            r#"{"maximumHoverLength":1e19}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":2,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":4,"trimTrailingWhitespace":true},"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"maximumHoverLength":-9223372036854775808,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+        (
+            r#"{"maximumHoverLength":4294967306,"indentStyle":4294967296,"tabSize":-4294967292}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":4294967296,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":-4294967292,"trimTrailingWhitespace":true},"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"maximumHoverLength":4294967306,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+        (
+            r#"{"preferences":{"autoImportFileExcludePatterns":[1,false]}}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":2,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":4,"trimTrailingWhitespace":true},"preferences":{"autoImportFileExcludePatterns":[],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+    ];
 }

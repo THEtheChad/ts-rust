@@ -6,7 +6,7 @@ use crate::flags_macros::go_enum;
 use crate::spanmap::{self, Feature, SpanMap};
 
 // Go: ls/change/tracker.go:22 NodeOptions
-// PORT: Go `indentation *int` and `delta *int` are `Option<i32>`. The
+// PORT: Go `indentation *int` and `delta *int` are `Option<i64>`. The
 // embedded `LeadingTriviaOption` and `TrailingTriviaOption` are the fields
 // `leading_trivia_option` and `trailing_trivia_option`. Go unexported fields
 // are `pub(crate)`.
@@ -19,10 +19,10 @@ pub struct NodeOptions {
     pub suffix: String,
 
     /// Text of inserted node will be formatted with this indentation, otherwise indentation will be inferred from the old node
-    pub(crate) indentation: Option<i32>,
+    pub(crate) indentation: Option<i64>,
 
     /// Text of inserted node will be formatted with this delta, otherwise delta will be inferred from the new node kind
-    pub(crate) delta: Option<i32>,
+    pub(crate) delta: Option<i64>,
 
     pub leading_trivia_option: LeadingTriviaOption,
     pub trailing_trivia_option: TrailingTriviaOption,
@@ -985,7 +985,7 @@ impl Tracker {
     }
 
     // Go: ls/change/tracker.go:601 tryComputeIndentationForNewMember
-    fn try_compute_indentation_for_new_member(&self, source_file: Node, node: Node) -> i32 {
+    fn try_compute_indentation_for_new_member(&self, source_file: Node, node: Node) -> i64 {
         let node_start = astnav::get_start_of_node(node, source_file, false);
         let line_start = format::get_line_start_position_for_position(node_start, source_file);
 
@@ -998,7 +998,7 @@ impl Tracker {
         if indent_size <= 0 {
             indent_size = 4;
         }
-        i32::max(
+        i64::max(
             find_indentation_column(
                 &source_file_text(source_file),
                 line_start,
@@ -1010,13 +1010,13 @@ impl Tracker {
     }
 
     // Go: ls/change/tracker.go:617 tryComputeIndentationFromExistingMembers
-    fn try_compute_indentation_from_existing_members(&self, source_file: Node, node: Node) -> i32 {
+    fn try_compute_indentation_from_existing_members(&self, source_file: Node, node: Node) -> i64 {
         let members = get_members_or_properties(node);
         if members.is_nil() {
             return -1;
         }
 
-        let mut indentation: i32 = -1;
+        let mut indentation: i64 = -1;
         let text = source_file_text(source_file);
         let mut tab_size = self.format_settings.editor_settings.tab_size;
         let mut last = node;
@@ -1182,7 +1182,7 @@ impl Tracker {
         &mut self,
         source_file: Node,
         node: Node,
-        indentation: i32,
+        indentation: i64,
     ) -> NodeOptions {
         let has_previous_insertion = self.nodes_with_insertions_at_start.contains_key(&node);
         if !has_previous_insertion {
@@ -1292,8 +1292,8 @@ pub fn is_separator(node: Node, candidate: Node) -> bool {
 }
 
 // Go: ls/change/tracker.go:804 findIndentationColumn
-fn find_indentation_column(text: &str, line_start: i32, member_start: i32, tab_size: i32) -> i32 {
-    let mut column: i32 = 0;
+fn find_indentation_column(text: &str, line_start: i32, member_start: i32, tab_size: i64) -> i64 {
+    let mut column: i64 = 0;
 
     let bytes = text.as_bytes();
     let mut i = line_start;
@@ -1316,7 +1316,7 @@ fn find_indentation_column(text: &str, line_start: i32, member_start: i32, tab_s
 }
 
 // Go: ls/change/tracker.go:823 advanceIndentationColumn
-fn advance_indentation_column(column: i32, ch: char, tab_size: i32) -> i32 {
+fn advance_indentation_column(column: i64, ch: char, tab_size: i64) -> i64 {
     if ch == '\t' {
         return column + tab_size - (column % tab_size);
     }

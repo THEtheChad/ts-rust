@@ -1,6 +1,7 @@
 use crate::ls::lsutil::prelude::*;
 
 use crate::frontend::json::{JsonError, MarshalerTo};
+use crate::gostd::conv::float64_to_int64;
 use crate::gostd::unicode;
 use crate::modulespecifiers::{
     ImportModuleSpecifierEndingPreference, ImportModuleSpecifierPreference,
@@ -15,10 +16,7 @@ use std::borrow::Cow;
 // one helper per type (`preference_int`, `preference_strings`, the
 // `parse_preference_*` functions), applied the same way at every field.
 //
-// PORT: Go `int` is 64 bits. `maximum_hover_length` and `IndentStyle` hold
-// it; the formatter's sizes (`base_indent_size`, `indent_size`, `tab_size`)
-// are `i32`, as in the rest of the formatter, so a size outside `i32` wraps
-// (Go would build an indentation string that long).
+// PORT: Go `int` is 64 bits, and so is every int preference here.
 
 // PORT: Go `strings.ToLower` maps each rune with `unicode.ToLower`. Rust
 // `str::to_lowercase` uses the full mapping of a newer Unicode and the
@@ -27,25 +25,12 @@ pub(super) fn strings_to_lower(s: &str) -> String {
     s.chars().map(unicode::to_lower).collect()
 }
 
-/// Go `int(value)` of a `float64` on amd64 (CVTTSD2SQ): toward zero in
-/// range; out of range and NaN give `math.MinInt64`, where Rust's `as`
-/// saturates.
-fn float64_to_int(value: f64) -> i64 {
-    // 2^63 is exact in f64; -2^63 itself converts to i64::MIN. NaN is in no
-    // range.
-    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
-    if !(-LIMIT..LIMIT).contains(&value) {
-        return i64::MIN;
-    }
-    value as i64
-}
-
 /// Go `switch value := value.(type) { case int: ...; case float64: ... }` of
 /// an int field: a JSON number as a Go `int`. PORT: a decoded `any` never
 /// holds a Go `int`; every `LspAny` number is the `float64` case.
 fn preference_int(value: &LspAny) -> Option<i64> {
     match value {
-        LspAny::Number(value) => Some(float64_to_int(*value)),
+        LspAny::Number(value) => Some(float64_to_int64(*value)),
         _ => None,
     }
 }
@@ -323,7 +308,7 @@ impl UserPreferences {
             match name.as_str() {
                 "baseIndentSize" => {
                     if let Some(value) = preference_int(value) {
-                        self.format_code_settings.editor_settings.base_indent_size = value as i32;
+                        self.format_code_settings.editor_settings.base_indent_size = value;
                     }
                 }
                 "convertTabsToSpaces" => {
@@ -333,7 +318,7 @@ impl UserPreferences {
                 }
                 "indentSize" => {
                     if let Some(value) = preference_int(value) {
-                        self.format_code_settings.editor_settings.indent_size = value as i32;
+                        self.format_code_settings.editor_settings.indent_size = value;
                     }
                 }
                 "indentStyle" => {
@@ -348,7 +333,7 @@ impl UserPreferences {
                 }
                 "tabSize" => {
                     if let Some(value) = preference_int(value) {
-                        self.format_code_settings.editor_settings.tab_size = value as i32;
+                        self.format_code_settings.editor_settings.tab_size = value;
                     }
                 }
                 "trimTrailingWhitespace" => {
@@ -542,12 +527,12 @@ impl UserPreferences {
                 }
                 "autoImportFileExcludePatterns" => {
                     if let Some(values) = preference_strings(value) {
-                        self.auto_import_file_exclude_patterns = values;
+                        self.auto_import_file_exclude_patterns = Some(values);
                     }
                 }
                 "autoImportSpecifierExcludeRegexes" => {
                     if let Some(values) = preference_strings(value) {
-                        self.auto_import_specifier_exclude_regexes = values;
+                        self.auto_import_specifier_exclude_regexes = Some(values);
                     }
                 }
                 "automaticTypeAcquisitionEnabled" => {
@@ -669,7 +654,7 @@ impl UserPreferences {
         if let Some(value) = config_value(config, &["format.baseIndentSize"])
             && let Some(value) = preference_int(&value)
         {
-            p.format_code_settings.editor_settings.base_indent_size = value as i32;
+            p.format_code_settings.editor_settings.base_indent_size = value;
         }
         if let Some(value) = config_value(config, &["format.convertTabsToSpaces"]) {
             p.format_code_settings
@@ -679,7 +664,7 @@ impl UserPreferences {
         if let Some(value) = config_value(config, &["format.indentSize"])
             && let Some(value) = preference_int(&value)
         {
-            p.format_code_settings.editor_settings.indent_size = value as i32;
+            p.format_code_settings.editor_settings.indent_size = value;
         }
         if let Some(value) = config_value(config, &["format.indentStyle"]) {
             p.format_code_settings.editor_settings.indent_style =
@@ -693,7 +678,7 @@ impl UserPreferences {
         if let Some(value) = config_value(config, &["format.tabSize"])
             && let Some(value) = preference_int(&value)
         {
-            p.format_code_settings.editor_settings.tab_size = value as i32;
+            p.format_code_settings.editor_settings.tab_size = value;
         }
         if let Some(value) = config_value(config, &["format.trimTrailingWhitespace"]) {
             p.format_code_settings
@@ -922,13 +907,13 @@ impl UserPreferences {
         if let Some(value) = config_value(config, &["preferences.autoImportFileExcludePatterns"])
             && let Some(values) = preference_strings(&value)
         {
-            p.auto_import_file_exclude_patterns = values;
+            p.auto_import_file_exclude_patterns = Some(values);
         }
         if let Some(value) =
             config_value(config, &["preferences.autoImportSpecifierExcludeRegexes"])
             && let Some(values) = preference_strings(&value)
         {
-            p.auto_import_specifier_exclude_regexes = values;
+            p.auto_import_specifier_exclude_regexes = Some(values);
         }
         if let Some(value) = config_value(config, &["tsserver.automaticTypeAcquisition.enabled"]) {
             p.automatic_type_acquisition_enabled = parse_preference_tristate(&value);
@@ -1026,12 +1011,12 @@ impl UserPreferences {
 impl MarshalerTo for UserPreferences {
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
         let p = self;
-        let mut config: IndexMap<String, LspAny> = IndexMap::new();
+        let mut config: IndexMap<String, ConfigValue> = IndexMap::new();
         if p.format_code_settings.editor_settings.base_indent_size != 0 {
             set_nested_value(
                 &mut config,
                 "format.baseIndentSize",
-                LspAny::Number(p.format_code_settings.editor_settings.base_indent_size as f64),
+                ConfigValue::Int(p.format_code_settings.editor_settings.base_indent_size),
             );
         }
         if p.format_code_settings
@@ -1046,7 +1031,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.convertTabsToSpaces",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .editor_settings
                         .convert_tabs_to_spaces
@@ -1058,14 +1043,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.indentSize",
-                LspAny::Number(p.format_code_settings.editor_settings.indent_size as f64),
+                ConfigValue::Int(p.format_code_settings.editor_settings.indent_size),
             );
         }
         if p.format_code_settings.editor_settings.indent_style.0 != 0 {
             set_nested_value(
                 &mut config,
                 "format.indentStyle",
-                LspAny::Number(p.format_code_settings.editor_settings.indent_style.0 as f64),
+                ConfigValue::Int(p.format_code_settings.editor_settings.indent_style.0),
             );
         }
         if !p
@@ -1077,7 +1062,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.newLineCharacter",
-                LspAny::String(
+                ConfigValue::String(
                     p.format_code_settings
                         .editor_settings
                         .new_line_character
@@ -1089,7 +1074,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.tabSize",
-                LspAny::Number(p.format_code_settings.editor_settings.tab_size as f64),
+                ConfigValue::Int(p.format_code_settings.editor_settings.tab_size),
             );
         }
         if p.format_code_settings
@@ -1104,7 +1089,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.trimTrailingWhitespace",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .editor_settings
                         .trim_trailing_whitespace
@@ -1122,7 +1107,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.indentMultiLineObjectLiteralBeginningOnBlankLine",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .indent_multi_line_object_literal_beginning_on_blank_line
                         .is_true(),
@@ -1135,7 +1120,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.indentSwitchCase",
-                LspAny::Bool(p.format_code_settings.indent_switch_case.is_true()),
+                ConfigValue::Bool(p.format_code_settings.indent_switch_case.is_true()),
             );
         }
         if p.format_code_settings
@@ -1148,7 +1133,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterCommaDelimiter",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_comma_delimiter
                         .is_true(),
@@ -1165,7 +1150,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterConstructor",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_constructor
                         .is_true(),
@@ -1182,7 +1167,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterFunctionKeywordForAnonymousFunctions",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_function_keyword_for_anonymous_functions
                         .is_true(),
@@ -1199,7 +1184,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterKeywordsInControlFlowStatements",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_keywords_in_control_flow_statements
                         .is_true(),
@@ -1216,7 +1201,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_empty_braces
                         .is_true(),
@@ -1233,7 +1218,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_jsx_expression_braces
                         .is_true(),
@@ -1250,7 +1235,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_nonempty_braces
                         .is_true(),
@@ -1267,7 +1252,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_nonempty_brackets
                         .is_true(),
@@ -1284,7 +1269,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_nonempty_parenthesis
                         .is_true(),
@@ -1301,7 +1286,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_opening_and_before_closing_template_string_braces
                         .is_true(),
@@ -1318,7 +1303,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterSemicolonInForStatements",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_semicolon_in_for_statements
                         .is_true(),
@@ -1335,7 +1320,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceAfterTypeAssertion",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_after_type_assertion
                         .is_true(),
@@ -1352,7 +1337,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceBeforeAndAfterBinaryOperators",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_before_and_after_binary_operators
                         .is_true(),
@@ -1369,7 +1354,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceBeforeFunctionParenthesis",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_before_function_parenthesis
                         .is_true(),
@@ -1386,7 +1371,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.insertSpaceBeforeTypeAnnotation",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .insert_space_before_type_annotation
                         .is_true(),
@@ -1403,7 +1388,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.placeOpenBraceOnNewLineForControlBlocks",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .place_open_brace_on_new_line_for_control_blocks
                         .is_true(),
@@ -1420,7 +1405,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.placeOpenBraceOnNewLineForFunctions",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.format_code_settings
                         .place_open_brace_on_new_line_for_functions
                         .is_true(),
@@ -1431,7 +1416,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "format.semicolons",
-                LspAny::String(p.format_code_settings.semicolons.0.to_string()),
+                ConfigValue::String(p.format_code_settings.semicolons.0.to_string()),
             );
         }
         if p.include_automatic_optional_chain_completions.is_true()
@@ -1440,7 +1425,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.includeAutomaticOptionalChainCompletions",
-                LspAny::Bool(p.include_automatic_optional_chain_completions.is_true()),
+                ConfigValue::Bool(p.include_automatic_optional_chain_completions.is_true()),
             );
         }
         if p.include_completions_for_import_statements.is_true()
@@ -1449,7 +1434,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.includeCompletionsForImportStatements",
-                LspAny::Bool(p.include_completions_for_import_statements.is_true()),
+                ConfigValue::Bool(p.include_completions_for_import_statements.is_true()),
             );
         }
         if p.include_completions_for_module_exports.is_true()
@@ -1458,7 +1443,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.autoImports",
-                LspAny::Bool(p.include_completions_for_module_exports.is_true()),
+                ConfigValue::Bool(p.include_completions_for_module_exports.is_true()),
             );
         }
         if p.include_completions_with_class_member_snippets.is_true()
@@ -1467,7 +1452,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.classMemberSnippets.enabled",
-                LspAny::Bool(p.include_completions_with_class_member_snippets.is_true()),
+                ConfigValue::Bool(p.include_completions_with_class_member_snippets.is_true()),
             );
         }
         if p.include_completions_with_object_literal_method_snippets
@@ -1478,7 +1463,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.objectLiteralMethodSnippets.enabled",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.include_completions_with_object_literal_method_snippets
                         .is_true(),
                 ),
@@ -1488,7 +1473,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.jsxAttributeCompletionStyle",
-                LspAny::String(p.jsx_attribute_completion_style.0.to_string()),
+                ConfigValue::String(p.jsx_attribute_completion_style.0.to_string()),
             );
         }
         if p.inlay_hints
@@ -1501,7 +1486,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.enumMemberValues.enabled",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.inlay_hints
                         .include_inlay_enum_member_value_hints
                         .is_true(),
@@ -1518,7 +1503,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.functionLikeReturnTypes.enabled",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.inlay_hints
                         .include_inlay_function_like_return_type_hints
                         .is_true(),
@@ -1535,7 +1520,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.parameterTypes.enabled",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.inlay_hints
                         .include_inlay_function_parameter_type_hints
                         .is_true(),
@@ -1551,7 +1536,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.parameterNames.enabled",
-                LspAny::String(
+                ConfigValue::String(
                     p.inlay_hints
                         .include_inlay_parameter_name_hints
                         .0
@@ -1569,7 +1554,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.parameterNames.suppressWhenArgumentMatchesName",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     !p.inlay_hints
                         .include_inlay_parameter_name_hints_when_argument_matches_name
                         .is_true(),
@@ -1586,7 +1571,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.propertyDeclarationTypes.enabled",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.inlay_hints
                         .include_inlay_property_declaration_type_hints
                         .is_true(),
@@ -1599,7 +1584,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.variableTypes.enabled",
-                LspAny::Bool(p.inlay_hints.include_inlay_variable_type_hints.is_true()),
+                ConfigValue::Bool(p.inlay_hints.include_inlay_variable_type_hints.is_true()),
             );
         }
         if p.inlay_hints
@@ -1612,7 +1597,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "inlayHints.variableTypes.suppressWhenTypeMatchesName",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     !p.inlay_hints
                         .include_inlay_variable_type_hints_when_type_matches_name
                         .is_true(),
@@ -1625,7 +1610,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "implementationsCodeLens.enabled",
-                LspAny::Bool(p.code_lens.implementations_code_lens_enabled.is_true()),
+                ConfigValue::Bool(p.code_lens.implementations_code_lens_enabled.is_true()),
             );
         }
         if p.code_lens
@@ -1638,7 +1623,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "implementationsCodeLens.showOnAllClassMethods",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.code_lens
                         .implementations_code_lens_show_on_all_class_methods
                         .is_true(),
@@ -1655,7 +1640,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "implementationsCodeLens.showOnInterfaceMethods",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.code_lens
                         .implementations_code_lens_show_on_interface_methods
                         .is_true(),
@@ -1668,7 +1653,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "referencesCodeLens.enabled",
-                LspAny::Bool(p.code_lens.references_code_lens_enabled.is_true()),
+                ConfigValue::Bool(p.code_lens.references_code_lens_enabled.is_true()),
             );
         }
         if p.code_lens
@@ -1681,7 +1666,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "referencesCodeLens.showOnAllFunctions",
-                LspAny::Bool(
+                ConfigValue::Bool(
                     p.code_lens
                         .references_code_lens_show_on_all_functions
                         .is_true(),
@@ -1692,7 +1677,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "unstable.allowRenameOfImportPath",
-                LspAny::Bool(p.allow_rename_of_import_path.is_true()),
+                ConfigValue::Bool(p.allow_rename_of_import_path.is_true()),
             );
         }
         if p.allow_text_changes_in_new_files.is_true()
@@ -1701,14 +1686,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "unstable.allowTextChangesInNewFiles",
-                LspAny::Bool(p.allow_text_changes_in_new_files.is_true()),
+                ConfigValue::Bool(p.allow_text_changes_in_new_files.is_true()),
             );
         }
         if p.enable_auto_closing_tags.is_true() || p.enable_auto_closing_tags.is_false() {
             set_nested_value(
                 &mut config,
                 "autoClosingTags.enabled",
-                LspAny::Bool(p.enable_auto_closing_tags.is_true()),
+                ConfigValue::Bool(p.enable_auto_closing_tags.is_true()),
             );
         }
         if p.auto_import_entrypoint_directory_search.is_true()
@@ -1717,33 +1702,21 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.autoImportEntrypointDirectorySearch",
-                LspAny::Bool(p.auto_import_entrypoint_directory_search.is_true()),
+                ConfigValue::Bool(p.auto_import_entrypoint_directory_search.is_true()),
             );
         }
-        if !p.auto_import_file_exclude_patterns.is_empty() {
+        if let Some(values) = &p.auto_import_file_exclude_patterns {
             set_nested_value(
                 &mut config,
                 "preferences.autoImportFileExcludePatterns",
-                LspAny::Array(
-                    p.auto_import_file_exclude_patterns
-                        .iter()
-                        .cloned()
-                        .map(LspAny::String)
-                        .collect(),
-                ),
+                ConfigValue::Strings(values.clone()),
             );
         }
-        if !p.auto_import_specifier_exclude_regexes.is_empty() {
+        if let Some(values) = &p.auto_import_specifier_exclude_regexes {
             set_nested_value(
                 &mut config,
                 "preferences.autoImportSpecifierExcludeRegexes",
-                LspAny::Array(
-                    p.auto_import_specifier_exclude_regexes
-                        .iter()
-                        .cloned()
-                        .map(LspAny::String)
-                        .collect(),
-                ),
+                ConfigValue::Strings(values.clone()),
             );
         }
         if p.automatic_type_acquisition_enabled.is_true()
@@ -1752,21 +1725,21 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "tsserver.automaticTypeAcquisition.enabled",
-                LspAny::Bool(p.automatic_type_acquisition_enabled.is_true()),
+                ConfigValue::Bool(p.automatic_type_acquisition_enabled.is_true()),
             );
         }
         if p.enable_js_doc_completions.is_true() || p.enable_js_doc_completions.is_false() {
             set_nested_value(
                 &mut config,
                 "suggest.jsdoc.enabled",
-                LspAny::Bool(p.enable_js_doc_completions.is_true()),
+                ConfigValue::Bool(p.enable_js_doc_completions.is_true()),
             );
         }
         if !p.custom_config_file_name.is_empty() {
             set_nested_value(
                 &mut config,
                 "customConfigFileName",
-                LspAny::String(p.custom_config_file_name.clone()),
+                ConfigValue::String(p.custom_config_file_name.clone()),
             );
         }
         if p.disable_automatic_type_acquisition.is_true()
@@ -1775,7 +1748,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "disableAutomaticTypeAcquisition",
-                LspAny::Bool(p.disable_automatic_type_acquisition.is_true()),
+                ConfigValue::Bool(p.disable_automatic_type_acquisition.is_true()),
             );
         }
         if p.disable_line_text_in_references.is_true()
@@ -1784,21 +1757,21 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "unstable.disableLineTextInReferences",
-                LspAny::Bool(p.disable_line_text_in_references.is_true()),
+                ConfigValue::Bool(p.disable_line_text_in_references.is_true()),
             );
         }
         if p.disable_suggestions.is_true() || p.disable_suggestions.is_false() {
             set_nested_value(
                 &mut config,
                 "unstable.disableSuggestions",
-                LspAny::Bool(p.disable_suggestions.is_true()),
+                ConfigValue::Bool(p.disable_suggestions.is_true()),
             );
         }
         if p.display_parts_for_js_doc.is_true() || p.display_parts_for_js_doc.is_false() {
             set_nested_value(
                 &mut config,
                 "unstable.displayPartsForJSDoc",
-                LspAny::Bool(p.display_parts_for_js_doc.is_true()),
+                ConfigValue::Bool(p.display_parts_for_js_doc.is_true()),
             );
         }
         if p.exclude_library_symbols_in_nav_to.is_true()
@@ -1807,14 +1780,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "workspaceSymbols.excludeLibrarySymbols",
-                LspAny::Bool(p.exclude_library_symbols_in_nav_to.is_true()),
+                ConfigValue::Bool(p.exclude_library_symbols_in_nav_to.is_true()),
             );
         }
         if p.enable_formatting.is_true() || p.enable_formatting.is_false() {
             set_nested_value(
                 &mut config,
                 "format.enabled",
-                LspAny::Bool(p.enable_formatting.is_true()),
+                ConfigValue::Bool(p.enable_formatting.is_true()),
             );
         }
         if p.generate_return_in_doc_template.is_true()
@@ -1823,14 +1796,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "suggest.jsdoc.generateReturns",
-                LspAny::Bool(p.generate_return_in_doc_template.is_true()),
+                ConfigValue::Bool(p.generate_return_in_doc_template.is_true()),
             );
         }
         if p.import_module_specifier_ending != ImportModuleSpecifierEndingPreference::None {
             set_nested_value(
                 &mut config,
                 "preferences.importModuleSpecifierEnding",
-                LspAny::String(
+                ConfigValue::String(
                     import_module_specifier_ending_string(p.import_module_specifier_ending)
                         .to_string(),
                 ),
@@ -1840,7 +1813,7 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.importModuleSpecifier",
-                LspAny::String(
+                ConfigValue::String(
                     import_module_specifier_preference_string(p.import_module_specifier_preference)
                         .to_string(),
                 ),
@@ -1852,17 +1825,17 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "unstable.lazyConfiguredProjectsFromExternalProject",
-                LspAny::Bool(p.lazy_configured_projects_from_external_project.is_true()),
+                ConfigValue::Bool(p.lazy_configured_projects_from_external_project.is_true()),
             );
         }
         if !p.locale.is_empty() {
-            set_nested_value(&mut config, "locale", LspAny::String(p.locale.clone()));
+            set_nested_value(&mut config, "locale", ConfigValue::String(p.locale.clone()));
         }
         if p.maximum_hover_length != 0 {
             set_nested_value(
                 &mut config,
                 "unstable.maximumHoverLength",
-                LspAny::Number(p.maximum_hover_length as f64),
+                ConfigValue::Int(p.maximum_hover_length),
             );
         }
         if p.organize_imports_accent_collation.is_true()
@@ -1871,13 +1844,13 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.organizeImports.accentCollation",
-                LspAny::Bool(p.organize_imports_accent_collation.is_true()),
+                ConfigValue::Bool(p.organize_imports_accent_collation.is_true()),
             );
         }
         set_nested_value(
             &mut config,
             "preferences.organizeImports.caseFirst",
-            LspAny::String(
+            ConfigValue::String(
                 serialize_preference_organize_imports_case_first(p.organize_imports_case_first)
                     .to_string(),
             ),
@@ -1885,7 +1858,7 @@ impl MarshalerTo for UserPreferences {
         set_nested_value(
             &mut config,
             "preferences.organizeImports.unicodeCollation",
-            LspAny::String(
+            ConfigValue::String(
                 serialize_preference_organize_imports_collation(p.organize_imports_collation)
                     .to_string(),
             ),
@@ -1894,14 +1867,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.organizeImports.caseSensitivity",
-                LspAny::Bool(p.organize_imports_ignore_case.is_true()),
+                ConfigValue::Bool(p.organize_imports_ignore_case.is_true()),
             );
         }
         if !p.organize_imports_locale.is_empty() {
             set_nested_value(
                 &mut config,
                 "preferences.organizeImports.locale",
-                LspAny::String(p.organize_imports_locale.clone()),
+                ConfigValue::String(p.organize_imports_locale.clone()),
             );
         }
         if p.organize_imports_numeric_collation.is_true()
@@ -1910,20 +1883,20 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "preferences.organizeImports.numericCollation",
-                LspAny::Bool(p.organize_imports_numeric_collation.is_true()),
+                ConfigValue::Bool(p.organize_imports_numeric_collation.is_true()),
             );
         }
         set_nested_value(
             &mut config,
             "preferences.organizeImports.sort",
-            LspAny::String(
+            ConfigValue::String(
                 serialize_preference_organize_imports_sort(p.organize_imports_sort).to_string(),
             ),
         );
         set_nested_value(
             &mut config,
             "preferences.organizeImports.typeOrder",
-            LspAny::String(
+            ConfigValue::String(
                 serialize_preference_organize_imports_type_order(p.organize_imports_type_order)
                     .to_string(),
             ),
@@ -1931,20 +1904,20 @@ impl MarshalerTo for UserPreferences {
         set_nested_value(
             &mut config,
             "unstable.preferGoToSourceDefinition",
-            LspAny::Bool(p.prefer_go_to_source_definition),
+            ConfigValue::Bool(p.prefer_go_to_source_definition),
         );
         if p.prefer_type_only_auto_imports.is_true() || p.prefer_type_only_auto_imports.is_false() {
             set_nested_value(
                 &mut config,
                 "preferences.preferTypeOnlyAutoImports",
-                LspAny::Bool(p.prefer_type_only_auto_imports.is_true()),
+                ConfigValue::Bool(p.prefer_type_only_auto_imports.is_true()),
             );
         }
         if p.use_aliases_for_rename.is_true() || p.use_aliases_for_rename.is_false() {
             set_nested_value(
                 &mut config,
                 "preferences.useAliasesForRenames",
-                LspAny::Bool(p.use_aliases_for_rename.is_true()),
+                ConfigValue::Bool(p.use_aliases_for_rename.is_true()),
             );
         }
         if p.provide_refactor_not_applicable_reason.is_true()
@@ -1953,14 +1926,14 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "unstable.provideRefactorNotApplicableReason",
-                LspAny::Bool(p.provide_refactor_not_applicable_reason.is_true()),
+                ConfigValue::Bool(p.provide_refactor_not_applicable_reason.is_true()),
             );
         }
         if !p.quote_preference.0.is_empty() {
             set_nested_value(
                 &mut config,
                 "preferences.quoteStyle",
-                LspAny::String(p.quote_preference.0.to_string()),
+                ConfigValue::String(p.quote_preference.0.to_string()),
             );
         }
         if p.report_style_checks_as_warnings.is_true()
@@ -1969,21 +1942,21 @@ impl MarshalerTo for UserPreferences {
             set_nested_value(
                 &mut config,
                 "reportStyleChecksAsWarnings",
-                LspAny::Bool(p.report_style_checks_as_warnings.is_true()),
+                ConfigValue::Bool(p.report_style_checks_as_warnings.is_true()),
             );
         }
         if p.enable_validation.is_true() || p.enable_validation.is_false() {
             set_nested_value(
                 &mut config,
                 "validate.enabled",
-                LspAny::Bool(p.enable_validation.is_true()),
+                ConfigValue::Bool(p.enable_validation.is_true()),
             );
         }
         if !p.workspace_symbols_scope.0.is_empty() {
             set_nested_value(
                 &mut config,
                 "workspaceSymbols.scope",
-                LspAny::String(p.workspace_symbols_scope.0.to_string()),
+                ConfigValue::String(p.workspace_symbols_scope.0.to_string()),
             );
         }
         // PORT: Go marshals with `json.Deterministic(true)`, which writes the
@@ -1995,10 +1968,10 @@ impl MarshalerTo for UserPreferences {
 
 // PORT: the Go `json.Deterministic(true)` map key order, applied to every
 // nested object. `String` `Ord` is the bytewise Go `slices.Sort` order.
-fn sort_keys_deterministic(m: &mut IndexMap<String, LspAny>) {
+fn sort_keys_deterministic(m: &mut IndexMap<String, ConfigValue>) {
     m.sort_keys();
     for v in m.values_mut() {
-        if let LspAny::Object(m) = v {
+        if let ConfigValue::Map(m) = v {
             sort_keys_deterministic(m);
         }
     }

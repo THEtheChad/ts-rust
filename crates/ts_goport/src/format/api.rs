@@ -98,8 +98,8 @@ pub fn format_node_given_indentation(
     node: Node,
     file: Node,
     language_variant: LanguageVariant,
-    initial_indentation: i32,
-    delta: i32,
+    initial_indentation: i64,
+    delta: i64,
 ) -> Vec<TextChange> {
     let text_range = TextRange::new(node.pos(), node.end());
     new_formatting_scanner(

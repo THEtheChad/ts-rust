@@ -3,6 +3,7 @@ use crate::format::prelude::*;
 use crate::flags_macros::go_enum;
 use crate::frontend::core_textchange::TextChange;
 use crate::frontend::scanner::scanner_p1::{rune_to_char, utf8_decode_rune_in_string};
+use crate::gostd::conv::float64_to_int64;
 use std::cell::Cell;
 
 // Go: format/span.go:20 findEnclosingNode
@@ -91,7 +92,7 @@ pub fn get_own_or_inherited_delta(
     mut n: Node,
     options: &lsutil::FormatCodeSettings,
     source_file: Node,
-) -> i32 {
+) -> i64 {
     let mut previous_line = -1;
     let mut child = Node::NIL;
     while n.is_some() {
@@ -177,8 +178,8 @@ pub fn prepare_range_contains_error_function(
 pub struct FormatSpanWorker<'t> {
     pub original_range: TextRange,
     pub enclosing_node: Node,
-    pub initial_indentation: i32,
-    pub delta: i32,
+    pub initial_indentation: i64,
+    pub delta: i64,
     pub request_kind: FormatRequestKind,
     pub range_contains_error: Box<dyn FnMut(TextRange) -> bool>,
     pub source_file: Node,
@@ -196,7 +197,7 @@ pub struct FormatSpanWorker<'t> {
 
     pub child_context_node: Node,
     pub last_indented_line: i32,
-    pub indentation_on_last_indented_line: i32,
+    pub indentation_on_last_indented_line: i64,
 
     pub visiting_node: Node,
     pub visiting_indenter: Option<Rc<DynamicIndenter>>,
@@ -213,8 +214,8 @@ pub fn new_format_span_worker<'t>(
     ctx: &Context,
     original_range: TextRange,
     enclosing_node: Node,
-    initial_indentation: i32,
-    delta: i32,
+    initial_indentation: i64,
+    delta: i64,
     request_kind: FormatRequestKind,
     range_contains_error: Box<dyn FnMut(TextRange) -> bool>,
     source_file: Node,
@@ -501,14 +502,14 @@ impl<'t> FormatSpanWorker<'t> {
         node_start_line: i32,
         undecorated_node_start_line: i32,
         child: Node,
-        mut inherited_indentation: i32,
+        mut inherited_indentation: i64,
         parent: Node,
         parent_dynamic_indentation: Option<&Rc<DynamicIndenter>>,
         parent_start_line: i32,
         undecorated_parent_start_line: i32,
         is_list_item: bool,
         is_first_list_item: bool,
-    ) -> i32 {
+    ) -> i64 {
         debug_assert!(!node_is_synthesized(child));
 
         if node_is_missing(child) || child.flags().intersects(NodeFlags::REPARSED) {
@@ -828,7 +829,7 @@ impl<'t> FormatSpanWorker<'t> {
     }
 
     // Go: format/span.go:544 getCurrentIndentationAtPosition
-    pub fn get_current_indentation_at_position(&self, pos: i32) -> i32 {
+    pub fn get_current_indentation_at_position(&self, pos: i32) -> i64 {
         let start_line_position = get_line_start_position_for_position(pos, self.source_file);
         find_first_non_whitespace_column(start_line_position, pos, self.source_file, self.options())
     }
@@ -838,11 +839,11 @@ impl<'t> FormatSpanWorker<'t> {
         &mut self,
         node: Node,
         start_line: i32,
-        inherited_indentation: i32,
+        inherited_indentation: i64,
         parent: Node,
         parent_dynamic_indentation: Option<&Rc<DynamicIndenter>>,
         effective_parent_start_line: i32,
-    ) -> (i32, i32) {
+    ) -> (i64, i64) {
         // PORT: Go dereferences a nil `parentDynamicIndentation` only where
         // it is used; so does this.
         let pdi = || parent_dynamic_indentation.expect("nil dynamicIndenter");
@@ -916,8 +917,8 @@ impl<'t> FormatSpanWorker<'t> {
         end_pos: i32,
         parent_start_line: i32,
         r: TextRange,
-        inherited_indentation: i32,
-    ) -> i32 {
+        inherited_indentation: i64,
+    ) -> i64 {
         let r2 = TextRange::new(start_pos, end_pos);
         if r.overlaps(r2) || r2.contained_by(r) {
             /* Not to miss zero-range nodes e.g. JsxText */
@@ -927,7 +928,7 @@ impl<'t> FormatSpanWorker<'t> {
         } else {
             let start_line = get_ecma_line_of_position(self.source_file, start_pos);
             let column = self.get_current_indentation_at_position(start_pos);
-            if start_line != parent_start_line || start_pos == column {
+            if start_line != parent_start_line || i64::from(start_pos) == column {
                 // Use the base indent size if it is greater than
                 // the indentation of the inherited predecessor.
                 let base_indent_size = self.options().editor_settings.base_indent_size;
@@ -947,8 +948,8 @@ impl<'t> FormatSpanWorker<'t> {
         context_node: Node,
         node_start_line: i32,
         undecorated_node_start_line: i32,
-        indentation: i32,
-        delta: i32,
+        indentation: i64,
+        delta: i64,
     ) {
         if !self
             .original_range
@@ -1397,7 +1398,7 @@ pub fn is_comment(kind: SyntaxKind) -> bool {
 
 impl<'t> FormatSpanWorker<'t> {
     // Go: format/span.go:878 insertIndentation
-    pub fn insert_indentation(&mut self, pos: i32, indentation: i32, line_added: bool) {
+    pub fn insert_indentation(&mut self, pos: i32, indentation: i64, line_added: bool) {
         let indentation_string = get_indentation_string(indentation, self.options());
         if line_added {
             // new line is added before the token by the formatting rules
@@ -1421,7 +1422,7 @@ impl<'t> FormatSpanWorker<'t> {
     }
 
     // Go: format/span.go:893 characterToColumn
-    pub fn character_to_column(&self, start_line_position: i32, character_in_line: i32) -> i32 {
+    pub fn character_to_column(&self, start_line_position: i32, character_in_line: i32) -> i64 {
         let mut column = 0;
         let text_text = source_file_text(self.source_file);
         let text = text_text.as_bytes();
@@ -1459,7 +1460,7 @@ impl<'t> FormatSpanWorker<'t> {
     pub fn indent_trivia_items(
         &mut self,
         trivia: &[TextRangeWithKind],
-        comment_indentation: i32,
+        comment_indentation: i64,
         mut indent_next_token_or_trivia: bool,
         indent_single_line: &mut dyn FnMut(&mut FormatSpanWorker<'t>, TextRangeWithKind),
     ) -> bool {
@@ -1496,7 +1497,7 @@ impl<'t> FormatSpanWorker<'t> {
     pub fn indent_multiline_comment(
         &mut self,
         comment_range: TextRange,
-        indentation: i32,
+        indentation: i64,
         first_line_is_indented: bool,
         indent_final_line: bool,
     ) {
@@ -1583,25 +1584,39 @@ impl<'t> FormatSpanWorker<'t> {
     }
 }
 
-/// Go `strings.Repeat(s, count)`.
-// PORT: Go panics on a negative count; `str::repeat` takes a usize.
-fn strings_repeat(s: &str, count: i32) -> String {
+/// Go `strings.Repeat(s, count)` (go1.27 strings/strings.go Repeat): the
+/// same panics on a negative count and on a length past `math.MaxInt`.
+// PORT: a length Go can't allocate is a fatal "out of memory" in Go and an
+// allocation failure here; neither is an answer.
+fn strings_repeat(s: &str, count: i64) -> String {
+    match count {
+        0 => return String::new(),
+        1 => return s.to_string(),
+        _ => {}
+    }
     if count < 0 {
         panic!("strings: negative Repeat count");
+    }
+    let len = (s.len() as u128) * (count as u128);
+    if len > i64::MAX as u128 {
+        panic!("strings: Repeat output length overflow");
     }
     s.repeat(count as usize)
 }
 
 // Go: format/span.go:998 getIndentationString
-pub fn get_indentation_string(indentation: i32, options: &lsutil::FormatCodeSettings) -> String {
+// PORT: Go `int(math.Floor(...))` is `gostd::conv::float64_to_int64`, and
+// the arithmetic wraps as Go's `int` does.
+pub fn get_indentation_string(indentation: i64, options: &lsutil::FormatCodeSettings) -> String {
     // go's `strings.Repeat` already has static, global caching for repeated tabs and spaces, so there's no need to cache here like in strada
     if !options.editor_settings.convert_tabs_to_spaces.is_true() {
         if options.editor_settings.tab_size == 0 {
             return String::new();
         }
-        let tabs =
-            (f64::from(indentation) / f64::from(options.editor_settings.tab_size)).floor() as i32;
-        let spaces = indentation - (tabs * options.editor_settings.tab_size);
+        let tabs = float64_to_int64(
+            (indentation as f64 / options.editor_settings.tab_size as f64).floor(),
+        );
+        let spaces = indentation.wrapping_sub(tabs.wrapping_mul(options.editor_settings.tab_size));
         let mut res = strings_repeat("\t", tabs);
         if spaces > 0 {
             res = res + &strings_repeat(" ", spaces);
@@ -1803,8 +1818,8 @@ impl<'t> FormatSpanWorker<'t> {
 pub struct DynamicIndenter {
     pub node: Node,
     pub node_start_line: i32,
-    pub indentation: Cell<i32>,
-    pub delta: Cell<i32>,
+    pub indentation: Cell<i64>,
+    pub delta: Cell<i64>,
 
     pub options: lsutil::FormatCodeSettings,
     pub source_file: Node,
@@ -1815,9 +1830,9 @@ impl DynamicIndenter {
     pub fn get_indentation_for_comment(
         &self,
         kind: SyntaxKind,
-        token_indentation: i32,
+        token_indentation: i64,
         container: Node,
-    ) -> i32 {
+    ) -> i64 {
         match kind {
             // preceding comment to the token that closes the indentation scope inherits the indentation from the scope
             // ..  {
@@ -1856,7 +1871,7 @@ impl DynamicIndenter {
         kind: SyntaxKind,
         container: Node,
         suppress_delta: bool,
-    ) -> i32 {
+    ) -> i64 {
         if !suppress_delta && self.should_add_delta(line, kind, container) {
             return self.indentation.get() + self.get_delta(container);
         }
@@ -1864,12 +1879,12 @@ impl DynamicIndenter {
     }
 
     // Go: format/span.go:1166 getIndentation
-    pub fn get_indentation(&self) -> i32 {
+    pub fn get_indentation(&self) -> i64 {
         self.indentation.get()
     }
 
     // Go: format/span.go:1170 getDelta
-    pub fn get_delta(&self, child: Node) -> i32 {
+    pub fn get_delta(&self, child: Node) -> i64 {
         // Delta value should be zero when the node explicitly prevents indentation of the child node
         if node_will_indent_child(&self.options, self.node, child, self.source_file, true) {
             return self.delta.get();
@@ -1979,8 +1994,8 @@ impl<'t> FormatSpanWorker<'t> {
         &self,
         node: Node,
         node_start_line: i32,
-        indentation: i32,
-        delta: i32,
+        indentation: i64,
+        delta: i64,
     ) -> Rc<DynamicIndenter> {
         Rc::new(DynamicIndenter {
             node,

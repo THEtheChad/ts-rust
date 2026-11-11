@@ -67,12 +67,9 @@ impl LanguageService {
             if max_trunc_len <= 0 {
                 max_trunc_len = 500;
             }
-            // PORT: the preference is a Go `int` (64 bits) and the node
-            // builder's lengths are `i32`. A length past `i32::MAX` is never
-            // reached, so it saturates (Go never truncates there either).
             let vc = VerbosityContext {
                 level: verbosity_level,
-                max_truncation_length: i32::try_from(max_trunc_len).unwrap_or(i32::MAX),
+                max_truncation_length: max_trunc_len,
                 ..Default::default()
             };
 
