@@ -30,20 +30,23 @@ other material is not read. New Go and JS logs go to a staging dir (lspdiff --go
 and are published only when the tier verified its inputs clean; lspdiff's settings.json must equal
 the keyed settings. Standard sessions run with ATA off (vendor/lspdiff client.mjs initializeParams).
 
-Inputs (lanes H4 and H5): every project and the frozen typings store are read-only snapshots, made
+Inputs (lanes H4, H5 and H8): every project and the frozen typings store are read-only snapshots, made
 before the first session and watched with inotify while the tier runs. lspdiff runs in a user, mount
 and network namespace (no network) with each snapshot bound read-only at its own path (so the file
-texts it sends are the snapshot's), and every server process (Go, tsc-rs, JS) in a namespace of its
-own with a fresh overlay of the project and a private home, empty and new for every process, at
-SANDBOX_HOME, with nothing of this environment (vendor/lspdiff/sandbox.mjs, LSPDIFF_SANDBOX): a
-server that writes into its project fails its session ("session end": DIFF with rsFailure input
-for tsc-rs), and ATA's typings cache is in the private home, so every run starts it empty and fills
-it from the store. A change to a snapshot while the tier runs makes its sessions ERROR and discards
-the staged logs. Tripwires (GUARDED): the real dirs a server could read outside its keyed inputs (the
-shared typings cache ~/.cache/typescript, npm's cache and config, ~/.config) are each covered, in
-lspdiff's namespace, by a bait dir of the session's own (a typings cache with the files ATA reads
-first) that inotify watches for every access, reads included: any access makes every item of the
-session ERROR. SANDBOX_HOME must still be empty when the tier ends. In full, tsc-rs runs three times: twice as is and once with
+texts it sends are the snapshot's), and every server process (Go, tsc-rs, JS) in the sandbox the api
+tier uses (parity_sandbox_init.py, under vendor/lspdiff/sandbox.mjs, LSPDIFF_SANDBOX; lane H8): PID 1
+of its own user, mount, network and PID namespace, the host's state dirs covered by empty tmpfs dirs
+(so the real dirs a server could read outside its keyed inputs, the shared typings cache
+~/.cache/typescript, npm's cache and config, ~/.config, do not exist for it, not even for stat), the
+whole tree read-only but a fresh overlay of the project and a private home, new for every process with
+only its skeleton, at SANDBOX_HOME; no privilege, no fd but 0, 1 and 2, nothing of this environment.
+A server that writes into its project fails its session ("session end": DIFF with rsFailure input for
+tsc-rs), one that leaves a process behind or holds its output open fails it too, and what it writes
+into its home is compared with Go's (item "session home"). ATA's typings cache is in the private home,
+so every run starts it empty and fills it from the store. A server that cannot be started (a sandbox or
+exec failure) makes the session ERROR, and nothing of it is cached. A change to a snapshot while the
+tier runs makes its sessions ERROR and discards the staged logs. SANDBOX_HOME must still be empty when
+the tier ends. In full, tsc-rs runs three times: twice as is and once with
 GOPORT_PARSE_THREADS=1. An item is judged in this order (docs/perf-rearch/parity.md, "JS tsserver as
 the LSP referee"):
 1. tsc-rs determinism: a tsc-rs run that crashed or timed out, or an answer on which a later tsc-rs
@@ -65,7 +68,8 @@ the LSP referee"):
 --js-all runs JS on every session: it records JS's view of every item that is not MATCH (also
 GO-BROKEN ones, for the report) and the calibration (per kind: on how many answers where tsc-rs
 equals Go JS's normalized answer equals Go's too) in results.json "jsCalibration".
-Items: lsp/<session>/<index> <step> (index: the answer's place in the session). Status MATCH,
+Items: lsp/<session>/<index> <step> (index: the answer's place in the session; the initialize answer
+and the home come after the last answer, lane H8). Status MATCH,
 GO-BROKEN, JS-AGREES, DIFF; a session that fails is one ERROR item. Output:
 DIR/results.json and DIR/<session>/ (lspdiff's files: mismatches.json, summary.json, rs.jsonl,
 js.json, js.jsonl when JS ran).
@@ -88,6 +92,7 @@ import ata_typings  # noqa: E402
 import parity_inputs as inputs  # noqa: E402
 import parity_modes as modes  # noqa: E402
 import parity_referees as referees  # noqa: E402
+import parity_sandbox_init as sandbox_init  # noqa: E402
 import parity_watch  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -201,11 +206,14 @@ RS_RUNS = {'quick': [], 'full': ['--rs-runs', '2', '--rs-env', 'GOPORT_PARSE_THR
 JS_TSSERVER = HOME / '.cache/perf-rearch/js-tsc/node_modules/typescript/lib/tsserver.js'
 # The lspdiff sources that script a session, so Go's (and JS's) answers depend on them; the diff and
 # referee code (lspdiff.mjs, referee.mjs) and the bench scripts do not change a cached answer.
-SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
-                   'ata-npm/npm', 'ata-npm/fake-npm.mjs')
+# The sandbox's init (shared with the api tier) is one of them.
+SESSION_SOURCES = ('client.mjs', 'fixtures.mjs', 'json.mjs', 'project.mjs', 'scenario.mjs', 'session.mjs', 'sandbox.mjs', 'settings.mjs',
+                   'ata-npm/npm', 'ata-npm/fake-npm.mjs', '../../parity_sandbox_init.py', '../../parity_sandbox_storage.py')
 # Bump when the form of the cached logs changes (2: lane H4, session results, snapshots; 3: lane H5, the
-# hermetic servers: private home, frozen typings store, no network).
-CACHE_VERSION = 3
+# hermetic servers: private home, frozen typings store, no network; 4: lane H8, the sealed sandbox, the
+# initialize answer in the log and the home in the session result; 5: lane H8 round 2, the storage and its
+# write record from the init, the server messages through EOF, the stand-in npm's fixed config).
+CACHE_VERSION = 5
 
 
 def scenario_sources_sha(extra=()):
@@ -217,22 +225,13 @@ def scenario_sources_sha(extra=()):
 
 
 LSPDIFF = HERE / 'vendor/lspdiff/lspdiff.mjs'
-# The servers' private home (sandbox.mjs): an empty dir that every server process has its own new home
-# bound over, so the typings location (os.UserCacheDir()/typescript/7.1, in some answers) has the same
-# path in every run.
+# The servers' private home (sandbox.mjs): where every server process sees its own new home, so the
+# typings location (os.UserCacheDir()/typescript/7.1, in some answers) has the same path in every run.
 SANDBOX_HOME = HOME / '.cache/perf-rearch/parity/lsp-home'
-# The tripwires: real dirs that hold state a server or its npm could read, keyed by nothing. Each is
-# covered by a bait dir in lspdiff's namespace (so in every server's too), and any access to the bait
-# fails the session. The typings bait holds what ATA's init reads first (Go project/ata/ata.go init:
-# package.json, package-lock.json, the registry's index.json).
-GUARDED = {HOME / '.cache/typescript': {'7.1/package.json': '{ "private": true }', '7.1/package-lock.json': '{}',
-                                        '7.1/node_modules/types-registry/index.json': '{ "entries": {} }',
-                                        '7.1/node_modules/@types/.keep': ''},
-           HOME / '.npm': {'.keep': ''}, HOME / '.config': {'.keep': ''}}
 
 
-# lspdiff in a user, mount and network namespace with each snapshot (or bait) bound read-only at its
-# path: $1 snapshot, $2 path, then the next pair, then the command.
+# lspdiff in a user, mount and network namespace with each snapshot bound read-only at its path: $1
+# snapshot, $2 path, then the next pair, then the command.
 def outer(binds):
     script = [f'mount --bind "${{{2 * k + 1}}}" "${{{2 * k + 2}}}" && mount -o remount,bind,ro "${{{2 * k + 2}}}"' for k in range(len(binds))]
     return ['unshare', '-rmn', '--', 'sh', '-c', ' && '.join([*script, f'shift {2 * len(binds)}', 'exec "$@"']), 'outer',
@@ -247,10 +246,12 @@ ANCESTOR_NAMES = ('node_modules', 'package.json', 'tsconfig.json', 'jsconfig.jso
 
 
 def ancestor_dirs(*paths):
-    out = set()
+    """The dirs above paths that a server sees from the host: the sandbox's hidden dirs are empty tmpfs dirs
+    there (parity_sandbox_init.py HIDDEN), so the dirs in them are not looked up on the host."""
+    out = {'/'}
     for p in paths:
         p = Path(os.path.realpath(p))
-        out.update(str(a) for a in p.parents)
+        out.update(str(a) for a in p.parents if not sandbox_init.hidden(str(a)))
     return sorted(out)
 
 
@@ -264,21 +265,6 @@ def ancestors_state(dirs):
                 out[p] = inputs.tree_hash(p)
             elif os.path.lexists(p):
                 out[p] = inputs._file_sha(p) if os.path.isfile(p) and not os.path.islink(p) else f'link {os.readlink(p)}'
-    return out
-
-
-def make_baits(dir_):
-    """A session's bait dirs (fresh): [(bait, guarded path)] for every GUARDED dir that exists."""
-    inputs.remove_tree(dir_)
-    out = []
-    for k, (real, files) in enumerate(GUARDED.items()):
-        if not real.is_dir():
-            continue
-        bait = dir_ / str(k)
-        for rel, text in files.items():
-            (bait / rel).parent.mkdir(parents=True, exist_ok=True)
-            (bait / rel).write_text(text)
-        out.append((bait, real))
     return out
 
 
@@ -381,9 +367,6 @@ def main():
     SANDBOX_HOME.mkdir(parents=True, exist_ok=True)
     if any(SANDBOX_HOME.iterdir()):
         sys.exit(f'parity_lsp: {SANDBOX_HOME} is not empty: every server binds its own home over it')
-    for real in GUARDED:
-        if real == HOME / '.cache/typescript':
-            real.mkdir(parents=True, exist_ok=True)
     stage = inputs.Stage('lsp')
     snaps = inputs.Inputs()
     chosen = [sess for sess in sessions(args.tier) if re.search(args.only, sess['name'])]
@@ -443,8 +426,6 @@ def main():
                 typings = manifest['sha']
         except inputs.SnapshotError as e:
             return {f'lsp/{name}': {'status': 'ERROR', 'detail': f'no snapshot: {e}'}}, None, f'lsp {name}: ERROR {e}'
-        baits = make_baits(HOME / f'.cache/perf-rearch/parity/scratch/lsp-guard/{name}')
-        binds += [(str(b), str(real)) for b, real in baits]
         runs_go = go_runs(sess)
         material = session_material(sess, root, project_snap, typings, src_sha, info, node, [f'g{runs_go}'], up_state)
         js_material = session_material(sess, root, project_snap, typings, js_src_sha, info, node, (), up_state)
@@ -478,19 +459,11 @@ def main():
             cmd += ['--js', args.js, '--js-stage', str(js_stage), *(['--js-cache', str(js_cache)] if js_cache else [])]
             cmd += ['--js-all'] if args.js_all else []
         cmd += ['--scenario', scenario] if scenario else ['--positions', str(sess['positions'])]
-        cmd += ['--ata-store', str(store)] if frozen else []
+        cmd += ['--ata-store', str(store), '--ata-manifest', str(Path(args.ata_manifest).resolve())] if frozen else []
         start = time.monotonic()
-        with parity_watch.Watch([str(b) for b, _ in baits], mask=parity_watch.ACCESS) as guard:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
-                               env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
-            touched = guard.dirty()
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env={**os.environ, 'LSPDIFF_SANDBOX': json.dumps(sandbox)})
         secs = round(time.monotonic() - start, 1)
         (out / f'{name}.log').write_text(r.stdout + r.stderr)
-        if touched:  # fail closed: the session read state that no key holds
-            real = {str(b): str(g) for b, g in baits}
-            why = '; '.join(f'{real[b]} ({ev.replace(b, real[b])})' for b, ev in sorted(touched.items()))
-            return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'a process of the session touched an unkeyed path: {why}'}},
-                    {'secs': secs, 'error': True, 'root': str(root), 'touched': why}, f'lsp {name}: ERROR touched {why}')
         produced = sout / f'{root.name}-diff{"-" + scenario if scenario else ""}' / 'items.json'
         if r.returncode or not produced.exists():
             return ({f'lsp/{name}': {'status': 'ERROR', 'detail': f'lspdiff exit {r.returncode}: {r.stderr[-300:]}'}},
@@ -553,9 +526,6 @@ def main():
     for root, err in errs.items():
         if err:
             print(f'lsp: no snapshot of {root}: {err}', flush=True)
-    for name, sinfo in sessions_info.items():  # its Go runs read unkeyed state: no evidence of this tier is kept
-        if sinfo.get('touched'):
-            changed[f'session {name}'] = f'{name} touched an unkeyed path: {sinfo["touched"]}'
     if any(SANDBOX_HOME.iterdir()):  # a server wrote there without its own home over it
         changed[str(SANDBOX_HOME)] = f'{SANDBOX_HOME} is not empty after the tier: {sorted(p.name for p in SANDBOX_HOME.iterdir())[:5]}'
         for k in [k for k in items if k.startswith('lsp/')]:

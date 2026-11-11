@@ -54,8 +54,12 @@ import { fileURLToPath } from "node:url";
 import { fileUri } from "./client.mjs";
 import { ATA_STORE, FIXTURES, writeFixture, writeTree } from "./fixtures.mjs";
 import { endPosition, offsetToPosition, pickPositions, rel } from "./project.mjs";
-import { TYPED, startServer } from "./session.mjs";
-import { SERVER_PATH } from "./sandbox.mjs";
+import { TYPED, maskId, messagesEntry, startServer } from "./session.mjs";
+import { SANDBOXED, SERVER_PATH, serverHome } from "./sandbox.mjs";
+import { createHash } from "node:crypto";
+
+// The fixed place of the stand-in npm's config, node and log in a server's sandbox (ata-npm/).
+const ATA_DIR = "/run/lspdiff-ata";
 import { SETTINGS } from "./settings.mjs";
 
 const SETTLE_MS = SETTINGS.LSPDIFF_SETTLE_MS;
@@ -81,7 +85,7 @@ class Script {
 
   async ask(step, method, params) {
     const r = await this.client.request(method, params);
-    this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ms: r.ms });
+    this.log.push({ step, method, params, result: r.result, error: r.error, ...(r.failed ? { failed: r.failed } : {}), ...(r.rawNumbers ? { rawNumbers: true } : {}), ms: r.ms });
     return r;
   }
 
@@ -201,10 +205,11 @@ class Script {
   }
 
   // ATA's npm calls so far, from the stand-in npm's log (ata-npm/fake-npm.mjs): every call writes a
-  // start line and, when its work is done, a done line with the same pid.
+  // start line and, when its work is done, a done line with the same pid. The log is on the server's
+  // recorded storage (the plumbing dir), read through the sandbox's init (sandbox.mjs inside()).
   npmCalls() {
-    const file = this.ata.log;
-    return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+    const file = this.client.server.inside(`${ATA_DIR}/log/npm.log`);
+    return file && existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   }
 
   // Waits until ATA's npm is idle: every started call is done and its process has exited, and the log
@@ -213,21 +218,15 @@ class Script {
   // (false: npm was idle at once). A wait that reaches ATA_DEADLINE_MS fails the run (a timeout of
   // that server: for tsc-rs a DIFF, for Go GO-BROKEN), never a success.
   async npmIdle(label, since) {
-    const alive = (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (e) {
-        return e.code === "EPERM";
-      }
-    };
+    // The pid in the log is npm's own, in the server's PID namespace (sandbox.mjs alive).
+    const alive = (pid) => this.client.server.alive(pid);
     const start = performance.now();
     for (let polls = 0; ; polls++) {
       const log = this.npmCalls();
       // A call the store cannot answer (a package it lacks) or made outside the private typings
       // location: the input is not the frozen one, so the run is a harness error, never an answer.
-      const bad = log.find((e) => e.missing || e.refused);
-      if (bad) throw Object.assign(new Error(`ATA's npm at ${label}: ${bad.missing ? `the typings store lacks ${bad.missing.join(", ")}` : `refused: ${bad.refused}`}`), { harness: true });
+      const bad = log.find((e) => e.missing || e.refused || e.error);
+      if (bad) throw Object.assign(new Error(`ATA's npm at ${label}: ${bad.missing ? `the typings store lacks ${bad.missing.join(", ")}` : bad.refused ? `refused: ${bad.refused}` : `failed: ${bad.error}`}`), { harness: true });
       if (log.length !== this.ata.seen) [this.ata.seen, this.ata.changedAt] = [log.length, performance.now()];
       const done = new Set(log.filter((e) => e.done).map((e) => e.pid));
       const busy = log.some((e) => e.start && (!done.has(e.pid) || alive(e.pid)));
@@ -253,8 +252,9 @@ class Script {
     const start = performance.now();
     for (let since = start; ; since = -Infinity) {
       await this.client.settle(ms);
-      if (!this.ata || !(await this.npmIdle(label, since))) return performance.now() - start;
+      if (!this.ata || !(await this.npmIdle(label, since))) break;
     }
+    return performance.now() - start;
   }
 
   // ata-overlay: waits until ATA is idle (settle, the barrier of lane H4: the stand-in npm's own log)
@@ -322,7 +322,9 @@ class Script {
     const after = this.activeKeys();
     const delta = { added: after.filter((k) => !before.has(k)), removed: [...before].filter((k) => !after.includes(k)).sort() };
     pushed.sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
-    const entry = (what, method, result, ms = 0) => this.log.push({ step: `${name} ${what}`, method, result, ms });
+    // An event that held a number kept as its text (client.mjs) marks every entry of the checkpoint.
+    const raw = fresh.some((e) => e.raw);
+    const entry = (what, method, result, ms = 0) => this.log.push({ step: `${name} ${what}`, method, result, ...(raw ? { rawNumbers: true } : {}), ms });
     entry("watch events", "watch/events", events, waited);
     entry("watch delta", "watch/delta", { added: delta.added.map(JSON.parse), removed: delta.removed.map(JSON.parse) });
     entry("watch active", "watch/active", after.map(JSON.parse));
@@ -343,10 +345,7 @@ class Script {
   }
 }
 
-// "<name> watcher <n>.<i>": n comes from a process-wide counter of watcher versions
-// (project/watch.go watcherID), which counts every WatchedFiles version the process made, so it
-// is masked in every item but "watch ids".
-const maskId = (id) => id.replace(/ watcher \d+\./, " watcher <n>.");
+// maskId: session.mjs (the registration ids' watcher counter, masked in every item but "watch ids").
 
 const SMALL_A = "src/a.ts";
 
@@ -620,13 +619,13 @@ function fixtureChanges(root, expected) {
 }
 
 // Runs a scenario on one server and returns { log: [{ step, method, params, result, error }],
-// session } (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
+// session } (the log's first entry: the initialize answer) (session: the server's result, sandbox.mjs; for a fixture scenario it also fails when the
 // fixture dir is not what the script made it). A fixture scenario first writes its fixture into
 // `root`. When the server crashes or times out, the error carries the answers so far as `log` and the
 // session as `session`.
 // serverLog: a file that gets the server's window/logMessage stream (lspdiff --server-logs).
 // ataStore: the frozen typings store (lspdiff --ata-store), for the scenarios with `typings: "frozen"`.
-export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog, ataStore } = {}) {
+export async function runScenario(cmd, name, root, { files = [], stderr, env, serverLog, ataStore, ataManifest } = {}) {
   const scenario = SCENARIOS[name];
   if (!scenario) throw new Error(`unknown scenario ${name}`);
   if (scenario.fixture) writeFixture(scenario.fixture, root);
@@ -635,32 +634,40 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
   // private home (sandbox.mjs), new for every server run.
   let ata;
   const here = dirname(fileURLToPath(import.meta.url));
+  // What the server sees besides its project (sandbox.mjs binds): a fixture dir (read-only: the script
+  // writes it, the server only reads it), and with ATA on the stand-in npm, node, its store and its config;
+  // its log is in the storage's plumbing dir, at ATA_DIR/log (every write to it recorded: lane H8 round 3).
+  const binds = scenario.fixture ? [{ src: root }] : [];
   if (scenario.ata ?? true) {
+    // ATA_DIR (lane H8 round 2): the stand-in npm's config, node and log dir at fixed paths, nothing in the
+    // environment (the server controls that); the store authenticated file by file (its sha256s).
+    if (!SANDBOXED) throw new Error(`scenario ${name} runs ATA: it needs the sandbox (LSPDIFF_SANDBOX)`);
     const typings = scenario.typings ?? "frozen";
-    if (typings === "frozen" && !ataStore) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store`);
+    if (typings === "frozen" && !(ataStore && ataManifest)) throw new Error(`scenario ${name} runs ATA on the frozen typings store: pass --ata-store and --ata-manifest`);
     const dir = mkdtempSync(join(tmpdir(), "lspdiff-ata-"));
     if (typings === "fixture") writeTree(Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [`store/${k}`, v])), dir);
-    ata = { dir, log: join(dir, "npm.log") };
-    env = {
-      ...env,
-      PATH: `${join(here, "ata-npm")}:${SERVER_PATH}`,
-      ATA_NODE: process.execPath,
-      ATA_STORE: typings === "fixture" ? join(dir, "store") : ataStore,
-      ATA_NPM_LOG: ata.log,
-      ATA_NPM_DELAY_MS: String(SETTINGS.ATA_NPM_DELAY_MS),
-    };
+    ata = { dir };
+    const store = typings === "fixture" ? join(dir, "store") : ataStore;
+    const files = typings === "fixture"
+      ? Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [k, createHash("sha256").update(v).digest("hex")]))
+      : JSON.parse(readFileSync(ataManifest, "utf8")).files;
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ store, files, log: `${ATA_DIR}/log/npm.log`, delayMs: SETTINGS.ATA_NPM_DELAY_MS, cache: `${serverHome()}/.cache` }));
+    binds.push({ src: join(here, "ata-npm") }, { src: store }, { src: join(dir, "config.json"), at: `${ATA_DIR}/config.json` },
+      { src: process.execPath, at: `${ATA_DIR}/node` }, { src: join(here, "ata-npm/fake-npm.mjs"), at: `${ATA_DIR}/fake-npm.mjs` });
+    env = { ...env, PATH: `${join(here, "ata-npm")}:${SERVER_PATH}` };
   }
   if (ata) Object.assign(ata, { reported: 0, seen: 0, changedAt: -Infinity });
   let client;
   try {
-    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true });
+    client = await startServer(cmd, scenario.workspace ? join(root, scenario.workspace) : root, { stderr, watch: true, env, ata: scenario.ata ?? true, binds, ...(ata ? { plumbing: `${ATA_DIR}/log` } : {}) });
   } catch (e) {
     if (scenario.fixture) rmSync(root, { recursive: true, force: true });
     if (ata) rmSync(ata.dir, { recursive: true, force: true });
-    throw Object.assign(e, { log: [], session: e.session });
+    throw Object.assign(e, { log: e.initialize ? [e.initialize] : [], session: e.session });
   }
   const s = new Script(client, root);
   s.ata = ata;
+  s.log.push(client.initialize);
   if (scenario.fixture) s.expected = new Map(Object.entries(FIXTURES[scenario.fixture]));
   let failure;
   try {
@@ -672,6 +679,7 @@ export async function runScenario(cmd, name, root, { files = [], stderr, env, se
     failure = e;
   }
   const session = await client.shutdown();
+  s.log.push(messagesEntry(client, s.seen)); // what came after the last checkpoint, through EOF
   if (s.expected) {
     const changes = fixtureChanges(root, s.expected);
     if (changes.length) Object.assign(session, { clean: false, why: [...session.why, `it changed the fixture: ${changes.slice(0, 5).join(", ")}`] });

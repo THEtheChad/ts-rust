@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py, parity_api_init.py).
+"""Lane H7's negative controls for the api tier (parity_api.py, parity_api_session.py, parity_sandbox_init.py).
 
 usage: parity_h7_test.py [--unit]                 prints H7 SELFTEST OK, or each FAIL; exit 1 on a failure
        parity_h7_test.py --e2e-only --harness DIR  the end-to-end controls against another harness's
@@ -127,7 +127,7 @@ def unit():
     api.session_sha = lambda: 'another-source'
     check('key: the session driver\'s and init\'s source (harness sources)', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     api.session_sha = saved[0]
-    check('key: both sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_api_init.py'])
+    check('key: the sandbox sources are hashed', [f.name for f in api.SOURCES] == ['parity_api_session.py', 'parity_sandbox_init.py', 'parity_sandbox_storage.py'])
     session.PROTOCOL = 'another protocol'
     check('key: the API protocol', inputs.json_hash(api.material(base, None, {}, 'g' * 64)) != k0)
     session.PROTOCOL = saved[1]
@@ -198,24 +198,26 @@ def unit():
         except session.Malformed:
             check(f'frame: {what} is malformed', True)
 
-    # round 3 finding 3: the home skeleton is checked against its exact structure
+    # round 3 finding 3: the home skeleton is checked against its exact structure (the sandbox's storage
+    # code since lane H8 round 2: parity_sandbox_storage.py, shared with the lsp tier)
+    import parity_sandbox_storage as storage
     h = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH)) / 'home'
-    session.make_home(h)
-    check('round 3 finding 3: a fresh skeleton has no deviation', session.skeleton_errors(h) == [], session.skeleton_errors(h))
+    storage.make_home(str(h), 0)
+    check('round 3 finding 3: a fresh skeleton has no deviation', storage.skeleton_errors(str(h)) == [], storage.skeleton_errors(str(h)))
     (h / 'tmp').rmdir()
     (h / 'tmp').write_text('x')
-    check('round 3 finding 3: tmp replaced by a file is a deviation', any(e.startswith('tmp:') for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: tmp replaced by a file is a deviation', any(e.startswith('tmp:') for e in storage.skeleton_errors(str(h))))
     (h / 'tmp').unlink()
     (h / 'tmp').mkdir(mode=0o700)
     os.chmod(h / 'tmp', 0o700)
-    check('round 3 finding 3: tmp of another mode is a deviation', any('mode 700' in e for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: tmp of another mode is a deviation', any('mode 700' in e for e in storage.skeleton_errors(str(h))))
     os.chmod(h / '.cache', 0o755)
     (h / '.cache').rmdir()
-    check('round 3 finding 3: a skeleton dir gone is a deviation', any(e == '.cache: gone' for e in session.skeleton_errors(h)))
+    check('round 3 finding 3: a skeleton dir gone is a deviation', any(e == '.cache: gone' for e in storage.skeleton_errors(str(h))))
     inputs.remove_tree(h.parent)
     w = Path(tempfile.mkdtemp(prefix='skel-', dir=SCRATCH))
-    session.make_home(w / 'home')
-    listing = session.storage(w)[0]
+    storage.make_home(str(w / 'home'), 0)
+    listing = storage.listing(str(w), 0)
     check('round 3 finding 3: the skeleton is in the storage listing, with its modes, not skipped',
           listing['home'].get('tmp') == 'dir 755' and listing['skeleton'] == [], listing)
     inputs.remove_tree(w)
@@ -237,18 +239,17 @@ def unit():
     else:
         check('regen --only: Astra\'s version 3 file and the evidence runs exist', False, (v3, full))
 
-    # finding 9: the directory-collision scenario exists, quick runs it, and B2's pin tracks it
+    # finding 9: the directory-collision scenario exists and quick runs it (B2 fixed it and removed its pin:
+    # the item is now held to MATCH like every other)
     name9 = 'dyn-config-include-dirs-insensitive'
     try:
         sc9 = next((x for x in api.load_scenarios() if x['name'] == name9), None)
         files9 = sorted((sc9 or {}).get('fs', {}).get('files', {}))
-        pins = grandfather.load((HERE / 'parity-grandfathered.json').read_text(), 'checkout')
         ok9 = (sc9 is not None and sc9.get('caseSensitive') is False and any(f.endswith('/src/A/x.ts') for f in files9)
-               and any(f.endswith('/src/a/y.ts') for f in files9) and name9 in api.modes.working_manifest().api
-               and 'B2' in pins.get(f'api/{name9}', {}).get('reason', ''))
-        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick, pinned for B2', ok9, files9)
+               and any(f.endswith('/src/a/y.ts') for f in files9) and name9 in api.modes.working_manifest().api)
+        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick', ok9, files9)
     except Exception as e:  # noqa: BLE001 (an older harness lacks what this reads)
-        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick, pinned for B2', False, e)
+        check('finding 9: dynamic src/A/x.ts and src/a/y.ts on an insensitive host: a scenario, in quick', False, e)
 
     try:
         grandfather.validate({'about': 'x', 'version': grandfather.VERSION, 'items': {'api/x-y': {

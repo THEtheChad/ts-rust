@@ -252,7 +252,7 @@ await part("go variants", async () => {
   const copy = join(ROOT, "lspdiff-copy");
   spawnSync("cp", ["-r", LSPDIFF, copy]);
   const src = readFileSync(join(copy, "lspdiff.mjs"), "utf8");
-  writeFileSync(join(copy, "lspdiff.mjs"), src.replace("const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method));", "const answer = (e, method) => JSON.stringify(normalize(e && { result: e.result }, method));"));
+  writeFileSync(join(copy, "lspdiff.mjs"), src.replace("const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method, !!e?.rawNumbers));", "const answer = (e, method) => JSON.stringify(normalize(e && { result: e.result }, method, !!e?.rawNumbers));"));
   writeRuns([hover(null), refs([1, 2])], [hover(null), refs([1, 2])]);
   const changed = run(M, ["--go-variants", store], copy);
   check("round 3: a changed answer function does not read the record (normalizer identity)", changed.ref?.status === "MATCH" && /other normalizer/.test(changed.out), JSON.stringify(changed.ref) + changed.out.slice(-200));
@@ -302,6 +302,7 @@ function scriptProbe(npmLog, now, alive = true) {
     existsSync: () => true,
     readFileSync: () => npmLog(reads++),
     SETTLE_MS: 0,
+    ATA_DIR: "/run/lspdiff-ata",
     SETTINGS: { ATA_IDLE_MS: 1500, ATA_DEADLINE_MS: 60000 },
     setTimeout: (cb) => cb(),
     Error,
@@ -312,7 +313,8 @@ function scriptProbe(npmLog, now, alive = true) {
   const script = new cls();
   const settles = [];
   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
-  script.client = { settle: async () => settles.push(now()) };
+  // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
+  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, inside: (p) => p } };
   script.log = [];
   return { script, settles, reads: () => reads };
 }
@@ -350,15 +352,26 @@ await part("h5", async () => {
   const home = join(dir, "home");
   const typings = join(home, ".cache/typescript/7.1");
   mkdirSync(typings, { recursive: true });
-  const log = join(dir, "npm.log");
-  const npm = (args, cwd = typings) => {
-    const r = spawnSync(join(LSPDIFF, "ata-npm/npm"), args, {
-      cwd,
-      env: { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: join(home, ".cache"), ATA_NODE: process.execPath, ATA_STORE: store, ATA_NPM_LOG: log, ATA_NPM_DELAY_MS: "0" },
+  // The stand-in reads only its fixed config (lane H8 round 2): each call runs in a mount namespace with
+  // the config, node and the log dir bound at /run/lspdiff-ata, as the sandbox binds them.
+  const { createHash } = await import("node:crypto");
+  const logDir = join(dir, "log");
+  mkdirSync(logDir, { recursive: true });
+  const log = join(logDir, "npm.log");
+  const files = Object.fromEntries(Object.entries(ATA_STORE).map(([k, v]) => [k, createHash("sha256").update(v).digest("hex")]));
+  const config = (over = {}) => {
+    const f = join(dir, "config.json");
+    writeFileSync(f, JSON.stringify({ store, files, log: "/run/lspdiff-ata/log/npm.log", delayMs: 0, cache: join(home, ".cache"), ...over }));
+    return f;
+  };
+  const npm = (args, cwd = typings, { env = {}, cfg = config() } = {}) => {
+    const bind = 'mount -t tmpfs tmpfs /run && mkdir -p /run/lspdiff-ata/log && touch /run/lspdiff-ata/config.json /run/lspdiff-ata/node /run/lspdiff-ata/fake-npm.mjs && mount --bind "$1" /run/lspdiff-ata/config.json && mount --bind "$2" /run/lspdiff-ata/node && mount --bind "$3" /run/lspdiff-ata/log && mount --bind "$4" /run/lspdiff-ata/fake-npm.mjs && cd "$5" && shift 5 && exec "$@"';
+    const r = spawnSync("unshare", ["-rm", "sh", "-c", bind, "sh", cfg, process.execPath, logDir, join(LSPDIFF, "ata-npm/fake-npm.mjs"), cwd, join(LSPDIFF, "ata-npm/npm"), ...args], {
+      env: { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: join(home, ".cache"), ...env },
       encoding: "utf8",
     });
-    const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    return { code: r.status, last: lines.at(-1) };
+    const lines = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+    return { code: r.status, last: lines.at(-1), stderr: r.stderr };
   };
   const reg = npm(["install", "--ignore-scripts", "types-registry@latest"]);
   const two = npm(["install", "--ignore-scripts", "@types/ata-fake-lib@latest", "@types/ata-fake-two@latest", "--save-dev", '--user-agent="typesInstaller/7.1"']);
@@ -372,7 +385,14 @@ await part("h5", async () => {
   check("h5: a package the store lacks fails the call, is logged as missing, and nothing of the call is installed", miss.code === 1 && JSON.stringify(miss.last.missing) === '["@types/not-in-store@latest"]', JSON.stringify(miss));
   const out = npm(["install", "--ignore-scripts", "types-registry@latest"], dir);
   check("h5: a call outside the private XDG_CACHE_HOME is refused (the real typings cache, say)", out.code === 1 && /not under the private XDG_CACHE_HOME/.test(out.last.refused ?? ""), JSON.stringify(out));
-  for (const [what, line] of [["missing", '{"done":true,"pid":1,"args":[],"code":1,"missing":["@types/x@latest"]}'], ["refused", '{"done":true,"pid":1,"args":[],"code":1,"refused":"outside"}']]) {
+  // Lane H8 round 2 (Astra's ata-unlogged): the environment is not the stand-in's config.
+  const before = readFileSync(log, "utf8").split("\n").length;
+  const env = npm(["install", "--ignore-scripts", "types-registry@latest"], typings, { env: { ATA_NPM_LOG: "/dev/null", ATA_STORE: "/nowhere", ATA_NPM_DELAY_MS: "0", XDG_CACHE_HOME: "/elsewhere" } });
+  check("h8 r2: the stand-in ignores the environment: ATA_NPM_LOG, ATA_STORE and XDG_CACHE_HOME of the server change nothing (the call is logged, installs, and is not refused)",
+    env.code === 0 && readFileSync(log, "utf8").split("\n").length === before + 2 && env.last.code === 0, JSON.stringify(env));
+  const tampered = npm(["install", "--ignore-scripts", "types-registry@latest"], typings, { cfg: config({ files: { ...files, "registry/index.json": "0".repeat(64) } }) });
+  check("h8 r2: a store file that does not have its configured sha256 fails the call, logged as error", tampered.code === 1 && /sha256/.test(tampered.last.error ?? ""), JSON.stringify(tampered));
+  for (const [what, line] of [["missing", '{"done":true,"pid":1,"args":[],"code":1,"missing":["@types/x@latest"]}'], ["refused", '{"done":true,"pid":1,"args":[],"code":1,"refused":"outside"}'], ["error", '{"done":true,"pid":1,"args":[],"code":1,"error":"a store file"}']]) {
     const probe = scriptProbe(() => '{"start":true,"pid":1}\n' + line + "\n", () => 0, false);
     let threw = null;
     try {
@@ -397,9 +417,10 @@ await part("h5", async () => {
     );
   const plain = probe(false);
   const keys = plain.out[0].trim().split(" ");
-  check("h5: a server gets none of lspdiff's environment, a private home and the system PATH only", !keys.includes("LEAK_ME") && !keys.includes("ATA_REAL_NPM") && keys.includes("XDG_CACHE_HOME") && plain.out[1] !== homedir() && plain.out[2].includes(".cache") && plain.r.inputs.homeWrites === 1, JSON.stringify(plain));
+  check("h5: a server gets none of lspdiff's environment, a private home and the system PATH only", !keys.includes("LEAK_ME") && !keys.includes("ATA_REAL_NPM") && keys.includes("XDG_CACHE_HOME") && plain.out[1] !== homedir() && plain.out[2].includes(".cache"), JSON.stringify(plain));
   const boxed = probe(true);
-  check("h5: in the sandbox the private home is at its fixed path, new and empty again after, and there is no network (loopback only)", boxed.out[1] === fixed && boxed.out[3].trim() === "1" && boxed.r.inputs.homeWrites === 1 && readdirSync(fixed).length === 0, JSON.stringify(boxed));
+  check("h5: in the sandbox the private home is at its fixed path, the write is recorded and listed, the host's dir stays empty, and there is no network (loopback only)",
+    boxed.out[1] === fixed && boxed.out[3].trim() === "1" && boxed.r.writes?.["home/.cache/written"]?.includes("create") && /^[0-9a-f]{16} /.test(boxed.r.storage?.home?.[".cache/written"] ?? "") && readdirSync(fixed).length === 0, JSON.stringify(boxed));
 });
 
 rmSync(ROOT, { recursive: true, force: true });

@@ -149,7 +149,7 @@ def scenarios(tier, path=SCENARIOS):
     return [s for s in every if s['name'] in names]
 
 
-SOURCES = (Path(session.__file__), session.INIT)  # what decides a Go answer: the session driver and the sandbox's init
+SOURCES = (Path(session.__file__), session.INIT, session.STORAGE)  # what decides a Go answer: the session driver, the sandbox's init and its storage
 
 
 def session_sha():
@@ -249,7 +249,7 @@ def answers(t):
 
 def storage(t):
     """What the session left in its writable places after each request, and at its end."""
-    return {'steps': [s.get('fs') for s in t['steps']], 'end': t['fs']}
+    return {'steps': [s.get('fs') for s in t['steps']], 'end': t['fs'], 'writes': t.get('writes', {})}
 
 
 def view(t):
@@ -426,8 +426,7 @@ class Tier:
 def ancestor_dirs(roots):
     """The dirs above the roots that the sandbox shows from the host (the hidden dirs are empty tmpfs dirs
     there, made by the sandbox): module resolution and the config search look up ANCESTOR_NAMES in them."""
-    hidden = lambda d: any(d == h or d.startswith(h + '/') for h in session.HIDDEN)  # noqa: E731
-    return sorted({d for d in parity_lsp.ancestor_dirs(*roots) if not hidden(d)} | {'/'})
+    return parity_lsp.ancestor_dirs(*roots)
 
 
 def main_tier(argv):

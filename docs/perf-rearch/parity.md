@@ -87,10 +87,13 @@ material and is read only when it matches (lane H4).
   `lspdiff.mjs info`: `LSPDIFF_SETTLE_MS`, `LSPDIFF_QUIET_MS`, `LSPDIFF_REQUEST_TIMEOUT_MS`,
   `LSPDIFF_SHUTDOWN_MS`, `ATA_IDLE_MS`, `ATA_NPM_DELAY_MS`, `ATA_DEADLINE_MS`). No other lspdiff
   module reads an `LSPDIFF_*` or `ATA_*` variable, and lspdiff writes the settings it ran with to
-  `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`.
+  `settings.json`, which must equal the keyed ones. The JS key adds `tsserver.mjs`. Since lane H8 the
+  sources also hold `json.mjs` (the wire's JSON reader) and the sandbox's init
+  (`parity_sandbox_init.py`, shared with the api tier), and the ancestor dirs keyed are only the ones a
+  server sees (none in the sandbox's hidden dirs: on MS-A2 only `/`).
 - **api** (lane H7): the scenario as expanded (request filesystem, options, requests, build steps, the
   case flag), its root, the disk fixture's content hash, the session's sources (`parity_api_session.py`
-  and `parity_api_init.py`: protocol client, requests, sandbox, timeouts), the protocol, the private
+  and `parity_sandbox_init.py`: protocol client, requests, sandbox, timeouts), the protocol, the private
   home path, the ancestor dirs' lookup names, the Go binary's sha and the Go run count. See "api: API
   sessions".
 - **fuzz and corpus:** the case's id and `json_hash` of its content (every file, the options, the
@@ -213,6 +216,15 @@ binary runs once more on its own, and is FLAKY if it then passes.
 This tier uses lspdiff from `perf/lsp-concurrency` (931fad409). The vendored copy adds
 `--go-cache`, a per-answer `items.json`, the watch scenarios (`scenario.mjs`, `fixtures.mjs`),
 repeated tsc-rs runs and more Go runs (below). Up to 4 sessions run side by side (`--jobs`).
+
+**Servers and the wire (lane H8).** Every server process (Go, tsc-rs, JS tsserver) runs in the api
+tier's sandbox (`parity_sandbox_init.py`): PID 1 of its own PID namespace, the host's state dirs empty,
+the whole tree read-only but its project overlay and its private home, no privilege, no fd but 0, 1
+and 2, no network; a process left behind when it ends fails the session. The client reads the wire
+strictly (Content-Length framing, exact JSON-RPC 2.0 envelopes, no duplicate key, every number's text
+kept), and every session has two more items after its last answer: `initialize` (the initialize
+answer) and `session home` (what the server wrote into its home: the final listing and its history).
+A server that cannot be started is ERROR, never GO-BROKEN. See "LSP sandbox and wire (lane H8)".
 
 **Standard sessions** (`session.mjs`; umami, ts-pattern and, in full only, hono). Each session opens 12 files of the project. For
 each file it asks for diagnostics, semantic tokens, inlay hints, document symbols and folding
@@ -342,8 +354,9 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   `scratch/api/<scenario>/root` for the requests that use the host filesystem: the build orchestrator,
   and `kind: "layer"` filesystems, which are allowed only over a fixture (they fall back to the host,
   which in the sandbox is the fixture and nothing else). `host` symlinks are refused.
-- **The sandbox** (`parity_api_init.py`, PID 1 of a new user, mount, network and PID namespace; `unshare
-  --pid --fork --kill-child --mount-proc`):
+- **The sandbox** (`parity_sandbox_init.py`, until lane H8 `parity_api_init.py`; the lsp tier's too since
+  then; PID 1 of a new user, mount, network and PID namespace; `unshare --pid --fork --kill-child
+  --mount-proc`):
   - `/home`, `/tmp`, `/var/tmp`, `/run`, `/mnt`, `/media`, `/srv`, `/opt` and `/dev/shm` are empty tmpfs
     dirs: the user's files (the real `~/.cache/typescript`, `~/.npm`, `~/.config`, every other lane's
     trees) do not exist for the server, not even for `stat`. The dirs the sandbox makes there have mode
@@ -397,7 +410,7 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   are the sandbox's own) are keyed and watched for the names module resolution looks up. A change to
   either is ERROR. There are no tripwires: the dirs they guarded do not exist in the sandbox.
 - **Key** (`material`): the expanded scenario, its root, the fixture hash, the sha of
-  `parity_api_session.py` and `parity_api_init.py` (`SOURCES`), `PROTOCOL` (the wire protocol: JSON-RPC
+  `parity_api_session.py` and `parity_sandbox_init.py` (`SOURCES`), `PROTOCOL` (the wire protocol: JSON-RPC
   `--async`, the pin's protocol 5 in `api_oracle.py`'s numbering), the home path, the ancestors' state,
   whether `/parity-api` exists, the timeouts, the Go command's identity (a binary's sha256) and the Go run
   count. Go's two sessions per scenario are cached in `go-cache/<go sha>/api/<scenario>-<key>.json` with
@@ -1950,15 +1963,21 @@ Details are in `js-vs-go/js/items/<item>/diff.txt` and `js-vs-go/js.log`.
   turn base MATCHes into new results, so rerun the base after one.
 - **Inputs outside the snapshots.** The Go and tsc-rs binaries are keyed by their sha, and JS by its
   package. In the lsp tier (lane H5) the node, the typings store and the ancestor dirs' lookup names
-  are keyed too, the servers see none of the harness's environment, and the tripwires cover the
-  shared typings cache, npm's cache and `~/.config`. Not keyed: the kernel, the CPU count and the
-  host's load (which change how Go's goroutines race, not its inputs), the system libraries, and
-  `stat` of a guarded path (a tripwire sees opens and reads, not lookups). The CLI, fuzz and corpus
+  are keyed too, and the servers see none of the harness's environment; since lane H8 the servers run
+  in the api tier's sealed sandbox, where the shared typings cache, npm's cache, `~/.config` and every
+  other user file do not exist. Not keyed: the kernel, the CPU count and the host's load (which change
+  how Go's goroutines race, not its inputs), and the system libraries (`/usr`, `/etc`: visible,
+  read-only). The CLI, fuzz and corpus
   tiers still pass the harness's environment through and do not key their ancestor dirs (none holds
   a lookup name on MS-A2 now).
-- **Transient changes of a fixture scenario's dir by a server.** The fixture must hold exactly what
-  the script made it after each run, but a change a server makes and undoes inside its own run is not
-  seen there (the script writes the same dir; inotify cannot tell the writers apart).
+- **Transient changes of a fixture scenario's dir by a server:** closed by lane H8. The server sees the
+  fixture dir through a read-only bind (the script writes it from outside), so it cannot change it at
+  all; the end check stays.
+- **The home with ATA on (lane H8).** In the scenarios with ATA on the home is listed at every wait
+  (quiet, checkpoint), where ATA is idle, not after every answer (ATA writes it in the background, so a
+  listing between two waits would depend on npm's timing). A file a server writes and removes again
+  between two waits of such a scenario is not seen; one that stays, or one a server writes in a session
+  with ATA off, is.
 
 ## Grandfather pins without Rust line numbers (lane H6, 2026-11-09)
 
@@ -2245,7 +2264,7 @@ mapping and change them back before the end check: both content checks pass, and
 is another host process racing the harness, not the compiler under test, which runs in the sandbox
 and cannot reach the fixture snapshot. The same holds for the snapshots of the cli and lsp tiers.
 
-### The lsp tier: the same gaps (reported, not fixed; for lane H8)
+### The lsp tier: the same gaps (reported here; fixed by lane H8, see "LSP sandbox and wire (lane H8)")
 
 `vendor/lspdiff/sandbox.mjs` runs each server under `unshare -rmn` with overlays of its inputs and its
 home bound, and `client.mjs` kills only that process. With Astra's corrections from her recheck:
@@ -2377,6 +2396,310 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   the self-tests' entries.
 - **Self-tests:** `parity_h7_test.py` takes about 2.5 minutes (89 checks; the tripwire race about 10 s,
   the end-to-end controls the rest); `--unit` about 14 s.
+## LSP sandbox and wire (lane H8, 2026-11-10)
+
+The api tier runs each session sealed and unprivileged (lane H7, three review rounds). The lsp tier had
+the same gaps or worse (Astra's H7 round 2 recheck, question 4; "The lsp tier: the same gaps" above):
+each let a misbehaving server be reported as MATCH or GO-BROKEN. This lane ports the api tier's design
+to the lsp tier, sharing its code, and fixes each gap at the level of the design.
+
+### The design
+
+- **One init for both tiers.** `parity_api_init.py` became `parity_sandbox_init.py`, the PID 1 of every
+  api and lsp server. Its spec is general: `mounts` in order (binds, read-only unless `rw`, and overlays
+  of a read-only lower with an upper and work dir the server cannot reach), `expose` (host files and
+  dirs the server needs, bound back read-only at their own paths when a hidden dir covers them), the
+  server's `cwd`, the fixed `mtime` and the `cmd`. The policy is the init's own, the same for both tiers:
+  `HIDDEN` (the user's files, `/tmp`, `/var/tmp`, `/run`, `/mnt`, `/media`, `/srv`, `/opt`, `/dev/shm`)
+  are empty tmpfs dirs; the whole tree is read-only but the `rw` binds and the overlays; a mount point
+  outside the hidden dirs is refused (it would be made on the host's filesystem); every symlink in a
+  hidden dir on the way to the cwd, an exposed path or a mount point is made again, read-only (umami's
+  project path is a symlink to its snapshot's path). The server drops every privilege before exec (a
+  nested user namespace that owns nothing and may make no other, no capability, uid and gid 1000,
+  `no_new_privs`, checked), keeps no fd but 0, 1 and 2, and has no network. When it ends, every process
+  left in its PID namespace is a survivor (listed through a `/proc` fd opened before the server
+  started), killed and reported. A setup, privilege-drop, cwd or exec failure comes back on the init's
+  report pipe, never as a server result. Callers run `python3 -I parity_sandbox_init.py launch SPEC`; the
+  init execs `unshare` with itself as PID 1 (`UNSHARE` is in the init too), so both tiers start servers
+  the same way. The api tier's spec is its old one in the new form (the home bound `rw`, the fixture's
+  overlay, the command's files exposed): its 49 scenarios, its pins (before B2 removed them: Go's result
+  and every attempt fingerprint of the 14 entries unchanged, only their keys) and `parity_h7_test.py`'s
+  108 checks are the same on it.
+- **The storage, made, recorded and listed in one place** (round 2; `parity_sandbox_storage.py`, which
+  the init imports): the init mounts one tmpfs per session in its own user namespace for the private home
+  (`home/`, with its skeleton) and each overlay's upper and work dirs (`ovl<k>/`), binds the home at the
+  home path, mounts the overlays on it, and detaches it (keeping an fd: the server reaches it only through
+  the home and the overlays). Before the server starts it marks the tmpfs with fanotify (a filesystem
+  mark, which a user namespace may set on a filesystem it mounted): every create, write, attribute
+  change, delete and rename anywhere in the storage is recorded, in a dir made a moment before too (no
+  watch per dir, so no race), as the order-free record `writes` (for every path ever touched, what
+  happened to it; the overlays' work dirs left out). After the end (survivors killed) it lists the
+  storage with the one lister both tiers use (`walk`, the api tier's `_walk` of H7's final fix: every
+  entry, the roots as `.`, an unlistable dir or unreadable file said so, never skipped; the init has
+  every capability over the tmpfs, so a mode the server sets hides nothing), and reports both. The api
+  tier asks the init for a listing after every request (a control pipe) and compares the write record as
+  part of its storage; lspdiff judges them as items (below).
+- **lspdiff's servers** (`sandbox.mjs` `ServerProcess`; Go, tsc-rs and JS tsserver) run under it when
+  `LSPDIFF_SANDBOX` is set (parity_lsp.py always sets it): the private home at the fixed home path, an
+  overlay per project snapshot at its own path, and as read-only binds the files the command
+  names (each word that names a file, by its realpath: `--go` and `--rs` are commands, split at
+  spaces, as the api tier's), a fixture scenario's dir (the script writes it from outside; the server
+  can only read it), tsserver's package, and with ATA on the stand-in npm, its store and, at the fixed
+  dir `/run/lspdiff-ata`, its config (read-only), node (read-only) and its log's dir (`rw`, the one
+  writable place outside the storage; it must hold the log and nothing else after the run). The
+  stand-in reads only that config (round 2: nothing of the environment, which the server controls), and
+  checks every store file it installs against the store's sha256 list (the frozen store's manifest,
+  `ata-typings.json`; the fixture store's own); the log is the ATA barrier's and a report, not evidence:
+  what was installed is in the write record and the storage.
+  The stand-in npm runs in the server's PID namespace, so the ATA barrier's liveness check reads the
+  init's descendants from the host's `/proc` (NSpid). The stand-in now writes `package.json` and the
+  lock with their maps sorted, as npm does, so the home does not depend on the order of ATA's calls; it
+  lays packages out with npm's modes (dirs 755, files 644) instead of the frozen store's (its snapshot
+  has dirs 555, which only a server that was root in its namespace could write into: the first fill
+  after the privilege drop timed out in ATA on watch-ts-pattern-f12 and watch-hono-f12, Go and tsc-rs
+  alike); and a failure of its own is logged as `error`, a harness error of the scenario, not a wait
+  that runs into its deadline.
+- **The wire** (`client.mjs`, `json.mjs`), as the api tier reads its server: a header is only
+  `Content-Length` (and `Content-Type`), at most 4 lines of 256 bytes, a length of at most 10 digits and
+  256 MB; a body is UTF-8 without a BOM and one JSON text with no duplicate key; every message is exactly
+  a JSON-RPC 2.0 envelope: an answer to a pending request (`{jsonrpc, id, result}` or `{jsonrpc, id,
+  error: {code, message, data?}}`), a server request or a notification. Anything else breaks the
+  protocol: the run ends there, a crash (rsFailure crash for tsc-rs, GO-BROKEN for Go). Answers are
+  compared as canonical JSON (the server's key order, strings re-escaped, no insignificant whitespace);
+  `json.mjs` `parseKeep` keeps every number whose text JSON.stringify would not give back (`1e999`,
+  `-0`, `1.0`, `1e0`, integers past 2^53) as that text (`JSON.rawJSON`), so the comparison never maps two
+  texts of a number to one value. The referee's normalizer reads answers the same way. Round 2 (cost):
+  `scan` is one tokenizer pass (escape-aware strings, brackets, the commas before keys, and only the
+  number tokens that can be non-canonical: a fraction, an exponent, `-0`, 16 or more digits), which finds
+  a duplicate decoded key and checks each such number's text; a body whose numbers are all canonical is
+  parsed with plain `JSON.parse`, the others with the reviver. An entry that holds a kept number is
+  marked `rawNumbers`, and lspdiff and the referee read and normalize with the reviver only what is
+  marked. No plain object is a map keyed by names a server gives (round 2, finding 2: a key `__proto__`
+  in a `{}` set its prototype instead; the lister is Python now, and the referee and tsserver.mjs build
+  such objects with `Object.fromEntries` or a `Map`).
+- **Four new items per session, after the last answer** (so every earlier item keeps its index):
+  - `<n> initialize`, the initialize answer, and `<n+1> session messages`, every server-to-client
+    request and notification after the last checkpoint (a standard session: all of them) through the
+    end of the server's output, `window/logMessage` left out and watcher ids masked (round 2, finding 4:
+    a message sent while shutdown is answered, or in a session without checkpoints, was dropped). Both
+    are answers like any other: tsc-rs's determinism, GO-BROKEN when Go's runs differ, accumulated Go
+    evidence, then MATCH or DIFF.
+  - `<n> session storage` and `<n> session writes` (round 2, finding 7: two items, judged path by path):
+    the storage after the end (every path of the home and of each overlay's upper dir, and the home
+    skeleton's deviations) and the write record. On each path, tsc-rs's value (absent counts as one)
+    must be a Go value. The storage is judged against this fill's Go runs only, never a recorded or prior
+    variant: where they agree on a path tsc-rs must equal it; where they differ on a path (the final
+    storage itself varies across Go's runs), tsc-rs must equal one of them, and only that path is
+    exempt. The writes count this fill's Go runs, the clean prior runs and the per-path variants recorded
+    by earlier fills (one record key per path); only a path whose Go value varies is exempt, and a path
+    tsc-rs touched that no Go run ever did is a DIFF. The item is MATCH when every path is equal,
+    GO-BROKEN when tsc-rs differs only on paths where Go varies, else DIFF; tsc-rs's runs (and the
+    confirming run) must agree on every path.
+- **Shutdown** (round 2, finding 5): its result must be `null`; any other is a broken shutdown.
+- **Session result:** a survivor, an output stream held open 10 s after the end (both streams; stderr's
+  EOF used to be waited on for 2 s and not enforced), the exit, stderr crash lines, changed inputs and
+  the shutdown, as before. `infra` (the init's setup report, a spawn failure, or no report from an init
+  lspdiff did not kill) stops lspdiff with exit 3: the session is ERROR, and that run is neither staged
+  nor added to the variant record.
+- **Gone:** the tripwires (`GUARDED`, the bait dirs and their inotify watch): the dirs they guarded do not
+  exist for a server, not even for `stat`. The ancestor dirs keyed are the ones a server sees (none in a
+  hidden dir; on MS-A2 only `/`).
+- **Keys:** the init, its storage module and `json.mjs` are session sources, and `CACHE_VERSION` is 5
+  (round 2), so every lsp Go and JS key changed and every variant record started empty. The api tier's
+  key holds the init and the storage module too.
+
+### The gaps, their fixes and their controls
+
+`parity_h8_test.py` (`--unit`: 15 checks, seconds; end to end: 24 checks through `parity_lsp.py --tier
+quick --no-js` on ts-pattern-f12-p6, about 10 minutes, under the gate lock) with `parity_h8_fake.py`, an
+LSP proxy in front of the Go oracle: Astra's lsp probes (`scratch/review-h7r2-astra/lsp/`: init.py,
+overflow.py, home.py, the non-executable Go) and the api tier's round 2 and 3 probes as modes. The
+"before" column is the same test run against the harness before this lane (`--e2e-only --harness
+<git archive c788830c4>`).
+
+| gap | fix | control | before (`c788830c4`) | now |
+|---|---|---|---|---|
+| no PID namespace: a child outlives the server; stderr's EOF not enforced | the init is PID 1; survivors fail; both streams must reach EOF | `detached`, `hide-proc-survivor` (tmpfs over `/proc` first), `child-stderr` | MATCH ×3 | session end DIFF; DIFF; session end DIFF |
+| everything outside the overlays and the home writable; the server root in its namespace | the sealed read-only tree; every privilege dropped | `outside-write` (the review dir, `/etc`, `/var/tmp`, `/tmp`); `shm-remount`; `privs` (no capability; mount, umount, mount_setattr, unshare of a mount or user namespace all fail) | 3 host files written; MATCH; the probe fails (it could) | none written; DIFF; good |
+| the tripwires do not see `stat` or `O_PATH` | the guarded dirs do not exist; no fd but 0, 1, 2 | `stat-bait`; `fds` | MATCH; good | DIFF; good |
+| high: the initialize answer not compared (`session.mjs:21`) | item `initialize` | `init-null` (Astra's init.py) | MATCH | initialize DIFF |
+| high: lossy number parsing (`client.mjs:56`) | `parseKeep`: a number keeps its text | `overflow` (Astra's overflow.py, 1e999 for null), `minus-zero`, `float` (1.0), `exp` (1e0) | MATCH ×4 | DIFF ×4 |
+| medium: unexpected home writes change no verdict (`sandbox.mjs:162`) | item `session home` | `home-write` (Astra's home.py), `home-transient` (written and removed between two answers), `home-skeleton`, `home-root-hide`, `home-root-mode` (her storage-root chmod probes, on the home) | MATCH ×5 | session home DIFF ×5 |
+| high: an exec or setup failure is GO-BROKEN (`lspdiff.mjs:305`) | the init's report: ERROR, nothing kept | `unexec-go` (Astra's) | GO-BROKEN, cached | ERROR, nothing cached |
+| JSON-RPC envelopes not validated | strict framing and envelope | `dup-key`, `bad-rpc` (`"9.9"`), `extra-key`, `stray-answer` (an answer to no request) | MATCH ×4 | DIFF rsFailure crash ×4 |
+| controls | | `pass`, `fds`, `privs` | good, good, DIFF | good ×3 |
+
+The other self-tests on this harness: `parity_h7_test.py` (111 checks: 64 unit, 47 end to end; the api tier on the shared init:
+`H7 SELFTEST OK`; its finding 9 check no longer asks for the pin B2 removed), `parity_h4_test.py`,
+`parity_h5_test.py` (unit; its tripwire checks are gone with the tripwires, its ancestors checks follow
+the visible-only key, its e2e checks now ask that the real typings cache does not exist for tsc-rs and
+that a leaked `XDG_CACHE_HOME` cannot write it), `parity_h6_test.py`, `selftest/h4-selftest.mjs` (the ATA
+barrier's probe gets the server's liveness check) and `selftest/referee-selftest.mjs`: all OK. The
+referee self-test had failed since lane H5 (its proxy, `#!/usr/bin/env node`, found no node on a
+server's PATH, and its settings came through an environment the servers no longer get: 15 checks
+failed on `c788830c4`); its proxy now takes a settings file and runs as a command.
+
+### Round 2: Astra's review of `06a4344b9` (`reviews/2026-11-10-astra-h8.md`, REJECT)
+
+Her reproductions are in `~/.cache/perf-rearch/scratch/review-h8-astra/`. Root's design point: the storage
+is listed and recorded in one place for both tiers (her finding 1 was the api tier's `_walk` bug again,
+in lspdiff's own JS lister), so the lister, the home skeleton and the write record are the init's
+(`parity_sandbox_storage.py`), and the api tier uses them too. Each control is in `parity_h8_test.py`
+(her probes as `parity_h8_fake.py` modes, through `parity_lsp.py` on ts-pattern-f12-p6 or, as she ran
+them, lspdiff alone): "before" is `--e2e-only --harness <git archive 06a4344b9>`.
+
+| # | finding | fix | control | before (`06a4344b9`) | now |
+|---|---|---|---|---|---|
+| 1 | unreadable input storage gives MATCH: listing failures ignored, the overlay root's metadata not listed (`sandbox.mjs:83`) | the init lists the storage with the one lister (H7's `_walk`): the roots as `.`, an unlistable dir said so; the init has every capability over its tmpfs | `input-root-hide`, `input-root-mode` (lspdiff alone, as she ran them, and through the tier) | 59 MATCH, 59 MATCH | session end DIFF rsFailure input, session storage DIFF |
+| 2 | `$HOME/__proto__` invisible (`sandbox.mjs:105`: a `{}`) | the lister is Python; the referee's `refValue` and tsserver.mjs's rename `changes` no longer assign server-given names into a `{}` | `home-proto`; unit: the lister lists `__proto__`, the record records it | MATCH | session storage DIFF |
+| 3 | the home history misses writes inside one request (sampled) | the write record (fanotify on the storage's tmpfs, set before the server starts; complete, no per-dir race) | `within-request` (create and unlink before each answer); unit: a file made and removed in a new dir is recorded | MATCH | session writes DIFF |
+| 4 | server messages dropped: standard sessions all of them (`session.mjs:150`), watch sessions those after the last checkpoint (`scenario.mjs:675`) | item `session messages`: every server-to-client message after the last checkpoint through EOF | `request` (applyEdit during initialize), `late-request`, `late-diag` (while shutdown is answered); her watch-session cases | MATCH ×3 | session messages DIFF ×3 |
+| 5 | the shutdown result is not checked (`client.mjs:219`) | it must be null | `shutdown-result` (12345) | MATCH | session end DIFF |
+| 6 | the server controls ATA's evidence: the stand-in trusts `ATA_NPM_LOG`, `ATA_STORE` and the delay from the environment, its log dir is writable | the stand-in reads a fixed read-only config, checks every store file against its sha256, ignores the environment; the evidence is the write record | `ata-unlogged` on ata-overlay (her fake-extra.py: an npm call of its own with `ATA_NPM_LOG=/dev/null`); JS: the environment ignored, a store file with other bytes fails | 47 MATCH | the npm item and session writes DIFF |
+| 7 | a timing variation exempts unrelated home damage forever: storage and history were one answer, and a Go variant exempted all of it (`lspdiff.mjs:388`, `:491`) | two items, judged path by path: storage strict to this fill's Go runs; writes exempt only on the paths where Go varies, recorded per path | her synthetic case: a Go that writes P in about half of its runs, a tsc-rs that writes P and Q, now and in a later fill through the record; control: P alone | GO-BROKEN (her `home-variants`, `home-prior-variants`); the controls MATCH or fail | DIFF on Q only; P alone GO-BROKEN; storage P DIFF against a fill without it |
+| cost | the lsp tier 460 s → 641 s (round 1) | `scan` plus plain `JSON.parse`; `rawNumbers` marks | (below) | | |
+
+The round 1 controls pass on this head (`H8 SELFTEST OK`: 21 unit, 39 end to end); the ones on the home
+read the new items (`session storage` for a persistent write, `session writes` for a transient one).
+
+### Round 3: Astra's recheck of `95006241b` (`reviews/2026-11-10-astra-h8-r2.md`, REJECT; the last round)
+
+Her reproductions are in `~/.cache/perf-rearch/scratch/review-h8r2-astra/`. Root's decision on scope,
+which ends the review loop: the threat model below; findings 1, 2, 3, 4 and 6 fixed, finding 5
+documented as out of scope. Controls: `parity_h8_test.py` `round3()` (her fakes as `parity_h8_fake.py`
+modes, lspdiff alone as she ran it) and unit checks; "before" is `--harness <git archive 95006241b>`.
+
+| # | finding | fix | control | before (`95006241b`) | now |
+|---|---|---|---|---|---|
+| 1 | unresolved paths are one identity: writes to `A/f` and `B/f` in dirs made and removed before their handles were resolved both read `?/f` (`parity_sandbox_storage.py:215`) | the record keeps every event by its dir's handle and names it when the record ends, by the dir's last known path (a dir learned late, where a rename put it, names its earlier events too); a dir never seen at any path is `?<nonce>.<n>`, n one per such dir and the nonce new in every run, so two are never equal, in a run or across runs, and each is a path no Go run has: fail closed. (A first version named unresolved events as they were read, which made overlayfs's own copy-up nondeterministic: a dir it makes in its work dir and moves into the upper dir at once had its attrib event unresolved in some runs; the gate's api tier showed it as rs-nondet on build-references and two more, and that gate run was stopped) | `path-go`/`path-rs`; unit: two files in dirs gone before the reader reads are two distinct unresolved paths | 60 MATCH | session writes DIFF |
+| 2 | a writable place outside the record: the stand-in npm's log dir `/run/lspdiff-ata/log` was a writable host bind (`scenario.mjs:659`) | the log is on the recorded storage (the init's `plumbing/`, bound at that path; lspdiff reads it through the init's `/proc/<pid>/root`); there are no writable host binds; before exec the init checks `/proc/self/mountinfo`: a writable mount that is not on the storage's tmpfs, an overlay of ours, or `/proc` is a setup ERROR | `ata-log-transient` on ata-overlay; unit: a writable bind of a host dir is a setup failure | 49 MATCH | session writes DIFF (`plumbing/extra`) |
+| 3 | the stand-in npm trusts its runtime environment: `NODE_OPTIONS=--import=...` runs other code before it reads its config (`ata-npm/npm:5`) | `env -i`: node and the stand-in at fixed paths (`/run/lspdiff-ata/node`, `/run/lspdiff-ata/fake-npm.mjs`, both read-only binds), no flags, nothing of the environment | `npm-env` on ata-overlay | 49 MATCH | DIFF (the call reaches the stand-in, which refuses a package the store lacks) |
+| 4 | masking watcher ids changed diagnostic payloads: a replace over the whole message made `bad watcher 1.` equal `bad watcher 999.` (`session.mjs:41`) | only the registration ids are masked, by JSON path (`params.registrations[*].id`, `params.unregisterations[*].id`) | `mask-go`/`mask-rs` | 60 MATCH | session messages DIFF |
+| 5 | mmap writes escape the write record | out of scope (the threat model below) | her `fake-probes.py` `mmap-good`/`mmap-bad` (`review-h8r2-astra/probe-mmap`) | MATCH | MATCH (documented) |
+| 6 | the listing misses xattrs and hard links (`parity_sandbox_storage.py:84`) | each entry's extended attributes (name and value hash) and, for an inode with more than one name, its link count and a link group (the walk-order index of its first name, never the raw inode) | `xattr-good`/`xattr-bad`, `links-good`/`links-bad`; unit | 60 MATCH ×2 | session storage DIFF ×2 |
+
+A control session (ata-overlay, the same fake on both sides) is MATCH on both harnesses.
+
+### The threat model, and its known limits (root, 2026-11-10)
+
+The gate guards against **buggy compilers and racy environments**: a tsc-rs that answers wrongly, writes
+where it should not, leaves processes or output behind, breaks the protocol or misbehaves under load or
+another schedule, and a Go or a host whose timing varies. It is not built against a server written to
+evade observation; the sandbox's privilege drop, the sealed tree and the write record make most such
+evasions fail anyway, but where one needs deliberate behaviour no compiler has by accident, it is out of
+scope. Known limits:
+
+- **Writes through a shared writable mapping** (round 3 finding 5; Astra's
+  `review-h8r2-astra/probe-mmap`, `fake-probes.py` `mmap-bad`): fanotify sees no event for a store into a
+  mapped page, so a file changed through `mmap` and changed back before the end leaves no trace. A
+  change that stays shows in the final listing, which hashes every file's bytes after the end.
+- **Writes to an unlinked or `O_TMPFILE` file** that never gets a name: no path, and nothing persists.
+- **A dir made and removed before the record names it** (a temp dir of a racing writer): its events have
+  no path; they are recorded under distinct unresolved names, so the session differs from Go's (fail
+  closed), never matched; a real compiler that does this in its home makes its session a DIFF.
+- **Host-side writers** racing the harness's fixture checks (H7's known limit of the fixture check).
+- **The stand-in npm's log** is in the server's writable storage: a server can write it. It is the ATA
+  barrier and a report, recorded like every write; the evidence of what was installed is the write record
+  and the final listing.
+
+### Go and JS evidence
+
+Round 1's refill is kept as it was (`runs/h8b-lsp-fill-{1,2}` and the refills; the end of it overlapped the
+machine's task-cap incident of 13:01 to 13:21 CST, and root checked it: no fork error, the same results).
+Round 2 changed keyed sources (the init and its storage module, `json.mjs`, the stand-in npm, the
+scripts; `CACHE_VERSION` 5), so every lsp Go fill and variant record started empty again, and this is
+the one refill of round 2: on `tsgo-head-865385add-rel` (the head's crates; B2), under the heavy-run rule
+(`flock ~/.cache/ts-rust-heavy.lock`, `app-batch.slice`, `TasksMax=24000`, then the gate's lock;
+`scratch/h8/fill.sh`), 23:56 to 00:54 UTC: a full fill (`runs/h8r2-lsp-fill-1`, 626 s, Go 4 runs per
+session, 8 on hono and query), two `--go-refill` fills of each session where Go races (hono-f12-p6,
+umami-f12-p6, second-project-query, watch-umami-f12, watch-narrow-umami-f12, watch-hono-f12), then a full
+run judged with all of it (`runs/h8r2-lsp-fill-2`, 676 s).
+
+- **Against `base-current`** (`runs/b2-29e23ede3-full`, 2,629 MATCH and 29 GO-BROKEN): fill-1 2,681
+  MATCH and 29 GO-BROKEN; every base item has its base status, the GO-BROKEN set is the base's (hono 23,
+  umami 5, watch-hono 1), and the 52 more items are the new ones, all MATCH (`initialize`, `session
+  messages`, `session storage` and `session writes` of each of the 13 sessions: tsc-rs's initialize
+  answer, its messages through EOF, its storage and every write it made equal Go's everywhere).
+- **One DIFF in fill-2, not in any other run:** `watch-hono-f12/0016 load server messages`, rs-schedule:
+  tsc-rs's run with `GOPORT_PARSE_THREADS=1` sent one `workspace/diagnostic/refresh` fewer at the load
+  checkpoint than its run 1 (two refreshes after ATA's two installs were one). Go's 8 runs agreed; the
+  same session was MATCH in fill-1, both refills and the gate. A timing-dependent coalescing of refreshes
+  in tsc-rs, seen once in 4 runs of the session (12 tsc-rs runs); not this lane's code, and not excused.
+- **Go-variant records** (round 2 against the base's): the unstable request sets (requests with more
+  than one recorded Go answer) are unchanged in every session: hono-f12-p6 23, umami-f12-p6 5,
+  watch-hono-f12 1, every other session 0. The answer-hash sets are identical on every stable request
+  (2,620 common requests); on the 25 unstable ones (hono 19 of its 23, umami 5, watch-hono 1) they differ:
+  the base's records hold the answer orders of many more fills (32 against 5 on hono), and Go's races give
+  other orders in each fill, so neither set is a subset of the other there (round 2 holds 24 orders of a
+  hono `references` answer where the base holds 16). The new requests (the initialize answer, the
+  messages, and one key per written path: 171 on watch-ts-pattern-f12, 1,842 on watch-hono-f12, ATA's
+  typings) never varied in any fill.
+- **JS:** the JS keys changed too. No session had a DIFF of a refereed kind, so no JS replay was needed.
+  Round 1's `--js-all` on ts-pattern-f12-p6 and pkgjson-overlay (JS tsserver in the sandbox) gave exactly
+  the calibration the old harness gives on the same sessions, kind by kind (`scratch/h8/js-all{,-old}.log`).
+
+**Round 3's refills** (its keyed sources changed: the init and its storage module, the scripts, the
+stand-in npm): the same plan under the heavy-run rule. The first (`runs/h8r3-lsp-*`, 02:50 to 03:43 UTC:
+fill-1 and fill-2 each 2,681 MATCH and 29 GO-BROKEN, no DIFF) was made before the record's last fix (above)
+and is superseded; the final one is `runs/h8r3b-lsp-*` (05:39 to 06:28 UTC): fill-1 (630 s) and fill-2 (234 s) each 2,681 MATCH and 29 GO-BROKEN, every
+refill MATCH or its base GO-BROKEN, no DIFF in any run. Every base item has its base status, the GO-BROKEN
+set is the base's, and the 52 new items all MATCH. The variant records against the base's: the base's hold
+2,645 requests, all present; the unstable request sets are unchanged in every session (hono-f12-p6 23,
+umami-f12-p6 5, watch-hono-f12 1, others 0); the answer-hash sets are identical on all 2,616 stable
+requests and on 4 of the 29 unstable ones, and differ on the other 25 (Go's racing orders, as in round 2);
+no new request (initialize, messages, per-path writes) varied in any fill.
+
+### Gate run
+
+**Round 3 (the last):** `parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref
+t3/harden-lsp-parity-harness` (harness `22c476832`; base `runs/b2-29e23ede3-full`),
+`runs/h8r3b-head-865385add-full`, 22 min (06:28 to 06:51 UTC, load 1 to 17), under the heavy-run rule:
+**PARITY OK**. 187,337 base items compared, 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not
+good (the 52 new lsp items all MATCH), 0 crashes on good items, 36 grandfathered (as pinned), 0 stale, 0
+recovered, none newly good by a referee. cli 170 MATCH; tests 140,002 PASS, 1,731 IGNORED, no FLAKY; lsp
+2,681 MATCH, 29 GO-BROKEN (the base's 29; `watch-hono-f12/0016`, lane B4's flake, did not show) in 232 s;
+api 49 MATCH; fuzz 29,955 MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus
+12,727 MATCH. A run before it on round 3's first record (`runs/h8r3-head-865385add-full`) was stopped in
+its fuzz tier after api showed 3 DIFF (rs-nondet on the build scenarios: the copy-up race of the first
+version of finding 1's fix, above); it is not evidence.
+
+Round 2's:
+
+`parity.sh full tsgo-head-865385add-rel --base base-current --accepted-ref t3/harden-lsp-parity-harness`
+(harness `b64de20d5`; base `runs/b2-29e23ede3-full`), `runs/h8r2-head-865385add-full`, 23 min (01:31 to
+01:54 UTC, load 1 to 16), under the heavy-run rule: **PARITY OK**. 187,337 base items compared (185,606 a
+full run must have), 0 lost, 0 not run, 0 known-bad not as pinned, 0 new items not good (the 52 new lsp
+items all MATCH), 0 crashes on good items, 36 grandfathered (the fuzz entries, exactly as pinned), 0
+stale, 0 recovered, none newly good by a referee. cli 170 MATCH; tests 140,001 PASS, 1,731 IGNORED, 1
+FLAKY (`tsctests::contentmapper_watch::content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error`,
+failed, then passed alone); lsp 2,681 MATCH, 29 GO-BROKEN (the base's 29); api 49 MATCH; fuzz 29,955
+MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12,727 MATCH. Round 1's gate
+(`runs/h8-head-865385add-full`, harness `31c3e1d44`) was PARITY OK too.
+
+### Cost
+
+| | base (`b2-29e23ede3-full`) | round 1 (`h8-head-865385add-full`) | round 2 (`h8r2-head-865385add-full`) |
+|---|---|---|---|
+| lsp tier wall | 460 s | 641 s | 235 s |
+| tsc-rs's own runs, summed over sessions | 1,046 s | 978 s | 733 s |
+| lspdiff's own time on umami-f12-p6 (session minus tsc-rs) | 112 s | 314 s | 44 s |
+| lspdiff's own time on any other session | 0.1 to 14 s | about the same | 0 to 3 s |
+| a server start and end (`/bin/true`, 20 runs) | 9.7 ms | 47.4 ms | about the same as round 1 |
+
+- **Round 2's changes:** `json.mjs` `scan` (one tokenizer pass, plain `JSON.parse` unless a number must
+  keep its text; on umami's 340 MB of answers a run: 2.8 s on the wire against 9.6 s of round 1's reviver
+  and duplicate scan, and 0.7 s against 5 s to read a cached log); lspdiff reads a prior Go log only when
+  the variant record lacks it (umami's 8 prior logs of 340 MB were read and normalized on every run) and
+  normalizes each answer once. The last two are not keyed and changed no Go fill.
+- **The tier's wall** also depends on the load: the gate ran at load 1 to 16, the base at 10 to 44 (its
+  tsc-rs runs of umami took 322 s, these 61 s). lspdiff's own time is the comparable part: lower than
+  the base's in every session.
+- **The sandbox:** +38 ms a server process (two more Python starts, the namespaces, the storage tmpfs and
+  its fanotify mark); the write record and the final listing are the init's, after the server ended.
+- **The other tiers:** the api tier shares the init and its storage (5 s, the same 49 scenarios); the cli,
+  fuzz and corpus tiers do not use this lane's code.
+- **Self-tests:** `parity_h8_test.py --unit` about 10 s; the end-to-end controls about 15 minutes.
+
 ## Files
 
 - `scripts/perf-rearch/parity.sh`: the driver (`help`).
@@ -2391,7 +2714,7 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   (about 1 minute together; the JS file also has lane ND2's and H5's).
 - `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
 - `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
-  (the protocol client, the requests, the storage reads); `parity_api_init.py`: the session's sandbox,
+  (the protocol client, the requests, the storage reads); `parity_sandbox_init.py`: the session's sandbox,
   PID 1 of its namespaces (both keyed: their sha is in every api key); `parity-api-scenarios.json`: the
   scenarios; `parity_h7_test.py`: lane H7's negative controls (30 s to 2.5 minutes; `--unit` about 14 s;
   `--e2e-only --harness DIR` against another harness); `parity_h7_fake.py`: its fake server, Astra's
@@ -2405,12 +2728,17 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES; corpus 12,727 MATCH. A
   minutes; `SELFTEST OK`).
 - `parity-projects.json`: the CLI projects; `prepare-parity-projects.sh`: the parity lane's
   project copies.
+- `parity_sandbox_init.py`: PID 1 of every api and lsp server's sandbox (lane H8 made it shared; it was
+  `parity_api_init.py`); `parity_h8_test.py`: lane H8's negative controls for the lsp tier (`--unit` in
+  seconds; the end-to-end controls about 10 minutes; `--e2e-only --harness DIR` against another harness);
+  `parity_h8_fake.py`: its fake LSP server, a proxy in front of the Go oracle.
 - `vendor/lspdiff/` (perf/lsp-concurrency 931fad409, plus `--go-cache`, `items.json`,
   `--scenario`, `--rs-runs`, `--rs-env`, `--go-runs`, `--server-logs` and the JS referee's `--js`,
   `--js-cache`, `--js-all`, `--js-kinds`; `scenario.mjs` holds the watch scenarios and
   `fixtures.mjs` the watch-small and ata-small fixtures; `ata-npm/` the stand-in npm, the only npm a
   server can run; `tsserver.mjs` drives JS tsserver, `referee.mjs` holds
-  the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process and its session result,
+  the normalizers and the JS-AGREES judge, `sandbox.mjs` the server process (under the shared init) and
+  its session result, `json.mjs` the strict JSON reader of the wire,
   `settings.mjs` every setting, `selftest/` their self-tests) and `vendor/difffuzz/` (feat/difffuzz
   033e55442; `oracle.py` checks the inputs since lane H4).
 - State: `~/.cache/perf-rearch/parity/` holds `base-main/`, `js-vs-go/`, `go-cache/`, `js-cache/`,

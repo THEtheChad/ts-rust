@@ -40,6 +40,7 @@
 //     as unrefereed), so a changed order stays a DIFF;
 //   - at least one point.
 // Points where tsc-rs equals Go need nothing from JS.
+import { parseKeep } from "./json.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -119,8 +120,9 @@ export function canonUri(u) {
 function refValue(value, side) {
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((v) => refValue(v, side));
-  const out = {};
-  for (const [k, v] of Object.entries(value)) out[k] = refValue(v, side);
+  // Object.fromEntries defines every key as an own property: a key named "__proto__" from an answer
+  // stays a key (an assignment into a {} would set the prototype instead; lane H8 round 2).
+  const out = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, refValue(v, side)]));
   if (out.changes && typeof out.changes === "object" && !Array.isArray(out.changes)) {
     out.changes = Object.fromEntries(Object.entries(out.changes).map(([u, v]) => [canonUri(u), v]));
   }
@@ -376,8 +378,10 @@ export function normalize(method, answer, { root, side, libDir } = {}) {
   if (!f) return null;
   side ??= libDir === JS_LIBS ? "js" : "go";
   if (answer?.failed) return { failed: String(answer.failed), scalars: {}, sets: {}, rest: null };
-  let v = JSON.parse(J(answer?.result));
-  if (root) v = JSON.parse(J(v).replaceAll(root, "<root>"));
+  // parseKeep (json.mjs): a number keeps its text, so 1e999 is never null here either (lane H8).
+  const parse = answer?.rawNumbers ? parseKeep : JSON.parse;
+  let v = parse(J(answer?.result));
+  if (root) v = parse(J(v).replaceAll(root, "<root>"));
   v = sortChanges(v);
   // Both views come from the same value in the same element order (refValue keeps it), so element i
   // of one is element i of the other.

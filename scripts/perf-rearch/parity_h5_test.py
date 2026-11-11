@@ -7,11 +7,14 @@ usage: python3 -I scripts/perf-rearch/parity_h5_test.py [--e2e BIN] [--keep]
 
 Unit checks (a second): the typings store's hash is in the key, a key of another store never reads
 the old Go cache, its priors, refills or Go-variant record; the store's content hash moves with any
-byte; the tripwire sees reads through a bind mount in a nested namespace; an entry made in an ancestor
-dir of a project (a package.json, node_modules) is seen and changes the key.
+byte; an entry made in an ancestor dir of a project (a package.json, node_modules) is seen and changes
+the key, and the ancestors keyed are the ones a server sees (lane H8: none in the sandbox's hidden dirs).
+The tripwire on the real typings cache is gone with lane H8: in the sandbox that dir does not exist
+(parity_h8_test.py stat-bait).
 --e2e BIN (a tsc-rs binary; minutes, takes the gate lock): through the real lsp tier,
-  - a tsc-rs that reads the real ~/.cache/typescript (an absolute path, or ATA with XDG_CACHE_HOME
-    pointing at the real ~/.cache) makes its session ERROR, and no Go log of that tier is published;
+  - the real ~/.cache/typescript does not exist for a tsc-rs (lane H8; before, a read of it made the
+    session ERROR), and one whose ATA writes there (XDG_CACHE_HOME pointing at the real ~/.cache) cannot:
+    its session is not MATCH, and the real cache is unchanged;
   - a store that lacks a package the scenario's ATA asks for makes the session ERROR (not GO-BROKEN);
   - a store with one byte changed is another key: Go runs again (no cached log is reused) and its
     variant record is another file;
@@ -100,7 +103,9 @@ def unit_checks(root):
     # Ancestor dirs: what a server looks up above its project is keyed and watched.
     proj = root / 'up/a/proj'
     proj.mkdir(parents=True)
-    dirs = L.ancestor_dirs(proj)
+    check('ancestors: the dirs above a project in a hidden dir are not keyed (the sandbox shows them empty)', L.ancestor_dirs(proj) == ['/'],
+          L.ancestor_dirs(proj))
+    dirs = [str(d) for d in proj.parents]  # the watch and the state, on dirs of the test's own
     st0 = L.ancestors_state(dirs)
     with W.Watch(dirs, keep=lambda p: os.path.basename(p) in L.ANCESTOR_NAMES, recursive=False) as w:
         (root / 'up/a/unrelated.txt').write_text('x')
@@ -115,18 +120,6 @@ def unit_checks(root):
           and str(root / 'up/package.json') in st1 and not st0, (st0, st1))
     real = L.ancestors_state(L.ancestor_dirs(L.SANDBOX_HOME / '.cache/typescript/7.1', *[os.path.expanduser(p[0]) for p in L.PROJECTS.values()]))
     check('ancestors: none of the real projects\' ancestor dirs holds such an entry now', real == {}, real)
-    # The tripwire: reads through a read-only bind in a nested namespace are seen, its own listing is not.
-    baits = L.make_baits(root / 'guard')
-    bait, real = next((b, r) for b, r in baits if r == HOME / '.cache/typescript')
-    for name, script, want in (('nothing', 'true', False),
-                               ('ATA\'s first read', f'cat {real}/7.1/package.json', True),
-                               ('a directory listing', f'ls {real}/7.1/node_modules', True),
-                               ('a write (refused: read-only)', f'echo x > {real}/7.1/new', False)):
-        with W.Watch([str(bait)], mask=W.ACCESS) as w:
-            subprocess.run(L.outer([(str(bait), str(real))]) + ['unshare', '-rmn', '--', 'sh', '-c', script],
-                           capture_output=True)
-            hit = w.dirty()
-        check(f'tripwire: {name} {"is" if want else "is not"} an access of the guarded dir', bool(hit) == want, hit)
 
 
 def e2e_checks(root, rs):
@@ -147,18 +140,23 @@ def e2e_checks(root, rs):
         return r, res
 
     def wrapper(name, body):
-        return script(root / f'{name}.sh', f'#!/bin/sh\n{body}\nexec {rs} "$@"\n')
+        # A command of words (lspdiff binds each file it names into the sandbox): sh, the script, tsc-rs.
+        w = script(root / f'{name}.sh', f'#!/bin/sh\n{body}\nrs="$1"; shift; exec "$rs" "$@"\n')
+        return f'/bin/sh {w} {rs}'
 
     # 1. a tsc-rs that reads the real typings cache. ata-overlay: fixture, ATA on, Go cached after its first fill.
     tier('warm', rs, '^ata-overlay$')
-    for name, body in (('reads-cache', f'cat {HOME}/.cache/typescript/7.1/package.json >/dev/null 2>&1'),
-                       ('xdg-leak', f'export XDG_CACHE_HOME={HOME}/.cache')):
-        r, res = tier(name, wrapper(name, body), '^ata-overlay$')
-        item = res.get('items', {}).get('lsp/ata-overlay', {})
-        check(f'e2e: a tsc-rs that {name.replace("-", " ")}s the real ~/.cache/typescript makes the session ERROR',
-              item.get('status') == 'ERROR' and 'unkeyed path' in item.get('detail', '') and '.cache/typescript' in item.get('detail', ''),
-              item or r.stdout[-500:])
-        check(f'e2e: {name}: no Go log of that tier is published', 'staged files discarded' in r.stdout, r.stdout[-300:])
+    real = HOME / '.cache/typescript'
+    before = sorted(str(p) for p in real.rglob('*')) if real.exists() else []
+    r, res = tier('reads-cache', wrapper('reads-cache', f'[ -e {real} ] && exit 9'), '^ata-overlay$')
+    items = res.get('items', {})
+    check('e2e: the real ~/.cache/typescript does not exist for tsc-rs (every item good)',
+          items and all(v['status'] in ('MATCH', 'GO-BROKEN') for v in items.values()), r.stdout[-500:])
+    r, res = tier('xdg-leak', wrapper('xdg-leak', f'export XDG_CACHE_HOME={HOME}/.cache'), '^ata-overlay$')
+    items = res.get('items', {})
+    after = sorted(str(p) for p in real.rglob('*')) if real.exists() else []
+    check('e2e: a tsc-rs whose ATA writes into the real ~/.cache cannot: its session is not MATCH, the real cache is unchanged',
+          items and any(v['status'] not in ('MATCH', 'GO-BROKEN') for v in items.values()) and before == after, r.stdout[-500:])
     # 2-4. stores: one that lacks @types/node, one with a byte changed, a manifest that is not its store's.
     lacking = make_store(root, store, 'lack', lambda d: drop_closure(d, '@types/node'))
     # A byte no earlier run of this test added (its pid), so no Go fill of this store exists yet.

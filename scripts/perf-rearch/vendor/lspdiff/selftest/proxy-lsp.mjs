@@ -14,10 +14,13 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const go = process.env.LSPDIFF_PROXY_GO;
-const goArgs = process.argv.slice(2);
-const rules = JSON.parse(process.env.LSPDIFF_PROXY_RULES ?? "[]");
-const state = process.env.LSPDIFF_PROXY_STATE;
+// The settings come from a JSON file named as the first argument ({ go, rules, state }: a server gets
+// none of lspdiff's environment since lane H5), or from the LSPDIFF_PROXY_* variables.
+const fromFile = process.argv[2]?.endsWith(".json") ? JSON.parse(readFileSync(process.argv[2], "utf8")) : null;
+const go = fromFile ? fromFile.go : process.env.LSPDIFF_PROXY_GO;
+const goArgs = process.argv.slice(fromFile ? 3 : 2);
+const rules = fromFile ? fromFile.rules : JSON.parse(process.env.LSPDIFF_PROXY_RULES ?? "[]");
+const state = fromFile ? fromFile.state : process.env.LSPDIFF_PROXY_STATE;
 const run = state ? (existsSync(state) ? Number(readFileSync(state, "utf8")) : 0) + 1 : 1;
 if (state) writeFileSync(state, String(run));
 const server = spawn(go, goArgs, { stdio: ["pipe", "pipe", "inherit"] });

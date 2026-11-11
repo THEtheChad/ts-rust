@@ -69,6 +69,8 @@
 //                                          [--scenario <name> [--ata-store <dir>]] [--rs-runs 1] [--rs-env K=V...] [--go-cache <dir>]
 //   node scripts/lspdiff/lspdiff.mjs bench --project <dir> [--files 6] [--runs 3] [--interval 120]
 //
+// --ata-manifest <file>: that store's manifest (ata-typings.json: every file's sha256, which the stand-in
+// npm checks each file it installs against).
 // --ata-store <dir>: the frozen typings store that ATA's stand-in npm installs from in the scenarios
 // with ATA on (scenario.mjs; scripts/perf-rearch/ata_typings.py builds it).
 // Options: --go <bin> (default ~/.local/bin/tsgo-lsp-oracle-3e9236361fa9), --rs <bin>
@@ -83,6 +85,7 @@ import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
 import { SCENARIOS, runScenario, scenarioInfo } from "./scenario.mjs";
+import { parseEntry, parseKeep, scan } from "./json.mjs";
 import { applyJsReferee } from "./referee.mjs";
 import { runSession } from "./session.mjs";
 import { SETTINGS } from "./settings.mjs";
@@ -112,6 +115,7 @@ const { positionals, values: opt } = parseArgs({
     "js-stage": { type: "string" },
     scenario: { type: "string" },
     "ata-store": { type: "string" },
+    "ata-manifest": { type: "string" },
     "rs-runs": { type: "string", default: "1" },
     "go-runs": { type: "string", default: "2" },
     "rs-env": { type: "string", multiple: true },
@@ -142,7 +146,9 @@ if (scenario && !SCENARIOS[scenario]) {
 }
 // A fixture scenario writes its project into --project itself, so there is nothing to pick yet.
 const files = scenario && SCENARIOS[scenario].fixture ? [] : pickFiles(root, Number(opt.files), opt.file);
-const servers = { go: [opt.go, "--lsp", "--stdio"], rs: [opt.rs, "--lsp", "--stdio"] };
+// --go and --rs are commands: their words split at spaces (as the api tier's; a word that names a file is
+// bound into the sandbox, sandbox.mjs).
+const servers = { go: [...opt.go.split(" "), "--lsp", "--stdio"], rs: [...opt.rs.split(" "), "--lsp", "--stdio"] };
 const stderr = opt.verbose ? process.stderr : undefined;
 const outDir = join(opt.out, `${root.split("/").pop()}-${mode}${mode === "bench" && opt.pulls !== "all" ? `-${opt.pulls}` : ""}${scenario ? `-${scenario}` : ""}`);
 mkdirSync(outDir, { recursive: true });
@@ -152,8 +158,9 @@ console.log(`project ${root}\nfiles: ${files.map((f) => rel(root, f)).join(", ")
 // Only what must differ between two runs: timing, the project root, and orders Go itself
 // does not keep stable from run to run: completion items with equal sort keys and the files
 // of a WorkspaceEdit come out in map order. Editors sort completions by sortText anyway.
-function normalize(value, method) {
-  const v = JSON.parse(JSON.stringify(value ?? null).replaceAll(root, "<root>"));
+// keep: the entry is marked rawNumbers (json.mjs): its numbers that need it keep their text.
+function normalize(value, method, keep = false) {
+  const v = (keep ? parseKeep : JSON.parse)(JSON.stringify(value ?? null).replaceAll(root, "<root>"));
   const byJson = (list) => list.map((i) => [JSON.stringify(i), i]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, i]) => i);
   if (method === "textDocument/completion" && Array.isArray(v?.result?.items)) v.result.items = byJson(v.result.items);
   if (v?.result?.changes) v.result.changes = Object.fromEntries(Object.entries(v.result.changes).sort(([a], [b]) => (a < b ? -1 : 1)));
@@ -199,7 +206,8 @@ function checkRecord(rec, where) {
 // A value as canonical JSON: object keys sorted, the project root masked.
 function canon(v) {
   const sort = (x) => (Array.isArray(x) ? x.map(sort) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])])) : x);
-  return JSON.stringify(sort(JSON.parse(JSON.stringify(v ?? null).replaceAll(root, "<root>"))));
+  const text = JSON.stringify(v ?? null).replaceAll(root, "<root>");
+  return JSON.stringify(sort((scan(text).exact ? JSON.parse : parseKeep)(text)));
 }
 
 // The identity of each request of a log (lane H4): its step name, method and canonical params, and how
@@ -281,7 +289,7 @@ if (mode === "diff") {
   // One server run of the session (or scenario): its log.
   const runOne = (name, cmd, env) =>
     scenario
-      ? runScenario(cmd, scenario, root, { files, stderr, env, ataStore: opt["ata-store"], serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
+      ? runScenario(cmd, scenario, root, { files, stderr, env, ataStore: opt["ata-store"], ataManifest: opt["ata-manifest"], serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
       : runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
   // { log, broken, session }: a crash or a timeout ends the run with the answers it gave; session is
   // the server's result (sandbox.mjs), mandatory for every run.
@@ -304,6 +312,13 @@ if (mode === "diff") {
       session = e.session ?? { clean: false, why: [`no session result (${String(e.message).slice(0, 200)})`] };
       fail = { kind: e.timeout ? "timeout" : "crash", reason: String(e.message).slice(0, 300), at: e.log.length };
     }
+    if (session.infra) {
+      // The server could not be started (sandbox.mjs: a mount, the namespace, a file that is not
+      // executable): the harness's failure, never a server's answer. The session fails (parity_lsp.py:
+      // ERROR), and nothing of this run is kept (lane H8; before, a Go that could not run was GO-BROKEN).
+      console.error(`lspdiff: harness error in ${name}: the server could not be started: ${session.infra}`);
+      process.exit(3);
+    }
     console.log(`${name}${env ? ` (${JSON.stringify(env)})` : ""}: ${log.length} answers in ${((performance.now() - start) / 1000).toFixed(1)} s${fail ? ` (${fail.kind}: ${fail.reason})` : ""}${session.clean ? "" : `; session: ${session.why.join("; ")}`}`);
     return { log, broken: fail, session };
   };
@@ -314,7 +329,7 @@ if (mode === "diff") {
   };
   const readLog = (f) => {
     const text = readFileSync(f, "utf8").trim();
-    return text ? text.split("\n").map((l) => JSON.parse(l)) : [];
+    return text ? text.split("\n").map((l) => parseEntry(l)) : [];
   };
   const readBroken = (dir, name) => (existsSync(join(dir, `${name}.broken.json`)) ? JSON.parse(readFileSync(join(dir, `${name}.broken.json`), "utf8")) : undefined);
   const readSession = (dir, name) => JSON.parse(readFileSync(join(dir, `${name}.session.json`), "utf8"));
@@ -365,35 +380,64 @@ if (mode === "diff") {
   // requests only other runs made in their place (mergeOrder): where every run asks the same
   // requests, item i is answer i of every log, as before.
   const NOT_ASKED = '"<not asked>"';
-  const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method));
+  const answer = (e, method) => JSON.stringify(normalize(e && { step: e.step, result: e.result, error: e.error }, method, !!e?.rawNumbers));
   const goNames = Object.keys(logs).filter((k) => /^go\d*$/.test(k));
   const rsNames = Object.keys(logs).filter((k) => !goNames.includes(k));
-  const order = mergeOrder([...goNames, ...rsNames].map((k) => logs[k]));
-  const aligned = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, alignTo(order, log)]));
+  // Lane H8: two answers of every run are no request of the script and come after the merged order of
+  // its requests, so that the item index of every request stays what it was: the initialize answer (the
+  // log's first entry; session.mjs startServer) and the server-to-client messages through the end of
+  // its output (the log's last entry, "session messages"; round 2: a request or a notification sent while
+  // shutdown is answered counts). Both are compared like every answer (determinism, GO-BROKEN,
+  // accumulated Go evidence, MATCH or DIFF). The server's storage and its write record (sandbox.mjs) are
+  // judged path by path: items "session storage" and "session writes" (judgePaths, below).
+  const TAIL = ["initialize", "session messages"];
+  const isTail = (e) => (e.step === "initialize" && e.method === "initialize") || (e.step === "session messages" && e.method === "server/messages");
+  const scriptOf = (log) => log.filter((e) => !isTail(e));
+  const entriesOf = (log) => [...scriptOf(log), ...TAIL.map((t) => log.find((e) => isTail(e) && e.step === t)).filter(Boolean)];
+  const order = mergeOrder([...goNames, ...rsNames].map((k) => scriptOf(logs[k])));
+  const n = order.length;
+  for (const t of TAIL) {
+    const e = Object.values(logs).flatMap((l) => l.filter((x) => isTail(x) && x.step === t))[0];
+    if (e) order.push(requestKeys([e])[0]);
+  }
+  const aligned = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, alignTo(order, entriesOf(log))]));
   // Every run asks the requests it shares with the others in the same relative order.
-  const orderBroken = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, orderBreak(order, log)]).filter(([, v]) => v));
-  // Where a run that crashed or timed out ended: after the merged position of its last answer.
-  const endOf = (k, log = aligned[k]) => log.reduce((last, e, p) => (e ? p : last), -1);
+  const orderBroken = Object.fromEntries(Object.entries(logs).map(([k, log]) => [k, orderBreak(order, scriptOf(log))]).filter(([, v]) => v));
+  // Where a run that crashed or timed out ended: after the merged position of its last answer to the script.
+  const endOf = (k, log = aligned[k]) => log.slice(0, n).reduce((last, e, p) => (e ? p : last), -1);
   const ends = Object.fromEntries(Object.keys(logs).map((k) => [k, endOf(k)]));
-  const ended = (k, p, b = broken[k], end = ends[k]) => !!b && p > end;
+  const ended = (k, p, b = broken[k], end = ends[k], log = aligned[k]) => !!b && !log[p] && p > end;
   const why = (k, b = broken[k]) => (b ? `${k} ${b.kind === "timeout" ? "timed out" : "crashed"} after ${b.at} answers (${b.reason})` : `${k} has no answer here`);
   const failureOf = (b) => (b ? (b.kind === "timeout" ? "timeout" : "crash") : undefined);
   // One run's answer at merged position p: its normalized answer, NOT_ASKED, or null when it ended.
-  const at = (k, p, method) => (aligned[k][p] ? answer(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
+  // An entry's normalized answer, once per entry (lane H8 round 2, cost: umami's 690 answers of 340 MB a
+  // run were normalized again at every use).
+  const answers = new WeakMap();
+  const answerOf = (e, method) => {
+    if (!e || method !== e.method) return answer(e, method);
+    let a = answers.get(e);
+    if (a === undefined) answers.set(e, (a = answer(e, method)));
+    return a;
+  };
+  const at = (k, p, method) => (aligned[k][p] ? answerOf(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
   // Accumulated Go evidence (see the top comment): request key -> Map(answer hash -> [provenance]).
   // Only a Go run whose session is clean (its inputs intact, sandbox.mjs, and a clean end) counts; a
   // Go run that changed its inputs makes the whole session an error.
   const hash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
   // The identity of the answer-to-hash transformation: the record's format version and the source of
   // every function on the way (normalize, canon, requestKeys, answer, hash).
-  const NORMALIZER = hash([VARIANTS_FORMAT, normalize, canon, requestKeys, answer, hash].map(String).join("\n"));
+  // A path's key in the variant record and the hash of its value (judgePaths, below).
+  const ABSENT = "<absent>";
+  const pathKey = (kind, path) => `0\u0000session ${kind}\u0000server/${kind}\u0000${JSON.stringify(path)}`;
+  const pathValue = (v) => hash(v ?? ABSENT);
+  const NORMALIZER = hash([VARIANTS_FORMAT, normalize, canon, requestKeys, answer, hash, pathKey, pathValue].map(String).join("\n"));
   const variants = new Map();
   const addVariant = (k, h, prov) => {
     const byHash = variants.get(k) ?? variants.set(k, new Map()).get(k);
     const list = byHash.get(h) ?? byHash.set(h, []).get(h);
     if (!list.some((x) => x.fill === prov.fill && x.run === prov.run && x.log === prov.log)) list.push(prov);
   };
-  const addLog = (log, prov) => requestKeys(log).forEach((k, i) => addVariant(k, hash(answer(log[i], log[i].method)), prov));
+  const addLog = (entries, prov) => requestKeys(entries).forEach((k, i) => addVariant(k, hash(answerOf(entries[i], entries[i].method)), prov));
   const cleanSession = (s) => !!s && s.clean === true && Array.isArray(s.why) && s.why.length === 0 && !(s.inputs?.modified?.length);
   const changedInputs = goNames.filter((k) => sessions[k]?.inputs?.modified?.length);
   if (changedInputs.length) throw new Error(`Go changed its inputs in ${changedInputs.map((k) => `${k} (${sessions[k].inputs.modified.slice(0, 3).join(", ")})`).join("; ")}: no Go evidence`);
@@ -401,15 +445,23 @@ if (mode === "diff") {
   const fillId = opt["fill-id"] ?? outDir;
   if ((opt["go-variants"] || opt["go-variants-out"] || opt["go-prior"]) && !vMaterial) throw new Error("--go-variants needs --go-variants-material");
   let priorVariants = 0;
+  // Every log the record's variants came from: a prior log among them is in the record whole (addLog adds
+  // every answer of a log, and the record is written at once), so it is not read again (lane H8 round 2,
+  // cost: umami's 8 prior logs of 340 MB were read and normalized on every run).
+  const recordedLogs = new Set();
   if (opt["go-variants"] && existsSync(opt["go-variants"])) {
     const rec = checkRecord(JSON.parse(readFileSync(opt["go-variants"], "utf8")), opt["go-variants"]);
     if (rec.material === vMaterial && rec.normalizer === NORMALIZER) {
-      for (const [k, byHash] of Object.entries(rec.variants)) for (const [h, provs] of Object.entries(byHash)) for (const pv of provs) addVariant(k, h, pv);
+      for (const [k, byHash] of Object.entries(rec.variants)) for (const [h, provs] of Object.entries(byHash)) for (const pv of provs) {
+        addVariant(k, h, pv);
+        recordedLogs.add(pv.log);
+      }
       priorVariants = Object.keys(rec.variants).length;
     } else console.log(`go variants: ${opt["go-variants"]} has other ${rec.material === vMaterial ? "normalizer" : "material"}: not merged`);
   }
   // A prior log counts only with its session result beside it, clean (inputs intact, a clean end).
   let priorsUsed = 0;
+  const priorWrites = []; // [writes, provenance] of the clean prior Go runs (judgePaths)
   for (const f of opt["go-prior"] ?? []) {
     const sf = f.replace(/\.jsonl$/, ".session.json");
     const s = existsSync(sf) ? JSON.parse(readFileSync(sf, "utf8")) : null;
@@ -417,20 +469,86 @@ if (mode === "diff") {
       console.log(`go variants: prior ${f} not used: ${s ? `its session is not clean (${(s.why ?? []).join("; ") || "no why"})` : "no session result"}`);
       continue;
     }
-    addLog(readLog(f), { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f });
+    const prov = { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f };
+    if (!recordedLogs.has(f)) addLog(entriesOf(readLog(f)), prov);
+    if (s.writes) priorWrites.push([s.writes, prov]);
     priorsUsed++;
   }
   if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${priorsUsed} of ${(opt["go-prior"] ?? []).length} prior logs used`);
   // The recorded variants at merged position p that none of this fill's Go runs gave.
   const earlierOnly = (p, method) => {
-    const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answer(aligned[k][p], method))));
+    const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answerOf(aligned[k][p], method))));
     return [...(variants.get(order[p])?.keys() ?? [])].filter((h) => !seen.has(h));
+  };
+  // The server's storage and its write record (sandbox.mjs, from the sandbox's init), judged path by path
+  // (lane H8 round 2), each as a Map path -> value: storage "home/<p>", "disk<k>/<p>" -> what the entry is
+  // (and "skeleton" -> the home skeleton's deviations); writes "<path>" -> what happened to it. On each
+  // path, tsc-rs's value (or ABSENT) must be a Go value:
+  //   - storage: only this fill's Go runs count, never a recorded or prior variant. Where they agree on a
+  //     path, tsc-rs must equal it; where they differ on a path (the final storage itself varies across
+  //     Go's runs), tsc-rs must equal one of them, and only that path is exempt.
+  //   - writes: this fill's Go runs, the clean prior runs and the recorded per-path variants (pathKey) of
+  //     earlier fills count; only a path whose Go value varies is exempt, and a path tsc-rs touched that no
+  //     Go run ever did is a DIFF.
+  // MATCH where every path is equal, GO-BROKEN where tsc-rs differs only on paths where Go varies (within
+  // Go's values), else DIFF. tsc-rs's runs must agree on every path (rs-nondet, rs-schedule).
+  const pathsOf = {
+    storage: (s) => {
+      if (!s?.storage) return null;
+      const m = new Map(Object.entries(s.storage.home ?? {}).map(([p, v]) => [`home/${p}`, v]));
+      (s.storage.disk ?? []).forEach((d, k) => Object.entries(d).forEach(([p, v]) => m.set(`disk${k}/${p}`, v)));
+      m.set("skeleton", JSON.stringify(s.storage.skeleton ?? []));
+      return m;
+    },
+    writes: (s) => (s?.writes ? new Map(Object.entries(s.writes).map(([p, ops]) => [p, JSON.stringify(ops)])) : null),
+  };
+  const recordedPaths = (kind) => {
+    const prefix = pathKey(kind, "").slice(0, -2);
+    return [...variants.keys()].filter((k) => k.startsWith(prefix)).map((k) => JSON.parse(k.slice(prefix.length)));
+  };
+  const judgePaths = (kind, extraRs = {}) => {
+    const of = pathsOf[kind];
+    const rs = Object.fromEntries([...rsNames.map((k) => [k, sessions[k]]), ...Object.entries(extraRs)].map(([k, s]) => [k, of(s)]));
+    const ended = Object.keys(rs).filter((k) => !rs[k]);
+    if (ended.length) return { status: "DIFF", detail: `tsc-rs ${ended.join(", ")}: no ${kind} (the run was ended before its init reported)`, rsFailure: "crash" };
+    const base = rs.rs;
+    const showPaths = (ps) => ps.slice(0, 5).map((p) => JSON.stringify(p)).join(", ") + (ps.length > 5 ? `, and ${ps.length - 5} more` : "");
+    const nondet = Object.entries(rs).filter(([k, m]) => k !== "rs" && [...new Set([...m.keys(), ...base.keys()])].some((p) => m.get(p) !== base.get(p)));
+    if (nondet.length) {
+      return { status: "DIFF", detail: nondet.map(([k, m]) => `${k.startsWith("rs-env") ? "rs-schedule" : "rs-nondet"}: ${k} differs from run 1 on ${showPaths([...new Set([...m.keys(), ...base.keys()])].filter((p) => m.get(p) !== base.get(p)))}`).join("; ") };
+    }
+    const go = goNames.map((k) => of(sessions[k])).filter(Boolean);
+    const priors = kind === "writes" ? priorWrites.map(([w]) => of({ writes: w })) : [];
+    if (!go.length) return { status: "GO-BROKEN", detail: `no Go run has a ${kind} record` };
+    const paths = new Set([...base.keys(), ...go.flatMap((m) => [...m.keys()]), ...priors.flatMap((m) => [...m.keys()]), ...(kind === "writes" ? recordedPaths(kind) : [])]);
+    const diffs = [];
+    const varying = [];
+    for (const p of [...paths].sort()) {
+      const seen = new Set([...go, ...priors].map((m) => pathValue(m.get(p))));
+      if (kind === "writes") for (const h of variants.get(pathKey(kind, p))?.keys() ?? []) seen.add(h);
+      const r = pathValue(base.get(p));
+      if (seen.size === 1 && seen.has(r)) continue;
+      if (seen.has(r)) varying.push(p);
+      else diffs.push(`${JSON.stringify(p)}: tsc-rs ${base.get(p) ?? ABSENT}, Go ${[...new Set(go.map((m) => m.get(p) ?? ABSENT))].join(" | ")}`);
+    }
+    if (diffs.length) return { status: "DIFF", detail: `${diffs.length} path${diffs.length === 1 ? "" : "s"} no Go run gave: ${diffs.slice(0, 5).join("; ")}${diffs.length > 5 ? "; ..." : ""}` };
+    if (varying.length) return { status: "GO-BROKEN", detail: `only where Go's ${kind} vary: ${showPaths(varying)}` };
+    return { status: "MATCH" };
+  };
+  // The record after this fill (go-variants-out): every path of the writes of this fill's clean Go runs and
+  // of the clean priors, with the recorded ones, gets each run's value (ABSENT where the run did not touch it).
+  const addWrites = () => {
+    const runs = [...goNames.filter((k) => cleanSession(sessions[k]) && sessions[k].writes).map((k) => [pathsOf.writes(sessions[k]), { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) }]), ...priorWrites.map(([w, prov]) => [pathsOf.writes({ writes: w }), prov])];
+    const paths = new Set([...runs.flatMap(([m]) => [...m.keys()]), ...recordedPaths("writes")]);
+    for (const [m, prov] of runs) for (const p of paths) addVariant(pathKey("writes", p), pathValue(m.get(p)), prov);
   };
   const mismatches = [];
   const unstable = [];
   const items = [];
-  const n = order.length;
-  for (let p = 0; p < n; p++) {
+  // The items of a whole run (its end, its request order, its session): after every answer, at index n.
+  const runLevel = new WeakSet();
+  const runItem = (it) => (runLevel.add(it), items.push(it), it);
+  for (let p = 0; p < order.length; p++) {
     const first = Object.values(aligned).map((l) => l[p]).find(Boolean);
     const { step, method } = first;
     const diff = (detail, extra = {}, more = {}) => {
@@ -481,7 +599,8 @@ if (mode === "diff") {
   }
   // The record after this fill: monotone (a variant once seen stays).
   if (opt["go-variants-out"]) {
-    for (const k of goNames.filter((k) => cleanSession(sessions[k]))) addLog(logs[k], { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) });
+    for (const k of goNames.filter((k) => cleanSession(sessions[k]))) addLog(entriesOf(logs[k]), { fill: fillId, run: k, log: logFrom[k] ?? join(outDir, `${k}.jsonl`) });
+    addWrites();
     const out = opt["go-variants-out"];
     mkdirSync(join(out, ".."), { recursive: true });
     const rec = checkRecord({
@@ -496,12 +615,12 @@ if (mode === "diff") {
   // A tsc-rs run that ended early also gets an item of its own, so the crash is listed even where
   // Go ended at the same answer.
   for (const k of rsNames.filter((k) => broken[k])) {
-    items.push({ i: n, step: `${k} server`, method: "server/exit", status: "DIFF", detail: `tsc-rs ${why(k)}`, rsFailure: failureOf(broken[k]) });
+    runItem({ i: n, step: `${k} server`, method: "server/exit", status: "DIFF", detail: `tsc-rs ${why(k)}`, rsFailure: failureOf(broken[k]) });
   }
   // Request order and session results (lane H4): one item each, after every answer.
   const orderItem = (names, status) => {
     const bad = names.filter((k) => orderBroken[k]);
-    if (bad.length) items.push({ i: n, step: `${bad.join(",")} request order`, method: "server/order", status, detail: bad.map((k) => `${k}: ${orderBroken[k]}`).join("; ") });
+    if (bad.length) runItem({ i: n, step: `${bad.join(",")} request order`, method: "server/order", status, detail: bad.map((k) => `${k}: ${orderBroken[k]}`).join("; ") });
   };
   orderItem(rsNames, "DIFF");
   orderItem(goNames, "GO-BROKEN");
@@ -511,13 +630,18 @@ if (mode === "diff") {
     const rsBad = bad(Object.keys(all).filter((k) => !/^go\d*$/.test(k)));
     const goBad = bad(goNames);
     const why = (ks) => ks.map((k) => `${k}: ${all[k].why.join(", ")}`).join("; ");
-    const it = items.find((x) => x.step === "session end") ?? items[items.push({ i: n, step: "session end", method: "server/session" }) - 1];
+    const it = items.find((x) => x.step === "session end") ?? runItem({ i: n, step: "session end", method: "server/session" });
     delete it.rsFailure;
     if (rsBad.length) Object.assign(it, { status: "DIFF", detail: `tsc-rs ${why(rsBad)}${goBad.length ? `; Go ${why(goBad)}` : ""}`, rsFailure: rsBad.some((k) => all[k].inputs?.modified?.length) ? "input" : "crash" });
     else if (goBad.length) Object.assign(it, { status: "GO-BROKEN", detail: `Go ${why(goBad)}` });
     else Object.assign(it, { status: "MATCH", detail: undefined });
   };
   sessionItem();
+  // The storage and the write record: whole-run items, judged path by path (judgePaths).
+  const pathItems = {};
+  if (Object.values(sessions).some((x) => x?.storage || x?.writes)) {
+    for (const kind of ["storage", "writes"]) pathItems[kind] = runItem({ i: n, step: `session ${kind}`, method: `server/${kind}`, ...judgePaths(kind) });
+  }
   // Step 3, JS-AGREES (referee.mjs): JS's verdict on each DIFF of a refereed kind.
   let jsRef;
   if (opt.js) {
@@ -547,9 +671,9 @@ if (mode === "diff") {
         if (opt["js-stage"] && jsBroken?.kind !== "timeout") saveRun(opt["js-stage"], "js", res);
       }
       // A JS run that broke the request order or whose session is not clean is no evidence at all.
-      const unusable = orderBreak(order, log) ?? (jsSession.clean ? null : `its session: ${jsSession.why.join(", ")}`);
+      const unusable = orderBreak(order, scriptOf(log)) ?? (jsSession.clean ? null : `its session: ${jsSession.why.join(", ")}`);
       if (unusable) return { answers: order.map(() => undefined), broken: `the JS run is no evidence: ${unusable}` };
-      const answers = alignTo(order, log);
+      const answers = alignTo(order, entriesOf(log));
       const jsEnd = endOf("js", answers);
       // Past the point where the JS run ended there is no JS answer (never an empty one).
       return { answers: answers.map((e, p) => (jsBroken && p > jsEnd ? undefined : e)), broken: jsBroken ? why("js", jsBroken) : undefined };
@@ -568,15 +692,16 @@ if (mode === "diff") {
     writeFileSync(join(outDir, "rs-confirm.jsonl"), confirm.log.map((e) => JSON.stringify(e)).join("\n") + "\n");
     writeFileSync(join(outDir, "rs-confirm.session.json"), JSON.stringify(confirm.session));
     sessionItem({ "rs-confirm": confirm.session });
-    const confirmOrder = orderBreak(order, confirm.log);
-    if (confirmOrder) items.push({ i: n, step: "rs-confirm request order", method: "server/order", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run ${confirmOrder}` });
-    const c = alignTo(order, confirm.log);
+    const confirmOrder = orderBreak(order, scriptOf(confirm.log));
+    if (confirmOrder) runItem({ i: n, step: "rs-confirm request order", method: "server/order", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run ${confirmOrder}` });
+    const cEntries = entriesOf(confirm.log);
+    const c = alignTo(order, cEntries);
     const cEnd = endOf("rs-confirm", c);
-    const extra = confirm.log.length - c.filter(Boolean).length;
+    const extra = cEntries.length - c.filter(Boolean).length;
     for (const it of items) {
-      if (it.i >= n) continue; // the run-level items (server, order, session)
-      const p = it.i;
-      const cAns = c[p] ? answer(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd) ? null : NOT_ASKED;
+      if (runLevel.has(it)) continue; // the run-level items (server, order, session)
+      const p = it.i; // an answer's merged position (the initialize answer and the home: n and after)
+      const cAns = c[p] ? answerOf(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd, c) ? null : NOT_ASKED;
       if (cAns === at("rs", p, it.method)) continue;
       const what = cAns === null ? why("rs-confirm", confirm.broken) : cAns === NOT_ASKED ? "it was not asked this request" : "its answer differs from run 1";
       it.detail = `rs-nondet: the confirming tsc-rs run (made for the ${pending.length} GO-BROKEN or JS-AGREES items): ${what}${it.status === "MATCH" ? "" : ` (was ${it.status}${it.detail ? `: ${it.detail}` : ""})`}`;
@@ -584,8 +709,13 @@ if (mode === "diff") {
       if (cAns === null) it.rsFailure = failureOf(confirm.broken);
       agreeing.delete(it);
     }
-    if (extra > 0) items.push({ i: n, step: "rs-confirm extra answers", method: "server/answers", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run asked ${extra} requests that run 1 did not` });
-    if (confirm.broken) items.push({ i: n, step: "rs-confirm server", method: "server/exit", status: "DIFF", detail: `tsc-rs ${why("rs-confirm", confirm.broken)}`, rsFailure: failureOf(confirm.broken) });
+    // The storage and the write record of the confirming run must be run 1's too.
+    for (const [kind, it] of Object.entries(pathItems)) {
+      const again = judgePaths(kind, { "rs-confirm": confirm.session });
+      if (again.status === "DIFF" && it.status !== "DIFF") Object.assign(it, { status: "DIFF", detail: `the confirming tsc-rs run: ${again.detail} (was ${it.status}${it.detail ? `: ${it.detail}` : ""})`, ...(again.rsFailure ? { rsFailure: again.rsFailure } : {}) });
+    }
+    if (extra > 0) runItem({ i: n, step: "rs-confirm extra answers", method: "server/answers", status: "DIFF", detail: `rs-nondet: the confirming tsc-rs run asked ${extra} requests that run 1 did not` });
+    if (confirm.broken) runItem({ i: n, step: "rs-confirm server", method: "server/exit", status: "DIFF", detail: `tsc-rs ${why("rs-confirm", confirm.broken)}`, rsFailure: failureOf(confirm.broken) });
   }
   for (const it of agreeing) {
     const k = it.js.points.length + (it.js.morePoints ?? 0);
