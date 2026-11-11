@@ -1935,3 +1935,23 @@ once a **reconciliation step** is built and tested.
       item MATCH.
   - **No Astra review of B4:** it ships a test and docs only. The barrier is
     reviewed in H9.
+- **H8 round 3 done; merged `2e08cbde7`.** Root accepts it without another
+  Astra round. Every fix is inside the threat model, and each has a control
+  that MATCHes on `95006241b` and DIFFs on the head.
+  - **Fixed:** 1 (unresolved paths are named by the dir's last known path,
+    otherwise `?<nonce>.<n>`, failing closed), 2 (no writable host binds;
+    the init checks mountinfo), 3 (`env -i` npm), 4 (ids masked by JSON
+    path) and 6 (xattrs and link groups).
+  - **Documented:** 5 (mmap) and the other known limits, in `parity.md`,
+    "The threat model".
+  - **A false start:** a first version of fix 1 made overlayfs copy-up
+    nondeterministic (3 api rs-nondet). That gate was stopped, and the
+    version that names paths at the end of the record fixed it.
+  - **Refill:** `runs/h8r3b-lsp-*`. **Gate:**
+    `runs/h8r3b-head-865385add-full` PARITY OK; lsp 2,681 MATCH and 29
+    GO-BROKEN in 232 s; 0 lost.
+  - **Root's check:** the H8, H7, H6 and H4 JS self-tests pass on the
+    merged head.
+  - **base-current** moved to `h8r3b-head-865385add-full`.
+  - **Next:** H9, the B4 barrier plus an ATA progress barrier, with one
+    refill.
