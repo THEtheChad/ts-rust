@@ -2158,3 +2158,26 @@ once a **reconciliation step** is built and tested.
   declaration emit's module specifiers still use the process directory for
   `paths` (`ProgramHost::base_directory`), giving `"../shared/value"`
   where Go writes `"alias"`. Round 3 sent, the last.
+- **W3 done; Astra review running.** Head `f24c08c9b`.
+  - **Port bloat:** 14 → 9 rows with Δ ≥ 10 (≥ 25: 2 → 1), including
+    `Scanner::scan` 258 → 222 (Go 224) and `get_symbol_at_location`
+    108 → 92 (Go 97). **Own code:** 24 → 23 over 25.
+  - **Left:**
+    - 5 port rows are Go's tagless-switch residue;
+    - `create_late_bound_index_signatures` (`core.IfElse` eagerness);
+    - `subtree_facts_of_data` (a hot match over Go's 72 methods);
+    - `update_indexes` (cancellation points);
+    - 21 own rows are stdlib and x/text ports within +6 of their Go.
+  - **Gate:** `runs/w3-ccdaa34b4-full` PARITY OK; icount single-threaded
+    at most +0.034%.
+  - **Root's decision on gorel** (W3 asked):
+    - score the stdlib and x/text ports against Go's own source, a real
+      correction;
+    - show tagless-switch residue as its own column rather than
+      subtracting it, so the raw Δ stays honest.
+
+    Both go to F6, which starts after B6 and B7 merge, since it edits
+    markers in their files.
+- **B8 started:** the `WORKER_FS` suspect. On a miss, checker workers ask
+  the OS disk, where Go asks the program's FS (LSP overlay, API virtual).
+  Probe, fix the Go way, measure.
