@@ -164,7 +164,9 @@ thread_local! {
     /// `resolve_lazy_js_doc`).
     static LAZY_JSDOC: RefCell<PerFileMap<&'static [Node]>> = const { RefCell::new(PerFileMap::new()) };
     /// The file system of a checker worker thread (Go `host.FS()` without
-    /// the cache; the program's `HostFsCache` caches its answers).
+    /// the cache; the program's `HostFsCache` caches its answers): the OS
+    /// file system, the host of every program that checks on worker threads
+    /// (see `file_exists`).
     static WORKER_FS: Rc<dyn Fs> = bundled::wrap_fs(osvfs_fs());
 }
 
@@ -791,15 +793,31 @@ pub(crate) fn cached_lazy_js_doc(node: Node) -> Option<&'static [Node]> {
 // this thread's copy of the file system on a miss. Module specifier
 // generation probes the same paths for many types (`tryGetAnyFileFromPath`):
 // realworld3 lexical made 8.6M uncached stat calls, Go 8,768.
+// The worker's copy is the OS file system, which is the host file system of
+// the programs that run checker workers: those of `tsc`, `tsc -b` and
+// `tsc -w` (with a tracking host in a watch full build: `worker_seen_files`).
+// A language service program (the language server, the API) checks and
+// emits on its loading thread (`ls_program`), so its probes ask its own
+// host, the snapshot's file system. Two worker threads still ask the OS for
+// a host that is not the OS: a language server search thread
+// (`ls/search_thread.rs`; references, implementations and rename make no
+// module specifier, and its checker's diagnostics are not reported), and a
+// check of the API build orchestrator over a client callback file system
+// (`api/callbackfs.rs`), where Go asks the client (not covered by a test).
 pub(super) fn file_exists(path: &str) -> bool {
     let id = prog().id;
     if let Some(go) = FRONTENDS.with(|frontends| frontends.borrow().get(&id).cloned()) {
         return go.file_exists(path);
     }
     super::with_tables(|tables| {
-        tables
-            .host_fs_cache
-            .file_exists(path, || WORKER_FS.with(|fs| fs.file_exists(path)))
+        tables.host_fs_cache.file_exists(path, || {
+            if let Some(seen) = tables.worker_seen_files.get() {
+                seen.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(path.to_string());
+            }
+            WORKER_FS.with(|fs| fs.file_exists(path))
+        })
     })
 }
 

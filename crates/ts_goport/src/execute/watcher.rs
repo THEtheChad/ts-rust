@@ -946,6 +946,8 @@ impl Watcher {
         drop(watch_host.config_parses.take());
         crate::program::mark_freeable_parses(&np);
         let version = crate::program::new_program_version(&np, None);
+        // Go's checkers ask the host's file system, `tfs`, too.
+        crate::program::track_worker_file_probes(version);
         drop(np);
         let _program = crate::core::enter_program(Some(version));
         let mut program = incremental::program::new_program(
@@ -979,6 +981,12 @@ impl Watcher {
         let result = self.compile_and_emit();
         cached.disable_and_clear_cache();
 
+        // The paths that the checker threads asked the host about
+        // (`track_worker_file_probes`; Go: their `FileExists` calls, which
+        // `tfs` tracks).
+        crate::program::worker_seen_files(|path| {
+            tfs.seen_files.borrow_mut().insert(path.to_string());
+        });
         // PORT: Go's module specifier lookups read package.json files through
         // the program's resolver, whose file system is `tfs`
         // (module/resolver.go:1755 getPackageJsonInfo), so the lookups of

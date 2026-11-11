@@ -1014,6 +1014,11 @@ pub(crate) struct VersionTables {
     /// Each version has its own: Go watch gives each build a new host cache
     /// (execute/watcher.go:431 and :462 `cachedvfs.From`).
     host_fs_cache: crate::modulespecifiers::host::HostFsCache,
+    /// The paths that worker threads asked `host_fs_cache` about, when the
+    /// program's host file system tracks the paths it is asked about (Go
+    /// `trackingvfs.FS`, the host of a `tsc --watch` full build,
+    /// execute/watcher.go:480). Set by `track_worker_file_probes`.
+    worker_seen_files: OnceLock<Mutex<FxHashSet<String>>>,
     /// The entries of the resolver's package.json cache that module
     /// specifier generation reads and fills on any thread
     /// (`with_host_fs_cache`). Only its package.json part is used. A version
@@ -1081,6 +1086,7 @@ impl VersionTables {
             file_associations: OnceLock::new(),
             declaration_diagnostic_cache: Mutex::new(FxHashMap::default()),
             host_fs_cache: Default::default(),
+            worker_seen_files: OnceLock::new(),
             package_json_cache: Arc::default(),
             go: None,
             file_versions: Vec::new(),
@@ -3228,6 +3234,32 @@ pub fn resolve_lazy_js_doc(file: Node, info: &SourceFileInfo, node: Node) -> &'s
 pub fn file_exists(path: &str) -> bool {
     alias_resolver_unimplemented();
     go_frontend::file_exists(path)
+}
+
+/// Makes the worker threads of `program` note each path that they ask its
+/// host file system about (`go_frontend::file_exists`), for
+/// `worker_seen_files`. Go `tsc --watch` builds its full-build program on a
+/// tracking file system (execute/watcher.go:480), and its checkers ask that
+/// file system (compiler/program.go:146 `FileExists`), so their paths are
+/// seen files of the build. Call it on the loading thread before any check
+/// of `program`.
+pub(crate) fn track_worker_file_probes(program: &'static GoProgram) {
+    let tables = held_tables(program);
+    let tracked = tables.worker_seen_files.set(Mutex::default());
+    assert!(tracked.is_ok(), "worker file probes are already tracked");
+}
+
+/// Calls `f` with each path that the worker threads of the current program
+/// asked its host file system about since `track_worker_file_probes`, in no
+/// order (Go `trackingvfs.FS.SeenFiles`). Nothing when not tracked.
+pub(crate) fn worker_seen_files(mut f: impl FnMut(&str)) {
+    with_tables(|tables| {
+        if let Some(seen) = tables.worker_seen_files.get() {
+            for path in seen.lock().unwrap_or_else(PoisonError::into_inner).iter() {
+                f(path);
+            }
+        }
+    });
 }
 
 /// Runs `f` with the package.json cache of module specifier generation of
