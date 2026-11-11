@@ -1892,3 +1892,17 @@ once a **reconciliation step** is built and tested.
     - **Lane B4 started:** write a Go note, find the root cause, fix it the
       Go way, add a test that fails on the base and never on the head, and
       check sibling notifications.
+- **H8 recheck: REJECT,** with 6 new gaps (`reviews/2026-11-10-astra-h8-r2.md`).
+  - **The pattern:** this is the loop Chad asked about. Each round finds
+    stranger cases, and Astra writes deliberately evasive servers.
+  - **Root's decision:**
+    - **State the threat model** in `parity.md`: buggy compilers and racy
+      environments, not adversarial servers.
+    - **Fix** 1 (unresolved paths fail closed), 2 (every writable mount
+      recorded, checked in the init), 3 (sanitize npm's env), 4 (mask only
+      ID fields) and 6 (xattrs and hard links in the listing).
+    - **Out of scope, documented:** 5, a transient mmap write that is
+      restored.
+  - **Round 3 sent,** the last under the cap. After it, root decides
+    without a further Astra round, unless a finding is inside the threat
+    model.
