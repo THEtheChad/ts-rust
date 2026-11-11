@@ -1657,6 +1657,52 @@ an item whose attempts differ from each other, whose row lacks the evidence, or 
 rows disagree. `--old` prints, per item, whether the outcome kinds and Go's panic line agree with an
 older run's.
 
+### Grandfather entries that recover (lane T1, 2026-11-11)
+
+When tsc-rs starts to pass a grandfathered item, the gate reports its entry as stale
+(`good now: remove the entry`), and a plain `regen` refuses the item, since it is no longer a DIFF.
+`regen --drop-recovered` removes such entries instead:
+
+```sh
+scripts/perf-rearch/parity_grandfather.py regen --full $R/<evidence>-full --quick $R/<evidence>-quick --drop-recovered
+```
+
+- **Recovered** means the `--full` run has the item with a good status (`parity_compare.GOOD`:
+  MATCH, GO-BROKEN, GO-PARTITION, JS-AGREES, PASS or FLAKY) and no tsc-rs failure (`rs_failure`).
+  This is the same test the gate uses for a stale entry.
+- **Each dropped entry is printed** before anything is written:
+  `dropped <item>: <status> in <run> (<detail>); the entry was '<old reason>'`. The summary line
+  counts them (`N recovered dropped`).
+- **Not run is never dropped.** If the `--full` run lacks the item, its entry is not dropped, and
+  regen refuses it as before and writes nothing.
+- **A good status with a tsc-rs failure** is not dropped either. The gate reports such an item as a
+  crash, and regen refuses to pin it.
+- **Quick and full must agree.** If a `--quick` run has a recovered item as not good, regen stops
+  with an error.
+- **`--only`** limits the candidates to the items it matches. Every other entry stays byte for byte,
+  even if its item recovered.
+- **Without the option, regen is unchanged.** With no recovered item, the option writes the same
+  file as plain regen.
+
+**Self-test.** `python3 -I scripts/perf-rearch/parity_t1_test.py` takes about 5 s. Its rows come
+from the real fuzz tier on fake binaries, as in H6. It checks:
+- the GO-BROKEN and MATCH items are dropped and printed;
+- the still-bad item is kept and pinned again;
+- good with a tsc-rs crash is kept;
+- not run is kept, and regen refuses it and writes nothing;
+- an entry outside `--only` stays, and one inside it is dropped;
+- a quick run that disagrees is an error;
+- plain regen refuses a recovered item, and on a run with no recovered item it matches the option.
+
+Each of three mutations of the drop rule fails 2 to 5 of the checks.
+
+**Dry run on `base-current`** (`runs/h8r3b-head-865385add-full`, binary
+`tsgo-head-865385add-rel`). No quick run of that binary existed, so the quick evidence for the two
+quick-manifest entries (`fuzz/1:411`, `fuzz/1:795`) came from
+`evidence --mode quick --only '^fuzz/1:(411|795)$'` (`scratch/t1-quick-865385add`). With `--out` to a
+scratch file, `regen --drop-recovered` dropped 0 of 36 entries. All 36 are DIFF in the base, the
+output equals plain regen's byte for byte, and every pin equals the committed one except `evidence`.
+
 ### Negative controls
 
 `parity_h4_test.py` (27 checks) and `vendor/lspdiff/selftest/h4-selftest.mjs` (15 checks) run each
@@ -2713,6 +2759,7 @@ MATCH, 36 DIFF (grandfathered), 8 GO-BROKEN, 1 JS-AGREES (the base's); corpus 12
 - `parity_h4_test.py` and `vendor/lspdiff/selftest/h4-selftest.mjs`: lane H4's negative controls
   (about 1 minute together; the JS file also has lane ND2's and H5's).
 - `parity_h6_test.py`: lane H6's negative controls for the stderr site form (about 10 seconds).
+- `parity_t1_test.py`: lane T1's self-test of `regen --drop-recovered` (about 5 seconds).
 - `parity_api.py`: the api tier (also `probe`, `list`, `key`); `parity_api_session.py`: one API session
   (the protocol client, the requests, the storage reads); `parity_sandbox_init.py`: the session's sandbox,
   PID 1 of its namespaces (both keyed: their sha is in every api key); `parity-api-scenarios.json`: the
