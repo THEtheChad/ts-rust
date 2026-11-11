@@ -2192,3 +2192,32 @@ once a **reconciliation step** is built and tested.
   - **Root fixed `w3.md`'s counts:** 23 stdlib rows, not 21; 6 residue
     rows plus 3 others.
   - **base-current** moved to `w3-ccdaa34b4-full`, which contains every merge through W3.
+- **B7 round 3 done; merged.** Root accepts it without a further Astra
+  round, as decided.
+  - **The fix:** declaration emit's module specifiers use the program's
+    base. Item `api/build-decl-paths-base-directory`: Go writes
+    `import("alias").V`, tsc-rs on round-2 code `import("../shared/value").V`;
+    DIFF there, MATCH from `049abdd54`.
+  - **Root's checks:**
+    - the reproduction outputs (`scratch/b7/api-r3-{old,new}`);
+    - `base_directory_sites.py check` COMPLETE: 156 Go sites (76 correct,
+      13 fixed, 67 n/a);
+    - `parity_b7_test.py`: B7 SELFTEST OK (the changedProjects key sort).
+  - **Gate:** `runs/20261111-143822-full-114452a990` PARITY OK, 0 lost;
+    icount single-threaded flat.
+  - **base-current stays at W3's run,** because B7's gate predates W3. B7's
+    7 new items are protected by the new-not-good check. The next full
+    gate on the merged head becomes the base.
+- **Bug pattern** (Chad asked where the bugs come from). The real
+  differences found in this phase fall into three groups:
+  1. **Context taken from the process, not the program:** case
+     sensitivity (B2), base directory (B7), FS on workers (B8, suspected).
+  2. **Go semantics Rust types don't carry:** `int` width, nil against
+     empty, integers written through `f64` (B6).
+  3. **Stale pre-pin ports** (B3).
+
+  None was in checker logic. Groups 1 and 2 can be audited mechanically:
+  B2, B7 and B8 cover group 1.
+- **A1 started:** a read-only audit for group 2 (Go `int` ported to a
+  narrower type, nil against empty, integers through `f64`), ranked, with
+  fixes and tests suggested.
