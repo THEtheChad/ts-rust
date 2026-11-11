@@ -2181,3 +2181,13 @@ once a **reconciliation step** is built and tested.
 - **B8 started:** the `WORKER_FS` suspect. On a miss, checker workers ask
   the OS disk, where Go asks the program's FS (LSP overlay, API virtual).
   Probe, fix the Go way, measure.
+- **W3: Astra ACCEPT; merged.**
+  - **Confirmed:**
+    - the scanner change is exactly 8 `break 'sw` → `return` plus 12
+      continues, with the same state;
+    - fallthrough order is kept;
+    - `msg_in` and `new_object_type` are faithful;
+    - the lib-blob payloads are identical;
+    - the remaining rows are defensible (Astra reproduced all 23 Go values).
+  - **Root fixed `w3.md`'s counts:** 23 stdlib rows, not 21; 6 residue
+    rows plus 3 others.
