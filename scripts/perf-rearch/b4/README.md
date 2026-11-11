@@ -68,7 +68,7 @@ Reproduced with `starve-repro.sh` (one CPU, 6 busy loops):
 The server logs show `Delaying scheduled diagnostics refresh...` after the slow open (3 to 4 s)
 in every short run, Go's and tsc-rs's.
 
-## Fix: a barrier in lspdiff (`lspdiff-barrier.patch`, `apply-barrier.py`)
+## Fix: a barrier in lspdiff (now in `vendor/lspdiff`)
 
 `client.mjs` gets `NotificationBarrier`, which counts the notifications the client sends
 (didOpen, didChange, didClose, didSave, didChangeWatchedFiles, didChangeConfiguration) and the
@@ -77,19 +77,20 @@ notification (a request's line carries its id). `LspClient.caughtUp()` waits unt
 notification is handled. `Script.settle` (scenario.mjs) calls it first, so the quiet and npm windows
 start after the server's work for the step has started. A server that died or hangs is not waited
 for: its next request reports the crash or timeout as before (a tsc-rs failure, not a harness
-error). `h4-selftest.mjs` gets the probe client's `caughtUp` and two "b4" checks: that a scenario
+error). `h4-selftest.mjs` has the probe client's `caughtUp` and two "b4" checks: that a scenario
 wait calls the barrier before its windows, and the barrier's counting.
 
-`apply-barrier.py <scripts/perf-rearch>` makes these edits by anchor text, and the patch is its
-output on H8's round-3 head `b214cfb3d` (`git apply --check` passes; the selftest passes with it).
-H8 owns `vendor/lspdiff`, so this lane does not commit the edit there. The patch changes
-`SESSION_SOURCES` (client.mjs, scenario.mjs), so it resets the Go evidence of every watch
-scenario: the gate needs a Go fill (`--go-refill`) of them once it is applied.
+This lane shipped the barrier as a patch and its applier, since H8 owned `vendor/lspdiff` then. Lane
+H9 (2026-11-11) applied it there (`client.mjs`, `scenario.mjs`, `selftest/h4-selftest.mjs`) and removed
+both; `tsserver.mjs` (the JS referee, which can replay a scenario) has the same interface with nothing to
+wait for. H9 also closed the residual race below with a progress barrier: see `docs/perf-rearch/parity.md`,
+"Progress barrier (lane H9)".
 
 ## Verification (`starve-repro.sh`, 2026-11-10)
 
 H8's harness at `b214cfb3d`, without and with the barrier. Each harness got a private Go cache
-(`B4_GO_CACHE`), filled unstarved. The starved runs pin the server to CPU 7, which 6 busy loops
+(`B4_GO_CACHE`), filled unstarved. `harness-copy.sh <ref | dir> <out>` makes such a copy (its
+`parity_lsp.py` reads `B4_RS_RUNS` and `B4_GO_CACHE` and writes the server logs; lane H9). The starved runs pin the server to CPU 7, which 6 busy loops
 share, so the third open takes 1.1 to 3.9 s:
 
 | harness | server (starved) | runs | load refreshes | coalesced (`Delaying`) |
@@ -111,7 +112,9 @@ typings again: one extra `@types/jsdom @types/ws` call in the load's npm list (1
 the first one either. Nothing on the LSP stream marks the end of an ATA request. The client turns
 `workDoneProgress` off, Go logs nothing for an install that succeeded, and its progress has a
 display delay of its own. So the fix needs a new signal (for example progress on, waiting for each
-"Installing types" to end) or a longer idle window. That is for H8 or root to choose.
+"Installing types" to end) or a longer idle window. Lane H9 took the first: the watch scenarios advertise
+`window.workDoneProgress` and every wait lasts until each progress begun has ended (`parity.md`, "Progress
+barrier (lane H9)", with its starvation table).
 
 ## The tsc-rs test
 
