@@ -148,6 +148,7 @@ mod projectcollectiondefaultproject_test;
 mod projectlifetime_test;
 mod projectreferencesprogram_test;
 mod refcountcache_test;
+mod refresh_sequence_test;
 mod released_program_test;
 mod requestfilesystem_filechanges_test;
 mod requestfilesystem_pathtree_test;

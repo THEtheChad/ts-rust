@@ -181,6 +181,21 @@ pub struct ClientMock {
     send_telemetry: RefCell<Vec<lsproto::TelemetryEvent>>,
     get_locale: RefCell<usize>,
     set_locale: RefCell<Vec<String>>,
+    /// The calls that reach the LSP client as server-to-client messages, in
+    /// call order (no Go field: lane B4's refresh-sequence test).
+    sequence: RefCell<Vec<ClientCall>>,
+}
+
+/// One entry of `ClientMock::sequence`: the server-to-client message that a
+/// `Client` call sends. A progress call has its message's key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClientCall {
+    RefreshDiagnostics,
+    RefreshInlayHints,
+    RefreshCodeLens,
+    ProgressStart(&'static str),
+    ProgressFinish(&'static str),
+    PublishDiagnostics(String),
 }
 
 impl ClientMock {
@@ -223,6 +238,13 @@ impl ClientMock {
     pub fn set_locale_calls(&self) -> Vec<String> {
         self.set_locale.borrow().clone()
     }
+    /// The server-to-client calls so far, in order (`ClientCall`).
+    pub fn sequence(&self) -> Vec<ClientCall> {
+        self.sequence.borrow().clone()
+    }
+    fn record(&self, call: ClientCall) {
+        self.sequence.borrow_mut().push(call);
+    }
 }
 
 impl Client for ClientMock {
@@ -260,6 +282,7 @@ impl Client for ClientMock {
         }
     }
     fn refresh_diagnostics(&self, _ctx: &Context) -> Result<(), GoError> {
+        self.record(ClientCall::RefreshDiagnostics);
         *self.refresh_diagnostics.borrow_mut() += 1;
         Ok(())
     }
@@ -268,14 +291,17 @@ impl Client for ClientMock {
         _ctx: &Context,
         params: lsproto::PublishDiagnosticsParams,
     ) -> Result<(), GoError> {
+        self.record(ClientCall::PublishDiagnostics(params.uri.0.clone()));
         self.publish_diagnostics.borrow_mut().push(params);
         Ok(())
     }
     fn refresh_inlay_hints(&self, _ctx: &Context) -> Result<(), GoError> {
+        self.record(ClientCall::RefreshInlayHints);
         *self.refresh_inlay_hints.borrow_mut() += 1;
         Ok(())
     }
     fn refresh_code_lens(&self, ctx: &Context) -> Result<(), GoError> {
+        self.record(ClientCall::RefreshCodeLens);
         *self.refresh_code_lens.borrow_mut() += 1;
         match &*self.refresh_code_lens_func.borrow() {
             Some(f) => f(ctx),
@@ -283,6 +309,7 @@ impl Client for ClientMock {
         }
     }
     fn progress_start(&self, message: &'static ts_goport::diagnostics::Message, args: Vec<String>) {
+        self.record(ClientCall::ProgressStart(message.key()));
         self.progress_start
             .borrow_mut()
             .push(ProgressCall { message, args });
@@ -292,6 +319,7 @@ impl Client for ClientMock {
         message: &'static ts_goport::diagnostics::Message,
         args: Vec<String>,
     ) {
+        self.record(ClientCall::ProgressFinish(message.key()));
         self.progress_finish
             .borrow_mut()
             .push(ProgressCall { message, args });

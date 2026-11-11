@@ -1,0 +1,149 @@
+diff -ru a/scripts/perf-rearch/vendor/lspdiff/client.mjs b/scripts/perf-rearch/vendor/lspdiff/client.mjs
+--- a/scripts/perf-rearch/vendor/lspdiff/client.mjs
++++ b/scripts/perf-rearch/vendor/lspdiff/client.mjs
+@@ -17,6 +17,42 @@
+ // A request the server does not answer in this time ends the run: the server is killed and the
+ // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
+ const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
++// The notifications whose handling LspClient.caughtUp waits for: the ones a scenario sends between
++// its waits.
++const BARRIER_METHODS = new Set(["textDocument/didOpen", "textDocument/didChange", "textDocument/didClose", "textDocument/didSave", "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration"]);
++// The log line of a handled notification; a request's line has its id after the method:
++// "handled method 'm' in 1.2ms", "error handling method 'm': e" (Go lsp/server.go
++// handleRequestOrNotification, and tsc-rs's port of it).
++const HANDLED_LOG = /^(?:handled|error handling) method '([^']+)'(?: in |: )/;
++
++// Lane B4: which sent notifications of BARRIER_METHODS the server has handled, by its log. Both
++// servers handle notifications one at a time, in order, on their dispatch loop, and log one such line
++// when the handler returns. A notification has no answer, so a wait on the stream's quiet alone can
++// end while the server still handles the last one; the next step's notifications then queue behind it
++// and their background work runs back to back: ATA's results, each scheduling a refresh that a 500 ms
++// debounce coalesces (watch-hono-f12's load: 10 to 12 refreshes on a starved CPU, Go and tsc-rs alike).
++export class NotificationBarrier {
++  constructor() {
++    this.sent = new Map();
++    this.handled = new Map();
++  }
++
++  // A notification the client sends.
++  send(method) {
++    if (BARRIER_METHODS.has(method)) this.sent.set(method, (this.sent.get(method) ?? 0) + 1);
++  }
++
++  // A window/logMessage text of the server.
++  log(message) {
++    const m = HANDLED_LOG.exec(message ?? "");
++    if (m) this.handled.set(m[1], (this.handled.get(m[1]) ?? 0) + 1);
++  }
++
++  // The methods with sent notifications the server has not logged yet ("<method> <handled>/<sent>").
++  behind() {
++    return [...this.sent].filter(([m, n]) => (this.handled.get(m) ?? 0) < n).map(([m, n]) => `${m} ${this.handled.get(m) ?? 0}/${n}`);
++  }
++}
+ const MAX_HEADER_LINE = 256;
+ const MAX_HEADERS = 4;
+ const MAX_FRAME = 256 << 20;
+@@ -61,6 +97,7 @@
+     // The watch scenarios (scenario.mjs) read registrations and publishDiagnostics from it.
+     this.events = [];
+     this.lastMessageAt = performance.now();
++    this.barrier = new NotificationBarrier(); // caughtUp
+     this.buf = Buffer.alloc(0);
+     this.exited = this.server.exited;
+     this.dead = null; // why the server is gone, once it is
+@@ -145,6 +182,7 @@
+       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, ...(raw ? { rawNumbers: true } : {}) });
+       return;
+     }
++    if (msg.method === "window/logMessage") this.barrier.log(msg.params?.message);
+     this.notifications.push({ method: msg.method, params: msg.params, at });
+     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
+   }
+@@ -195,9 +233,22 @@
+   }
+ 
+   notify(method, params) {
++    this.barrier.send(method);
+     this.#write({ jsonrpc: "2.0", method, params });
+   }
+ 
++  // Resolves once the server has handled every notification of BARRIER_METHODS sent so far
++  // (NotificationBarrier), at most `maxMs`. A server that died or hangs is not waited for: the next
++  // request reports its crash or timeout, as before (a tsc-rs failure, not a harness error).
++  async caughtUp(maxMs = REQUEST_TIMEOUT_MS) {
++    const start = performance.now();
++    for (;;) {
++      const waited = performance.now() - start;
++      if (this.dead || waited >= maxMs || this.barrier.behind().length === 0) return waited;
++      await new Promise((r) => setTimeout(r, 10));
++    }
++  }
++
+   cancel(id) {
+     this.notify("$/cancelRequest", { id });
+   }
+diff -ru a/scripts/perf-rearch/vendor/lspdiff/scenario.mjs b/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
+--- a/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
++++ b/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
+@@ -249,6 +249,9 @@
+   // the stream alone ended before or during that call at random (lane ND2), so the next answers and
+   // refreshes depended on npm's time and the host's load, for Go and tsc-rs alike.
+   async settle(ms, label) {
++    // First the server must have handled every notification sent (client.mjs caughtUp, lane B4): the
++    // windows below then start after its work for them has started.
++    await this.client.caughtUp();
+     const start = performance.now();
+     for (let since = start; ; since = -Infinity) {
+       await this.client.settle(ms);
+diff -ru a/scripts/perf-rearch/vendor/lspdiff/selftest/h4-selftest.mjs b/scripts/perf-rearch/vendor/lspdiff/selftest/h4-selftest.mjs
+--- a/scripts/perf-rearch/vendor/lspdiff/selftest/h4-selftest.mjs
++++ b/scripts/perf-rearch/vendor/lspdiff/selftest/h4-selftest.mjs
+@@ -314,9 +314,11 @@
+   const settles = [];
+   script.ata = { log: "fake", reported: 0, seen: 0, changedAt: -Infinity };
+   // The server's own liveness check (sandbox.mjs ServerProcess.alive: the pid as npm saw it) and home marks.
+-  script.client = { settle: async () => settles.push(now()), server: { alive: () => alive, inside: (p) => p } };
++  // caughtUp (lane B4): the windows that settle had opened when each barrier wait began.
++  const caught = [];
++  script.client = { settle: async () => settles.push(now()), caughtUp: async () => caught.push(settles.length), server: { alive: () => alive, inside: (p) => p } };
+   script.log = [];
+-  return { script, settles, reads: () => reads };
++  return { script, settles, caught, reads: () => reads };
+ }
+ 
+ // ---- lane ND2: the scenarios' waits cover ATA's npm calls ----------------------------------------
+@@ -343,6 +345,33 @@
+   check("nd2: with ATA off, a scenario wait is the server's quiet window alone", off.reads() === 0 && quick < 1500, `reads ${off.reads()}, waited ${quick}`);
+ });
+ 
++// ---- lane B4: a scenario wait starts when the server has handled the notifications sent -----------
++await part("b4", async () => {
++  // Every wait first waits for the barrier, before any of its quiet or npm windows.
++  let clock = 0;
++  const probe = scriptProbe(() => "", () => (clock += 100), false);
++  await probe.script.settle(300, "probe");
++  check("b4: a scenario wait waits for the server to have handled its notifications before its windows", probe.caught.length === 1 && probe.caught[0] === 0 && probe.settles.length >= 1, `caught ${probe.caught}, settles ${probe.settles}`);
++  // The barrier counts the notifications sent and the server's log lines of handled ones.
++  const { NotificationBarrier } = await import(join(LSPDIFF, "client.mjs"));
++  const b = new NotificationBarrier();
++  b.send("textDocument/didOpen");
++  b.send("textDocument/didOpen");
++  b.send("$/cancelRequest"); // not waited for
++  b.send("workspace/didChangeWatchedFiles");
++  const first = b.behind().join("; ");
++  b.log("handled method 'textDocument/didOpen' in 3.1ms");
++  b.log("handled method 'textDocument/diagnostic' (4) in 1ms"); // a request's line
++  b.log("handled method 'textDocument/didOpen' (7) in 1ms"); // with an id: not a notification
++  b.log("Processed 1 file changes in 85µs");
++  const second = b.behind().join("; ");
++  b.log("handled method 'textDocument/didOpen' in 1.2s");
++  b.log("error handling method 'workspace/didChangeWatchedFiles': boom");
++  check("b4: the barrier is behind until each notification sent has its handled (or error) log line, requests' lines aside",
++    first === "textDocument/didOpen 0/2; workspace/didChangeWatchedFiles 0/1" && second === "textDocument/didOpen 1/2; workspace/didChangeWatchedFiles 0/1" && b.behind().length === 0,
++    JSON.stringify({ first, second, last: b.behind() }));
++});
++
+ // ---- lane H5: hermetic servers and ATA ------------------------------------------------------------
+ await part("h5", async () => {
+   const { ATA_STORE, writeTree } = await import(join(LSPDIFF, "fixtures.mjs"));
