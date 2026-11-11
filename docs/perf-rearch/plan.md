@@ -1984,3 +1984,47 @@ once a **reconciliation step** is built and tested.
   2 (progress lifecycle checks) and 3 (check Go's fixed progress payload, not
   its occurrence). For 4, find a deterministic ATA completion signal, else
   document the assumption. Fix both test weaknesses. Round 2 sent.
+- **Q9 done; merged.** Root reviewed the `goport_watch` change: the
+  rewrite loop is bounded by the clock catching up, and the cover wait is
+  capped at `BUILD_TIMEOUT`.
+  - **Clippy:** go_baselines is `test = false`, so CI's `--all-targets`
+    never compiled it. Its 87–88 findings are fixed mechanically, with no
+    `#[allow]`. CI now lints `--test go_baselines`, plain and with
+    `diagnostics,test-hooks`.
+  - **The CRLF flake:** the cause was timesyncd stepping the wall clock
+    back (`msa2-clock-steps`). After a step the edit got an older mtime
+    than lib's build info, and Go's up-to-date check would skip it too.
+    `goport_watch` now rewrites the edit until its mtime is later than
+    every file under the project, and waits for a watch to cover the
+    target (a second race the 300 ms wait hid).
+    - **Rates:** base 4 failures of 200 runs; head 0 of 2,000; the head
+      with the 300 ms wait restored, 0 of 1,000.
+  - **The release `tsgo` is byte-identical.** Tests: plain 2,199 passed,
+    with features 2,230 passed; parity tests tier 0 lost; GATING OK.
+- **B5 started:** direct tests for B2's path-case risks 8 (sort direction
+  of redirect candidates), 9, 11 (realpath differing only in case) and 14
+  (overlay listing, `İ.ts` against `i.ts`). Each test must fail with its
+  fix reverted.
+- **H9 round 2 done** (head `73db30179`, gate on `fafe6a374`).
+  - **The fixes:**
+    - 1: the notification deadline is a harness ERROR;
+    - 2: Go's progress lifecycle is enforced (create always comes before
+      begin at the pin);
+    - 3: Go's fixed progress payloads are checked, and a broken rule
+      becomes a DIFF on that side;
+    - 4: Go has no deterministic ATA completion signal, so `parity.md`
+      states the residual bound in place of the load-independent claim.
+    - Both test weaknesses are fixed.
+  - **Controls:** each fails on `3195ad922` and passes on the head.
+  - **Gate:** `runs/h9r2-fafe6a374-full` PARITY OK, 0 lost. 3 lsp runs,
+    with all session and server messages MATCH.
+  - **lsp time:** 233 s.
+  - **Astra recheck** running (round 2 of 3).
+- **H9 recheck: REJECT,** with 2 narrow findings in scope
+  (`reviews/2026-11-11-astra-h9-r2.md`):
+  - the transport type of progress messages isn't checked;
+  - payload violations aren't attributed to the server that broke the
+    rule.
+
+  Everything else from round 1 is confirmed. Round 3 sent, the last; root
+  decides after it.

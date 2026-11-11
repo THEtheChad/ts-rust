@@ -98,7 +98,7 @@ fn test_walk_dir_ignores_unreadable_subdir() {
         std::fs::create_dir(&denied).unwrap();
         let child = denied.join("child");
         std::fs::write(&child, "hidden").unwrap();
-        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         let found = walk_all(walk, &s(&root));
         std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700)).unwrap();

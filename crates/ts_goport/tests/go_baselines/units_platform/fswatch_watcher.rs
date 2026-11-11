@@ -2065,7 +2065,7 @@ fn test_non_recursive_with_denied_subdir() {
         let denied = join(&dir, "denied");
         mkdir(&denied);
         chmod(&denied, 0);
-        let d2 = denied.clone();
+        let d2 = denied;
         t.cleanup(move || chmod(&d2, 0o700));
         let (r, _) = subscribe_for_opts(t, &dir, wi, vec![]);
         let f = sub_path(&dir);
@@ -2370,7 +2370,7 @@ fn test_recursive_with_denied_subdir() {
         let denied = join(&dir, "denied");
         mkdir(&denied);
         chmod(&denied, 0);
-        let d2 = denied.clone();
+        let d2 = denied;
         t.cleanup(move || chmod(&d2, 0o700));
         let (r, _) = subscribe_for(t, &dir, wi);
         let f = join(&accessible, "test.txt");

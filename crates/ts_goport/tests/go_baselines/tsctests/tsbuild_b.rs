@@ -1772,11 +1772,11 @@ fn sample_inputs() -> Vec<TscInput> {
                 cwd: "/user/username/projects/sample1".into(),
                 command_line_args: [
                     args!["--b", "tests", "--verbose", "--stopBuildOnErrors"],
-                    options.clone(),
+                    options,
                 ]
                 .concat(),
                 edits: [
-                    no_change.clone(),
+                    no_change,
                     vec![TscEdit {
                         caption: "fix error".into(),
                         edit: edit(|sys| {

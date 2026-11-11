@@ -40,12 +40,12 @@ fn test_js_casing() {
         ("uppercase ligature", to_upper_js("ﬁoo"), "FIOO".to_string()),
         (
             "capitalize-style uppercase",
-            format!("{}{}", to_upper_js("ß"), "foo".to_string()),
+            format!("{}{}", to_upper_js("ß"), "foo"),
             "SSfoo".to_string(),
         ),
         (
             "uncapitalize-style lowercase",
-            format!("{}{}", to_lower_js("İ"), "foo".to_string()),
+            format!("{}{}", to_lower_js("İ"), "foo"),
             "i̇foo".to_string(),
         ),
         (

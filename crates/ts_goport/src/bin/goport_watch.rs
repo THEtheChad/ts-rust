@@ -25,7 +25,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use ts_goport::execute::execute_tsc::{GoTsc, command_line};
 use ts_goport::execute::tsc::{EXIT_UNPORTED, System, Writer, new_os_system};
@@ -41,9 +41,6 @@ const BUILD_END: &str = "Watching for file changes";
 
 /// How long one build may take.
 const BUILD_TIMEOUT: Duration = Duration::from_mins(5);
-
-/// The wait between the end of a build and the next edit.
-const EDIT_DELAY: Duration = Duration::from_millis(300);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -157,17 +154,60 @@ fn drive(output: &Mutex<Vec<u8>>, watches: &Watches, edits: &[Edit]) -> bool {
         return false;
     }
     for (i, Edit { target, text }) in edits.iter().enumerate() {
-        // The file system clock is coarse: an edit right after a build can
-        // get the mtime of that build's outputs, and the `-b` up-to-date
-        // check then sees no change.
-        std::thread::sleep(EDIT_DELAY);
-        std::fs::write(target, text).unwrap_or_else(|e| panic!("write {target}: {e}"));
+        if !watches.wait_for_cover(target) {
+            return false;
+        }
+        write_after_outputs(target, text);
         watches.send_update(target);
         if !wait_for_builds(output, i + 2) {
             return false;
         }
     }
     true
+}
+
+/// Writes `text` to `target` until the file gets a later mtime than every
+/// file under the current directory (the project and its outputs), so
+/// `tsc -b` sees the edit as newer than the outputs of the last build: Go
+/// `getUpToDateStatus` rebuilds a project only for an input or config newer
+/// than its build info. File mtimes come from the wall clock, and an edit
+/// right after a build can get the same time as that build's outputs (a
+/// coarse tick clock) or an earlier one (a wall clock that NTP steps back:
+/// on MS-A2 timesyncd steps it back by about 1.6 s every 32 s). Then the
+/// project stays up to date and keeps the outputs of the last build. Each
+/// write before the last one is not reported: only the last counts.
+fn write_after_outputs(target: &str, text: &[u8]) {
+    let newest = newest_mtime(Path::new("."));
+    loop {
+        std::fs::write(target, text).unwrap_or_else(|e| panic!("write {target}: {e}"));
+        if mtime(Path::new(target)) > newest {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The latest mtime of a file under `dir`. Symbolic links are not followed.
+fn newest_mtime(dir: &Path) -> SystemTime {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+    entries
+        .map(|entry| {
+            let entry = entry.unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => newest_mtime(&path),
+                _ => mtime(&path),
+            }
+        })
+        .max()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// The mtime of `path` itself (a link's own time).
+fn mtime(path: &Path) -> SystemTime {
+    std::fs::symlink_metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or_else(|e| panic!("mtime of {}: {e}", path.display()))
 }
 
 /// Waits until the output shows `count` finished builds.
@@ -209,6 +249,31 @@ struct Watches {
 }
 
 impl Watches {
+    /// Waits until a watch covers `path`. The first `tsc -b --watch` build
+    /// prints its end before the orchestrator makes its watches (Go
+    /// `Orchestrator.Watch` runs after the build), and an update sent before
+    /// then reaches no watch and builds nothing. False when no watch came in
+    /// `BUILD_TIMEOUT`.
+    fn wait_for_cover(&self, path: &str) -> bool {
+        let start = Instant::now();
+        loop {
+            let covered = self
+                .live
+                .lock()
+                .expect("watches")
+                .iter()
+                .any(|(_, dir, recursive, _)| covers(dir, *recursive, path));
+            if covered {
+                return true;
+            }
+            if start.elapsed() > BUILD_TIMEOUT {
+                eprintln!("goport_watch: no watch covers {path}");
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Sends an update event for `path` to each watch that covers it.
     fn send_update(&self, path: &str) {
         let callbacks: Vec<WatchCallback> = self

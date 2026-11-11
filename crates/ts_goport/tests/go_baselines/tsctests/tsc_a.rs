@@ -1614,7 +1614,7 @@ fn tsc_ignore_config_inputs() -> Vec<TscInput> {
             TscInput {
                 sub_scenario: format!("{}{}", sub_scenario, " when config file absent"),
                 files: files_without_config(),
-                command_line_args: command_line_args.clone(),
+                command_line_args,
                 ..Default::default()
             },
             TscInput {
@@ -1623,7 +1623,7 @@ fn tsc_ignore_config_inputs() -> Vec<TscInput> {
                     sub_scenario, " when config file absent with --ignoreConfig"
                 ),
                 files: files_without_config(),
-                command_line_args: command_line_args_ignore_config.clone(),
+                command_line_args: command_line_args_ignore_config,
                 ..Default::default()
             },
         ]
@@ -3271,7 +3271,7 @@ fn tsc_library_resolution_inputs() -> Vec<TscInput> {
                 sub_scenario: "with config with libReplacement".into(),
                 files: get_tsc_library_resolution_file_map(true),
                 cwd: "/home/src/workspace/projects".into(),
-                command_line_args: command_line_args.clone(),
+                command_line_args,
                 ..Default::default()
             },
         ]

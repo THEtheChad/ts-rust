@@ -532,7 +532,7 @@ fn test_read_directory() {
             extensions: strs(&[".ts", ".tsx", ".d.ts"]),
             includes: strs(&["x/y/**/a.ts", "x/**/a.ts", "z/**/a.ts"]),
             expect: |c, got| {
-                c.check(got.len() > 0, "len(got) > 0".to_string());
+                c.check(!got.is_empty(), "len(got) > 0".to_string());
             },
             ..ReadDirTestCase::default()
         },
@@ -1089,7 +1089,7 @@ fn test_read_directory() {
             extensions: strs(&[".ts", ".tsx", ".d.ts"]),
             includes: strs(&["*.ts"]),
             expect: |c, got| {
-                c.check(got.len() > 0, "len(got) > 0".to_string());
+                c.check(!got.is_empty(), "len(got) > 0".to_string());
             },
             ..ReadDirTestCase::default()
         },
@@ -1113,7 +1113,7 @@ fn test_read_directory() {
             host: case_insensitive_host,
             extensions: strs(&[".ts", ".tsx", ".d.ts"]),
             expect: |c, got| {
-                c.check(got.len() > 0, "len(got) > 0".to_string());
+                c.check(!got.is_empty(), "len(got) > 0".to_string());
                 c.check(
                     has(got, "/dev/a.ts"),
                     "slices.Contains(got, \"/dev/a.ts\")".to_string(),
@@ -1141,7 +1141,7 @@ fn test_read_directory() {
             host: case_insensitive_host,
             extensions: strs(&[]),
             expect: |c, got| {
-                c.check(got.len() > 0, "expected files to be returned".to_string());
+                c.check(!got.is_empty(), "expected files to be returned".to_string());
             },
             ..ReadDirTestCase::default()
         },
@@ -1272,7 +1272,7 @@ fn test_read_directory_edge_cases() {
             extensions: strs(&[".ts"]),
             includes: strs(&["z/*.ts"]),
             expect: |c, got| {
-                c.check(got.len() > 0, "len(got) > 0".to_string());
+                c.check(!got.is_empty(), "len(got) > 0".to_string());
             },
             ..ReadDirTestCase::default()
         },
@@ -1291,7 +1291,7 @@ fn test_read_directory_empty_includes() {
         extensions: strs(&[".ts"]),
         includes: strs(&[]),
         expect: |c, got| {
-            if got.len() == 0 {
+            if got.is_empty() {
                 return;
             }
             c.check(
@@ -1400,7 +1400,7 @@ fn test_read_directory_matches_type_script_baselines() {
                 ]);
                 c.check_eq(&got.len(), &expected.len());
                 for want in expected.iter() {
-                    c.check(has(got, &want), "slices.Contains(got, want)".to_string());
+                    c.check(has(got, want), "slices.Contains(got, want)".to_string());
                 }
             },
             ..ReadDirTestCase::default()
@@ -1468,7 +1468,7 @@ fn test_read_directory_matches_type_script_baselines() {
                 let expected = strs(&["/dev/js/ab.min.js", "/dev/js/d.min.js"]);
                 c.check_eq(&got.len(), &expected.len());
                 for want in expected.iter() {
-                    c.check(has(got, &want), "slices.Contains(got, want)".to_string());
+                    c.check(has(got, want), "slices.Contains(got, want)".to_string());
                 }
             },
             ..ReadDirTestCase::default()
