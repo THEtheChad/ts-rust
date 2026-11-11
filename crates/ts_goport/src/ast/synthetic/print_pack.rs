@@ -41,26 +41,23 @@ impl PrintPack {
 /// ends the walk: every thread reads it. `more` must not make or change
 /// synthetic nodes.
 pub fn export_print_pack(roots: &[Node], mut more: impl FnMut(Node, &mut Vec<Node>)) -> PrintPack {
-    let mut pack = PrintPack {
-        slots: Vec::new(),
-        datas: Vec::new(),
-        lists: Vec::new(),
+    let mut walk = PrintPackWalk {
+        pack: PrintPack {
+            slots: Vec::new(),
+            datas: Vec::new(),
+            lists: Vec::new(),
+        },
+        stack: Vec::new(),
+        extra: Vec::new(),
     };
     let mut seen = SEEN.take();
-    let mut stack: Vec<u32> = Vec::new();
-    let mut extra: Vec<Node> = Vec::new();
-    let push = |stack: &mut Vec<u32>, n: Node| {
-        if is_synthetic_node(n) {
-            stack.push(slot_index(n) as u32);
-        }
-    };
     for &root in roots {
-        push(&mut stack, root);
+        walk.push(root);
     }
     ARENA.with(|a| {
         let a = a.borrow();
         seen.resize(a.slots.len() * SLOT_CHUNK / 64 + 1, 0);
-        while let Some(index) = stack.pop() {
+        while let Some(index) = walk.stack.pop() {
             let (word, bit) = (index as usize / 64, 1u64 << (index % 64));
             if seen[word] & bit != 0 {
                 continue;
@@ -69,43 +66,14 @@ pub fn export_print_pack(roots: &[Node], mut more: impl FnMut(Node, &mut Vec<Nod
             match a.slot(index as usize) {
                 // Slot 0: every twin has it.
                 Slot::Nil => {}
-                Slot::Alias(target) => pack.slots.push((index, Slot::Alias(*target))),
-                Slot::Node(node) => {
-                    pack.slots.push((index, Slot::Node(node.clone())));
-                    let data = a.data(node.data);
-                    pack.datas.push((node.data, data.clone()));
-                    data.for_each_child(|child| {
-                        if let crate::astdata::Child::Node(id) = child {
-                            stack.push(id.index() as u32);
-                        }
-                    });
-                    // Every list field, also the ones that `for_each_child`
-                    // skips (`EnumMember.modifiers`, which
-                    // `set_node_modifiers` can set).
-                    data.data.view().for_each_list(|l| {
-                        let index = l.index() as u32;
-                        let list = a.own_list(index).get();
-                        stack.extend(list.nodes.iter().map(|id| id.index() as u32));
-                        pack.lists.push((index, list.clone()));
-                    });
-                    push(&mut stack, node.parent);
-                    if let Some(file) = &node.source_file {
-                        for &n in file.imports.iter().chain(&file.module_augmentations) {
-                            push(&mut stack, n);
-                        }
-                        push(&mut stack, file.common_js_module_indicator);
-                        push(&mut stack, file.external_module_indicator);
-                    }
-                    more(handle(index), &mut extra);
-                    for n in extra.drain(..) {
-                        push(&mut stack, n);
-                    }
-                }
+                Slot::Alias(target) => walk.pack.slots.push((index, Slot::Alias(*target))),
+                Slot::Node(node) => walk.export_node(&a, index, node, &mut more),
                 Slot::Absent => panic!("{ABSENT}"),
                 Slot::Freed => panic!("{PRINT_FREED}"),
             }
         }
     });
+    let pack = walk.pack;
     // Clear only the bits of this walk, so the next one starts empty.
     seen[0] &= !1;
     for &(index, _) in &pack.slots {
@@ -113,6 +81,67 @@ pub fn export_print_pack(roots: &[Node], mut more: impl FnMut(Node, &mut Vec<Nod
     }
     SEEN.set(seen);
     pack
+}
+
+/// One `export_print_pack` walk: the pack it fills and the slots it has
+/// still to visit.
+struct PrintPackWalk {
+    pack: PrintPack,
+    /// The slot indexes to visit; a slot can be on it more than once.
+    stack: Vec<u32>,
+    /// The nodes that `more` adds for one node, reused.
+    extra: Vec<Node>,
+}
+
+impl PrintPackWalk {
+    /// Puts `n` on the stack when it is a synthetic node: a parsed node ends
+    /// the walk.
+    fn push(&mut self, n: Node) {
+        if is_synthetic_node(n) {
+            self.stack.push(slot_index(n) as u32);
+        }
+    }
+
+    /// Copies node slot `index` (`node`) with its astdata node and every list
+    /// field of that data, and puts on the stack the nodes it reaches: its
+    /// children, its parent, the nodes of its SourceFile fields and the
+    /// nodes that `more` adds for it.
+    fn export_node(
+        &mut self,
+        a: &SyntheticArena,
+        index: u32,
+        node: &SyntheticNode,
+        more: &mut impl FnMut(Node, &mut Vec<Node>),
+    ) {
+        self.pack.slots.push((index, Slot::Node(node.clone())));
+        let data = a.data(node.data);
+        self.pack.datas.push((node.data, data.clone()));
+        data.for_each_child(|child| {
+            if let crate::astdata::Child::Node(id) = child {
+                self.stack.push(id.index() as u32);
+            }
+        });
+        // Every list field, also the ones that `for_each_child` skips
+        // (`EnumMember.modifiers`, which `set_node_modifiers` can set).
+        data.data.view().for_each_list(|l| {
+            let index = l.index() as u32;
+            let list = a.own_list(index).get();
+            self.stack
+                .extend(list.nodes.iter().map(|id| id.index() as u32));
+            self.pack.lists.push((index, list.clone()));
+        });
+        self.push(node.parent);
+        if let Some(file) = &node.source_file {
+            for &n in file.imports.iter().chain(&file.module_augmentations) {
+                self.push(n);
+            }
+            self.push(file.common_js_module_indicator);
+            self.push(file.external_module_indicator);
+        }
+        more(handle(index), &mut self.extra);
+        let synthetic = self.extra.drain(..).filter(|&n| is_synthetic_node(n));
+        self.stack.extend(synthetic.map(|n| slot_index(n) as u32));
+    }
 }
 
 thread_local! {
