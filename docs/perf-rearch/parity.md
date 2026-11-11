@@ -2562,6 +2562,46 @@ them, lspdiff alone): "before" is `--e2e-only --harness <git archive 06a4344b9>`
 The round 1 controls pass on this head (`H8 SELFTEST OK`: 21 unit, 39 end to end); the ones on the home
 read the new items (`session storage` for a persistent write, `session writes` for a transient one).
 
+### Round 3: Astra's recheck of `95006241b` (`reviews/2026-11-10-astra-h8-r2.md`, REJECT; the last round)
+
+Her reproductions are in `~/.cache/perf-rearch/scratch/review-h8r2-astra/`. Root's decision on scope,
+which ends the review loop: the threat model below; findings 1, 2, 3, 4 and 6 fixed, finding 5
+documented as out of scope. Controls: `parity_h8_test.py` `round3()` (her fakes as `parity_h8_fake.py`
+modes, lspdiff alone as she ran it) and unit checks; "before" is `--harness <git archive 95006241b>`.
+
+| # | finding | fix | control | before (`95006241b`) | now |
+|---|---|---|---|---|---|
+| 1 | unresolved paths are one identity: writes to `A/f` and `B/f` in dirs made and removed before their handles were resolved both read `?/f` (`parity_sandbox_storage.py:215`) | such an event is `?<nonce>.<n>/<name>`: n counts them, the nonce is new in every run, so two are never equal, in a run or across runs, and each is a path no Go run has: fail closed | `path-go`/`path-rs`; unit: two files in dirs gone before the reader reads are two distinct unresolved paths | 60 MATCH | session writes DIFF |
+| 2 | a writable place outside the record: the stand-in npm's log dir `/run/lspdiff-ata/log` was a writable host bind (`scenario.mjs:659`) | the log is on the recorded storage (the init's `plumbing/`, bound at that path; lspdiff reads it through the init's `/proc/<pid>/root`); there are no writable host binds; before exec the init checks `/proc/self/mountinfo`: a writable mount that is not on the storage's tmpfs, an overlay of ours, or `/proc` is a setup ERROR | `ata-log-transient` on ata-overlay; unit: a writable bind of a host dir is a setup failure | 49 MATCH | session writes DIFF (`plumbing/extra`) |
+| 3 | the stand-in npm trusts its runtime environment: `NODE_OPTIONS=--import=...` runs other code before it reads its config (`ata-npm/npm:5`) | `env -i`: node and the stand-in at fixed paths (`/run/lspdiff-ata/node`, `/run/lspdiff-ata/fake-npm.mjs`, both read-only binds), no flags, nothing of the environment | `npm-env` on ata-overlay | 49 MATCH | DIFF (the call reaches the stand-in, which refuses a package the store lacks) |
+| 4 | masking watcher ids changed diagnostic payloads: a replace over the whole message made `bad watcher 1.` equal `bad watcher 999.` (`session.mjs:41`) | only the registration ids are masked, by JSON path (`params.registrations[*].id`, `params.unregisterations[*].id`) | `mask-go`/`mask-rs` | 60 MATCH | session messages DIFF |
+| 5 | mmap writes escape the write record | out of scope (the threat model below) | her `fake-probes.py` `mmap-good`/`mmap-bad` (`review-h8r2-astra/probe-mmap`) | MATCH | MATCH (documented) |
+| 6 | the listing misses xattrs and hard links (`parity_sandbox_storage.py:84`) | each entry's extended attributes (name and value hash) and, for an inode with more than one name, its link count and a link group (the walk-order index of its first name, never the raw inode) | `xattr-good`/`xattr-bad`, `links-good`/`links-bad`; unit | 60 MATCH ×2 | session storage DIFF ×2 |
+
+A control session (ata-overlay, the same fake on both sides) is MATCH on both harnesses.
+
+### The threat model, and its known limits (root, 2026-11-10)
+
+The gate guards against **buggy compilers and racy environments**: a tsc-rs that answers wrongly, writes
+where it should not, leaves processes or output behind, breaks the protocol or misbehaves under load or
+another schedule, and a Go or a host whose timing varies. It is not built against a server written to
+evade observation; the sandbox's privilege drop, the sealed tree and the write record make most such
+evasions fail anyway, but where one needs deliberate behaviour no compiler has by accident, it is out of
+scope. Known limits:
+
+- **Writes through a shared writable mapping** (round 3 finding 5; Astra's
+  `review-h8r2-astra/probe-mmap`, `fake-probes.py` `mmap-bad`): fanotify sees no event for a store into a
+  mapped page, so a file changed through `mmap` and changed back before the end leaves no trace. A
+  change that stays shows in the final listing, which hashes every file's bytes after the end.
+- **Writes to an unlinked or `O_TMPFILE` file** that never gets a name: no path, and nothing persists.
+- **A dir made and removed before the record names it** (a temp dir of a racing writer): its events have
+  no path; they are recorded under distinct unresolved names, so the session differs from Go's (fail
+  closed), never matched; a real compiler that does this in its home makes its session a DIFF.
+- **Host-side writers** racing the harness's fixture checks (H7's known limit of the fixture check).
+- **The stand-in npm's log** is in the server's writable storage: a server can write it. It is the ATA
+  barrier and a report, recorded like every write; the evidence of what was installed is the write record
+  and the final listing.
+
 ### Go and JS evidence
 
 Round 1's refill is kept as it was (`runs/h8b-lsp-fill-{1,2}` and the refills; the end of it overlapped the
