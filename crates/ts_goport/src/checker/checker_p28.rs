@@ -10,6 +10,40 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::{BuildHasher, Hasher};
 
+/// The data of a new object type of `Checker::new_object_type`, chosen by
+/// Go's test order on the object flags.
+// PERF: the boxed kinds are allocated before `new_type_with`, so its closure
+// makes no call and the `Type` (with the large inline `TypeReference` or
+// `ObjectType`) is written straight into its arena slot. An allocation in
+// the closure kept a 192-byte `memcpy`.
+enum NewObjectTypeKind {
+    Interface(Box<InterfaceType>),
+    Tuple(Box<TupleType>),
+    Reference,
+    Mapped(Box<MappedType>),
+    ReverseMapped(Box<ReverseMappedType>),
+    EvolvingArray(Box<EvolvingArrayType>),
+    InstantiationExpression(Box<InstantiationExpressionType>),
+    Anonymous,
+}
+
+impl NewObjectTypeKind {
+    /// The type data, built in place inside `new_type_with`'s closure.
+    #[inline(always)]
+    fn into_type_data(self) -> TypeData {
+        match self {
+            Self::Interface(d) => TypeData::Interface(d),
+            Self::Tuple(d) => TypeData::Tuple(d),
+            Self::Reference => TypeData::TypeReference(TypeReference::default()),
+            Self::Mapped(d) => TypeData::Mapped(d),
+            Self::ReverseMapped(d) => TypeData::ReverseMapped(d),
+            Self::EvolvingArray(d) => TypeData::EvolvingArray(d),
+            Self::InstantiationExpression(d) => TypeData::InstantiationExpression(d),
+            Self::Anonymous => TypeData::Object(ObjectType::default()),
+        }
+    }
+}
+
 impl Checker {
     // Go: checker/checker.go:25626 newUniqueESSymbolType
     pub fn new_unique_es_symbol_type(&mut self, symbol: SymbolId, name: &str) -> TypeId {
@@ -23,21 +57,9 @@ impl Checker {
 
     // Go: checker/checker.go:25634 newObjectType
     pub fn new_object_type(&mut self, object_flags: ObjectFlags, symbol: SymbolId) -> TypeId {
-        // PERF: the boxed kinds are allocated here, before `new_type_with`,
-        // so its closure makes no call and the `Type` (with the large inline
-        // `TypeReference` or `ObjectType`) is written straight into its arena
-        // slot. An allocation in the closure kept a 192-byte `memcpy`.
-        // `Kind` keeps the Go test order.
-        enum Kind {
-            Interface(Box<InterfaceType>),
-            Tuple(Box<TupleType>),
-            Reference,
-            Mapped(Box<MappedType>),
-            ReverseMapped(Box<ReverseMappedType>),
-            EvolvingArray(Box<EvolvingArrayType>),
-            InstantiationExpression(Box<InstantiationExpressionType>),
-            Anonymous,
-        }
+        // PERF: the boxed kinds are allocated here, before `new_type_with`
+        // (see `NewObjectTypeKind`). `Kind` keeps the Go test order.
+        use NewObjectTypeKind as Kind;
         let kind = if object_flags.intersects(ObjectFlags::CLASS_OR_INTERFACE) {
             Kind::Interface(Box::default())
         } else if object_flags.intersects(ObjectFlags::TUPLE) {
@@ -57,15 +79,8 @@ impl Checker {
         } else {
             panic!("Unhandled case in newObjectType")
         };
-        let t = self.new_type_with(TypeFlags::OBJECT, object_flags, move || match kind {
-            Kind::Interface(d) => TypeData::Interface(d),
-            Kind::Tuple(d) => TypeData::Tuple(d),
-            Kind::Reference => TypeData::TypeReference(TypeReference::default()),
-            Kind::Mapped(d) => TypeData::Mapped(d),
-            Kind::ReverseMapped(d) => TypeData::ReverseMapped(d),
-            Kind::EvolvingArray(d) => TypeData::EvolvingArray(d),
-            Kind::InstantiationExpression(d) => TypeData::InstantiationExpression(d),
-            Kind::Anonymous => TypeData::Object(ObjectType::default()),
+        let t = self.new_type_with(TypeFlags::OBJECT, object_flags, move || {
+            kind.into_type_data()
         });
         self.ty_mut(t).symbol = symbol;
         t
