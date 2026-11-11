@@ -410,7 +410,16 @@ if (mode === "diff") {
   const why = (k, b = broken[k]) => (b ? `${k} ${b.kind === "timeout" ? "timed out" : "crashed"} after ${b.at} answers (${b.reason})` : `${k} has no answer here`);
   const failureOf = (b) => (b ? (b.kind === "timeout" ? "timeout" : "crash") : undefined);
   // One run's answer at merged position p: its normalized answer, NOT_ASKED, or null when it ended.
-  const at = (k, p, method) => (aligned[k][p] ? answer(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
+  // An entry's normalized answer, once per entry (lane H8 round 2, cost: umami's 690 answers of 340 MB a
+  // run were normalized again at every use).
+  const answers = new WeakMap();
+  const answerOf = (e, method) => {
+    if (!e || method !== e.method) return answer(e, method);
+    let a = answers.get(e);
+    if (a === undefined) answers.set(e, (a = answer(e, method)));
+    return a;
+  };
+  const at = (k, p, method) => (aligned[k][p] ? answerOf(aligned[k][p], method) : ended(k, p) ? null : NOT_ASKED);
   // Accumulated Go evidence (see the top comment): request key -> Map(answer hash -> [provenance]).
   // Only a Go run whose session is clean (its inputs intact, sandbox.mjs, and a clean end) counts; a
   // Go run that changed its inputs makes the whole session an error.
@@ -428,7 +437,7 @@ if (mode === "diff") {
     const list = byHash.get(h) ?? byHash.set(h, []).get(h);
     if (!list.some((x) => x.fill === prov.fill && x.run === prov.run && x.log === prov.log)) list.push(prov);
   };
-  const addLog = (entries, prov) => requestKeys(entries).forEach((k, i) => addVariant(k, hash(answer(entries[i], entries[i].method)), prov));
+  const addLog = (entries, prov) => requestKeys(entries).forEach((k, i) => addVariant(k, hash(answerOf(entries[i], entries[i].method)), prov));
   const cleanSession = (s) => !!s && s.clean === true && Array.isArray(s.why) && s.why.length === 0 && !(s.inputs?.modified?.length);
   const changedInputs = goNames.filter((k) => sessions[k]?.inputs?.modified?.length);
   if (changedInputs.length) throw new Error(`Go changed its inputs in ${changedInputs.map((k) => `${k} (${sessions[k].inputs.modified.slice(0, 3).join(", ")})`).join("; ")}: no Go evidence`);
@@ -436,10 +445,17 @@ if (mode === "diff") {
   const fillId = opt["fill-id"] ?? outDir;
   if ((opt["go-variants"] || opt["go-variants-out"] || opt["go-prior"]) && !vMaterial) throw new Error("--go-variants needs --go-variants-material");
   let priorVariants = 0;
+  // Every log the record's variants came from: a prior log among them is in the record whole (addLog adds
+  // every answer of a log, and the record is written at once), so it is not read again (lane H8 round 2,
+  // cost: umami's 8 prior logs of 340 MB were read and normalized on every run).
+  const recordedLogs = new Set();
   if (opt["go-variants"] && existsSync(opt["go-variants"])) {
     const rec = checkRecord(JSON.parse(readFileSync(opt["go-variants"], "utf8")), opt["go-variants"]);
     if (rec.material === vMaterial && rec.normalizer === NORMALIZER) {
-      for (const [k, byHash] of Object.entries(rec.variants)) for (const [h, provs] of Object.entries(byHash)) for (const pv of provs) addVariant(k, h, pv);
+      for (const [k, byHash] of Object.entries(rec.variants)) for (const [h, provs] of Object.entries(byHash)) for (const pv of provs) {
+        addVariant(k, h, pv);
+        recordedLogs.add(pv.log);
+      }
       priorVariants = Object.keys(rec.variants).length;
     } else console.log(`go variants: ${opt["go-variants"]} has other ${rec.material === vMaterial ? "normalizer" : "material"}: not merged`);
   }
@@ -454,14 +470,14 @@ if (mode === "diff") {
       continue;
     }
     const prov = { fill: "prior", run: f.split("/").pop().replace(/\.jsonl$/, ""), log: f };
-    addLog(entriesOf(readLog(f)), prov);
+    if (!recordedLogs.has(f)) addLog(entriesOf(readLog(f)), prov);
     if (s.writes) priorWrites.push([s.writes, prov]);
     priorsUsed++;
   }
   if (vMaterial) console.log(`go variants: ${priorVariants} requests recorded, ${priorsUsed} of ${(opt["go-prior"] ?? []).length} prior logs used`);
   // The recorded variants at merged position p that none of this fill's Go runs gave.
   const earlierOnly = (p, method) => {
-    const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answer(aligned[k][p], method))));
+    const seen = new Set(goNames.filter((k) => aligned[k][p]).map((k) => hash(answerOf(aligned[k][p], method))));
     return [...(variants.get(order[p])?.keys() ?? [])].filter((h) => !seen.has(h));
   };
   // The server's storage and its write record (sandbox.mjs, from the sandbox's init), judged path by path
@@ -685,7 +701,7 @@ if (mode === "diff") {
     for (const it of items) {
       if (runLevel.has(it)) continue; // the run-level items (server, order, session)
       const p = it.i; // an answer's merged position (the initialize answer and the home: n and after)
-      const cAns = c[p] ? answer(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd, c) ? null : NOT_ASKED;
+      const cAns = c[p] ? answerOf(c[p], it.method) : ended("rs-confirm", p, confirm.broken, cEnd, c) ? null : NOT_ASKED;
       if (cAns === at("rs", p, it.method)) continue;
       const what = cAns === null ? why("rs-confirm", confirm.broken) : cAns === NOT_ASKED ? "it was not asked this request" : "its answer differs from run 1";
       it.detail = `rs-nondet: the confirming tsc-rs run (made for the ${pending.length} GO-BROKEN or JS-AGREES items): ${what}${it.status === "MATCH" ? "" : ` (was ${it.status}${it.detail ? `: ${it.detail}` : ""})`}`;
