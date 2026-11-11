@@ -868,7 +868,7 @@ pub fn symbol_node_handle_from(node: Node, owner: Node) -> NodeHandle {
     node_handle_from(node)
 }
 
-// Go: api/session.go:298 nodeHandleFrom (ts#64518)
+// Go: api/session.go:294 nodeHandleFrom (ts#64518)
 pub fn node_handle_from(node: Node) -> NodeHandle {
     let source_file = get_source_file_of_node(node);
     let table = encoder::get_node_index_table(source_file);
