@@ -1453,6 +1453,125 @@
      "build": ""
     }
    ]
+  },
+  {
+   "name": "worker-fs-index-sibling",
+   "about": "B8: declaration emit names Foo of src/lib/index.ts; src/lib.ts exists only in the request filesystem, so the module specifier keeps /index (Go modulespecifiers/util.go:184 tryGetAnyFileFromPath asks the program host, not the disk)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/src/lib.ts": "export const sibling = 0;\n",
+     "@ROOT@/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/reexport.ts",
+      "@ROOT@/src/lib/index.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-index-nosibling",
+   "about": "B8 control for worker-fs-index-sibling: no src/lib.ts, so the module specifier drops /index",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/reexport.ts",
+      "@ROOT@/src/lib/index.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-import-ext",
+   "about": "B8: node16 extensionless import of ./foo with noEmitOnError; src/foo.mts exists only in the request filesystem, so the emit diagnostics say TS2835 \"Did you mean ./foo.mjs\" (Go checker.go:15860 getSuggestedImportExtension asks the program host)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/main.mts": "import { x } from \"./foo\";\nexport const y = x;\n",
+     "@ROOT@/src/foo.mts": "export const x = 1;\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.mts",
+      "@ROOT@/src/foo.mts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "module": 100,
+      "moduleResolution": 3,
+      "noEmitOnError": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-pkgjson",
+   "about": "B8: declaration emit names Thing of node_modules/pkg; its package.json (types) exists only in the request filesystem, so the module specifier is \"pkg\" (Go GetPackageJsonInfo reads the program host)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"types\":\"dist/index.d.ts\"}\n",
+     "@ROOT@/node_modules/pkg/dist/index.d.ts": "export interface Thing { a: number }\nexport declare function make(): Thing;\n",
+     "@ROOT@/src/re.ts": "export { make } from \"pkg\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./re\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/re.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
   }
  ]
 }
