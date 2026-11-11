@@ -2020,3 +2020,11 @@ once a **reconciliation step** is built and tested.
     with all session and server messages MATCH.
   - **lsp time:** 233 s.
   - **Astra recheck** running (round 2 of 3).
+- **H9 recheck: REJECT,** with 2 narrow findings in scope
+  (`reviews/2026-11-11-astra-h9-r2.md`):
+  - the transport type of progress messages isn't checked;
+  - payload violations aren't attributed to the server that broke the
+    rule.
+
+  Everything else from round 1 is confirmed. Round 3 sent, the last; root
+  decides after it.
