@@ -1,0 +1,80 @@
+diff -ru a/scripts/perf-rearch/vendor/lspdiff/client.mjs b/scripts/perf-rearch/vendor/lspdiff/client.mjs
+--- a/scripts/perf-rearch/vendor/lspdiff/client.mjs
++++ b/scripts/perf-rearch/vendor/lspdiff/client.mjs
+@@ -17,6 +17,10 @@
+ // A request the server does not answer in this time ends the run: the server is killed and the
+ // request rejects with an error whose `timeout` is true (lspdiff.mjs: Go timed out, GO-BROKEN).
+ const REQUEST_TIMEOUT_MS = SETTINGS.LSPDIFF_REQUEST_TIMEOUT_MS;
++// The notifications whose handling caughtUp waits for: the ones a scenario sends between its waits.
++const BARRIER_METHODS = new Set(["textDocument/didOpen", "textDocument/didChange", "textDocument/didClose", "textDocument/didSave", "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration"]);
++// A notification's line has no request id: "handled method 'm' in 1.2ms", "error handling method 'm': e".
++const HANDLED_LOG = /^(?:handled|error handling) method '([^']+)'(?: in |: )/;
+ const MAX_HEADER_LINE = 256;
+ const MAX_HEADERS = 4;
+ const MAX_FRAME = 256 << 20;
+@@ -61,6 +65,10 @@
+     // The watch scenarios (scenario.mjs) read registrations and publishDiagnostics from it.
+     this.events = [];
+     this.lastMessageAt = performance.now();
++    // The notifications of BARRIER_METHODS sent, and those the server's log says it handled, by method
++    // (caughtUp).
++    this.sent = new Map();
++    this.handled = new Map();
+     this.buf = Buffer.alloc(0);
+     this.exited = this.server.exited;
+     this.dead = null; // why the server is gone, once it is
+@@ -145,6 +153,10 @@
+       p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, ...(raw ? { rawNumbers: true } : {}) });
+       return;
+     }
++    if (msg.method === "window/logMessage") {
++      const m = HANDLED_LOG.exec(msg.params?.message ?? "");
++      if (m) this.handled.set(m[1], (this.handled.get(m[1]) ?? 0) + 1);
++    }
+     this.notifications.push({ method: msg.method, params: msg.params, at });
+     this.events.push({ kind: "notification", method: msg.method, params: msg.params, at, ...(raw ? { raw } : {}) });
+   }
+@@ -195,9 +207,30 @@
+   }
+ 
+   notify(method, params) {
++    if (BARRIER_METHODS.has(method)) this.sent.set(method, (this.sent.get(method) ?? 0) + 1);
+     this.#write({ jsonrpc: "2.0", method, params });
+   }
+ 
++  // Resolves once the server has handled every notification of BARRIER_METHODS sent so far: its log
++  // (window/logMessage) has one "handled method '<m>'" (or "error handling method '<m>'") line per
++  // notification. Both servers handle notifications one at a time, in order, on their dispatch loop,
++  // and log that line when the handler returns (Go lsp/server.go handleRequestOrNotification). A
++  // notification has no answer, so without this a wait on the stream's quiet can end while the server
++  // still handles the last one, and the next step's notifications then queue behind it: their
++  // background work (ATA's results, each scheduling a debounced diagnostics refresh) runs back to back
++  // and is coalesced, so what the server sends depends on its speed (lane B4: watch-hono-f12's load
++  // refreshes, 10 to 12 for Go and tsc-rs alike on a starved CPU).
++  async caughtUp(maxMs = REQUEST_TIMEOUT_MS) {
++    // A server that died or hangs is not waited for: the next request reports its crash or timeout,
++    // as before (an rs failure, not a harness error).
++    const start = performance.now();
++    for (;;) {
++      const now = performance.now();
++      if (this.dead || now - start >= maxMs || [...this.sent].every(([m, n]) => (this.handled.get(m) ?? 0) >= n)) return now - start;
++      await new Promise((r) => setTimeout(r, 10));
++    }
++  }
++
+   cancel(id) {
+     this.notify("$/cancelRequest", { id });
+   }
+diff -ru a/scripts/perf-rearch/vendor/lspdiff/scenario.mjs b/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
+--- a/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
++++ b/scripts/perf-rearch/vendor/lspdiff/scenario.mjs
+@@ -248,6 +248,9 @@
+   // the stream alone ended before or during that call at random (lane ND2), so the next answers and
+   // refreshes depended on npm's time and the host's load, for Go and tsc-rs alike.
+   async settle(ms, label) {
++    // First the server must have handled every notification sent (client.mjs caughtUp, lane B4): the
++    // windows below then start when its work for them has started.
++    await this.client.caughtUp();
+     const start = performance.now();
+     for (let since = start; ; since = -Infinity) {
+       await this.client.settle(ms);
