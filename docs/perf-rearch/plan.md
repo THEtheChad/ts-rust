@@ -1964,3 +1964,18 @@ once a **reconciliation step** is built and tested.
       feature sets the gate tests;
     - the root cause of the `build_watch_keeps_the_first_json_parse_of_a_cycle`
       CRLF flake.
+- **H9 done; Astra review running.** Head `3195ad922` (gate on `df7a71ff3`).
+  - **The barriers:**
+    - B4's notification barrier is in lspdiff, and the patch is deleted;
+    - a work-done-progress barrier, with a 60 s deadline that makes the run
+      a harness ERROR;
+    - progress is left out of the compared streams, because Go only shows
+      one after 250 ms (`ProgressDelay`), so it depends on timing in Go.
+  - **npm-idle stays:** ATA runs that show no progress still schedule
+    refreshes.
+  - **Starvation (12 loops), load refreshes:** base Go 10–11 in all 8
+    runs, base tsc-rs 11 in 19 of 20; head Go 12 in 8 of 8, head tsc-rs 12
+    in 50 of 50.
+  - **Gate:** `runs/h9-df7a71ff3-full` PARITY OK, 0 lost. 3 lsp runs, with
+    all 13 `session messages` and 73 `server messages` items MATCH.
+  - **lsp time:** 240 s against 232 s (+3%).
