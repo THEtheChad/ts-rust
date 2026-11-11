@@ -1,35 +1,15 @@
 use crate::ls::lsutil::prelude::*;
 
 use crate::flags_macros::go_enum;
-use crate::gostd::unicode;
 
 // Port of Go `ls/lsutil/formatcodeoptions.go`.
 
 // Go: ls/lsutil/formatcodeoptions.go:9 IndentStyle
-go_enum!(IndentStyle, i32 {
+go_enum!(IndentStyle, i64 {
     NONE = 0;
     BLOCK = 1;
     SMART = 2;
 });
-
-// Go: ls/lsutil/formatcodeoptions.go:19 parseIndentStyle (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:193 parsePreferenceIndentStyle)
-// PORT: Go `v any` is an `LspAny`. Go also accepts a Go `int`; an `LspAny`
-// number is always the Go `float64` case. Go `int(float64)` keeps 64 bits;
-// the Rust field is `i32` (PORTING `int` -> `i32`), so a value outside the
-// `i32` range differs from Go.
-pub fn parse_indent_style(v: &LspAny) -> IndentStyle {
-    match v {
-        LspAny::String(s) => match strings_to_lower(s).as_str() {
-            "none" => return IndentStyle::NONE,
-            "block" => return IndentStyle::BLOCK,
-            "smart" => return IndentStyle::SMART,
-            _ => {}
-        },
-        LspAny::Number(s) => return IndentStyle(*s as i64 as i32),
-        _ => {}
-    }
-    IndentStyle::SMART
-}
 
 // Go: ls/lsutil/formatcodeoptions.go:17 SemicolonPreference
 // PORT: a Go string type. The value is always one of the Go constants or the
@@ -43,22 +23,9 @@ impl SemicolonPreference {
     pub const REMOVE: SemicolonPreference = SemicolonPreference("remove");
 }
 
-// Go: ls/lsutil/formatcodeoptions.go:46 parseSemicolonPreference (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:357 parsePreferenceSemicolonPreference)
-pub fn parse_semicolon_preference(v: &LspAny) -> SemicolonPreference {
-    if let LspAny::String(s) = v {
-        match strings_to_lower(s).as_str() {
-            "ignore" => return SemicolonPreference::IGNORE,
-            "insert" => return SemicolonPreference::INSERT,
-            "remove" => return SemicolonPreference::REMOVE,
-            _ => {}
-        }
-    }
-    SemicolonPreference::IGNORE
-}
-
-// Go: ls/lsutil/formatcodeoptions.go:60 EditorSettings (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:43 EditorSettings)
-// PORT: the Go `raw` and `config` tags are in the field table in
-// userpreferences.rs.
+// Go: ls/lsutil/userpreferences_generated.go:43 EditorSettings
+// PORT: the Go sizes are `int` (64 bits); here they are `i32`, as in the
+// rest of the formatter (userpreferences_generated.rs).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EditorSettings {
     pub base_indent_size: i32,
@@ -70,7 +37,7 @@ pub struct EditorSettings {
     pub trim_trailing_whitespace: Tristate,
 }
 
-// Go: ls/lsutil/formatcodeoptions.go:70 FormatCodeSettings (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:53 FormatCodeSettings)
+// Go: ls/lsutil/userpreferences_generated.go:53 FormatCodeSettings
 // PORT: Go embeds `EditorSettings`. It is the nested field `editor_settings`
 // (Go `opts.IndentSize` is `opts.editor_settings.indent_size`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -161,11 +128,4 @@ pub fn get_default_format_code_settings() -> FormatCodeSettings {
         indent_switch_case: Tristate::True,
         ..Default::default()
     }
-}
-
-// PORT: Go `strings.ToLower` maps each rune with `unicode.ToLower`. Rust
-// `str::to_lowercase` uses the full mapping of a newer Unicode and the
-// final-sigma rule, which Go does not.
-fn strings_to_lower(s: &str) -> String {
-    s.chars().map(unicode::to_lower).collect()
 }

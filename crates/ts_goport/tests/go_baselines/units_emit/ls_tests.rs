@@ -2,9 +2,11 @@
 //! internal/ls/lsutil/utilities_test.go and
 //! internal/ls/lsutil/userpreferences_test.go.
 //!
-//! Not ported (blocked, see bugs/S3.md): TestUserPreferencesParseUnstable
-//! and the `withConfig` subtest of TestUserPreferencesRoundtrip
-//! (`UserPreferences::with_config` is `pub(crate)`).
+//! TestUserPreferencesParseUnstable calls the unexported `withConfig`, so it
+//! is a unit test in `src/ls/lsutil/userpreferences.rs`. Not ported: the
+//! `withConfig` subtest of TestUserPreferencesRoundtrip
+//! (`UserPreferences::with_config` is `pub(crate)`; the UnmarshalJSONFrom
+//! subtest runs it on the same JSON).
 
 use super::{Subtests, assert_equal, leak};
 use indexmap::IndexMap;
