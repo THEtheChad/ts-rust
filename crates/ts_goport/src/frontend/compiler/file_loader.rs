@@ -78,8 +78,8 @@ pub struct FileLoader {
     pub factory: NodeFactory,
     pub synthetic_owner: Rc<crate::ast::LoadSyntheticOwner>,
 
-    pub project_reference_file_mapper: Rc<RefCell<ProjectReferenceFileMapper>>,
-    pub dts_directories: FxHashSet<Path>,
+    /// Go `fileLoader.projectReferences`: the mapper's builder.
+    pub project_references: ProjectReferenceFileMapperBuilder,
 
     pub path_for_lib_file_cache: RefCell<FxHashMap<String, Rc<LibFile>>>,
     pub path_for_lib_file_resolutions: RefCell<FxHashMap<Path, Rc<LibResolution>>>,
@@ -355,11 +355,7 @@ impl FileLoader {
             // PORT: Go uses the zero `ast.NodeFactory`, which makes synthetic nodes.
             factory: NodeFactory::new(),
             synthetic_owner: Rc::new(crate::ast::LoadSyntheticOwner::new()),
-            project_reference_file_mapper: Rc::new(RefCell::new(ProjectReferenceFileMapper::new(
-                &opts,
-                host.clone(),
-            ))),
-            dts_directories: FxHashSet::default(),
+            project_references: ProjectReferenceFileMapperBuilder::new(&opts, host.clone()),
             path_for_lib_file_cache: RefCell::new(FxHashMap::default()),
             path_for_lib_file_resolutions: RefCell::new(FxHashMap::default()),
             shared_resolution: None,
@@ -387,12 +383,7 @@ impl FileLoader {
         factories: ProgramFactories,
         single_threaded: bool,
     ) -> Option<super::resolve_ahead::ResolveAhead> {
-        let resolver_host: Rc<dyn ResolutionHost> = self
-            .project_reference_file_mapper
-            .borrow()
-            .host
-            .clone()
-            .expect("projectReferenceFileMapper.host is set until processing ends");
+        let resolver_host = self.project_references.host.clone();
         let resolver_options = ResolverOptions {
             host: Some(resolver_host),
             compiler_options: Some(self.opts.config.compiler_options().clone()),
@@ -551,8 +542,7 @@ impl FileLoader {
 
     /// After the parse of the load's tasks: the parse workers have ended.
     /// Ends the resolve ahead of the load, hands the worker lookups and
-    /// package.json reads that the loader took to their caches, and drops
-    /// the mapper's loader and host.
+    /// package.json reads that the loader took to their caches.
     fn end_parse(&mut self, resolve_ahead: Option<super::resolve_ahead::ResolveAhead>) {
         // No worker uses the first-load job.
         self.first_load_ahead = None;
@@ -579,12 +569,6 @@ impl FileLoader {
         if let Some((shared, resolver)) = self.shared_resolution.as_ref().zip(default_resolver) {
             shared.end_package_json_reads(&resolver.package_json_info_cache);
         }
-        // PORT: Go ts#64519 keeps the loader and the host in a
-        // `projectReferenceFileMapperBuilder`, and the program gets only its
-        // mapper. Here the mapper holds them while loading, and loses them now.
-        let mut mapper = self.project_reference_file_mapper.borrow_mut();
-        mapper.loader = None;
-        mapper.host = None;
     }
 
     /// The processed files of the load and its module resolution error (Go
@@ -1481,8 +1465,7 @@ impl FileLoader {
         });
         let path = self.to_path(&t.normalized_file_path);
         let options = self
-            .project_reference_file_mapper
-            .borrow()
+            .project_references
             .get_compiler_options_for_file(&new_has_file_name(&t.normalized_file_path, &t.path));
         let parse_options = SourceFileParseOptions {
             file_name: t.normalized_file_path.clone(),
@@ -1942,8 +1925,7 @@ impl FileLoader {
         let mut type_resolutions_trace: Vec<DiagAndArgs> = Vec::new();
         for (index, ref_) in file.type_reference_directives.iter().enumerate() {
             let (redirect, file_name) = self
-                .project_reference_file_mapper
-                .borrow()
+                .project_references
                 .get_redirect_for_resolution(&new_has_file_name(file.file_name(), file.path()));
             let redirect_ref = redirect
                 .as_deref()
@@ -2053,8 +2035,7 @@ impl FileLoader {
             Vec::with_capacity(file.imports.len() + file.module_augmentations.len() + 2);
 
         let (redirect, file_name) = self
-            .project_reference_file_mapper
-            .borrow()
+            .project_references
             .get_redirect_for_resolution(&new_has_file_name(file.file_name(), file.path()));
         let redirect_ref = redirect
             .as_deref()
@@ -2244,8 +2225,7 @@ impl FileLoader {
                         SUPPORTED_TS_EXTENSIONS_WITH_JSON_FLAT,
                     )
                     && self
-                        .project_reference_file_mapper
-                        .borrow()
+                        .project_references
                         .get_redirect_parsed_command_line_for_resolution(&new_has_file_name(
                             resolved_file_name,
                             resolved_path,

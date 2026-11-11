@@ -124,8 +124,7 @@ impl ParseTask {
             )
         });
         let redirect = loader
-            .project_reference_file_mapper
-            .borrow()
+            .project_references
             .get_parse_file_redirect(&new_has_file_name(&self.normalized_file_path, &self.path));
         if !redirect.is_empty() {
             self.redirect(loader, &redirect);
@@ -654,8 +653,8 @@ fn set_prefetch_redirects(loader: &FileLoader, pool: &PrefetchPool) {
         return;
     }
     let redirects: FxHashMap<String, (String, Path)> = loader
-        .project_reference_file_mapper
-        .borrow()
+        .project_references
+        .mapper()
         .source_to_project_reference
         .values()
         .filter(|reference| !reference.output_dts.is_empty())
@@ -1699,7 +1698,12 @@ impl FilesParser {
             files: all_files,
             duplicate_source_files,
             files_by_path,
-            project_reference_file_mapper: Some(loader.project_reference_file_mapper.clone()),
+            project_reference_file_mapper: Some(
+                loader
+                    .project_references
+                    .project_reference_file_mapper
+                    .clone(),
+            ),
             resolved_modules: Arc::new(resolved_modules),
             type_resolutions_in_file: Rc::new(type_resolutions_in_file),
             source_file_meta_datas: Rc::new(source_file_meta_datas),
@@ -2849,7 +2853,7 @@ impl WorkerResolveConfig {
         let mut references = Vec::new();
         let mut redirects = FxHashMap::default();
         if shared.is_some() {
-            let mapper = loader.project_reference_file_mapper.borrow();
+            let mapper = loader.project_references.mapper();
             let mut index_of: FxHashMap<*const ParsedCommandLine, usize> = FxHashMap::default();
             // Go `getRedirectForResolution` tries the sources first, so a
             // source entry replaces an output entry of the same path.
