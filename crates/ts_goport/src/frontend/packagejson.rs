@@ -503,6 +503,8 @@ impl ExportsOrImports {
     }
 
     // Go: exportsorimports.go:58 initObjectKind
+    // PORT: `modulespecifiers::packagejson::JSONValue::object_kind` is a thread-safe copy
+    // (lane F5, `docs/perf-rearch/cleanup/f5.md`).
     fn init_object_kind(&mut self) {
         if self.object_kind == ObjectKind::Unknown && self.json_value.type_ == JSONValueType::OBJECT
         {
@@ -854,6 +856,8 @@ impl UnmarshalerFrom for Fields {
 }
 
 // Go: packagejson.go:128 Parse
+// PORT: `modulespecifiers::packagejson::parse` is a thread-safe copy
+// (lane F5, `docs/perf-rearch/cleanup/f5.md`).
 // PORT: Go returns `(Fields{}, err)` on error. The `Result` carries the same
 // information; callers use `unwrap_or_default()` for the zero `Fields`.
 // tsgo#4712: Go decodes into an anonymous struct that embeds the three field
@@ -923,6 +927,8 @@ pub struct DiagnosticAndArgs {
 
 impl PackageJson {
     // Go: cache.go:28 GetVersionPaths
+    // PORT: `modulespecifiers::packagejson::PackageJson::get_version_paths` is a thread-safe copy
+    // (lane F5, `docs/perf-rearch/cleanup/f5.md`).
     // PORT: Go `trace func(m, args ...any)` is an optional boxed closure.
     pub fn get_version_paths(
         &self,
@@ -1024,6 +1030,8 @@ impl VersionPaths {
     }
 
     // Go: cache.go:98 GetPaths
+    // PORT: `modulespecifiers::packagejson::VersionPaths::get_paths` is a thread-safe copy
+    // (lane F5, `docs/perf-rearch/cleanup/f5.md`).
     #[must_use]
     pub fn get_paths(&self) -> Option<&IndexMap<String, Option<Vec<String>>>> {
         if !self.exists() {

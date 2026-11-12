@@ -17,7 +17,6 @@
 //! checker pool of each version, by program id.
 
 use crate::execute::tsc::compile::CompileTimes;
-use crate::frontend::compiler::json_file_may_be_emitted;
 use crate::frontend::parser::ExternalModuleIndicatorOptions;
 use crate::frontend::tspath;
 use crate::gostd::{Context, context};
@@ -3133,100 +3132,10 @@ fn spawn_bind_thread<'scope>(
 // Resolution modes (Go compiler/fileloader.go)
 // ---------------------------------------------------------------------------
 
-// Go: compiler/fileloader.go:1046 getDefaultResolutionModeForFile
-fn get_default_resolution_mode_for_file_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    if import_syntax_affects_module_resolution(options) {
-        get_implied_node_format_for_emit_worker(file_name, options.get_emit_module_kind(), meta)
-    } else {
-        RESOLUTION_MODE_NONE
-    }
-}
-
-// Go: compiler/fileloader.go:1054 getModeForUsageLocation
-fn get_mode_for_usage_location_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    usage: Node,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    let parent = usage.parent();
-    if is_import_declaration(parent)
-        || parent.kind() == SyntaxKind::JsImportDeclaration
-        || is_export_declaration(parent)
-        || parent.kind() == SyntaxKind::JsDocImportTag
-    {
-        let is_type_only = is_exclusively_type_only_import_or_export(parent);
-        if is_type_only {
-            let (override_, ok) = parent.attributes().get_resolution_mode_override(None);
-            if ok {
-                return override_;
-            }
-        }
-    }
-    if is_literal_type_node(parent) && is_import_type_node(parent.parent()) {
-        let (override_, ok) = parent
-            .parent()
-            .attributes()
-            .get_resolution_mode_override(None);
-        if ok {
-            return override_;
-        }
-    }
-    if import_syntax_affects_module_resolution(options) {
-        return get_emit_syntax_for_usage_location_worker(file_name, meta, usage, options);
-    }
-    RESOLUTION_MODE_NONE
-}
-
-// Go: compiler/fileloader.go:1086 importSyntaxAffectsModuleResolution
-fn import_syntax_affects_module_resolution(options: &CompilerOptions) -> bool {
-    let module_resolution = options.get_module_resolution_kind();
-    ModuleResolutionKind::NODE16 <= module_resolution
-        && module_resolution <= ModuleResolutionKind::NODE_NEXT
-        || options.get_resolve_package_json_exports()
-        || options.get_resolve_package_json_imports()
-}
-
-// Go: compiler/fileloader.go:1092 getEmitSyntaxForUsageLocationWorker
-fn get_emit_syntax_for_usage_location_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    usage: Node,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    let parent = usage.parent();
-    if is_require_call(parent, false)
-        || is_external_module_reference(parent) && is_import_equals_declaration(parent.parent())
-    {
-        return ModuleKind::COMMON_JS;
-    }
-    let file_emit_mode = get_emit_module_format_of_file_worker(file_name, options, meta);
-    if is_import_call(walk_up_parenthesized_expressions(parent)) {
-        return if should_transform_import_call(file_name, options, file_emit_mode) {
-            ModuleKind::COMMON_JS
-        } else {
-            ModuleKind::ES_NEXT
-        };
-    }
-    // If we're in --module preserve on an input file, we know that an import
-    // is an import. But if this is a declaration file, we'd prefer to use the
-    // impliedNodeFormat. Since we want things to be consistent between the two,
-    // we need to issue errors when the user writes ESM syntax in a definitely-CJS
-    // file, until/unless declaration emit can indicate a true ESM import. On the
-    // other hand, writing CJS syntax in a definitely-ESM file is fine, since declaration
-    // emit preserves the CJS syntax.
-    if file_emit_mode == ModuleKind::COMMON_JS {
-        return ModuleKind::COMMON_JS;
-    }
-    if file_emit_mode.is_non_node_esm() || file_emit_mode == ModuleKind::PRESERVE {
-        return ModuleKind::ES_NEXT;
-    }
-    ModuleKind::NONE
-}
+// PORT: the Go `fileloader.go` functions that the program methods below
+// call (`getDefaultResolutionModeForFile`, `getModeForUsageLocation`,
+// `getEmitSyntaxForUsageLocationWorker`) are the loader's ports in
+// `frontend::compiler::file_loader`.
 
 // ---------------------------------------------------------------------------
 // Program methods (Go compiler/program.go). The program is the current
@@ -3430,8 +3339,14 @@ pub fn get_resolved_project_references() -> Vec<Option<Arc<ResolvedProjectRefere
 }
 
 // Go: compiler/program.go:2343 GetSymlinkCache
-// PORT: the Go frontend program has the port, and this is a copy of its
-// value, built on first use (`go_frontend::known_symlinks`).
+// PORT: the Go frontend program has the port
+// (`frontend::compiler::NewProgram::get_symlink_cache`), and this is a
+// thread-safe copy of its value, built on first use
+// (`go_frontend::known_symlinks`). `modulespecifiers::ProgramHost` keeps a
+// per-thread `Rc` copy of this one. The layers exist because the two
+// program forms hold the cache differently (`Rc` on the loading thread, an
+// `Arc` here); see `docs/perf-rearch/cleanup/f5.md` for what one cache
+// would take.
 pub fn get_go_symlink_cache() -> Option<Arc<crate::modulespecifiers::symlinks::KnownSymlinks>> {
     // Go: ls/autoimport/aliasresolver.go:150 GetSymlinkCache (unimplemented)
     alias_resolver_unimplemented();
@@ -3878,7 +3793,12 @@ pub fn get_emit_syntax_for_usage_location(source_file: Node, location: Node) -> 
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_emit_syntax_for_usage_location_worker(&info.file_name, meta, location, options)
+        crate::frontend::compiler::file_loader::get_emit_syntax_for_usage_location_worker(
+            &info.file_name,
+            meta,
+            location,
+            options,
+        )
     })
 }
 
@@ -3906,7 +3826,12 @@ pub fn get_mode_for_usage_location(source_file: Node, location: Node) -> Resolut
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_mode_for_usage_location_worker(&info.file_name, meta, location, options)
+        crate::frontend::compiler::file_loader::get_mode_for_usage_location(
+            &info.file_name,
+            meta,
+            location,
+            Some(options),
+        )
     })
 }
 
@@ -3918,7 +3843,11 @@ pub fn get_default_resolution_mode_for_file(source_file: Node) -> ResolutionMode
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_default_resolution_mode_for_file_worker(&info.file_name, meta, options)
+        crate::frontend::compiler::file_loader::get_default_resolution_mode_for_file(
+            &info.file_name,
+            meta,
+            options,
+        )
     })
 }
 
@@ -3960,55 +3889,74 @@ pub fn source_file_may_be_emitted(source_file: Node, force_dts_emit: bool) -> bo
     source_file_may_be_emitted_worker(source_file, force_dts_emit, false)
 }
 
-// Go: compiler/emitter.go:478 sourceFileMayBeEmitted
+/// `frontend::compiler::source_file_may_be_emitted` on this thread's
+/// program (`CurrentProgram`).
+#[inline]
 fn source_file_may_be_emitted_worker(
     source_file: Node,
     force_dts_emit: bool,
     force_js_emit: bool,
 ) -> bool {
-    let options = &prog().options;
-    let info = source_file_info(source_file);
-    // Js files are emitted only if option is enabled
-    if !force_js_emit && options.no_emit_for_js_files.is_true() && is_source_file_js(source_file) {
-        return false;
-    }
-    // Declaration files are not emitted
-    if info.is_declaration_file {
-        return false;
-    }
-    // #4712
-    // Runtime output for content-mapped files is owned by the external content mapper or build tool. Only
-    // include them in the emit set when their transformed TypeScript can produce declarations.
-    if !source_file_content_mapper(source_file).is_empty()
-        && !force_dts_emit
-        && !options.get_emit_declarations()
-    {
-        return false;
-    }
-    // Source file from node_modules are not emitted
-    if is_source_file_from_external_library(source_file) {
-        return false;
-    }
-    // forcing dts emit => file needs to be emitted
-    if force_dts_emit || force_js_emit {
-        return true;
-    }
-    // Source files from referenced projects are not emitted
-    if get_project_reference_from_source(&info.path).is_some() {
-        return false;
-    }
-    // Any non json file should be emitted
-    if !is_json_source_file(source_file) {
-        return true;
-    }
-    // The JSON part is the frontend's (`json_file_may_be_emitted`), so the
-    // two hosts give one answer.
-    json_file_may_be_emitted(
-        &info.file_name,
-        options,
-        base_directory(),
-        use_case_sensitive_file_names(),
+    crate::frontend::compiler::source_file_may_be_emitted(
+        &source_file,
+        &CurrentProgram,
+        force_dts_emit,
+        force_js_emit,
     )
+}
+
+/// Runs `read` on the fields of source file `file` that Go's emit decisions
+/// read (`EmitSourceFile`), with the file's info guard held.
+fn with_emit_source_file<R>(
+    file: Node,
+    read: impl FnOnce(&crate::frontend::outputpaths::EmitSourceFile<'_>) -> R,
+) -> R {
+    let info = source_file_info(file);
+    read(&crate::frontend::outputpaths::EmitSourceFile {
+        file_name: &info.file_name,
+        script_kind: info.script_kind,
+        is_declaration_file: info.is_declaration_file,
+        root: file,
+    })
+}
+
+/// This thread's program as Go's `SourceFileMayBeEmittedHost`: the emit
+/// side's host of `frontend::compiler::source_file_may_be_emitted`.
+struct CurrentProgram;
+
+impl crate::frontend::compiler::SourceFileMayBeEmittedHost for CurrentProgram {
+    type File = Node;
+
+    #[inline]
+    fn with_source_file<R>(
+        &self,
+        file: &Node,
+        read: impl FnOnce(&crate::frontend::outputpaths::EmitSourceFile<'_>) -> R,
+    ) -> R {
+        with_emit_source_file(*file, read)
+    }
+
+    fn options(&self) -> &CompilerOptions {
+        options()
+    }
+
+    fn is_source_file_from_external_library(&self, file: &Node) -> bool {
+        is_source_file_from_external_library(*file)
+    }
+
+    fn has_project_reference_from_source(&self, file: &Node) -> bool {
+        with_source_file_info(*file, |info| {
+            get_project_reference_from_source(&info.path).is_some()
+        })
+    }
+
+    fn base_directory(&self) -> Cow<'_, str> {
+        Cow::Borrowed(base_directory())
+    }
+
+    fn use_case_sensitive_file_names(&self) -> bool {
+        use_case_sensitive_file_names()
+    }
 }
 
 // Go: compiler/program.go:2107 GetSourceFile
@@ -4103,26 +4051,19 @@ pub fn get_source_file_from_reference(origin: Node, r: &FileReference) -> Node {
     with_go(|go| go.get_source_file_from_reference(origin, r))
 }
 
-// Go: outputpaths/outputpaths.go:52 GetOutputPathsFor, called by
-// compiler/emitHost.go:91 emitHost.GetOutputPathsFor and Program.Emit with
-// the program options.
-// PORT: Go reads three fields of the source file (#4712: the content
-// mapper). It is named for the emit host method so it does not clash with
-// the frontend `get_output_paths_for` in the frontend prelude.
+/// `outputpaths::get_output_paths_for` of source file `file`, with the
+/// program options: Go `GetOutputPathsFor` as `emitHost.GetOutputPathsFor`
+/// (compiler/emitHost.go:91) and `Program.Emit` call it.
+// PORT: named for the emit host method so it does not clash with the
+// frontend `get_output_paths_for` in the frontend prelude.
 pub fn get_output_paths_for_source_file(
     file: Node,
     host: &dyn crate::frontend::outputpaths::OutputPathsHost,
     force: crate::frontend::outputpaths::ForceEmitPaths,
 ) -> crate::frontend::outputpaths::OutputPaths {
-    let info = source_file_info(file);
-    crate::frontend::outputpaths::get_output_paths_for_file(
-        &info.file_name,
-        info.script_kind,
-        source_file_content_mapper(file),
-        options(),
-        host,
-        force,
-    )
+    with_emit_source_file(file, |source_file| {
+        crate::frontend::outputpaths::get_output_paths_for(source_file, options(), host, force)
+    })
 }
 
 // Go: compiler/program.go:2241 GetJSXRuntimeImportSpecifier
@@ -6754,6 +6695,7 @@ pub fn checker_index_of_file(file: Node) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::compiler::json_file_may_be_emitted;
 
     // startexit1: the index sort with ranked file names gives the order and
     // the merges of Go's `SortAndDeduplicateDiagnostics` (compiler/program.go:

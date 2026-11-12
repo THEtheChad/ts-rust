@@ -64,14 +64,6 @@ fn nb_e(b: &Nb) -> Rc<EmitContext> {
     b.borrow().e.clone()
 }
 
-// PORT: Go `modulespecifiers.CountPathComponents`. The modulespecifiers
-// package is not ported; this is the full Go body.
-// Go: modulespecifiers/compare.go:7 CountPathComponents
-fn count_path_components(path: &str) -> i32 {
-    let initial = if path.starts_with("./") { 2 } else { 0 };
-    path[initial..].matches('/').count() as i32
-}
-
 // Go: checker/nodebuilderimpl.go:1082 sortedSymbolNamePair
 struct SortedSymbolNamePair {
     sym: SymbolId,
@@ -358,7 +350,9 @@ impl Checker {
             let is_b_relative = crate::frontend::tspath::path_is_relative(specifier_b);
             if crate::frontend::tspath::path_is_relative(specifier_a) == is_b_relative {
                 // Both relative or both non-relative, sort by number of parts
-                return count_path_components(specifier_a) - count_path_components(specifier_b);
+                // PORT: Go's `int` difference; the port's count is a `usize`.
+                return crate::modulespecifiers::count_path_components(specifier_a) as i32
+                    - crate::modulespecifiers::count_path_components(specifier_b) as i32;
             }
             if is_b_relative {
                 // A is non-relative, B is relative: prefer A

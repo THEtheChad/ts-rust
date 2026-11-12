@@ -2245,8 +2245,10 @@ impl FileLoader {
                 let import_index = index as i32 - imports_start;
 
                 let should_add_file = !module_name.is_empty()
-                    && get_resolution_diagnostic(&options_for_file, &resolved_module, &file)
-                        .is_none()
+                    && get_resolution_diagnostic(&options_for_file, &resolved_module, || {
+                        file.is_declaration_file
+                    })
+                    .is_none()
                     && !options_for_file.no_resolve.is_true()
                     && !(is_js_file && !options_for_file.get_allow_js())
                     && (import_index < 0
@@ -3118,7 +3120,8 @@ fn check_prep_commit(
             file.file_name()
         );
         if resolved.is_resolved()
-            && get_resolution_diagnostic(names.options, resolved, file).is_none()
+            && get_resolution_diagnostic(names.options, resolved, || file.is_declaration_file)
+                .is_none()
             && (index < names.imports_start || add != Some(false))
         {
             adds.push(index);

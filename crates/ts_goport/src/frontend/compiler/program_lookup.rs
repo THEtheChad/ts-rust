@@ -3,6 +3,7 @@
 //! cache and the `plainJSErrors` set.
 
 use crate::frontend::prelude::*;
+use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
 // Go: program.go:92 packageNamesInfo
@@ -463,6 +464,9 @@ impl NewProgram {
 
     // Go: program.go:2343 (*Program).GetSymlinkCache
     // PORT: `known_symlinks` is Go `knownSymlinks lazyValue[*symlinks.KnownSymlinks]`.
+    // This is the port. The emit-side program's `program::get_go_symlink_cache`
+    // and `modulespecifiers::ProgramHost::get_symlink_cache` are copies of
+    // its value for other threads, not other ports.
     pub fn get_symlink_cache(&self) -> Rc<KnownSymlinks> {
         self.known_symlinks
             .get_value(|| Rc::new(self.build_symlink_cache()))
@@ -914,7 +918,7 @@ impl NewProgram {
                         .filter(|file| {
                             // #4699: Go `sourceFileMayBeEmitted(file, p, false
                             // /*forceDtsEmit*/, false /*forceJsEmit*/)`.
-                            source_file_may_be_emitted(file, self, false, false)
+                            source_file_may_be_emitted(&***file, self, false, false)
                                 && !file.is_declaration_file
                         })
                         .map(|file| file.file_name().to_string())
@@ -953,77 +957,129 @@ impl NewProgram {
     }
 }
 
-// Go: emitter.go:478 sourceFileMayBeEmitted
-// PORT: the Go host is `SourceFileMayBeEmittedHost`; the program is the only
-// host the frontend uses.
-pub fn source_file_may_be_emitted(
-    source_file: &ParsedSourceFile,
-    host: &NewProgram,
+// Go: compiler/emitter.go:470 SourceFileMayBeEmittedHost
+// PORT: the program has two representations, so this has two hosts: the
+// frontend program (`NewProgram`, files are `ParsedSourceFile`) and the
+// emit-side program of the checker threads (`program::CurrentProgram`,
+// files are arena `Node`s). `File` is the host's source file;
+// `with_source_file` gives its fields (Go reads them off `*ast.SourceFile`).
+// Go's `SourceFiles` is not here: `get_source_files_to_emit` is the
+// frontend's only.
+pub trait SourceFileMayBeEmittedHost {
+    type File: ?Sized;
+    /// Runs `read` on the fields of `file` that `source_file_may_be_emitted`
+    /// reads.
+    fn with_source_file<R>(
+        &self,
+        file: &Self::File,
+        read: impl FnOnce(&EmitSourceFile<'_>) -> R,
+    ) -> R;
+    fn options(&self) -> &CompilerOptions;
+    fn is_source_file_from_external_library(&self, file: &Self::File) -> bool;
+    /// Go `GetProjectReferenceFromSource(file.PathKey()) != nil`.
+    fn has_project_reference_from_source(&self, file: &Self::File) -> bool;
+    fn base_directory(&self) -> Cow<'_, str>;
+    /// Go `CaseSensitivity()` (ts#64159); the port keeps the bool.
+    fn use_case_sensitive_file_names(&self) -> bool;
+}
+
+impl SourceFileMayBeEmittedHost for NewProgram {
+    type File = ParsedSourceFile;
+
+    #[inline]
+    fn with_source_file<R>(
+        &self,
+        file: &ParsedSourceFile,
+        read: impl FnOnce(&EmitSourceFile<'_>) -> R,
+    ) -> R {
+        read(&EmitSourceFile::from(file))
+    }
+
+    fn options(&self) -> &CompilerOptions {
+        NewProgram::options(self)
+    }
+
+    fn is_source_file_from_external_library(&self, file: &ParsedSourceFile) -> bool {
+        NewProgram::is_source_file_from_external_library(self, file)
+    }
+
+    fn has_project_reference_from_source(&self, file: &ParsedSourceFile) -> bool {
+        self.get_project_reference_from_source(file.path())
+            .is_some()
+    }
+
+    fn base_directory(&self) -> Cow<'_, str> {
+        Cow::Owned(NewProgram::base_directory(self))
+    }
+
+    fn use_case_sensitive_file_names(&self) -> bool {
+        NewProgram::use_case_sensitive_file_names(self)
+    }
+}
+
+// Go: compiler/emitter.go:478 sourceFileMayBeEmitted
+pub fn source_file_may_be_emitted<H: SourceFileMayBeEmittedHost + ?Sized>(
+    source_file: &H::File,
+    host: &H,
     force_dts_emit: bool,
     force_js_emit: bool,
 ) -> bool {
     // TODO: move this to outputpaths?
-
     let options = host.options();
-    // Js files are emitted only if option is enabled
-    // #4699: a forced JS emit keeps JS files.
-    if !force_js_emit && options.no_emit_for_js_files.is_true() && source_file.is_js() {
-        return false;
-    }
+    host.with_source_file(source_file, |file| {
+        // Js files are emitted only if option is enabled
+        // #4699: a forced JS emit keeps JS files.
+        if !force_js_emit && options.no_emit_for_js_files.is_true() && file.is_js() {
+            return false;
+        }
 
-    // Declaration files are not emitted
-    if source_file.is_declaration_file {
-        return false;
-    }
+        // Declaration files are not emitted
+        if file.is_declaration_file {
+            return false;
+        }
 
-    // Runtime output for content-mapped files is owned by the external content mapper or build tool. Only
-    // include them in the emit set when their transformed TypeScript can produce declarations.
-    // tsgo#4712
-    if !source_file.content_mapper().is_empty()
-        && !force_dts_emit
-        && !options.get_emit_declarations()
-    {
-        return false;
-    }
+        // Runtime output for content-mapped files is owned by the external content mapper or build tool. Only
+        // include them in the emit set when their transformed TypeScript can produce declarations.
+        // tsgo#4712
+        if !file.content_mapper().is_empty() && !force_dts_emit && !options.get_emit_declarations()
+        {
+            return false;
+        }
 
-    // Source file from node_modules are not emitted
-    if host.is_source_file_from_external_library(source_file) {
-        return false;
-    }
+        // Source file from node_modules are not emitted
+        if host.is_source_file_from_external_library(source_file) {
+            return false;
+        }
 
-    // forcing dts emit => file needs to be emitted
-    // #4699: a forced JS emit too.
-    if force_dts_emit || force_js_emit {
-        return true;
-    }
+        // forcing dts emit => file needs to be emitted
+        // #4699: a forced JS emit too.
+        if force_dts_emit || force_js_emit {
+            return true;
+        }
 
-    // Check other conditions for file emit
-    // Source files from referenced projects are not emitted
-    if host
-        .get_project_reference_from_source(source_file.path())
-        .is_some()
-    {
-        return false;
-    }
+        // Check other conditions for file emit
+        // Source files from referenced projects are not emitted
+        if host.has_project_reference_from_source(source_file) {
+            return false;
+        }
 
-    // Any non json file should be emitted
-    if source_file.script_kind != ScriptKind::JSON {
-        return true;
-    }
+        // Any non json file should be emitted
+        if !file.is_json() {
+            return true;
+        }
 
-    json_file_may_be_emitted(
-        source_file.file_name(),
-        options,
-        &host.base_directory(),
-        host.use_case_sensitive_file_names(),
-    )
+        json_file_may_be_emitted(
+            file.file_name,
+            options,
+            &host.base_directory(),
+            host.use_case_sensitive_file_names(),
+        )
+    })
 }
 
 // Go: compiler/emitter.go:518-537 sourceFileMayBeEmitted: the JSON file part
 /// Whether JSON file `file_name` (rooted) may be emitted: only with an
-/// outDir, and not when its output would be the file itself. The
-/// emit-side program (`program::source_file_may_be_emitted`) asks this too,
-/// so the two hosts give one answer.
+/// outDir, and not when its output would be the file itself.
 // ts#64159: `GetSourceFileNameInNewDir` takes the path below the common
 // directory with `RelativeFilePathFromDirectory`, so a file that is not
 // under it keeps its name and is not emitted. The comparison is
@@ -1084,7 +1140,7 @@ pub fn get_source_files_to_emit(
     target_source_files
         .iter()
         .filter(|source_file| {
-            source_file_may_be_emitted(source_file, host, force_dts_emit, force_js_emit)
+            source_file_may_be_emitted(&***source_file, host, force_dts_emit, force_js_emit)
         })
         .cloned()
         .collect()

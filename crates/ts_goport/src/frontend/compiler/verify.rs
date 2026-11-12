@@ -481,7 +481,7 @@ impl NewProgram {
                     None => file.path().clone(),
                 };
                 // #4699: Go `sourceFileMayBeEmitted(file, p, false, false)`.
-                if source_file_may_be_emitted(file, self, false, false)
+                if source_file_may_be_emitted(&**file, self, false, false)
                     && !root_paths.contains(&root_path)
                 {
                     not_listed.push(Rc::new(ProcessingDiagnostic {
@@ -694,7 +694,8 @@ impl NewProgram {
             let mut emitted_files: Vec<String> = Vec::new();
             for file in &self.files {
                 // #4699: Go `sourceFileMayBeEmitted(file, p, false, false)`.
-                if !file.is_declaration_file && source_file_may_be_emitted(file, self, false, false)
+                if !file.is_declaration_file
+                    && source_file_may_be_emitted(&**file, self, false, false)
                 {
                     emitted_files.push(file.file_name().to_string());
                 }

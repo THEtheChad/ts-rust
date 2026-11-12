@@ -1,216 +1,19 @@
-//! The parts of Go `internal/module`, `internal/core` (pattern.go),
-//! `internal/stringutil` and `internal/outputpaths` that modulespecifiers
-//! uses.
+//! The parts of Go `internal/module`, `internal/core` (pattern.go) and
+//! `internal/stringutil` that modulespecifiers uses.
 //!
-//! PORT: the Go `module` and `outputpaths` packages are ported under
-//! `src/frontend/`, which `lib.rs` does not compile, and they need the full
-//! resolver. These are copies of the small functions this package calls.
+//! The `module` and `core` functions are the frontend ports, re-exported.
+//! `index_after` has no other port. `has_prefix`, `has_suffix` and
+//! `has_prefix_and_suffix_without_overlap` differ from the frontend's
+//! (`frontend::stringutil_ls`): see the PORT note on `has_prefix`.
 
 use crate::prelude::*;
 
-use super::packagejson::TYPE_SCRIPT_VERSION;
-use super::semver;
-use super::tspath;
-
-// Go: module/util.go:17 IsApplicableVersionedTypesKey
-pub fn is_applicable_versioned_types_key(key: &str) -> bool {
-    let Some(rest) = key.strip_prefix("types@") else {
-        return false;
-    };
-    let (range, ok) = semver::try_parse_version_range(rest);
-    if !ok {
-        return false;
-    }
-    range.test(&semver::must_parse_version(TYPE_SCRIPT_VERSION))
-}
-
-// Go: module/util.go:76 UnmangleScopedPackageName
-pub fn unmangle_scoped_package_name(package_name: &str) -> String {
-    if let Some((before, after)) = package_name.split_once("__") {
-        return format!("@{before}/{after}");
-    }
-    package_name.to_string()
-}
-
-// Go: module/util.go:88 GetPackageNameFromTypesPackageName
-pub fn get_package_name_from_types_package_name(mangled_name: &str) -> String {
-    if let Some(without_at_type_prefix) = mangled_name.strip_prefix("@types/") {
-        return unmangle_scoped_package_name(without_at_type_prefix);
-    }
-    mangled_name.to_string()
-}
-
-// Go: module/util.go:65 MangleScopedPackageName
-pub fn mangle_scoped_package_name(package_name: &str) -> String {
-    if package_name.starts_with('@') {
-        let Some(idx) = package_name.find('/') else {
-            return package_name.to_string();
-        };
-        return format!("{}__{}", &package_name[1..idx], &package_name[idx + 1..]);
-    }
-    package_name.to_string()
-}
-
-// Go: module/util.go:189 TryGetJSExtensionForFile
-// TryGetJSExtensionForFile maps TS/JS/DTS extensions to the output JS-side extension.
-// Returns an empty string if the extension is unsupported.
-pub fn try_get_js_extension_for_file(file_name: &str, options: &CompilerOptions) -> &'static str {
-    let ext = tspath::try_get_extension_from_path(file_name);
-    match ext {
-        tspath::EXTENSION_TS | tspath::EXTENSION_DTS => tspath::EXTENSION_JS,
-        tspath::EXTENSION_TSX => {
-            if options.jsx == JsxEmit::PRESERVE {
-                return tspath::EXTENSION_JSX;
-            }
-            tspath::EXTENSION_JS
-        }
-        tspath::EXTENSION_JS | tspath::EXTENSION_JSX | tspath::EXTENSION_JSON => ext,
-        tspath::EXTENSION_DMTS | tspath::EXTENSION_MTS | tspath::EXTENSION_MJS => {
-            tspath::EXTENSION_MJS
-        }
-        tspath::EXTENSION_DCTS | tspath::EXTENSION_CTS | tspath::EXTENSION_CJS => {
-            tspath::EXTENSION_CJS
-        }
-        _ => "",
-    }
-}
-
-// Go: module/resolver.go:2148 GetConditions
-pub fn get_conditions(
-    options: &CompilerOptions,
-    mut resolution_mode: ResolutionMode,
-) -> Vec<String> {
-    let module_resolution = options.get_module_resolution_kind();
-    if resolution_mode == ModuleKind::NONE && module_resolution == ModuleResolutionKind::BUNDLER {
-        resolution_mode = ModuleKind::ES_NEXT;
-    }
-    let custom_conditions = options.custom_conditions.as_deref().unwrap_or_default();
-    let mut conditions: Vec<String> = Vec::with_capacity(3 + custom_conditions.len());
-    if resolution_mode == ModuleKind::ES_NEXT {
-        conditions.push("import".to_string());
-    } else {
-        conditions.push("require".to_string());
-    }
-
-    if options.no_dts_resolution != Tristate::True {
-        conditions.push("types".to_string());
-    }
-    if module_resolution != ModuleResolutionKind::BUNDLER {
-        conditions.push("node".to_string());
-    }
-    conditions.extend(custom_conditions.iter().cloned());
-    conditions
-}
-
-// Go: core/pattern.go:5 Pattern
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Pattern {
-    pub text: String,
-    pub star_index: isize, // -1 for exact match
-}
-
-impl Pattern {
-    // Go: core/pattern.go:18 IsValid
-    pub fn is_valid(&self) -> bool {
-        self.star_index == -1 || (self.star_index as usize) < self.text.len()
-    }
-
-    // Go: core/pattern.go:22 Matches
-    // PORT: Go compares bytes. `text` and `candidate` are port forms, so
-    // this compares their Go bytes (see `scanner_util::GO_STRING_MARKER`).
-    // `star_index` is the port offset of the star.
-    pub fn matches(&self, candidate: &str) -> bool {
-        if self.star_index == -1 {
-            return self.text == candidate;
-        }
-        let star = self.star_index as usize;
-        go_len(candidate) + 1 >= go_len(&self.text)
-            && go_has_prefix(candidate, &self.text[..star])
-            && go_has_suffix(candidate, &self.text[star + 1..])
-    }
-
-    /// Go `StarIndex`: the Go byte offset of the star, or -1.
-    fn go_star_index(&self) -> isize {
-        if self.star_index == -1 {
-            return -1;
-        }
-        go_len(&self.text[..self.star_index as usize]) as isize
-    }
-}
-
-// Go: core/pattern.go:10 TryParsePattern
-pub fn try_parse_pattern(pattern: &str) -> Pattern {
-    let star_index = pattern.find('*');
-    match star_index {
-        None => Pattern {
-            text: pattern.to_string(),
-            star_index: -1,
-        },
-        Some(i) if !pattern[i + 1..].contains('*') => Pattern {
-            text: pattern.to_string(),
-            star_index: i as isize,
-        },
-        Some(_) => Pattern::default(),
-    }
-}
-
-// Go: core/pattern.go:41 FindBestPatternMatch
-pub fn find_best_pattern_match(values: &[Pattern], candidate: &str) -> Pattern {
-    let mut best_pattern = Pattern::default();
-    let mut longest_match_prefix_length: isize = -1;
-    for pattern in values {
-        let star_index = pattern.go_star_index();
-        if (star_index == -1 || star_index > longest_match_prefix_length)
-            && pattern.matches(candidate)
-        {
-            best_pattern = pattern.clone();
-            longest_match_prefix_length = star_index;
-        }
-    }
-    best_pattern
-}
-
-// Go: module/resolver.go:2209 ParsedPatterns
-#[derive(Clone, Debug, Default)]
-pub struct ParsedPatterns {
-    matchable_string_set: FxHashSet<String>,
-    patterns: Vec<Pattern>,
-}
-
-// Go: module/resolver.go:2218 TryParsePatterns
-pub fn try_parse_patterns(
-    path_mappings: Option<&IndexMap<String, Option<Vec<String>>>>,
-) -> ParsedPatterns {
-    let mut result = ParsedPatterns::default();
-    let Some(path_mappings) = path_mappings else {
-        return result;
-    };
-    for path in path_mappings.keys() {
-        let pattern = try_parse_pattern(path);
-        if pattern.is_valid() {
-            if pattern.star_index == -1 {
-                result.matchable_string_set.insert(path.clone());
-            } else {
-                result.patterns.push(pattern);
-            }
-        }
-    }
-    result
-}
-
-// Go: module/resolver.go:2257 MatchPatternOrExact
-pub fn match_pattern_or_exact(patterns: &ParsedPatterns, candidate: &str) -> Pattern {
-    if patterns.matchable_string_set.contains(candidate) {
-        return Pattern {
-            text: candidate.to_string(),
-            star_index: -1,
-        };
-    }
-    if patterns.patterns.is_empty() {
-        return Pattern::default();
-    }
-    find_best_pattern_match(&patterns.patterns, candidate)
-}
+pub use crate::frontend::module::{
+    Pattern, get_conditions, get_package_name_from_types_package_name,
+    is_applicable_versioned_types_key, match_pattern_or_exact, try_get_js_extension_for_file,
+    try_parse_patterns,
+};
+pub use crate::scanner_util::compare_booleans;
 
 // Go: core/core.go:714 IndexAfter
 pub fn index_after(s: &str, pattern: &str, start_index: usize) -> isize {
@@ -220,21 +23,18 @@ pub fn index_after(s: &str, pattern: &str, start_index: usize) -> isize {
     }
 }
 
-// Go: core/core.go:862 CompareBooleans
-// CompareBooleans treats true as greater than false.
-pub fn compare_booleans(a: bool, b: bool) -> i32 {
-    if a && !b {
-        1
-    } else if !a && b {
-        -1
-    } else {
-        0
-    }
-}
-
 // Go: stringutil/compare.go:74 HasPrefix
 // PORT: compares the Go bytes of the port forms (see
 // `scanner_util::GO_STRING_MARKER`).
+// PORT: the frontend port (`frontend::stringutil_ls::has_prefix`) differs.
+// Go slices by byte length and folds with `strings.EqualFold` (Unicode).
+// This one has Go's bytes but folds ASCII only, so it differs from Go for a
+// case-insensitive name that differs by a non-ASCII case. The frontend one
+// folds as Go does but compares the port forms' own bytes, so it differs
+// from Go even case-sensitively for names that hold an invalid UTF-8 byte or
+// a lone surrogate. Its encoding of byte 0x80 in `b"x\x80.ts"` matches the
+// suffix `"\u{10F780}.ts"`, which Go's bytes do not. Lane B10 fixes both
+// (`docs/perf-rearch/cleanup/f5.md`).
 pub fn has_prefix(s: &str, prefix: &str, case_sensitive: bool) -> bool {
     let (s, prefix) = (go_string_bytes(s), go_string_bytes(prefix));
     if case_sensitive {

@@ -10,6 +10,13 @@
 //!   member keeps the position of its first occurrence (OrderedMap.Set).
 //! - Any syntax error makes the whole file unparseable (`parseable ==
 //!   false`, empty fields), as a fatal Go v2 error does.
+//!
+//! So `GetVersionPaths`, `VersionPaths.GetPaths`, `initObjectKind` and
+//! `Parse` have two ports, this one and the frontend's; each carries a PORT
+//! note naming the other. One port needs the frontend model to be
+//! thread-safe (`Rc` to `Arc` through `frontend::packagejson` and the
+//! resolver caches that hold it): lane F5 left that restructuring
+//! (`docs/perf-rearch/cleanup/f5.md`).
 
 use crate::prelude::*;
 
@@ -145,6 +152,7 @@ impl JSONValue {
     }
 
     // Go: packagejson/exportsorimports.go:58 initObjectKind
+    // PORT: the frontend port is `frontend::packagejson::ExportsOrImports::init_object_kind`.
     // PORT: Go caches the kind on a copy of the value, so it is computed on
     // every call there too.
     fn object_kind(&self) -> ObjectKind {
@@ -244,6 +252,7 @@ impl Fields {
 }
 
 // Go: packagejson/packagejson.go:128 Parse
+// PORT: the frontend port is `frontend::packagejson::parse`.
 // PORT: `data` is the file's Go bytes. Go fails on invalid UTF-8 in a
 // string. Each string value is in the port form (see
 // `scanner_util::GO_STRING_MARKER`).
@@ -394,6 +403,7 @@ impl PackageJson {
     }
 
     // Go: packagejson/cache.go:28 GetVersionPaths
+    // PORT: the frontend port is `frontend::packagejson::PackageJson::get_version_paths`.
     // PORT: modulespecifiers passes a nil trace, so the traces are not kept.
     pub fn get_version_paths(&self) -> &VersionPaths {
         self.version_paths.get_or_init(|| {
@@ -439,6 +449,7 @@ impl VersionPaths {
     }
 
     // Go: packagejson/cache.go:98 GetPaths
+    // PORT: the frontend port is `frontend::packagejson::VersionPaths::get_paths`.
     // PORT: Go caches the result; this builds it on each call.
     pub fn get_paths(&self) -> Option<IndexMap<String, Option<Vec<String>>>> {
         if !self.exists() {

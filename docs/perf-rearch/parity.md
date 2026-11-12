@@ -193,6 +193,7 @@ There are 173 items over 25 configs:
 | react-hook-form | `root`, `app` | `~/.cache/perf-rearch/parity-projects/` |
 | svelte | `svelte`, `runtime` | parity-projects |
 | symlink-monorepo | `solution` (`build`, `build-edit` only), `b-preserve` (`explain-trace` only) | synthetic: `parity-fixtures.json` (lane B7, below) |
+| resolution-mode-source-phase | `cts` (`noemit`, `emit`, `decl`) | synthetic: `parity-fixtures.json` (lane F5, below) |
 
 Each project is at the commit that the repo's `scripts/prepare-*-inputs.mjs` pins. The parity
 lane's own copies are made by `scripts/perf-rearch/prepare-parity-projects.sh` (a shallow fetch
@@ -233,6 +234,16 @@ queries again over the built tree, then with b's source edited through a layer, 
 programs are updated in place in one snapshot and report TS2322 for a's `Inner` (through the redirect)
 assigned to a string. Go writes that update's `changedProjects`, a map, in random order (1 run in 10:
 `b7/changed_projects_control.py`); the comparison sorts only that map's keys (below, "Compared").
+
+`resolution-mode-source-phase` (lane F5, Astra's F5 review finding 1) holds the resolution mode of a
+`.cts` file under `module: esnext` and `moduleResolution: bundler`. `index.cts` has
+`import.source("a")`, then `import("b")`, then `import("a")`, and `paths` maps `a` and `b` to the same
+`lib.ts`, whose class `X` has a private member. The declaration of the exported promise names
+the module that the import type's specifier comes from: Go gives `Promise<import("b").X>`.
+Before F5, the emit-side program's copy of `getEmitSyntaxForUsageLocationWorker` lacked ts#63915, so
+it gave `import.source` the CommonJS mode. That shared a cache entry with the later `import("a")`, and
+the declaration said `import("a").X`. The `emit` and `decl` items DIFF on `9429e8a57` and MATCH from
+F5 on.
 
 ### tests: cargo suites and TestLocal (`parity_tests.py`)
 

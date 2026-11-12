@@ -3,10 +3,12 @@
 //!
 //! The package also needs small parts of internal/module,
 //! internal/outputpaths, internal/packagejson and internal/symlinks. Those
-//! packages are not ported in this crate, so the parts that
-//! modulespecifiers calls are ported in `deps.rs`, `packagejson.rs` and
-//! `symlinks.rs`. `host.rs` holds the Go `compiler.Program` methods that
-//! implement `ModuleSpecifierGenerationHost`.
+//! packages are ported under `src/frontend/`; `deps.rs` re-exports the
+//! parts that modulespecifiers calls. `packagejson.rs` is a thread-safe copy
+//! of the frontend package.json model (see that file). `symlinks.rs` ports
+//! Go `internal/symlinks` for both. `host.rs` holds the Go
+//! `compiler.Program` methods that implement
+//! `ModuleSpecifierGenerationHost`.
 
 pub mod compare;
 pub mod deps;
@@ -29,13 +31,11 @@ pub use util::*;
 
 // PORT: the Go tspath and semver packages are ported under
 // `src/frontend/`. This module reuses them so `Path` is one type across
-// both. `tspath_extension.rs` is a copy, see that file.
-use crate::frontend::tspath::path as tspath_path;
-mod tspath_extension;
+// both.
 pub use crate::frontend::semver;
 
 /// Go `internal/tspath`, as used by this package.
 pub mod tspath {
-    pub use super::tspath_extension::*;
-    pub use super::tspath_path::*;
+    pub use crate::frontend::tspath::extension::*;
+    pub use crate::frontend::tspath::path::*;
 }

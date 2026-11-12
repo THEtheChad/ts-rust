@@ -1622,68 +1622,11 @@ pub fn get_set_accessor_value_parameter(accessor: Node) -> Node {
     Node::NIL
 }
 
-// PORT: private ports of the Go `tspath` extension helpers and the
-// `module.MangleScopedPackageName` / `module.GetTypesPackageName` helpers
-// used above. No shared Rust port of them exists in this crate.
+// PORT: the Go `tspath` extension helpers and `module.MangleScopedPackageName`
+// / `module.GetTypesPackageName` used above are the frontend's ports.
 mod tspath_up2 {
-    // Go: tspath/extension.go:9
-    pub const EXTENSION_TS: &str = ".ts";
-    pub const EXTENSION_TSX: &str = ".tsx";
-    pub const EXTENSION_DTS: &str = ".d.ts";
-    pub const EXTENSION_JS: &str = ".js";
-    pub const EXTENSION_JSX: &str = ".jsx";
-    pub const EXTENSION_JSON: &str = ".json";
-    pub const EXTENSION_MJS: &str = ".mjs";
-    pub const EXTENSION_MTS: &str = ".mts";
-    pub const EXTENSION_DMTS: &str = ".d.mts";
-    pub const EXTENSION_CJS: &str = ".cjs";
-    pub const EXTENSION_CTS: &str = ".cts";
-    pub const EXTENSION_DCTS: &str = ".d.cts";
-
-    // Go: tspath/extension.go:43 extensionsToRemove
-    const EXTENSIONS_TO_REMOVE: [&str; 12] = [
-        EXTENSION_DTS,
-        EXTENSION_DMTS,
-        EXTENSION_DCTS,
-        EXTENSION_MJS,
-        EXTENSION_MTS,
-        EXTENSION_CJS,
-        EXTENSION_CTS,
-        EXTENSION_TS,
-        EXTENSION_JS,
-        EXTENSION_TSX,
-        EXTENSION_JSX,
-        EXTENSION_JSON,
-    ];
-
-    // Go: tspath/path.go:1142 FileExtensionIs
-    fn file_extension_is(path: &str, extension: &str) -> bool {
-        path.len() > extension.len() && path.ends_with(extension)
-    }
-
-    // Go: tspath/extension.go:66 TryGetExtensionFromPath
-    pub fn try_get_extension_from_path(p: &str) -> &'static str {
-        for ext in EXTENSIONS_TO_REMOVE {
-            if file_extension_is(p, ext) {
-                return ext;
-            }
-        }
-        ""
-    }
-
-    // Go: module/util.go:65 MangleScopedPackageName
-    pub fn mangle_scoped_package_name(package_name: &str) -> String {
-        if package_name.as_bytes().first() == Some(&b'@') {
-            let Some(idx) = package_name.find('/') else {
-                return package_name.to_string();
-            };
-            return format!("{}__{}", &package_name[1..idx], &package_name[idx + 1..]);
-        }
-        package_name.to_string()
-    }
-
-    // Go: module/util.go:84 GetTypesPackageName
-    pub fn get_types_package_name(package_name: &str) -> String {
-        format!("@types/{}", mangle_scoped_package_name(package_name))
-    }
+    pub use crate::frontend::module::{get_types_package_name, mangle_scoped_package_name};
+    pub use crate::frontend::tspath::{
+        EXTENSION_JS, EXTENSION_MJS, EXTENSION_MTS, EXTENSION_TS, try_get_extension_from_path,
+    };
 }

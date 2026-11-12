@@ -283,6 +283,23 @@
           ]
         }
       ]
+    },
+    {
+      "name": "resolution-mode-source-phase",
+      "fixture": "resolution-mode-source-phase",
+      "configs": [
+        {
+          "label": "cts",
+          "config": "tsconfig.json",
+          "skipVariants": [
+            "incr",
+            "listfiles",
+            "extdiag",
+            "pretty",
+            "showconfig"
+          ]
+        }
+      ]
     }
   ]
 }

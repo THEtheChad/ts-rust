@@ -306,7 +306,8 @@ pub(super) fn mark_freeable_parses(np: &NewProgram) {
 
 // Go: compiler/program.go:2343 GetSymlinkCache (`get_go_symlink_cache`)
 // PORT: Go builds the cache on first use, on any goroutine. The port
-// builds it from the frontend program, which only the loading thread has,
+// (`NewProgram::get_symlink_cache`, `build_symlink_cache`) builds it from
+// the frontend program, which only the loading thread has,
 // and keeps a thread-safe copy in the program's shared state. The loading
 // thread builds it on first use. A thread seeded from it finishes the
 // seed that the loading thread made when it seeded the thread
