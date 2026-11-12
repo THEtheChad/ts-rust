@@ -607,7 +607,7 @@ pub const RESOLUTION_MODE_COMMON_JS: ResolutionMode = ModuleKind::COMMON_JS;
 // Go: core/compileroptions.go:430 ResolutionModeESM
 pub const RESOLUTION_MODE_ESM: ResolutionMode = ModuleKind::ES_NEXT;
 
-// Go: core/compileroptions.go:451 ModuleKindToModuleResolutionKind
+// Go: core/options_generated.go:810 ModuleKindToModuleResolutionKind (moved from compileroptions.go)
 /// Go map lookup `ModuleKindToModuleResolutionKind[kind]` as `(value, ok)`.
 #[must_use]
 pub fn module_kind_to_module_resolution_kind(kind: ModuleKind) -> (ModuleResolutionKind, bool) {
