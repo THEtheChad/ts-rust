@@ -2405,3 +2405,29 @@ once a **reconciliation step** is built and tested.
     Markers naming nothing in any Go tree 1,168 → 1,153 (Effect's 1,093
     remain). Port bloat Δ ≥ 10 stays 10; own code over 25 stays 0. The
     gorel self-test is OK.
+- **B9 round 2 done; merged.** Root accepts it without a second Astra
+  round: each fix is narrow and pinned against Go.
+  - **The fixes:**
+    - A7: `kill(-1, 0)` is checked;
+    - A3: past EOF is decided on the wide position;
+    - A5's root-range overflow gets a PORT note (Go hangs there, so it is
+      GO-BROKEN) and a test;
+    - A4's index is `i64`.
+  - **Api `calls` request form,** with 3 new items:
+    `batch-page-cap-int64`, `format-insertion-past-int32` and
+    `positions-index-int64`.
+  - **Root's checks:** on `f608986a3` the items give decode errors or a
+    panic where Go answers; B9 SELFTEST OK.
+  - **Gate:** `runs/b9r2-654f71961-full` PARITY OK, api 68 MATCH;
+    single-threaded icount within ±0.003%.
+  - **New flake seen:**
+    `content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error`,
+    a clock step; 5 reruns pass.
+- **F5 started:** one port per Go function for `sourceFileMayBeEmitted`,
+  `GetOutputPathsFor`, `GetSymlinkCache` and the `modulespecifiers/`
+  copies, plus a risk triage of `dups.txt`.
+- **C1 started:** the content-mapper watch flake, fixed the Q9 way, plus a
+  sweep for the same pattern.
+- **Then the close-out:** a full gate on the merged head (which becomes
+  base-current), the window-2 timing against Go on every cell, the final
+  report, and asking Chad about pushing.
