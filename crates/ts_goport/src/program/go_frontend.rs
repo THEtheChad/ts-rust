@@ -163,8 +163,11 @@ thread_local! {
     /// dead file version go, and so do its JSDoc nodes (a file scope,
     /// `resolve_lazy_js_doc`).
     static LAZY_JSDOC: RefCell<PerFileMap<&'static [Node]>> = const { RefCell::new(PerFileMap::new()) };
-    /// The file system of a checker worker thread (Go `host.FS()` without
-    /// the cache; the program's `HostFsCache` caches its answers).
+    /// The file system of a worker thread (Go `host.FS()` without the
+    /// cache; the program's `HostFsCache` caches its answers): the OS file
+    /// system. It is the host of the programs that check on worker threads,
+    /// except one whose host reads through client calls: its workers ask
+    /// the loading thread (`host_queries`; see `file_exists`).
     static WORKER_FS: Rc<dyn Fs> = bundled::wrap_fs(osvfs_fs());
 }
 
@@ -791,6 +794,17 @@ pub(crate) fn cached_lazy_js_doc(node: Node) -> Option<&'static [Node]> {
 // this thread's copy of the file system on a miss. Module specifier
 // generation probes the same paths for many types (`tryGetAnyFileFromPath`):
 // realworld3 lexical made 8.6M uncached stat calls, Go 8,768.
+// The worker's copy is the OS file system, which is the host file system of
+// `tsc`, `tsc -b` and `tsc -w` (with a tracking host in a watch full build:
+// `worker_seen_files`), and of the API build without client reads. When
+// the host reads through client calls (the API build over `--callbacks`),
+// a miss goes to the loading thread instead (`host_queries`), which asks
+// the host. A language service program (the language server, the API)
+// checks and emits on its loading thread (`ls_program`), so its probes ask
+// its own host, the snapshot's file system. A language server search
+// thread (`ls/search_thread.rs`) still asks the OS: the references,
+// implementations and rename that run there make no module specifier
+// today, and its checker's diagnostics are not reported.
 pub(super) fn file_exists(path: &str) -> bool {
     let id = prog().id;
     if let Some(go) = FRONTENDS.with(|frontends| frontends.borrow().get(&id).cloned()) {
@@ -799,8 +813,28 @@ pub(super) fn file_exists(path: &str) -> bool {
     super::with_tables(|tables| {
         tables
             .host_fs_cache
-            .file_exists(path, || WORKER_FS.with(|fs| fs.file_exists(path)))
+            .file_exists(path, || worker_file_exists(tables, path))
     })
+}
+
+/// `file_exists` of `path` on a worker thread when the program's cache
+/// (`tables.host_fs_cache`) has no answer: the program's host, through the
+/// loading thread when the program has a channel to it (`host_queries`),
+/// else this thread's OS file system. A tracking host notes the path
+/// (`worker_seen_files`).
+fn worker_file_exists(tables: &super::VersionTables, path: &str) -> bool {
+    if let Some(seen) = tables.worker_seen_files.get() {
+        seen.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path.to_string());
+    }
+    if let Some(queries) = tables.host_queries.get() {
+        let asked = path.to_string();
+        if let Some(exists) = queries.ask(move |frontend| frontend.file_exists(&asked)) {
+            return exists;
+        }
+    }
+    WORKER_FS.with(|fs| fs.file_exists(path))
 }
 
 /// The Go files of this thread's unpublished stores, in store id order

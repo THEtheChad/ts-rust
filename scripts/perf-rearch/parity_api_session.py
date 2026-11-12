@@ -25,9 +25,23 @@ A scenario (parity-api-scenarios.json) is:
                 then, with release: true, release of the snapshot it replaced
   build         a list of build-orchestrator steps: {"create": {rootNames, cwd?, compilerOptions?,
                 buildOptions?}} first, then {"build": project}, {"buildReferences": project},
-                {"clean": project} and {"dispose": null} in any order
+                {"clean": project} and {"dispose": null} in any order; with several orchestrators,
+                {"interleave": {build: [i, project], callback: "<method> <path>", then: [j, project]}}
+                builds project on the i-th created orchestrator, and when the server makes that callback
+                (the first time), the client sends the build of the second project on the j-th one
+                before it answers the callback (lane B8 round 3: a request that arrives while a build
+                waits for the client). The step records both answers by id and one callback set.
   afterBuild    updates as in `updates`, made after the build steps on the same session's snapshot
                 (so the programs see what the build wrote, and reuse what they can)
+  callbacks     the client's file system (lane B8): {enable, files?, stat?}. enable is the server's
+                --callbacks list as it is (Go api/callbackfs.go names: readFile, fileExists,
+                directoryExists, getAccessibleEntries, realpath, stat, writeFile, removeFile, and the
+                ":error"/":noop"/":identity"/":fakeStat" forms). With files, the client serves every path
+                under @ROOT@ from that tree (and from what the server writes into it with writeFile), so
+                nothing of it is on disk; every other path is "useOS" (Callbacks, below). stat maps paths
+                to the mtime (RFC 3339) the stat callback gives for them, over the tree or the disk; a
+                disk path's mode and size come from inside the sandbox (/proc/<init>/root), never from
+                the parent's file system, and after each step its mtime is recorded (`mtimes`)
 In every string, @ROOT@ is the scenario's root: VIRTUAL/<name> for an in-memory scenario (a path that does
 not exist in the sandbox), SCRATCH/<name>/root for a scenario with a disk fixture. The server runs with
 --cwd @ROOT@. Dynamic names (^/~ts-uri~/...) are written out as they are.
@@ -54,6 +68,13 @@ clean:
              the item ERROR and caches nothing.
 A transcript of a failed session keeps the answers it got.
 
+Callbacks (a scenario with `callbacks`): the server's requests are the file-system callbacks of Go's
+callbackFS. The reader answers each one at once (Callbacks.answer), with the answer kinds Go's
+callbackFS takes ({kind: "value", value}, "missing", "identity", "useOS"). Each step records the set of
+callbacks made while it ran (`callbacks`: "<method> <path>", sorted, each once: Go's emit goroutines make
+them in parallel, and its cachedvfs may ask twice), and the transcript ends with the files the server
+wrote through writeFile (`clientFiles`). Without `callbacks` a server request is malformed, as before.
+
 Sandbox (parity_sandbox_init.py, the lsp tier's too; PID 1 of a new user, mount, network and PID namespace): the user's files
 (/home), /tmp, /var/tmp, /run, /mnt, /media, /srv, /opt and /dev/shm are covered by empty tmpfs dirs with a
 fixed mtime, so nothing there (the real ~/.cache/typescript, ~/.npm, ~/.config, other lanes' trees) exists
@@ -66,6 +87,7 @@ drop(): a nested user namespace that owns nothing, no capability, uid and gid 10
 ends, every process left in the namespace is a survivor (a failure) and is killed before anything is
 collected. The home's skeleton (HOME_DIRS) is listed like everything else and checked exactly.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -107,7 +129,10 @@ FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o755, 0o644
 CRASH_RE = re.compile(r"^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at "
                       r"|.*has overflowed its stack|Aborted\b|.*core dumped)")
 SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'updates', 'build',
-                 'afterBuild'}
+                 'afterBuild', 'callbacks'}
+CALLBACK_NAMES = {'readFile', 'fileExists', 'directoryExists', 'getAccessibleEntries', 'realpath', 'stat', 'writeFile', 'removeFile'}
+CALLBACK_DEFAULTS = {'realpath:identity', 'stat:fakeStat', 'writeFile:noop', 'removeFile:noop'}
+CALLBACK_MTIME = '2001-01-01T00:00:00Z'  # FIXED_MTIME: the stat of a served file or dir
 BUILD_STEPS = {'create': 'createBuildOrchestrator', 'build': 'build', 'buildReferences': 'buildReferences',
                'clean': 'cleanBuild', 'dispose': 'disposeBuildOrchestrator'}
 
@@ -162,6 +187,20 @@ def _validate_disk(name, disk):
             raise ScenarioError(f'{name}: disk maps paths to texts or symlinks')
 
 
+def _validate_callbacks(name, cb):
+    if not isinstance(cb, dict) or set(cb) - {'enable', 'files', 'stat'} or not cb.get('enable'):
+        raise ScenarioError(f'{name}: callbacks is {{enable, files?, stat?}}')
+    for e in cb['enable']:
+        base, _, suffix = e.partition(':')
+        if base not in CALLBACK_NAMES or (suffix and suffix != 'error' and e not in CALLBACK_DEFAULTS):
+            raise ScenarioError(f'{name}: unknown callback {e}')
+    for k in ('files', 'stat'):
+        v = cb.get(k)
+        if v is not None and (not isinstance(v, dict) or not all(isinstance(t, str) for t in v.values())
+                              or not all(p.startswith('@ROOT@/') for p in v)):
+            raise ScenarioError(f'{name}: callbacks.{k} maps @ROOT@/ paths to strings')
+
+
 def validate(sc):
     """Raises ScenarioError on a scenario this harness cannot run hermetically or exactly."""
     name = sc.get('name', '?') if isinstance(sc, dict) else '?'
@@ -176,8 +215,13 @@ def validate(sc):
         _validate_fs(name, sc['fs'], disk)
     if disk is not None:
         _validate_disk(name, disk)
-    if not (sc.get('fs') or disk is not None):
-        raise ScenarioError(f'{name}: no filesystem (fs or disk)')
+    served = sc.get('callbacks') is not None and sc['callbacks'].get('files') is not None
+    if sc.get('callbacks') is not None:
+        _validate_callbacks(name, sc['callbacks'])
+        if served and disk is not None:
+            raise ScenarioError(f'{name}: a served tree and a disk fixture are two roots')
+    if not (sc.get('fs') or disk is not None or served):
+        raise ScenarioError(f'{name}: no filesystem (fs, disk or callbacks.files)')
     for r in sc.get('requests') or []:
         if r not in PER_PROJECT:
             raise ScenarioError(f'{name}: unknown request {r}')
@@ -192,12 +236,19 @@ def validate(sc):
             raise ScenarioError(f'{name}: unknown request in an update')
     build = sc.get('build') or []
     for step in build:
-        if not isinstance(step, dict) or len(step) != 1 or set(step) - set(BUILD_STEPS):
+        if not isinstance(step, dict) or len(step) != 1 or set(step) - set(BUILD_STEPS) - {'interleave'}:
             raise ScenarioError(f'{name}: bad build step {step}')
+        if 'interleave' in step:
+            il = step['interleave']
+            creates = sum('create' in s for s in build)
+            if (sc.get('callbacks') is None or not isinstance(il, dict) or set(il) != {'build', 'callback', 'then'}
+                    or not all(isinstance(il[k], list) and len(il[k]) == 2 and isinstance(il[k][0], int)
+                               and 0 <= il[k][0] < creates for k in ('build', 'then'))):
+                raise ScenarioError(f'{name}: an interleave is {{build: [i, project], callback, then: [j, project]}} with callbacks')
     if build and 'create' not in build[0]:
         raise ScenarioError(f'{name}: the build steps start with create')
-    if build and disk is None:
-        raise ScenarioError(f'{name}: the build orchestrator uses the host filesystem: give a disk fixture')
+    if build and disk is None and not served:
+        raise ScenarioError(f'{name}: the build orchestrator uses the host filesystem: give a disk fixture or a served tree')
     if sc.get('afterBuild') and not build:
         raise ScenarioError(f'{name}: afterBuild needs build steps')
 
@@ -207,6 +258,8 @@ def server_args(sc):
     args = ['--api', '--async', '--cwd', root]
     if 'caseSensitive' in sc:
         args.append(f'--useCaseSensitiveFileNames={"true" if sc["caseSensitive"] else "false"}')
+    if sc.get('callbacks') is not None:
+        args += ['--callbacks', ','.join(sc['callbacks']['enable'])]
     return args
 
 
@@ -268,14 +321,141 @@ def envelope_error(msg, request_id):
     return None
 
 
+class Callbacks:
+    """The client's side of Go's callbackFS (api/callbackfs.go): the answer to each file-system callback,
+    and the record of them. Every path under root is served from the tree (files, and what writeFile put
+    there): a file exists when the tree has it, a directory when it is root or holds a file. Every other
+    path (the bundled libs, the root's ancestors) is "useOS". stat gives FIXED_MTIME, or the scenario's
+    mtime for the path; a stat of a path outside the tree that the scenario names gets that mtime with the
+    disk's size and mode."""
+
+    def __init__(self, cb, root, sandbox_root=None):
+        self.root = root
+        self.tree = dict(expand(cb['files'], root)) if cb.get('files') is not None else None
+        self.stat = expand(cb.get('stat') or {}, root)
+        self.made = set()  # "<method> <path>" since the last take()
+        self.written = {}  # path: text, every writeFile into the tree
+        # () -> the server's root as a path of this process (/proc/<init>/root), or None: where the stat of a
+        # disk path in `stat` reads its mode and size. Never this process's own file system.
+        self.sandbox_root = sandbox_root
+        self.armed = None  # (callback "<method> <path>", action): an interleave step's trigger
+
+    def arm(self, made, action):
+        """Runs action (once) when the server makes the callback `made`, before it is answered."""
+        self.armed = (made, action)
+
+    def take(self):
+        made, self.made = sorted(self.made), set()
+        return made
+
+    def _served(self, path):
+        return self.tree is not None and (path == self.root or path.startswith(self.root + '/'))
+
+    def _is_dir(self, path):
+        prefix = path.rstrip('/') + '/'
+        return path == self.root or any(f.startswith(prefix) for f in self.tree)
+
+    def _entries(self, path):
+        prefix = path.rstrip('/') + '/'
+        files, dirs = set(), set()
+        for f in self.tree:
+            if f.startswith(prefix):
+                head, sep, _ = f[len(prefix):].partition('/')
+                (dirs if sep else files).add(head)
+        return {'files': sorted(files), 'directories': sorted(dirs)}
+
+    def _stat(self, path):
+        mtime = self.stat.get(path, CALLBACK_MTIME)
+        if self._served(path):
+            if path in self.tree:
+                return {'kind': 'value', 'value': {'mode': 0o100644, 'size': len(self.tree[path].encode()), 'mtime': mtime}}
+            if self._is_dir(path):
+                return {'kind': 'value', 'value': {'mode': 0o040755, 'size': 0, 'mtime': mtime}}
+            return {'kind': 'missing'}
+        if path in self.stat:
+            st = self.sandbox_stat(path)
+            if st is None:
+                return {'kind': 'missing'}
+            return {'kind': 'value', 'value': {'mode': st.st_mode, 'size': st.st_size, 'mtime': mtime}}
+        return {'kind': 'useOS'}
+
+    def sandbox_stat(self, path):
+        """os.stat of path as the server sees it, or None when it does not exist there. A Malformed
+        failure when the sandbox cannot be read (the answer never falls back to this process's view)."""
+        top = self.sandbox_root() if self.sandbox_root else None
+        if top is None:
+            raise Malformed(f'no sandbox root to stat {path} in')
+        try:
+            return os.stat(top + path)
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            raise Malformed(f'cannot stat {path} in the sandbox: {e}') from None
+
+    def mtimes(self):
+        """For each disk path of `stat`: its mtime in the sandbox now, as the scenario's time when it is one,
+        else "other" (a time the server set), or "missing"."""
+        if self.tree is not None or not self.stat:
+            return None
+        out = {}
+        for path in sorted(self.stat):
+            st = self.sandbox_stat(path)
+            if st is None:
+                out[path] = 'missing'
+                continue
+            named = {t for t in self.stat.values()
+                     if int(datetime.datetime.fromisoformat(t.replace('Z', '+00:00')).timestamp() * 10**9) == st.st_mtime_ns}
+            out[path] = min(named) if named else 'other'
+        return out
+
+    def answer(self, method, params):
+        """The result of one callback (the reader thread calls it for every server request)."""
+        path = params.get('path') if method == 'writeFile' and isinstance(params, dict) else params
+        if not isinstance(path, str):
+            raise Malformed(f'a {method} callback with params {json.dumps(params)[:120]}')
+        made = f'{method} {path}'
+        self.made.add(made)
+        if self.armed and self.armed[0] == made:
+            action, self.armed = self.armed[1], None
+            action()
+        if method == 'stat':
+            answer = self._stat(path)
+            if path in self.stat:  # the answer of a scripted stat is part of the record
+                self.made.add(f'stat {path} -> {json.dumps(answer, sort_keys=True)}')
+            return answer
+        if not self._served(path):
+            return {'kind': 'useOS'}
+        if method == 'readFile':
+            return {'kind': 'value', 'value': self.tree[path]} if path in self.tree else {'kind': 'missing'}
+        if method == 'fileExists':
+            return {'kind': 'value', 'value': path in self.tree}
+        if method == 'directoryExists':
+            return {'kind': 'value', 'value': self._is_dir(path)}
+        if method == 'getAccessibleEntries':
+            return {'kind': 'value', 'value': self._entries(path)}
+        if method == 'realpath':
+            return {'kind': 'identity'}
+        if method == 'writeFile':
+            self.tree[path] = self.written[path] = params.get('data')
+            return {'kind': 'value', 'value': None}
+        if method == 'removeFile':
+            self.tree.pop(path, None)
+            self.written[path] = None
+            return {'kind': 'value', 'value': None}
+        raise Malformed(f'an unknown callback {method!r}')
+
+
 class Rpc:
     """JSON-RPC over a server's stdio. A reader thread splits stdout into frames strictly: only a
     Content-Length header (and Content-Type), a blank line, then exactly that many bytes of JSON."""
 
-    def __init__(self, argv, env, pass_fds):
+    def __init__(self, argv, env, pass_fds, callbacks=None):
         self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                                   cwd='/', start_new_session=True, pass_fds=pass_fds)
         self.n = 0
+        self.callbacks = callbacks  # a Callbacks: the server's requests are answered (else malformed)
+        self.others = {}  # id: raw answer or None, the requests that `send` made (an interleave step)
+        self.wlock = threading.Lock()  # one frame at a time on stdin: a request, or a callback's answer
         self.frames, self.cond, self.eof, self.bad = [], threading.Condition(), False, None
         # EOF is a fact a read reports (b''), set by the readers themselves, never inferred from a thread
         # that ended: a reader that dies of an exception leaves its flag False and says why in self.bad.
@@ -338,8 +518,14 @@ class Rpc:
                     self.out_eof = True
                     break
                 msg = parse(body)
+                if self.callbacks is not None and isinstance(msg, dict) and 'method' in msg and 'id' in msg:
+                    self._answer(msg)
+                    continue
                 with self.cond:
-                    self.frames.append((body, msg))
+                    if isinstance(msg, dict) and msg.get('id') in self.others and 'method' not in msg:
+                        self.others[msg['id']] = (body, msg)
+                    else:
+                        self.frames.append((body, msg))
                     self.cond.notify_all()
         except Malformed as e:
             self._fail(str(e))
@@ -356,18 +542,54 @@ class Rpc:
             self.eof = True
             self.cond.notify_all()
 
+    def _send(self, msg):
+        body = json.dumps(msg).encode()
+        with self.wlock:
+            try:
+                self.p.stdin.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
+                self.p.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass  # the reader sees the end
+
+    def send(self, rid, method, params):
+        """Sends a request whose answer `other` takes (not `call`): an interleave step's second build."""
+        with self.cond:
+            self.others[rid] = None
+        self._send({'jsonrpc': '2.0', 'id': rid, 'method': method, 'params': params})
+
+    def other(self, rid):
+        """(raw answer of the request `send` made, failure or None)."""
+        deadline = time.monotonic() + REQUEST_TIMEOUT
+        with self.cond:
+            while True:
+                if self.others.get(rid) is not None:
+                    raw, got = self.others.pop(rid)
+                    why = envelope_error(got, rid)
+                    return raw, (('malformed', f'build: {why}') if why else None)
+                if self.bad:
+                    return None, ('malformed', f'build: {self.bad}')
+                if self.eof:
+                    return None, ('crash', 'build: the server closed its output before answering')
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None, ('timeout', f'build: no answer in {REQUEST_TIMEOUT} s')
+                self.cond.wait(left)
+
+    def _answer(self, msg):
+        """Answers a server request: a file-system callback (Callbacks.answer)."""
+        if set(msg) - {'jsonrpc', 'id', 'method', 'params'} or msg.get('jsonrpc') != '2.0':
+            raise Malformed(f'a server request {json.dumps(msg)[:120]}')
+        with self.cond:
+            result = self.callbacks.answer(msg['method'], msg.get('params'))
+        self._send({'jsonrpc': '2.0', 'id': msg['id'], 'result': result})
+
     def call(self, method, params):
         """(raw answer bytes, failure (kind, why) or None)."""
         self.n += 1
         msg = {'jsonrpc': '2.0', 'id': self.n, 'method': method}
         if params is not None:
             msg['params'] = params
-        body = json.dumps(msg).encode()
-        try:
-            self.p.stdin.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
-            self.p.stdin.flush()
-        except (BrokenPipeError, OSError):
-            pass  # the reader sees the end
+        self._send(msg)
         deadline = time.monotonic() + REQUEST_TIMEOUT
         with self.cond:
             while True:
@@ -449,6 +671,8 @@ class Session:
     def __init__(self, binary, sc, work, fixture):
         self.sc, self.work, self.root = sc, work, root_of(sc)
         self.steps, self.failure = [], None
+        self.callbacks = Callbacks(sc['callbacks'], self.root, self.sandbox_root) if sc.get('callbacks') is not None else None
+        self.init_pid = None
         _clear(work)
         work.mkdir(parents=True)
         argv, files = command(binary)
@@ -463,11 +687,25 @@ class Session:
         self.start = time.monotonic()
         try:
             self.rpc = Rpc(['/usr/bin/python3', '-I', str(INIT), 'launch', json.dumps(spec)],
-                           server_env(str(SANDBOX_HOME)), [report_w, c_r, l_w])
+                           server_env(str(SANDBOX_HOME)), [report_w, c_r, l_w], self.callbacks)
         finally:
             for fd in (report_w, c_r, l_w):
                 os.close(fd)
         self.listings = os.fdopen(self.listing_r, 'r')
+
+    def sandbox_root(self):
+        """/proc/<init>/root: the server's view of the file system (its mount namespace), as lspdiff's
+        sandbox.mjs reads it. The init is the one child of the launched unshare."""
+        if self.init_pid is None:
+            try:
+                pid = self.rpc.p.pid
+                kids = open(f'/proc/{pid}/task/{pid}/children').read().split()
+            except OSError:
+                return None
+            if not kids:
+                return None
+            self.init_pid = kids[0]
+        return f'/proc/{self.init_pid}/root'
 
     def list_storage(self):
         """The storage now, from the init (None when it no longer answers: the session has ended)."""
@@ -485,6 +723,12 @@ class Session:
         step = {'method': method, 'params': params}
         if raw is not None:
             step['answer'] = raw.decode('utf-8', 'surrogateescape')
+        if self.callbacks is not None:
+            with self.rpc.cond:
+                step['callbacks'] = self.callbacks.take()
+                mtimes = self.callbacks.mtimes()
+            if mtimes is not None:
+                step['mtimes'] = mtimes
         if fail:
             self.failure = fail
             step['failure'] = fail[1]
@@ -514,17 +758,48 @@ class Session:
                 sid, projects = _result(snap, 'snapshot'), _projects(snap)
                 self.per_project(sid, projects, sc.get('requests'))
         sid, projects = self.updates(sid, projects, sc.get('updates'))
-        orchestrator = None
+        orchestrator, orchestrators = None, []
         for step in sc.get('build') or []:
             (kind, arg), = step.items()
             if kind == 'create':
                 got = self.ask(BUILD_STEPS[kind], expand(arg, root))
                 orchestrator = _result(got, 'buildOrchestratorID') if got else None
+                orchestrators.append(orchestrator)
+            elif kind == 'interleave':
+                self.interleave(orchestrators, expand(arg, root))
             elif kind == 'dispose':
                 self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator})
             else:
                 self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator, **({'project': expand(arg, root)} if arg else {})})
         self.updates(sid, projects, sc.get('afterBuild'))
+
+    def interleave(self, orchestrators, arg):
+        """The interleave build step (see the top comment): one step with both answers."""
+        if self.failure:
+            return
+        (i, project), (j, then) = arg['build'], arg['then']
+        rid = 1_000_000 + len(self.steps)
+        second = {'buildOrchestratorID': orchestrators[j], 'project': then}
+        self.callbacks.arm(arg['callback'], lambda: self.rpc.send(rid, 'build', second))
+        raw, fail = self.rpc.call('build', {'buildOrchestratorID': orchestrators[i], 'project': project})
+        step = {'method': 'build', 'params': {'buildOrchestratorID': orchestrators[i], 'project': project}}
+        if raw is not None:
+            step['answer'] = raw.decode('utf-8', 'surrogateescape')
+        sent = rid in self.rpc.others
+        step['then'] = {'params': second, 'sent': sent}
+        if not fail and sent:
+            raw2, fail = self.rpc.other(rid)
+            if raw2 is not None:
+                step['then']['answer'] = raw2.decode('utf-8', 'surrogateescape')
+        with self.rpc.cond:
+            self.callbacks.armed = None
+            step['callbacks'] = self.callbacks.take()
+        if fail:
+            self.failure = fail
+            step['failure'] = fail[1]
+        else:
+            step['fs'] = self.list_storage()
+        self.steps.append(step)
 
     def updates(self, sid, projects, updates):
         """updateSnapshot for each update on the current snapshot, its requests per project, and the
@@ -580,12 +855,16 @@ class Session:
         final = api_listing(st) if st else {}
         texts = st.get('texts', {})
         _clear(self.work)
+        extra = {}
+        if self.callbacks is not None:
+            with self.rpc.cond:
+                extra = {'clientFiles': dict(sorted(self.callbacks.written.items())), 'callbacksAfter': self.callbacks.take()}
         import parity_grandfather  # the site form a grandfather entry pins (never part of a cached Go answer's key)
         return {'steps': self.steps, 'exit': code, 'forced': forced, 'survivors': rep.get('survivors', []), 'reaped': rep.get('reaped'),
                 'stderr': {'sha': hashlib.sha256(err).hexdigest()[:16], 'site': parity_grandfather.stderr_site_hash(err),
                            'bytes': len(err), 'crash': crash, 'tail': err[-600:].decode('utf-8', 'replace')},
                 'fs': final, 'writes': rep.get('writes', {}), 'writtenText': texts, 'failure': failure[0] if failure else None,
-                'why': failure[1] if failure else None, 'secs': round(time.monotonic() - self.start, 2)}
+                'why': failure[1] if failure else None, 'secs': round(time.monotonic() - self.start, 2), **extra}
 
 
 def run_session(binary, sc, work, fixture=None):

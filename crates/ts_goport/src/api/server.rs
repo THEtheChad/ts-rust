@@ -125,6 +125,10 @@ impl Handler for FreeAfterMessage {
         let _message = self.enter();
         self.inner.handle_notification(ctx, method, params)
     }
+
+    fn must_wait(&self, method: &str) -> bool {
+        self.inner.must_wait(method)
+    }
 }
 
 // Go `defer f()`: runs `f` when the guard leaves scope, on every return
@@ -277,6 +281,16 @@ impl StdioServer {
             } else {
                 ClientWrites::Serialized
             }));
+        }
+
+        // PORT: not in Go. The client answers the reads of the session file
+        // system (`Session::client_reads`): each callback but the writes, in
+        // any form (`<name>:error` panics where the read would call).
+        if self.options.callbacks.iter().any(|name| {
+            let name = name.split(':').next().unwrap_or_default();
+            !matches!(name, "writeFile" | "removeFile")
+        }) {
+            session.client_reads.set(true);
         }
 
         // ts#64276

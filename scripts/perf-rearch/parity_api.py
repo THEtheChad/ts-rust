@@ -300,11 +300,12 @@ def answers(t):
     sort_changed_projects), and how the session ended."""
     steps = []
     for s in t['steps']:
-        step = {k: s[k] for k in ('method', 'params', 'answer', 'failure') if k in s}
+        step = {k: s[k] for k in ('method', 'params', 'answer', 'failure', 'callbacks', 'mtimes', 'then') if k in s}
         if isinstance(step.get('answer'), str):
             step['answer'] = sort_changed_projects(step['answer'])
         steps.append(step)
-    return {'steps': steps,
+    client = {k: t[k] for k in ('clientFiles', 'callbacksAfter') if k in t}  # a callback scenario's client side
+    return {'steps': steps, **client,
             'exit': t['exit'], 'forced': t['forced'], 'survivors': t['survivors'], 'reaped': t.get('reaped'), 'failure': t['failure']}
 
 

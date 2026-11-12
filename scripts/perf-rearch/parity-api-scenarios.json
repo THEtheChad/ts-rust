@@ -1622,6 +1622,376 @@
      "build": ""
     }
    ]
+  },
+  {
+   "name": "worker-fs-index-sibling",
+   "about": "B8: declaration emit names Foo of src/lib/index.ts; src/lib.ts exists only in the request filesystem, so the module specifier keeps /index (Go modulespecifiers/util.go:184 tryGetAnyFileFromPath asks the program host, not the disk)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/src/lib.ts": "export const sibling = 0;\n",
+     "@ROOT@/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/reexport.ts",
+      "@ROOT@/src/lib/index.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-index-nosibling",
+   "about": "B8 control for worker-fs-index-sibling: no src/lib.ts, so the module specifier drops /index",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/reexport.ts",
+      "@ROOT@/src/lib/index.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-import-ext",
+   "about": "B8: node16 extensionless import of ./foo with noEmitOnError; src/foo.mts exists only in the request filesystem, so the emit diagnostics say TS2835 \"Did you mean ./foo.mjs\" (Go checker.go:15860 getSuggestedImportExtension asks the program host)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/main.mts": "import { x } from \"./foo\";\nexport const y = x;\n",
+     "@ROOT@/src/foo.mts": "export const x = 1;\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.mts",
+      "@ROOT@/src/foo.mts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "module": 100,
+      "moduleResolution": 3,
+      "noEmitOnError": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "worker-fs-pkgjson",
+   "about": "B8: declaration emit names Thing of node_modules/pkg; its package.json (types) exists only in the request filesystem, so the module specifier is \"pkg\" (Go GetPackageJsonInfo reads the program host)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"types\":\"dist/index.d.ts\"}\n",
+     "@ROOT@/node_modules/pkg/dist/index.d.ts": "export interface Thing { a: number }\nexport declare function make(): Thing;\n",
+     "@ROOT@/src/re.ts": "export { make } from \"pkg\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./re\";\nexport const v = make();\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/src/main.ts",
+      "@ROOT@/src/re.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "outDir": "@ROOT@/out",
+      "declaration": true,
+      "module": 1,
+      "moduleResolution": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "callback-build-index-sibling",
+   "about": "B8 round 2: a build over a client file system (--callbacks; the client serves the tree, nothing on disk). src/lib.ts exists only in the tree, so the module specifier of Foo keeps /index: the checker threads ask the client through the loading thread (Go modulespecifiers/util.go:184 tryGetAnyFileFromPath asks the program host)",
+   "callbacks": {
+    "enable": [
+     "readFile",
+     "fileExists",
+     "directoryExists",
+     "getAccessibleEntries",
+     "realpath",
+     "stat",
+     "writeFile"
+    ],
+    "files": {
+     "@ROOT@/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/reexport.ts\",\"src/lib/index.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/src/lib.ts": "export const sibling = 0;\n",
+     "@ROOT@/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "callback-build-import-ext",
+   "about": "B8 round 2: the build over a client file system; the node16 extensionless import of ./foo gives TS2835 \"Did you mean ./foo.mjs\" (Go checker.go:15860 getSuggestedImportExtension asks the program host, the client)",
+   "callbacks": {
+    "enable": [
+     "readFile",
+     "fileExists",
+     "directoryExists",
+     "getAccessibleEntries",
+     "realpath",
+     "stat",
+     "writeFile"
+    ],
+    "files": {
+     "@ROOT@/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"node16\",\"moduleResolution\":\"node16\"},\"files\":[\"src/main.mts\",\"src/foo.mts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/src/main.mts": "import { x } from \"./foo\";\nexport const y = x;\n",
+     "@ROOT@/src/foo.mts": "export const x = 1;\n"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "callback-build-pkgjson",
+   "about": "B8 round 2: the build over a client file system; the package.json of node_modules/pkg (types) exists only in the tree, so the module specifier is \"pkg\" (Go GetPackageJsonInfo reads the program host)",
+   "callbacks": {
+    "enable": [
+     "readFile",
+     "fileExists",
+     "directoryExists",
+     "getAccessibleEntries",
+     "realpath",
+     "stat",
+     "writeFile"
+    ],
+    "files": {
+     "@ROOT@/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/re.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"types\":\"dist/index.d.ts\"}\n",
+     "@ROOT@/node_modules/pkg/dist/index.d.ts": "export interface Thing { a: number }\nexport declare function make(): Thing;\n",
+     "@ROOT@/src/re.ts": "export { make } from \"pkg\";\n",
+     "@ROOT@/src/main.ts": "import { make } from \"./re\";\nexport const v = make();\n"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "callback-build-dts-mtime",
+   "about": "B8 round 2 (Astra B8 finding 2): a composite build on a disk fixture, then again with declarationMap and build: the d.ts differs only in its map, so the build reverts its time with the host (Go incremental/emitfileshandler.go:231, build host GetMTime): a stat callback of out/a.d.ts, which the client answers with 2030",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\":{\"composite\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"noLib\":true},\"files\":[\"src/a.ts\",\"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/g.d.ts": "@GLOBALS@"
+   },
+   "callbacks": {
+    "enable": [
+     "stat"
+    ],
+    "stat": {
+     "@ROOT@/out/a.d.ts": "2030-01-01T00:00:00Z"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "declarationMap": true,
+       "build": true
+      }
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "callback-build-dts-mtime-nobuild",
+   "about": "B8 round 2 control for callback-build-dts-mtime: without the build option the d.ts write keeps its time (no differsOnlyInMap), and no stat callback for it; also no port-only lookup of the output areas (Orchestrator::outputs_overlap)",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\":{\"composite\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"noLib\":true},\"files\":[\"src/a.ts\",\"src/g.d.ts\"]}",
+    "src/a.ts": "export const a: number = 1;\n",
+    "src/g.d.ts": "@GLOBALS@"
+   },
+   "callbacks": {
+    "enable": [
+     "stat"
+    ],
+    "stat": {
+     "@ROOT@/out/a.d.ts": "2030-01-01T00:00:00Z"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ]
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    },
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "declarationMap": true
+      }
+     }
+    },
+    {
+     "build": "@ROOT@/tsconfig.json"
+    }
+   ]
+  },
+  {
+   "name": "callback-build-interleave",
+   "about": "B8 round 3 (Astra B8 r2 finding 1): two single-threaded build orchestrators over a client file system; while the first build waits for the client to answer a checker probe (fileExists a/src/lib.ts), the client sends the second build, then the answer. Go runs the second build after the first (buildMu, api/session.go:1891) and keeps handling responses (ipc/conn_async.go:96)",
+   "callbacks": {
+    "enable": [
+     "readFile",
+     "fileExists",
+     "directoryExists",
+     "getAccessibleEntries",
+     "realpath",
+     "stat",
+     "writeFile"
+    ],
+    "files": {
+     "@ROOT@/a/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/reexport.ts\",\"src/lib/index.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/a/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/a/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/a/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/a/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n",
+     "@ROOT@/b/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/reexport.ts\",\"src/lib/index.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/b/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/b/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/b/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/b/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n",
+     "@ROOT@/a/src/lib.ts": "export const sibling = 0;\n"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/a/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "singleThreaded": true
+      }
+     }
+    },
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/b/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "singleThreaded": true
+      }
+     }
+    },
+    {
+     "interleave": {
+      "build": [
+       0,
+       "@ROOT@/a/tsconfig.json"
+      ],
+      "callback": "fileExists @ROOT@/a/src/lib.ts",
+      "then": [
+       1,
+       "@ROOT@/b/tsconfig.json"
+      ]
+     }
+    }
+   ]
   }
  ]
 }
