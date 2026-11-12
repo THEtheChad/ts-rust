@@ -142,7 +142,7 @@ child_test! {
         let (project_session, _) = projecttestutil::setup(files(&[]));
         let session = api::new_lsp_session(project_session.clone(), None);
 
-        const MAX_RESPONSE_BYTES_PER_PAGE: i32 = 150;
+        const MAX_RESPONSE_BYTES_PER_PAGE: i64 = 150;
         let requests: Vec<BatchRequest> = (0..10).map(|_| batch_request("ping", "")).collect();
 
         let mut response = nil_error(session.handle_batch_requests(
@@ -283,6 +283,39 @@ child_test! {
         assert!(response.responses[0]
             .error
             .contains("batchRequests cannot be nested"));
+        session.close();
+        project_session.close();
+    }
+}
+
+// PORT: no Go test (audit A1). Go `maxResponseBytesPerPage` is a Go `int`
+// (api/proto.go:862), 64 bits on amd64: a cap of 2^32 or 2^53-1 decodes and
+// the whole batch fits one page (session.go:1285-1296). An `int32` field
+// failed the decode of the whole request.
+child_test! {
+    fn handle_batch_requests_page_cap_is_a_go_int() {
+        let (project_session, _) = projecttestutil::setup(files(&[]));
+        let session = api::new_lsp_session(project_session.clone(), None);
+
+        for cap in [4_294_967_296_i64, 9_007_199_254_740_991] {
+            let mut params = BatchRequestsParams::default();
+            json_unmarshal(
+                format!(
+                    r#"{{"requests":[{{"method":"ping"}},{{"method":"ping"}}],"maxResponseBytesPerPage":{cap}}}"#
+                )
+                .as_bytes(),
+                &mut params,
+                &[],
+            )
+            .unwrap_or_else(|err| panic!("unmarshal {cap}: {err:?}"));
+            assert_eq!(params.max_response_bytes_per_page, cap);
+            let response = nil_error(session.handle_batch_requests(&bg(), &params));
+            assert_eq!(response.responses.len(), 2);
+            assert_eq!(response.continuation_token, "");
+            for response in &response.responses {
+                assert_eq!(result_string(response), Some("pong"));
+            }
+        }
         session.close();
         project_session.close();
     }

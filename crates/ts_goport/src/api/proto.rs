@@ -2764,7 +2764,8 @@ pub struct BatchRequestsParams {
     pub requests: Vec<BatchRequest>,
     // ts#64061
     pub continuation_token: String,
-    pub max_response_bytes_per_page: i32,
+    // Go `int`
+    pub max_response_bytes_per_page: i64,
 }
 
 proto_json!(both BatchRequestsParams {

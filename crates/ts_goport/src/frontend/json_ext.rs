@@ -975,6 +975,15 @@ impl UnmarshalerFrom for i32 {
     }
 }
 
+// Go: arshal_default.go:492 makeIntArshaler (unmarshal), for Go `int`
+// (64 bits on amd64)
+impl UnmarshalerFrom for i64 {
+    fn unmarshal_json_from(&mut self, dec: &mut JsonDecoder<'_>) -> Result<(), JsonError> {
+        *self = unmarshal_int(dec, 64, "int")?;
+        Ok(())
+    }
+}
+
 // Go: arshal_default.go:591 makeUintArshaler (unmarshal)
 impl UnmarshalerFrom for u32 {
     fn unmarshal_json_from(&mut self, dec: &mut JsonDecoder<'_>) -> Result<(), JsonError> {
