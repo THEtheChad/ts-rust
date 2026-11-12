@@ -2304,3 +2304,23 @@ once a **reconciliation step** is built and tested.
     requests, and runs in the full tier only. A possible later trim: a
     shorter settle for steps with no ATA or watch.
 - **B9 next:** the A1 audit fixes (B6's helper is now merged).
+- **B8 round 2 done** (head `8d2816119`).
+  - **A callback mode in the api harness:** files are served by the client,
+    and the callback set is compared. All api keys changed and were
+    refilled. B8 SELFTEST OK.
+  - **5 callback-build items DIFF before and MATCH after:** index sibling,
+    import-ext, pkgjson, d.ts mtime, and a control. Go and tsc-rs are each
+    stable over 4 runs.
+  - **The fixes:**
+    - `program/host_queries.rs`: worker misses and package.json lookups go
+      to the loading thread for `client_reads` programs, and every wait
+      answers queries;
+    - the d.ts mtime revert goes through the host in the API flush;
+    - `outputs_overlap` (port-only) makes no lookups when the client reads
+      files. This was a third difference: it made stat/realpath callbacks
+      Go never makes.
+    - 184 stale API `// Go:` lines are fixed in a mechanical commit.
+  - **Gate:** `runs/b8-8d2816119-full` PARITY OK, api 62 MATCH;
+    single-threaded icount flat.
+  - **Astra recheck** running (round 2 of 3), focused on deadlock and
+    starvation and on whether `outputs_overlap` should go for OS hosts too.
