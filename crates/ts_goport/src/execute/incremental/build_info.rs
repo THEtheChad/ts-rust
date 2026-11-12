@@ -1823,6 +1823,13 @@ impl BuildInfo {
             } else if root.end.0 == 0 {
                 add_root(self.file_name(root.start), self.file_info(root.start));
             } else {
+                // PORT: Go `for i := root.Start; i <= root.End; i++`
+                // (buildInfo.go:655) wraps past `math.MaxInt64` and never
+                // ends for `[[MaxInt64, MaxInt64]]` (a corrupt
+                // `.tsbuildinfo`). The inclusive range stops after the last
+                // id, so tsc-rs reads that range as one unknown id and
+                // builds: a Go hang where tsc-rs answers is GO-BROKEN under
+                // the brief's "Better than Go" rule, not a hang to copy.
                 for i in root.start.0..=root.end.0 {
                     let i = BuildInfoFileId(i);
                     add_root(self.file_name(i), self.file_info(i));
@@ -1990,6 +1997,41 @@ mod tests {
                 "{signature}"
             );
         }
+    }
+
+    // Lane B9 (Astra round 1): Go's root loop never ends for a range that
+    // ends at `math.MaxInt64`; tsc-rs reads it as one id past the file
+    // names, which adds no root, and returns (see the PORT note at the loop).
+    #[test]
+    fn root_range_at_max_int64_terminates() {
+        let data = format!(
+            r#"{{"version":"v","root":[[{max},{max}],[1,1]],"fileNames":["./a.ts"],"fileInfos":["h"]}}"#,
+            max = i64::MAX
+        );
+        let mut info = BuildInfo::default();
+        json_unmarshal(data.as_bytes(), &mut info, &[]).unwrap();
+        assert_eq!(
+            (
+                info.root.as_ref().unwrap()[0].start,
+                info.root.as_ref().unwrap()[0].end
+            ),
+            (BuildInfoFileId(i64::MAX), BuildInfoFileId(i64::MAX))
+        );
+        let reader = info.get_build_info_root_info_reader(
+            "/p",
+            &ComparePathsOptions {
+                use_case_sensitive_file_names: true,
+                current_directory: "/p".to_string(),
+            },
+        );
+        assert_eq!(
+            reader
+                .root_to_resolved
+                .keys()
+                .map(|p| p.0.as_str())
+                .collect::<Vec<_>>(),
+            ["/p/a.ts"]
+        );
     }
 
     // Lane B9 (audit A5): Go `int32` fields (`code`, `category`,
