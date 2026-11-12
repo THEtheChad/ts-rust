@@ -65,7 +65,15 @@ GO_DIRS = ("internal", "cmd")
 GOROOT_SRC = Path(os.environ.get("PERF_QUALITY_GOROOT_SRC", Path.home() / ".local/go/src"))
 XTEXT_ROOT = Path(os.environ.get("PERF_QUALITY_XTEXT", Path.home() / "go/pkg/mod/golang.org/x/text@v0.42.0"))
 EXT_SKIP_DIRS = {"cmd", "vendor", "testdata"}
-EXT_TREES = (("std", "GOROOT src", GOROOT_SRC), ("x/text", "golang.org/x/text", XTEXT_ROOT))
+XSYS_ROOT = Path(os.environ.get("PERF_QUALITY_XSYS", Path.home() / "go/pkg/mod/golang.org/x/sys@v0.48.0"))
+XSYNC_ROOT = Path(os.environ.get("PERF_QUALITY_XSYNC", Path.home() / "go/pkg/mod/golang.org/x/sync@v0.23.0"))
+# x/text, x/sys and x/sync at the versions the pin's go.mod selects.
+EXT_TREES = (
+    ("std", "GOROOT src", GOROOT_SRC),
+    ("x/text", "golang.org/x/text", XTEXT_ROOT),
+    ("x/sys", "golang.org/x/sys", XSYS_ROOT),
+    ("x/sync", "golang.org/x/sync", XSYNC_ROOT),
+)
 EXT_NO_LOOKUP = ("effect/",)  # Effect's markers name its Go plugin, which is not on disk
 SRC = "crates/ts_goport/src/"
 OWN_LIMIT = 25

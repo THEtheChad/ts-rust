@@ -2383,3 +2383,21 @@ once a **reconciliation step** is built and tested.
     so it's GO-BROKEN under "Better than Go": a PORT note plus a test, not
     a reproduced hang. B3 is closed (nil both ways at the pin).
   - **Round 2 also** takes A4's index and the api `{method, params}` form.
+- **F6 done; merged.** Root reviewed it without Astra: there is no
+  behaviour change, the gate is OK, and the targets stay on the raw Δ.
+  - **Unresolved markers:** 2,092 → 1,168, of which 1,093 are Effect's,
+    whose Go isn't on disk. (b) 51 → 3 and (d) 30 → 0, the rest in B9's
+    files; (e) 12 → 0; (a) 177 → 35.
+  - **7 dead pre-pin functions removed,** each with no caller.
+  - **gorel:** scores fields and vars; scores stdlib (go1.27.1) and x/text
+    v0.42.0 ports as ported (683 rows, so own code over 25 goes 23 → 0);
+    shows a "Δ less residue" column (residue = Σ (clauses − 1) over Go's
+    tagless switches).
+    - Δ ≥ 10: 10 rows; 4 stay ≥ 10 less residue:
+      `create_late_bound_index_signatures` 13, `subtree_facts_of_data` 13,
+      `update_indexes` 10, `json_check_nesting_depth` 11 (new, now scored
+      against std `jsontext`).
+  - **Gate:** `runs/f6-33747d7b9-full` PARITY OK, with the lib blobs
+    rewritten for a key-file comment; icount flat.
+  - **Root adds x/sys v0.48.0 and x/sync v0.23.0** (the pin's go.mod
+    versions, both on disk) to gorel's trees.
