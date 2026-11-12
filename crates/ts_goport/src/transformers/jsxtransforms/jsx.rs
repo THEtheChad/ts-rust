@@ -1006,7 +1006,7 @@ impl JsxTransformer {
         self.create_jsx_pseudo_factory_expression(parent, e, "Fragment")
     }
 
-    /// Go: the children loop and the `StartOnNewLine` loop that
+    /// The children loop and the `StartOnNewLine` loop that Go's
     /// `visitJsxOpeningLikeElementCreateElement` and
     /// `visitJsxOpeningFragmentCreateElement` both write inline.
     fn transform_create_element_children(&mut self, children: NodeList) -> Vec<Node> {

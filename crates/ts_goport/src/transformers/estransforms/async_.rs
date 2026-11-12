@@ -786,7 +786,8 @@ impl AsyncTransformer {
         s.super_index_binding = saved.4;
     }
 
-    /// Go: reset the `superAccessState` fields for a new method body.
+    /// Resets the `superAccessState` fields for a new method body, as Go's
+    /// `transformMethodBody` and `transformAsyncFunctionBody` do inline.
     fn reset_super_access(&mut self) {
         let f = self.emit_context.factory();
         let super_binding = f.new_unique_name_ex("_super", optimistic_file_level());

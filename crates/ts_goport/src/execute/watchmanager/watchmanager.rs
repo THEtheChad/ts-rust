@@ -757,8 +757,9 @@ pub fn new_dir_watch_set(opts: tspath::ComparePathsOptions) -> DirWatchSet {
 }
 
 impl DirWatchSet {
-    // Go: watchmanager.go:309 DirWatchSet.canonical (at 673a5f17d713;
-    // ts#64159 uses CaseSensitivity.PathKey, watchmanager.go:339 in Set)
+    // PORT: not in Go at the pin. ts#64159 removed `DirWatchSet.canonical`
+    // (watchmanager.go at 673a5f17d713); `Set` and `Covered` now call
+    // `caseSensitivity.PathKey` (`path_key`) inline.
     fn canonical(&self, dir: &str) -> String {
         path_key(dir, self.opts.use_case_sensitive_file_names)
     }

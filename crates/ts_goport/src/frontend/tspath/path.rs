@@ -129,7 +129,8 @@ pub fn is_rooted_disk_path(path: &str) -> bool {
     get_encoded_root_length(path) > 0
 }
 
-// Go: tspath/path.go:43 IsDiskPathRoot (at 673a5f17d713; removed by ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed `IsDiskPathRoot`
+// (tspath/path.go at 673a5f17d713); the port's string paths still use it.
 // Determines whether a path consists only of a path root.
 pub fn is_disk_path_root(path: &str) -> bool {
     let root_length = get_encoded_root_length(path);
@@ -614,8 +615,9 @@ fn get_normalized_path_components_from_combined(path: &str) -> Vec<String> {
     components
 }
 
-// Go: tspath/path.go:388 GetNormalizedAbsolutePathWithoutRoot (at 673a5f17d713;
-// removed by ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed
+// `GetNormalizedAbsolutePathWithoutRoot` (tspath/path.go at 673a5f17d713); the
+// port's string paths still use it.
 pub fn get_normalized_absolute_path_without_root(
     file_name: &str,
     current_directory: &str,
@@ -989,8 +991,9 @@ pub fn path_key(path: &str, use_case_sensitive_file_names: bool) -> String {
     get_canonical_file_name(path, use_case_sensitive_file_names)
 }
 
-// Go: tspath/path.go:612 GetCanonicalFileName (at 673a5f17d713;
-// ts#64159 makes it CaseSensitivity.PathKey, tspath/pathkey.go:43)
+// Go: tspath/path.go:1019 CaseSensitivity.Canonicalize (ts#64159 made
+// GetCanonicalFileName this method; the port keeps that name and the bool.
+// `path_key` is CaseSensitivity.PathKey)
 pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: bool) -> String {
     if use_case_sensitive_file_names {
         return file_name.to_string();
@@ -998,8 +1001,8 @@ pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: b
     to_file_name_lower_case(file_name)
 }
 
-// Go: tspath/path.go:629 TrimFilePathPrefix (at 673a5f17d713, tsgo#4900; ts#64159
-// makes it CaseSensitivity.TrimPrefix, tspath/path.go:1031)
+// Go: tspath/path.go:1031 CaseSensitivity.TrimPrefix (tsgo#4900; ts#64159 made
+// TrimFilePathPrefix this method; the port keeps that name and the bool)
 // TrimFilePathPrefix removes prefix from the start of path, honoring
 // useCaseSensitiveFileNames the same way GetCanonicalFileName does. It returns
 // the remainder of path if path starts with prefix.
@@ -1126,8 +1129,9 @@ impl Path {
     }
 }
 
-// Go: tspath/path.go:723 ToPath (at 673a5f17d713;
-// ts#64159 makes it CaseSensitivity.PathKey, tspath/pathkey.go:43)
+// PORT: not in Go at the pin. ts#64159 removed `ToPath` (tspath/path.go at
+// 673a5f17d713): Go N' makes a name rooted first and then keys it with
+// `CaseSensitivity.PathKey` (`path_key`). This does both for a string name.
 // ts#64544: an encoded dynamic file name keeps its case (see
 // `canonical_dynamic_uri_path`).
 pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: bool) -> Path {
@@ -1184,7 +1188,8 @@ impl Path {
     }
 }
 
-// Go: tspath/path.go:744 RemoveTrailingDirectorySeparators (at 673a5f17d713; removed by ts#64159)
+// Go: tspath/path.go:721 removeTrailingDirectorySeparators (ts#64159
+// unexported RemoveTrailingDirectorySeparators)
 pub fn remove_trailing_directory_separators(path: &str) -> &str {
     let mut path = path;
     while has_trailing_directory_separator(path) {

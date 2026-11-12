@@ -723,14 +723,14 @@ pub struct NonLocalDefinition<'l> {
 }
 
 impl HasTextDocumentURI for NonLocalDefinition<'_> {
-    // Go: promoted from the embedded `position`.
+    // PORT: Go promotes this method from the embedded `position`.
     fn text_document_uri(&self) -> lsproto::DocumentUri {
         self.position.text_document_uri()
     }
 }
 
 impl HasTextDocumentPosition for NonLocalDefinition<'_> {
-    // Go: promoted from the embedded `position`.
+    // PORT: Go promotes this method from the embedded `position`.
     fn text_document_position(&self) -> lsproto::Position {
         self.position.text_document_position()
     }

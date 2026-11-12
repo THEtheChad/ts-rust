@@ -89,7 +89,8 @@ impl LanguageService {
 }
 
 impl<P: ProgramView> LanguageService<P> {
-    // Go: ls/languageservice.go:41 toPath (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed `(*LanguageService).toPath`
+    // (languageservice.go at 673a5f17d713).
     pub fn to_path(&self, file_name: &str) -> tspath::Path {
         tspath::to_path(
             file_name,
@@ -164,7 +165,9 @@ impl<P: ProgramView> LanguageService<P> {
         self.host.read_file(file_name)
     }
 
-    // Go: ls/languageservice.go:85 UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 renames it CaseSensitivity, ls/languageservice.go:82)
+    // Go: ls/languageservice.go:82 (*LanguageService).CaseSensitivity (ts#64159
+    // renamed UseCaseSensitiveFileNames; the port keeps that name and returns
+    // the bool)
     pub fn use_case_sensitive_file_names(&self) -> bool {
         self.host.use_case_sensitive_file_names()
     }

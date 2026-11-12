@@ -1079,7 +1079,7 @@ pub trait WatcherImpl: Send + Sync {
     fn subscribe(&self, w: &Arc<DirWatch>) -> Result<(), GoError>;
     fn close_watch(&self, w: &Arc<DirWatch>) -> Result<(), GoError>;
 
-    /// Go: the optional `subscribeMany` method that `watchAddMany` looks
+    /// The optional `subscribeMany` method that Go's `watchAddMany` looks
     /// for (only the FSEvents backend has it). `None`: the backend has none.
     fn subscribe_many(&self, _watches: &[Arc<DirWatch>]) -> Option<Result<(), GoError>> {
         None

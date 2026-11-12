@@ -593,8 +593,9 @@ impl Watcher {
         self.wm.borrow().reconcile_watches(&desired_dirs)
     }
 
-    // Go: execute/watcher.go:271 (*Watcher).comparePathsOptions (at 673a5f17d713; ts#64159
-    // makes it caseSensitivity, execute/watcher.go:287)
+    // Go: execute/watcher.go:287 (*Watcher).caseSensitivity (ts#64159 replaced
+    // comparePathsOptions; the port keeps that name and also returns the
+    // current directory, which its callers resolve names against)
     pub fn compare_paths_options(&self) -> ComparePathsOptions {
         ComparePathsOptions {
             use_case_sensitive_file_names: self.sys.fs().use_case_sensitive_file_names(),

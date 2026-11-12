@@ -139,7 +139,8 @@ pub fn is_wrapped_os_fs(fs: &Rc<dyn Fs>) -> bool {
 }
 
 impl Fs for WrappedFs {
-    // Go: embed.go:45 UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, bundled/embed.go:46)
+    // Go: bundled/embed.go:46 (*wrappedFS).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; the port keeps that name and returns the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         self.fs.use_case_sensitive_file_names()
     }

@@ -193,8 +193,8 @@ impl AliasResolver {
         }
     }
 
-    // Go: ls/autoimport/aliasresolver.go:70 GetCurrentDirectory (at 673a5f17d713;
-    // ts#64159 renames it BaseDirectory, aliasresolver.go:69)
+    // Go: ls/autoimport/aliasresolver.go:69 (*aliasResolver).BaseDirectory
+    // (ts#64159 renamed GetCurrentDirectory; the port keeps that name)
     // GetCurrentDirectory implements checker.Program.
     // PORT: Go N' returns `moduleResolver.BaseDirectory()`, the current
     // directory of the registry builder's resolution host
@@ -204,8 +204,9 @@ impl AliasResolver {
         self.host.get_current_directory().to_string()
     }
 
-    // Go: ls/autoimport/aliasresolver.go:75 UseCaseSensitiveFileNames (at
-    // 673a5f17d713; ts#64159 renames it CaseSensitivity, aliasresolver.go:74)
+    // Go: ls/autoimport/aliasresolver.go:74 (*aliasResolver).CaseSensitivity
+    // (ts#64159 renamed UseCaseSensitiveFileNames; the port keeps that name
+    // and returns the bool)
     // UseCaseSensitiveFileNames implements checker.Program.
     pub fn use_case_sensitive_file_names(&self) -> bool {
         self.host.fs().use_case_sensitive_file_names()

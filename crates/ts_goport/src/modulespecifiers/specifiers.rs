@@ -321,8 +321,8 @@ fn contains_ignored_path(s: &str) -> bool {
     s.contains("/node_modules/.") || s.contains("/.git") || s.contains(".#")
 }
 
-// Go: modulespecifiers/specifiers.go:259 ContainsNodeModules (at 673a5f17d713;
-// ts#64159 renames it moduleSpecifierContainsNodeModules, modulespecifiers/specifiers.go:256)
+// Go: modulespecifiers/specifiers.go:256 moduleSpecifierContainsNodeModules
+// (ts#64159 renamed ContainsNodeModules; the port keeps that name)
 /// Checks if a path contains the node_modules directory.
 pub fn contains_node_modules(s: &str) -> bool {
     s.contains("/node_modules/")

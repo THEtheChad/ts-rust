@@ -847,7 +847,8 @@ fn is_package_folder(name: &str) -> bool {
     }
 }
 
-// Go: vfs/vfsmatch/vfsmatch.go:504 ensureTrailingSlash (at 673a5f17d713; removed by ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed `ensureTrailingSlash`
+// (vfsmatch.go at 673a5f17d713); the port's string paths still use it.
 fn ensure_trailing_slash(s: &str) -> String {
     if !s.is_empty() && !s.ends_with('/') {
         return format!("{s}/");
@@ -1133,8 +1134,8 @@ impl GlobVisitor<'_> {
     }
 }
 
-// Go: vfs/vfsmatch/vfsmatch.go:647 matchFiles (at 673a5f17d713;
-// ts#64159 renames it matchFileNames, vfs/vfsmatch/vfsmatch.go:649)
+// Go: vfs/vfsmatch/vfsmatch.go:649 matchFileNames (ts#64159 renamed
+// matchFiles; the port keeps that name)
 #[allow(clippy::too_many_arguments)]
 fn match_files(
     path: &str,

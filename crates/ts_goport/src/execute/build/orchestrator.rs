@@ -218,8 +218,9 @@ impl Orchestrator {
         convert_to_relative_path(file_name, &self.compare_paths_options)
     }
 
-    // Go: build/orchestrator.go:97 (*Orchestrator).toPath (at 673a5f17d713; removed by
-    // ts#64159: Go N' calls caseSensitivity.PathKey)
+    // PORT: not in Go at the pin. ts#64159 removed `(*Orchestrator).toPath`
+    // (build/orchestrator.go at 673a5f17d713); Go N' calls
+    // `caseSensitivity.PathKey`.
     pub fn to_path(&self, file_name: &str) -> Path {
         to_path(
             file_name,

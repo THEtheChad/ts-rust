@@ -53,8 +53,10 @@ pub struct FsWatchBackend {
 }
 
 impl WatchBackend for FsWatchBackend {
-    // Go: watchbackend.go:32 FSWatchBackend.WatchDirectory (at 673a5f17d713; removed by
-    // ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `FSWatchBackend.WatchDirectory` (watchbackend.go at 673a5f17d713); the
+    // port's `WatchBackend` trait keeps the one-directory call, which this
+    // makes through `watch_directories`.
     fn watch_directory(
         &self,
         dir: &str,

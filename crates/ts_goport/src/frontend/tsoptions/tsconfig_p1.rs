@@ -1259,8 +1259,9 @@ pub fn convert_array_literal_expression_to_json(
     (CompilerOptionsValue::List(value), errors)
 }
 
-// Go: tsoptions/tsconfigparsing.go:694 directoryOfCombinedPath (at 673a5f17d713;
-// removed by ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed `directoryOfCombinedPath`
+// (tsconfigparsing.go at 673a5f17d713), whose callers now take the directory
+// of a rooted path; the port's paths are strings, so it keeps the helper.
 pub fn directory_of_combined_path(file_name: &str, base_path: &str) -> String {
     // Use the `getNormalizedAbsolutePath` function to avoid canonicalizing the path, as it must remain noncanonical
     // until consistent casing errors are reported

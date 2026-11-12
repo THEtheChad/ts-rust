@@ -828,7 +828,9 @@ impl CompilerHost for BuildHost {
         self.host.default_library_path()
     }
 
-    // Go: build/host.go:46 (*host).GetCurrentDirectory (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed `(*host).GetCurrentDirectory`
+    // (build/host.go at 673a5f17d713); the port's `CompilerHost` trait keeps
+    // the method.
     fn get_current_directory(&self) -> String {
         self.host.get_current_directory()
     }
@@ -1064,8 +1066,9 @@ impl CompilerHost for BuildCompilerHost {
         self.host.default_library_path()
     }
 
-    // Go: build/compilerHost.go:29 (*compilerHost).GetCurrentDirectory (at 673a5f17d713;
-    // removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `(*compilerHost).GetCurrentDirectory` (build/compilerHost.go at
+    // 673a5f17d713); the port's `CompilerHost` trait keeps the method.
     fn get_current_directory(&self) -> String {
         CompilerHost::get_current_directory(&*self.host)
     }

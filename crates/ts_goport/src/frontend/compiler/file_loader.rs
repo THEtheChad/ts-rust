@@ -177,7 +177,8 @@ impl RedirectsFile {
         self.file_name.clone()
     }
 
-    // Go: fileloader.go:109 (*redirectsFile).Path (at 673a5f17d713; ts#64159 renames it PathKey, compiler/fileloader.go:113)
+    // Go: compiler/fileloader.go:113 (*redirectsFile).PathKey (ts#64159 renamed
+    // Path; the port keeps that name)
     pub fn path(&self) -> Path {
         self.path.clone()
     }

@@ -567,9 +567,9 @@ where
         self.wg.borrow_mut().push_back((item, response));
     }
 
-    // Go: wg.RunAndWait()
-    // PORT: runs the queued items, including items queued while it runs, in
-    // the 3 phases of the file header, and returns when every item committed.
+    // PORT: the `wg.RunAndWait()` call of the Go search. It runs the queued
+    // items, including items queued while it runs, in the 3 phases of the
+    // file header, and returns when every item committed.
     // At most `search_thread::max_in_flight()` searches run on search
     // threads at once (Go: GOMAXPROCS).
     fn run_and_wait(&self) {

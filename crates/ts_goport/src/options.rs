@@ -297,9 +297,8 @@ pub fn empty_compiler_options() -> &'static CompilerOptions {
 }
 
 impl CompilerOptions {
-    // Go: core/compileroptions.go:183 Clone
-    // Clone creates a shallow copy of the CompilerOptions.
-    // PORT: Go copies every exported field by reflection. The derived
+    // PORT: Go `(*CompilerOptions).Clone` (core/compileroptions.go:183) makes a
+    // shallow copy by reflection over every exported field. The derived
     // `Clone::clone` copies every field, which is the same set, so Go
     // `options.Clone()` ports to `options.clone()` with no inherent method.
 
@@ -620,7 +619,8 @@ pub fn module_kind_to_module_resolution_kind(kind: ModuleKind) -> (ModuleResolut
 }
 
 impl ModuleResolutionKind {
-    // Go: core/compileroptions.go:457 String
+    // Go: core/options_generated.go:815 ModuleResolutionKind.String (moved
+    // from core/compileroptions.go into the generated file)
     // We don't use stringer on this for now, because these values
     // are user-facing in --traceResolution, and stringer currently
     // lacks the ability to remove the "ModuleResolutionKind" prefix
@@ -705,7 +705,8 @@ impl std::fmt::Display for ScriptTarget {
 }
 
 impl JsxEmit {
-    // Go: core/compileroptions.go:538 String
+    // Go: core/options_generated.go:834 JsxEmit.String (moved from
+    // core/compileroptions.go into the generated file)
     #[must_use]
     pub fn string(self) -> String {
         match self {

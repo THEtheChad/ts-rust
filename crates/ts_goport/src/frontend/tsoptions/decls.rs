@@ -1371,9 +1371,9 @@ pub static OPTIONS_FOR_COMPILER: LazyLock<Vec<&'static CommandLineOption>> = Laz
     DECLS.iter().map(OptionDecl::leak).collect()
 });
 
-// Go: tsoptions/declscompiler.go:1211 optionsType
-// PORT: ts#64457 removes this Go function (fed0bf24149f compares each field
-// in options_generated.go). The port keeps it; the results are the same.
+// PORT: not in Go at the pin. ts#64457 removed `optionsType`
+// (tsoptions/declscompiler.go at fed0bf24149f compares each field in
+// options_generated.go). The port keeps it; the results are the same.
 // PORT: Go reads `core.CompilerOptions` fields by reflection. This returns
 // the exported fields in Go declaration order, as (Go field name, value).
 // The Go field index `i` is the index in this list (the unexported
@@ -1650,9 +1650,9 @@ pub fn compiler_options_field_values(
     ]
 }
 
-// Go: tsoptions/declscompiler.go:1213 optionsHaveChanges
-// PORT: ts#64457 removes this Go function (fed0bf24149f compares each field
-// in options_generated.go). The port keeps it; the results are the same.
+// PORT: not in Go at the pin. ts#64457 removed `optionsHaveChanges`
+// (tsoptions/declscompiler.go at fed0bf24149f compares each field in
+// options_generated.go). The port keeps it; the results are the same.
 #[must_use]
 pub fn options_have_changes(
     old_options: Option<&CompilerOptions>,
@@ -1689,9 +1689,9 @@ pub fn options_have_changes(
     })
 }
 
-// Go: tsoptions/declscompiler.go:1234 ForEachCompilerOptionValue
-// PORT: ts#64457 removes this Go function (fed0bf24149f compares each field
-// in options_generated.go). The port keeps it; the results are the same.
+// PORT: not in Go at the pin. ts#64457 removed `ForEachCompilerOptionValue`
+// (tsoptions/declscompiler.go at fed0bf24149f compares each field in
+// options_generated.go). The port keeps it; the results are the same.
 pub fn for_each_compiler_option_value(
     options: &CompilerOptions,
     decl_filter: &dyn Fn(&CommandLineOption) -> bool,

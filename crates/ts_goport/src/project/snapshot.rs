@@ -389,7 +389,8 @@ impl Snapshot {
         self.id
     }
 
-    // Go: project/snapshot.go:252 toPath (ts#64163; at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed `(*Snapshot).toPath`
+    // (ts#64163; project/snapshot.go at 673a5f17d713).
     pub fn to_path(&self, file_name: &str) -> tspath::Path {
         (self.host.to_path)(file_name)
     }
@@ -409,8 +410,8 @@ impl Snapshot {
         false
     }
 
-    // Go: project/snapshot.go:270 UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159
-    // renames it CaseSensitivity, snapshot.go:252)
+    // Go: project/snapshot.go:252 (*Snapshot).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; the port keeps that name and returns the bool)
     pub fn use_case_sensitive_file_names(&self) -> bool {
         self.fs.fs.use_case_sensitive_file_names()
     }

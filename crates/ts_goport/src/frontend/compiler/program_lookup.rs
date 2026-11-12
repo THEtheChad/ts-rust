@@ -20,7 +20,8 @@ pub struct PackageNamesInfo {
 pub type ResolutionCallback<'f, T> = dyn FnMut(&T, &str, ResolutionMode, &Path) + 'f;
 
 impl NewProgram {
-    // Go: program.go:2067 (*Program).toPath (at 673a5f17d713; ts#64159 makes it PathKeyForFileName, compiler/program.go:2103)
+    // Go: compiler/program.go:2103 (*Program).PathKeyForFileName (ts#64159
+    // replaced toPath; the port keeps that name)
     // PORT: the host's current directory, as the loader's keys
     // (`FileLoader::to_path`). Go N' keys a rooted name with no directory.
     pub fn to_path(&self, filename: &str) -> Path {

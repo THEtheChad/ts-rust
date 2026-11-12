@@ -582,7 +582,9 @@ impl Checker {
         self.alloc_type_mapper(TypeMapper::Composite(CompositeTypeMapper { m1, m2 }))
     }
 
-    // Go: checker/mapper.go:307 newInferenceTypeMapper (at fed0bf24149f; ts#64796 makes it initInferenceTypeMapper, checker/mapper.go:346)
+    // Go: checker/mapper.go:346 initInferenceTypeMapper (ts#64796 replaced
+    // newInferenceTypeMapper; the port allocates the mapper in the arena, as
+    // newInferenceTypeMapper did, and keeps that name)
     pub fn new_inference_type_mapper(&mut self, n: InferenceContextId, fixing: bool) -> MapperId {
         self.alloc_type_mapper(TypeMapper::Inference(InferenceTypeMapper { n, fixing }))
     }

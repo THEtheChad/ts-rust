@@ -1597,8 +1597,9 @@ impl FileSource for ReleasedFileSource {
 
 // Go: project/snapshotfs.go:664 `var _ vfs.FS = (*sourceFS)(nil)`
 impl vfs::Fs for SourceFS {
-    // Go: project/snapshotfs.go:879 sourceFS.UseCaseSensitiveFileNames (at 673a5f17d713;
-    // ts#64159 renames it CaseSensitivity, snapshotfs.go:888)
+    // Go: project/snapshotfs.go:888 (*sourceFS).CaseSensitivity (ts#64159
+    // renamed UseCaseSensitiveFileNames; the port keeps that name and returns
+    // the bool)
     // UseCaseSensitiveFileNames implements vfs.FS.
     fn use_case_sensitive_file_names(&self) -> bool {
         // PORT: through the source, so a released source can answer it

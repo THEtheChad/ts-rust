@@ -379,7 +379,8 @@ impl ObjectRestSpreadTransformer {
         })
     }
 
-    /// Go: a `var` statement for the flattened `declarations` with `EFCustomPrologue`.
+    /// A `var` statement for the flattened `declarations` with
+    /// `EFCustomPrologue`, which Go builds inline at both call sites.
     // PORT: Go makes an empty list, then appends to its `Nodes`. A synthetic
     // list is fixed at creation, so the list is made with the declarations.
     fn new_custom_prologue_var_statement(&self, declarations: Node) -> Node {

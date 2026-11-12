@@ -600,8 +600,9 @@ impl FsLayer for OverlayFS {
 
 // Go: project/overlayfs.go:217 `_ vfs.FS = (*overlayFS)(nil)`
 impl vfs::Fs for OverlayFS {
-    // Go: project/overlayfs.go:269 overlayFS.UseCaseSensitiveFileNames (at 673a5f17d713;
-    // ts#64159 renames it CaseSensitivity, overlayfs.go:269)
+    // Go: project/overlayfs.go:269 (*overlayFS).CaseSensitivity (ts#64159
+    // renamed UseCaseSensitiveFileNames; the port keeps that name and returns
+    // the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         self.host.use_case_sensitive_file_names()
     }

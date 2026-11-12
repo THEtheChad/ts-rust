@@ -35,7 +35,9 @@ struct WrappedFs {
 }
 
 impl Fs for WrappedFs {
-    // Go: wrapvfs.go:36 UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, vfs/wrapvfs/wrapvfs.go:37)
+    // Go: vfs/wrapvfs/wrapvfs.go:37 (*wrappedFS).CaseSensitivity (ts#64159
+    // renamed UseCaseSensitiveFileNames; the port keeps that name and returns
+    // the bool)
     // UseCaseSensitiveFileNames implements [vfs.FS].
     fn use_case_sensitive_file_names(&self) -> bool {
         if let Some(f) = &self.replacements.use_case_sensitive_file_names {

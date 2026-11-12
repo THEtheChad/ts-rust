@@ -396,8 +396,8 @@ struct TranspileFs {
 }
 
 impl Fs for TranspileFs {
-    // Go: transpile/fs.go:18 transpileFS.UseCaseSensitiveFileNames (at 673a5f17d713;
-    // ts#64159 makes it CaseSensitivity, transpile/fs.go:19, CaseSensitive)
+    // Go: transpile/fs.go:19 (*transpileFS).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; Go returns CaseSensitive, the port true)
     fn use_case_sensitive_file_names(&self) -> bool {
         true
     }

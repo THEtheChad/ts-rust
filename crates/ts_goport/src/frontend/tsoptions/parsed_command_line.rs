@@ -698,14 +698,15 @@ impl ParsedCommandLine {
         all_files_belong_to_path
     }
 
-    // Go: tsoptions/parsedcommandline.go:189 (*ParsedCommandLine).GetCurrentDirectory (at 673a5f17d713;
-    // ts#64159 makes it BaseDirectory, tsoptions/parsedcommandline.go:219)
+    // Go: tsoptions/parsedcommandline.go:219 (*ParsedCommandLine).BaseDirectory
+    // (ts#64159 renamed GetCurrentDirectory; the port keeps that name)
     pub fn get_current_directory(&self) -> &str {
         &self.compare_paths_options.current_directory
     }
 
-    // Go: tsoptions/parsedcommandline.go:193 (*ParsedCommandLine).UseCaseSensitiveFileNames (at 673a5f17d713;
-    // ts#64159 makes it CaseSensitivity, tsoptions/parsedcommandline.go:223)
+    // Go: tsoptions/parsedcommandline.go:223 (*ParsedCommandLine).CaseSensitivity
+    // (ts#64159 renamed UseCaseSensitiveFileNames; the port keeps that name
+    // and returns the bool)
     pub fn use_case_sensitive_file_names(&self) -> bool {
         self.compare_paths_options.use_case_sensitive_file_names
     }
@@ -877,8 +878,9 @@ impl ParsedCommandLine {
         }
     }
 
-    // Go: tsoptions/parsedcommandline.go:334 (*ParsedCommandLine).FileNamesByPath (at 673a5f17d713;
-    // ts#64159 makes it FilePaths, tsoptions/parsedcommandline.go:372)
+    // Go: tsoptions/parsedcommandline.go:372 (*ParsedCommandLine).FilePaths
+    // (ts#64159 replaced FileNamesByPath, a map, with this set of keys; the
+    // port keeps the map, whose keys are that set)
     pub fn file_names_by_path(&self) -> &FxHashMap<Path, String> {
         self.file_names_by_path.get_or_init(|| {
             let mut file_names_by_path = FxHashMap::with_capacity_and_hasher(

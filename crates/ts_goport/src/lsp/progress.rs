@@ -192,7 +192,7 @@ impl ProjectLoadingProgress {
         });
     }
 
-    // Go: the `select` of start and finish:
+    // PORT: the `select` that Go's start and finish both write inline:
     //
     //	select {
     //	case p.ch <- ev:

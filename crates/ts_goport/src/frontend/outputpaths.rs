@@ -364,8 +364,8 @@ fn change_to_declaration_extension_unexported(path: &str) -> String {
     )
 }
 
-// Go: outputpaths/outputpaths.go:161 GetSourceFilePathInNewDir (at 673a5f17d713;
-// ts#64159 renames it GetSourceFileNameInNewDir, outputpaths/outputpaths.go:221)
+// Go: outputpaths/outputpaths.go:221 GetSourceFileNameInNewDir (ts#64159
+// renamed GetSourceFilePathInNewDir; the port keeps that name)
 // tsgo#4900: the same as the worker.
 pub fn get_source_file_path_in_new_dir(
     file_name: &str,
@@ -405,8 +405,8 @@ fn get_output_path_without_changing_extension(
     input_file_name.to_string()
 }
 
-// Go: outputpaths/outputpaths.go:175 GetSourceFilePathInNewDirWorker (at 673a5f17d713;
-// ts#64159 merges it into GetSourceFileNameInNewDir, outputpaths/outputpaths.go:221)
+// Go: outputpaths/outputpaths.go:221 GetSourceFileNameInNewDir (ts#64159
+// merged GetSourceFilePathInNewDirWorker into it; the port keeps the worker)
 // tsgo#4900: `TrimFilePathPrefix` (in `relative_path_within_directory`) cuts
 // the common source directory by runes, not by its byte length.
 pub fn get_source_file_path_in_new_dir_worker(
