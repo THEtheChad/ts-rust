@@ -2431,3 +2431,15 @@ once a **reconciliation step** is built and tested.
 - **Then the close-out:** a full gate on the merged head (which becomes
   base-current), the window-2 timing against Go on every cell, the final
   report, and asking Chad about pushing.
+- **C1 done; merged.** The content-mapper watch flake came from the test:
+  `-b`'s up-to-date check compares config and package.json by mtime, and a
+  clock step made the build info older than its config.
+  - **Fix:** the first build's inputs get a 2001 mtime.
+  - **Rates:** base 16 of 2,000 runs, all inside a run that straddled a
+    logged step; head 0 of 2,000.
+  - **Siblings fixed:** `effect_build_info_is_reused` (base 1/1,000),
+    `build_prefetch_rereads` (base 4/1,000), `tsgo_watch_signal` and
+    `early_emit`.
+  - Q9's guard is now shared: `tests/common/mtime_order.rs`.
+  - `tsgo` is byte-identical. The whole go_baselines set runs in the
+    close-out gate.
