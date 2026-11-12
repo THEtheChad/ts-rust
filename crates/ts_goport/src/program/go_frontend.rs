@@ -811,21 +811,30 @@ pub(super) fn file_exists(path: &str) -> bool {
         return go.file_exists(path);
     }
     super::with_tables(|tables| {
-        tables.host_fs_cache.file_exists(path, || {
-            if let Some(seen) = tables.worker_seen_files.get() {
-                seen.lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(path.to_string());
-            }
-            if let Some(queries) = tables.host_queries.get() {
-                let asked = path.to_string();
-                if let Some(exists) = queries.ask(move |frontend| frontend.file_exists(&asked)) {
-                    return exists;
-                }
-            }
-            WORKER_FS.with(|fs| fs.file_exists(path))
-        })
+        tables
+            .host_fs_cache
+            .file_exists(path, || worker_file_exists(tables, path))
     })
+}
+
+/// `file_exists` of `path` on a worker thread when the program's cache
+/// (`tables.host_fs_cache`) has no answer: the program's host, through the
+/// loading thread when the program has a channel to it (`host_queries`),
+/// else this thread's OS file system. A tracking host notes the path
+/// (`worker_seen_files`).
+fn worker_file_exists(tables: &super::VersionTables, path: &str) -> bool {
+    if let Some(seen) = tables.worker_seen_files.get() {
+        seen.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path.to_string());
+    }
+    if let Some(queries) = tables.host_queries.get() {
+        let asked = path.to_string();
+        if let Some(exists) = queries.ask(move |frontend| frontend.file_exists(&asked)) {
+            return exists;
+        }
+    }
+    WORKER_FS.with(|fs| fs.file_exists(path))
 }
 
 /// The Go files of this thread's unpublished stores, in store id order
