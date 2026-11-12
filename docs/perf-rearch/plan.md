@@ -2537,3 +2537,26 @@ once a **reconciliation step** is built and tested.
     - incr-edit resume.
   - **Open** (`closeout.md`): the backlog items left out of scope. Pushing
     `perf/first-principles` waits for Chad.
+- **2026-11-12, upstream `main` against today's gate** (Chad asked).
+  - **Setup:** upstream `main` is still `91f3d021c`. Its goport bin
+    (sha `bbf40914…`, the bin of its 2026-11-03 base) ran in parity full
+    against base-current (`runs/main-91f3d021c-vs-c2close-full`).
+  - **Result:** PARITY FAIL, with 60 items lost, all of which pass on
+    perf/first-principles:
+
+    | cause | items | lane |
+    |---|---|---|
+    | the `initialize` answer advertises a `refactor.rewrite` code action Go doesn't (14 lsp sessions) | 14 | perf phase |
+    | path case through the API (emit paths, source maps, include) | 13 | B2 |
+    | editor preferences (int width, hover cutoff, tab sizes) | 8 | B6 |
+    | Effect build info (known on main) | 7 | perf phase |
+    | callback-FS builds (checker probes, d.ts mtime, interleave) | 6 | B8 |
+    | int width (page cap, insertion past i32, build-info range) | 5 | B9 |
+    | Unicode prefix folding in module specifiers | 3 | B10 |
+    | config base directory | 2 | B7 |
+    | `import.source` resolution mode | 2 | F5 |
+
+  - **Fuzz and corpus:** nothing lost.
+  - **The tests tier didn't run:** the gate builds with the
+    `diagnostics`/`test-hooks` features, which `main` lacks, so its tests
+    can't be compared this way.
