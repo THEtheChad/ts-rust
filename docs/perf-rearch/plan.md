@@ -2484,3 +2484,23 @@ once a **reconciliation step** is built and tested.
     - the duplicate `entityNameToString` is deleted.
   - **Gate:** `runs/20261112-043308-full-70fb2aa783` PARITY OK;
     single-threaded icount within ±0.007%.
+- **B10 done; merged** (`be997ed55`). Root accepts it without Astra: Astra's
+  F5 review supplied the spec and the caller inputs, and the fix follows
+  them.
+  - **One Go port** of `HasPrefix`, `HasSuffix` and
+    `HasPrefixAndSuffixWithoutOverlap`: Go bytes, byte-length checks
+    first, Unicode simple folding; entrypoints cut at Go byte offsets.
+  - **New api items:**
+    - `ms-paths-fold-insensitive`, `ms-imports-fold-insensitive` and
+      `ms-exports-fold-insensitive`, which DIFF on the base and MATCH on
+      the head;
+    - two case-sensitive controls.
+  - **Unit test** `go_bytes_and_equal_fold`: 18 rows from go1.27.1,
+    including the Kelvin byte rule and Astra's invalid-byte case.
+  - **Gate:** `runs/20261112-051058-full-68ae8bf58f` PARITY OK;
+    single-threaded icount within ±0.01%.
+  - **Merge:** resolved the `deps.rs` conflict to B10's side (copies
+    deleted, re-exports). On the merged tree, root checked the CI clippy
+    all-targets command and the `goport_util` unit test. `f5.md` now
+    points to `b10.md`.
+- **All lanes merged. Close-out next.**
