@@ -2401,3 +2401,7 @@ once a **reconciliation step** is built and tested.
     rewritten for a key-file comment; icount flat.
   - **Root adds x/sys v0.48.0 and x/sync v0.23.0** (the pin's go.mod
     versions, both on disk) to gorel's trees.
+  - **With x/sys and x/sync:** 24 more rows ported (x/sys 18, x/sync 6).
+    Markers naming nothing in any Go tree 1,168 → 1,153 (Effect's 1,093
+    remain). Port bloat Δ ≥ 10 stays 10; own code over 25 stays 0. The
+    gorel self-test is OK.
