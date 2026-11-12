@@ -3132,100 +3132,10 @@ fn spawn_bind_thread<'scope>(
 // Resolution modes (Go compiler/fileloader.go)
 // ---------------------------------------------------------------------------
 
-// Go: compiler/fileloader.go:1046 getDefaultResolutionModeForFile
-fn get_default_resolution_mode_for_file_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    if import_syntax_affects_module_resolution(options) {
-        get_implied_node_format_for_emit_worker(file_name, options.get_emit_module_kind(), meta)
-    } else {
-        RESOLUTION_MODE_NONE
-    }
-}
-
-// Go: compiler/fileloader.go:1054 getModeForUsageLocation
-fn get_mode_for_usage_location_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    usage: Node,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    let parent = usage.parent();
-    if is_import_declaration(parent)
-        || parent.kind() == SyntaxKind::JsImportDeclaration
-        || is_export_declaration(parent)
-        || parent.kind() == SyntaxKind::JsDocImportTag
-    {
-        let is_type_only = is_exclusively_type_only_import_or_export(parent);
-        if is_type_only {
-            let (override_, ok) = parent.attributes().get_resolution_mode_override(None);
-            if ok {
-                return override_;
-            }
-        }
-    }
-    if is_literal_type_node(parent) && is_import_type_node(parent.parent()) {
-        let (override_, ok) = parent
-            .parent()
-            .attributes()
-            .get_resolution_mode_override(None);
-        if ok {
-            return override_;
-        }
-    }
-    if import_syntax_affects_module_resolution(options) {
-        return get_emit_syntax_for_usage_location_worker(file_name, meta, usage, options);
-    }
-    RESOLUTION_MODE_NONE
-}
-
-// Go: compiler/fileloader.go:1086 importSyntaxAffectsModuleResolution
-fn import_syntax_affects_module_resolution(options: &CompilerOptions) -> bool {
-    let module_resolution = options.get_module_resolution_kind();
-    ModuleResolutionKind::NODE16 <= module_resolution
-        && module_resolution <= ModuleResolutionKind::NODE_NEXT
-        || options.get_resolve_package_json_exports()
-        || options.get_resolve_package_json_imports()
-}
-
-// Go: compiler/fileloader.go:1092 getEmitSyntaxForUsageLocationWorker
-fn get_emit_syntax_for_usage_location_worker(
-    file_name: &str,
-    meta: &SourceFileMetaData,
-    usage: Node,
-    options: &CompilerOptions,
-) -> ResolutionMode {
-    let parent = usage.parent();
-    if is_require_call(parent, false)
-        || is_external_module_reference(parent) && is_import_equals_declaration(parent.parent())
-    {
-        return ModuleKind::COMMON_JS;
-    }
-    let file_emit_mode = get_emit_module_format_of_file_worker(file_name, options, meta);
-    if is_import_call(walk_up_parenthesized_expressions(parent)) {
-        return if should_transform_import_call(file_name, options, file_emit_mode) {
-            ModuleKind::COMMON_JS
-        } else {
-            ModuleKind::ES_NEXT
-        };
-    }
-    // If we're in --module preserve on an input file, we know that an import
-    // is an import. But if this is a declaration file, we'd prefer to use the
-    // impliedNodeFormat. Since we want things to be consistent between the two,
-    // we need to issue errors when the user writes ESM syntax in a definitely-CJS
-    // file, until/unless declaration emit can indicate a true ESM import. On the
-    // other hand, writing CJS syntax in a definitely-ESM file is fine, since declaration
-    // emit preserves the CJS syntax.
-    if file_emit_mode == ModuleKind::COMMON_JS {
-        return ModuleKind::COMMON_JS;
-    }
-    if file_emit_mode.is_non_node_esm() || file_emit_mode == ModuleKind::PRESERVE {
-        return ModuleKind::ES_NEXT;
-    }
-    ModuleKind::NONE
-}
+// PORT: the Go `fileloader.go` functions that the program methods below
+// call (`getDefaultResolutionModeForFile`, `getModeForUsageLocation`,
+// `getEmitSyntaxForUsageLocationWorker`) are the loader's ports in
+// `frontend::compiler::file_loader`.
 
 // ---------------------------------------------------------------------------
 // Program methods (Go compiler/program.go). The program is the current
@@ -3883,7 +3793,12 @@ pub fn get_emit_syntax_for_usage_location(source_file: Node, location: Node) -> 
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_emit_syntax_for_usage_location_worker(&info.file_name, meta, location, options)
+        crate::frontend::compiler::file_loader::get_emit_syntax_for_usage_location_worker(
+            &info.file_name,
+            meta,
+            location,
+            options,
+        )
     })
 }
 
@@ -3911,7 +3826,12 @@ pub fn get_mode_for_usage_location(source_file: Node, location: Node) -> Resolut
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_mode_for_usage_location_worker(&info.file_name, meta, location, options)
+        crate::frontend::compiler::file_loader::get_mode_for_usage_location(
+            &info.file_name,
+            meta,
+            location,
+            Some(options),
+        )
     })
 }
 
@@ -3923,7 +3843,11 @@ pub fn get_default_resolution_mode_for_file(source_file: Node) -> ResolutionMode
     }
     let info = source_file_info(source_file);
     with_file_options_and_meta(source_file, |options, meta| {
-        get_default_resolution_mode_for_file_worker(&info.file_name, meta, options)
+        crate::frontend::compiler::file_loader::get_default_resolution_mode_for_file(
+            &info.file_name,
+            meta,
+            options,
+        )
     })
 }
 
