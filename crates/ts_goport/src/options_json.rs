@@ -93,9 +93,8 @@ fn marshal_tristate_omitzero(
 // Go JSON v2 struct marshaler for `core.TypeAcquisition` (tags `enable`,
 // `include`, `exclude` and `disableFilenameBasedTypeAcquisition`, all
 // `omitzero`).
-// PORT: a Go nil `Include` or `Exclude` is omitted and a non-nil empty one
-// is written as `[]`. The Rust `Vec` has no nil, so an empty list is
-// omitted.
+// A Go nil `Include` or `Exclude` (`None`) is omitted and a non-nil empty
+// one is written as `[]`.
 pub struct TypeAcquisitionJSON<'a>(pub &'a crate::frontend::core_ext::TypeAcquisition);
 
 impl MarshalerTo for TypeAcquisitionJSON<'_> {
@@ -104,11 +103,11 @@ impl MarshalerTo for TypeAcquisitionJSON<'_> {
         let first = &mut true;
         write_object_start(enc);
         marshal_tristate_omitzero(enc, first, "enable", ta.enable)?;
-        if !ta.include.is_empty() {
-            marshal_field(enc, first, "include", &ta.include)?;
+        if let Some(include) = &ta.include {
+            marshal_field(enc, first, "include", include)?;
         }
-        if !ta.exclude.is_empty() {
-            marshal_field(enc, first, "exclude", &ta.exclude)?;
+        if let Some(exclude) = &ta.exclude {
+            marshal_field(enc, first, "exclude", exclude)?;
         }
         marshal_tristate_omitzero(
             enc,
@@ -704,4 +703,58 @@ pub fn unmarshal_go_int_ptr(
     let n = v.get_or_insert(0);
     *n = crate::frontend::json_ext::unmarshal_int_as::<i64>(dec, "int")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod type_acquisition_tests {
+    use super::*;
+    use crate::frontend::core_ext::TypeAcquisition;
+    use crate::frontend::json::json_marshal;
+    use crate::frontend::tsoptions::command_line_option::CompilerOptionsValue;
+    use crate::frontend::tsoptions::parsing_helpers::parse_type_acquisition;
+
+    // Lane B9 (audit B1): Go `TypeAcquisition.Include` and `Exclude` are
+    // `[]string` with `omitzero` (core/options_generated.go:855). Go
+    // `ParseStringArray` keeps a JSON `[]` as a non-nil empty slice, which
+    // `omitzero` writes; a value that is not an array gives nil, which it
+    // omits. `Equals` compares with `slices.Equal`, where nil equals empty.
+    #[test]
+    fn include_and_exclude_keep_nil_apart_from_empty() {
+        let mut empty = TypeAcquisition::default();
+        let _ = parse_type_acquisition(
+            "include",
+            CompilerOptionsValue::List(Vec::new()),
+            &mut empty,
+        );
+        let _ = parse_type_acquisition(
+            "exclude",
+            CompilerOptionsValue::List(Vec::new()),
+            &mut empty,
+        );
+        assert_eq!(empty.include, Some(Vec::new()));
+        assert_eq!(
+            json_marshal(&TypeAcquisitionJSON(&empty), &[]).unwrap(),
+            r#"{"include":[],"exclude":[]}"#
+        );
+
+        let mut not_array = TypeAcquisition::default();
+        let _ = parse_type_acquisition(
+            "include",
+            CompilerOptionsValue::String("jquery".to_string()),
+            &mut not_array,
+        );
+        assert_eq!(not_array.include, None);
+        assert_eq!(
+            json_marshal(&TypeAcquisitionJSON(&not_array), &[]).unwrap(),
+            "{}"
+        );
+
+        assert_eq!(empty, not_array);
+        assert!(TypeAcquisition::equals(Some(&empty), Some(&not_array)));
+        let named = TypeAcquisition {
+            include: Some(vec!["a".to_string()]),
+            ..Default::default()
+        };
+        assert_ne!(named, empty);
+    }
 }

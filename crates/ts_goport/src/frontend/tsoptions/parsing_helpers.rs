@@ -678,8 +678,8 @@ pub fn parse_type_acquisition(
     let value = &value;
     match key {
         "enable" => all_options.enable = parse_tristate(value),
-        "include" => all_options.include = parse_string_array(value).unwrap_or_default(),
-        "exclude" => all_options.exclude = parse_string_array(value).unwrap_or_default(),
+        "include" => all_options.include = parse_string_array(value),
+        "exclude" => all_options.exclude = parse_string_array(value),
         "disableFilenameBasedTypeAcquisition" => {
             all_options.disable_filename_based_type_acquisition = parse_tristate(value);
         }

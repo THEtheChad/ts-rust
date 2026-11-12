@@ -1104,8 +1104,8 @@ impl Project {
             // For inferred and synthetic projects, use default settings.
             return Some(Rc::new(TypeAcquisition {
                 enable: Tristate::True,
-                include: Vec::new(),
-                exclude: Vec::new(),
+                include: None,
+                exclude: None,
                 disable_filename_based_type_acquisition: Tristate::False,
             }));
         }

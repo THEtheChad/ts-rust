@@ -1622,6 +1622,24 @@
      "build": ""
     }
    ]
+  },
+  {
+   "name": "typeacq-empty-include",
+   "about": "B9 (audit B1): a tsconfig with typeAcquisition include and exclude set to [] (Go keeps the non-nil empty slices and writes them, omitzero), and one whose include is not an array (nil, omitted) and exclude has a name; createSnapshot's parsedCommandLine.typeAcquisition shows both",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"noLib\": true}, \"files\": [\"a.ts\", \"g.d.ts\"], \"typeAcquisition\": {\"include\": [], \"exclude\": []}}",
+    "tsconfig.mixed.json": "{\"compilerOptions\": {\"noLib\": true}, \"files\": [\"a.ts\", \"g.d.ts\"], \"typeAcquisition\": {\"include\": \"jquery\", \"exclude\": [\"lodash\"], \"disableFilenameBasedTypeAcquisition\": true}}",
+    "a.ts": "export const a = 1;\n",
+    "g.d.ts": "@GLOBALS@"
+   },
+   "openProjects": [
+    "@ROOT@/tsconfig.json",
+    "@ROOT@/tsconfig.mixed.json"
+   ],
+   "requests": [
+    "getConfigFileParsingDiagnostics",
+    "getSourceFileNames"
+   ]
   }
  ]
 }
