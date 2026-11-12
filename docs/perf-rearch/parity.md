@@ -546,6 +546,13 @@ output differences there (`audits/b3-prepin.md`, D1 and D2) that no tier could s
   its dirs a real dir of mode 755), so a file written and removed between two requests is seen; the exit, survivors, whether the
   server exited by itself, the sha256 of stderr, and the storage at the end. Go and tsc-rs answer with
   the same bytes wherever they agree.
+- **Raw requests** (lane B9, `calls`): a scenario may list `{method, params}` requests, sent in order
+  after the createSnapshot requests. A param string that is exactly `@SNAPSHOT@`, `@PROJECT@` (the first
+  project) or `@ANSWER:<k>:<dotted path>@` (a value of the k-th call's answer) is replaced by that JSON
+  value; numbers go out as written, so a Go `int` field can get 2^32 or 2^63. The build orchestrator,
+  initialize, createSnapshot, updateSnapshot and release keep their own keys. A scenario without
+  `calls` sends exactly what it sent before (`parity_b9_test.py`, `B9 SELFTEST OK`). Items:
+  `batch-page-cap-int64`, `format-insertion-past-int32`, `positions-index-int64`.
 - **The one normalisation** (lane B7 round 3, `parity_api.sort_changed_projects`, applied in `answers()`,
   so to Go's own two runs, to tsc-rs and to every fingerprint alike): in an answer's
   `result.changes.changedProjects`, an object keyed by project that Go's `updateSnapshot` writes from a

@@ -224,8 +224,8 @@ struct ReadableBuildInfoDiagnostic {
     // incrementalBuildInfoFileId if it is for a File thats other than its stored for
     file: String,
     no_file: bool,
-    pos: i32,
-    end: i32,
+    pos: i64,
+    end: i64,
     code: i32,
     category: i32,
     message_key: String,
@@ -243,8 +243,8 @@ impl MarshalerTo for ReadableBuildInfoDiagnostic {
         let mut w = ObjectWriter::new(enc);
         w.string_omitzero("file", &self.file)?;
         w.bool_omitzero("noFile", self.no_file);
-        w.int_omitzero("pos", i64::from(self.pos));
-        w.int_omitzero("end", i64::from(self.end));
+        w.int_omitzero("pos", self.pos);
+        w.int_omitzero("end", self.end);
         w.int_omitzero("code", i64::from(self.code));
         w.int_omitzero("category", i64::from(self.category));
         w.string_omitzero("messageKey", &self.message_key)?;
@@ -264,7 +264,7 @@ impl MarshalerTo for ReadableBuildInfoDiagnostic {
 
 // Go: tsctests/readablebuildinfo.go:77 readableBuildInfoRepopulateInfo
 struct ReadableBuildInfoRepopulateInfo {
-    kind: i32,
+    kind: i64,
     module_reference: String,
     mode: i32,
     package_name: String,
@@ -507,7 +507,7 @@ impl ReadableBuildInfo<'_> {
                 .map(|(index, original)| {
                     let file_info = original.get_file_info();
                     ReadableBuildInfoFileInfo {
-                        file_name: self.to_file_path(BuildInfoFileId(index as i32 + 1)),
+                        file_name: self.to_file_path(BuildInfoFileId(index as i64 + 1)),
                         version: file_info.version.clone(),
                         signature: file_info.signature.clone(),
                         affects_global_scope: file_info.affects_global_scope,

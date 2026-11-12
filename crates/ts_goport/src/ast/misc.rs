@@ -191,9 +191,10 @@ pub fn escape_symbol_name(name: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Go `ast.RepopulateDiagnosticKind`: the kind of repopulation for a
-/// diagnostic chain entry.
+/// diagnostic chain entry. Go `int`, so a `.tsbuildinfo` kind outside
+/// `int32` stays as it is.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RepopulateDiagnosticKind(pub i32);
+pub struct RepopulateDiagnosticKind(pub i64);
 
 impl RepopulateDiagnosticKind {
     pub const MODE_MISMATCH: Self = Self(1); // RepopulateModeMismatch

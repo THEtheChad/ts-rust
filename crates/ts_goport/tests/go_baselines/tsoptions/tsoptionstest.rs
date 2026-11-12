@@ -882,8 +882,6 @@ impl MarshalerTo for CompilerOptionsJson<'_> {
 }
 
 /// Go JSON v2 marshaling of `core.TypeAcquisition`.
-// PORT: the Rust `include` and `exclude` are `Vec`, so an empty list is
-// written as the nil slice (omitted). No test sets an empty list.
 pub struct TypeAcquisitionJson<'a>(pub &'a TypeAcquisition);
 
 impl MarshalerTo for TypeAcquisitionJson<'_> {
@@ -891,8 +889,8 @@ impl MarshalerTo for TypeAcquisitionJson<'_> {
         let o = self.0;
         let mut w = OmitZeroWriter::new(enc);
         w.tristate("enable", o.enable)?;
-        w.strings("include", (!o.include.is_empty()).then_some(&o.include[..]))?;
-        w.strings("exclude", (!o.exclude.is_empty()).then_some(&o.exclude[..]))?;
+        w.strings("include", o.include.as_deref())?;
+        w.strings("exclude", o.exclude.as_deref())?;
         w.tristate(
             "disableFilenameBasedTypeAcquisition",
             o.disable_filename_based_type_acquisition,

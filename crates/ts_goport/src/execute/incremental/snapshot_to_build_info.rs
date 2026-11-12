@@ -117,7 +117,7 @@ impl ToBuildInfo<'_> {
             };
             let file_names = self.build_info.file_names.get_or_insert_with(Vec::new);
             file_names.push(name);
-            file_id = BuildInfoFileId(file_names.len() as i32);
+            file_id = BuildInfoFileId(file_names.len() as i64);
             self.file_name_to_file_id.insert(path.0.clone(), file_id);
         }
         file_id
@@ -138,7 +138,7 @@ impl ToBuildInfo<'_> {
         if file_id_list_id.0 == 0 {
             let file_ids_list = self.build_info.file_ids_list.get_or_insert_with(Vec::new);
             file_ids_list.push(file_ids.clone());
-            file_id_list_id = BuildInfoFileIdListId(file_ids_list.len() as i32);
+            file_id_list_id = BuildInfoFileIdListId(file_ids_list.len() as i64);
             self.file_names_to_file_id_list_id
                 .insert(file_ids, file_id_list_id);
         }
@@ -229,6 +229,7 @@ impl ToBuildInfo<'_> {
                 }
                 // PORT: Go byte offsets (see `go_text_range`).
                 let (pos, end) = go_text_range(d.file(), d.loc());
+                let (pos, end) = (i64::from(pos), i64::from(end));
                 BuildInfoDiagnostic {
                     file,
                     no_file,

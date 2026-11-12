@@ -651,7 +651,9 @@ fn float_or_int32_to_flag<T>(
         return v;
     }
     let go_type = match value {
-        CompilerOptionsValue::Number(f) => return from_i32(*f as i32),
+        CompilerOptionsValue::Number(f) => {
+            return from_i32(crate::gostd::conv::float64_to_int32(*f));
+        }
         CompilerOptionsValue::Nil => "nil",
         CompilerOptionsValue::Bool(_) => "bool",
         CompilerOptionsValue::String(_) => "string",
@@ -666,7 +668,8 @@ fn float_or_int32_to_flag<T>(
 
 // Go: tsoptions/options_generated.go:322 ParseTypeAcquisition (ts#64457 generates it)
 // PORT: Go `allOptions` can be nil; every Rust caller has one, so the nil
-// check is dropped. Go `[]string` fields are `Vec<String>`.
+// check is dropped. Go `[]string` fields are `Option<Vec<String>>`: Go
+// `ParseStringArray` gives nil (`None`) for a value that is not an array.
 pub fn parse_type_acquisition(
     key: &str,
     value: CompilerOptionsValue,
@@ -678,8 +681,8 @@ pub fn parse_type_acquisition(
     let value = &value;
     match key {
         "enable" => all_options.enable = parse_tristate(value),
-        "include" => all_options.include = parse_string_array(value).unwrap_or_default(),
-        "exclude" => all_options.exclude = parse_string_array(value).unwrap_or_default(),
+        "include" => all_options.include = parse_string_array(value),
+        "exclude" => all_options.exclude = parse_string_array(value),
         "disableFilenameBasedTypeAcquisition" => {
             all_options.disable_filename_based_type_acquisition = parse_tristate(value);
         }

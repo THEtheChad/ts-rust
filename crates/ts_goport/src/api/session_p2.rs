@@ -1122,6 +1122,40 @@ fn emit_program(
     Ok(ls_program::emit(program, ctx, options))
 }
 
+// Go handleFormatNodeForInsertion's initial indentation (session.go:4167
+// to :4176): `pos := UTF16ToUTF8(int(params.Position))`, then
+// `GetLineStartPositionForPosition(pos) == pos` and `GetIndentation(pos,
+// ...)`. Go's `pos` is a 64-bit int, so GetIndentation's past-EOF test
+// (`position > len(sourceFile.Text())`, format/indent.go:25) sees the wide
+// position and returns `BaseIndentSize` before the indent style is read;
+// the line start of a past-EOF position is never the position. The port's
+// formatter positions are `i32`, so the past-EOF case is decided here on
+// the wide position (the UTF-16 position plus the largest delta of the
+// map, Go `UTF16ToUTF8` past the last entry) and only a position inside
+// the text, which fits `i32`, goes on (Astra's B9 review: a clamp to
+// `i32::MAX` is inside a text of 2^31 - 1 bytes).
+fn format_insertion_indentation(
+    source_file: Node,
+    position: u32,
+    format_options: &crate::ls::lsutil::FormatCodeSettings,
+) -> i64 {
+    let position_map = source_file_get_position_map(source_file);
+    let last_delta = position_map.entries.last().map_or(0, |e| e.delta);
+    let text_len = source_file_text(source_file).len() as i64;
+    let pos = match i32::try_from(i64::from(position) + i64::from(last_delta)) {
+        Ok(_) => i64::from(position_map.utf16_to_utf8(position as i32)),
+        Err(_) => i64::from(position) + i64::from(last_delta),
+    };
+    if pos > text_len {
+        return format_options.editor_settings.base_indent_size; // past EOF
+    }
+    // `pos` is at most the text length, which fits `i32`.
+    let pos = pos as i32;
+    let is_at_line_start =
+        crate::format::get_line_start_position_for_position(pos, source_file) == pos;
+    crate::format::get_indentation(pos, source_file, format_options, is_at_line_start)
+}
+
 // Go: api/session.go:4131 nonNilDiagnostics (tsgo#4699)
 // PORT: a Rust `Vec` has no nil. An empty list marshals as `[]`, the same as
 // Go's non-nil empty slice.
@@ -1225,8 +1259,6 @@ impl Session {
             }
         };
 
-        let pos =
-            source_file_get_position_map(target_source_file).utf16_to_utf8(params.position as i32);
         let format_options = sd.snapshot.user_preferences().format_code_settings;
         let new_line = format_options.editor_settings.new_line_character.clone();
 
@@ -1249,14 +1281,8 @@ impl Session {
             &source_file_info(target_source_file).path,
         );
 
-        let is_at_line_start =
-            crate::format::get_line_start_position_for_position(pos, target_source_file) == pos;
-        let initial_indentation = crate::format::get_indentation(
-            pos,
-            target_source_file,
-            &format_options,
-            is_at_line_start,
-        );
+        let initial_indentation =
+            format_insertion_indentation(target_source_file, params.position, &format_options);
 
         let mut delta = 0;
         if format_options.editor_settings.indent_size != 0
@@ -3087,10 +3113,17 @@ impl Session {
         // (`getReferenceAtPosition`). Port offsets differ from Go offsets
         // after a marker unit (see `scanner_util::GO_STRING_MARKER`), so it
         // is mapped there (`port_byte_offset`).
-        let position = if node.kind() == SyntaxKind::SourceFile {
-            crate::scanner_util::port_byte_offset(&source_file_text(node), params.position)
-        } else {
-            params.position
+        // A Go `int` position outside `i32` is before or past any text, so
+        // `i32::MIN` or `i32::MAX` takes the same branches in
+        // `getReferenceAtPosition`: no reference contains it and the touching
+        // token is the same.
+        let position = match i32::try_from(params.position) {
+            Err(_) if params.position < 0 => i32::MIN,
+            Err(_) => i32::MAX,
+            Ok(position) if node.kind() == SyntaxKind::SourceFile => {
+                crate::scanner_util::port_byte_offset(&source_file_text(node), position)
+            }
+            Ok(position) => position,
         };
         let entries =
             lang_svc.get_referenced_symbols_for_node_exported(ctx, position, node, &source_files);
@@ -3447,6 +3480,58 @@ mod base64_tests {
             assert_eq!(
                 base64_std_encoding_decode_string(encoded).expect("valid base64"),
                 raw
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod format_insertion_tests {
+    use super::*;
+    use crate::frontend::parser::{SourceFileParseOptions, parse_source_file};
+    use crate::ls::lsutil::{EditorSettings, FormatCodeSettings, IndentStyle};
+
+    // Lane B9 (audit A3, Astra round 1): Go's past-EOF test in
+    // GetIndentation (format/indent.go:25) reads the wide position and
+    // returns `BaseIndentSize` before the indent style; inside the text,
+    // `IndentStyle::NONE` gives 0. A position past i32 is past EOF in any
+    // text, including one of 2^31 - 1 bytes, where a clamp to `i32::MAX`
+    // would be the end of the text (0 with `NONE`).
+    #[test]
+    fn past_eof_is_decided_on_the_wide_position() {
+        let file = Rc::new(parse_source_file(
+            &SourceFileParseOptions {
+                file_name: "/a.ts".to_string(),
+                path: tspath::Path("/a.ts".to_string()),
+                ..Default::default()
+            },
+            "  é\n",
+            ScriptKind::TS,
+        ));
+        crate::program::note_parsed_source_file(&file);
+        crate::program::publish_parsed_files("/");
+        let options = FormatCodeSettings {
+            editor_settings: EditorSettings {
+                base_indent_size: 4,
+                indent_style: IndentStyle::NONE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // The text is 5 UTF-8 bytes and 4 UTF-16 units: UTF-16 4 is UTF-8 5,
+        // the end of the text; UTF-16 5 is past it.
+        for (position, want) in [
+            (0, 0),
+            (4, 0),
+            (5, 4),
+            (0x7FFF_FFFF, 4),
+            (0x8000_0000, 4),
+            (u32::MAX, 4),
+        ] {
+            assert_eq!(
+                format_insertion_indentation(file.root, position, &options),
+                want,
+                "position {position}"
             );
         }
     }

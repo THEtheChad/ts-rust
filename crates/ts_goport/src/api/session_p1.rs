@@ -1231,7 +1231,7 @@ pub struct SessionOptions {
 // Go: api/session.go DefaultMaxResponseBytesPerPage (ts#64061)
 // DefaultMaxResponseBytesPerPage leaves room for base64 expansion beneath V8's
 // maximum string length while rounding down to an even decimal value.
-pub const DEFAULT_MAX_RESPONSE_BYTES_PER_PAGE: i32 = 300_000_000;
+pub const DEFAULT_MAX_RESPONSE_BYTES_PER_PAGE: i64 = 300_000_000;
 
 // Go: api/session.go NewLSPSession (ts#64163)
 // NewLSPSession creates a new API session with the given project session.
@@ -2328,11 +2328,12 @@ impl Session {
         &self,
         page: BatchResponsePage,
         responses: Option<Vec<BatchResponse>>,
-        mut max_response_bytes_per_page: i32,
+        mut max_response_bytes_per_page: i64,
     ) -> Result<BatchRequestsResponse, GoError> {
         if max_response_bytes_per_page <= 0 {
             max_response_bytes_per_page = DEFAULT_MAX_RESPONSE_BYTES_PER_PAGE;
         }
+        // Go `int`: positive here, so it fits `usize` on 64-bit targets.
         let max_response_bytes_per_page = max_response_bytes_per_page as usize;
         let mut encoded_length = r#"{"responses":[]}"#.len();
         let mut page_length = 0usize;
@@ -4274,7 +4275,7 @@ impl Session {
         let source_file = self.resolve_optional_source_file(program, Some(&params.file))?;
         let resolution_count = {
             let info = source_file_info(source_file);
-            let mut resolution_count = info.imports.len() as i32;
+            let mut resolution_count = info.imports.len() as i64;
             for &augmentation in &info.module_augmentations {
                 if augmentation.kind() == SyntaxKind::StringLiteral {
                     resolution_count += 1;

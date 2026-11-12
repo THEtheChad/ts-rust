@@ -76,19 +76,17 @@ pub fn discover_typings(
         .type_acquisition
         .as_deref()
         .unwrap_or_else(|| crate::core::go_nil_dereference());
-    // PORT: Go tests `Include != nil`. `TypeAcquisition.include` is a `Vec`
-    // with no nil, so an explicit empty list skips the call. The call adds
-    // nothing for an empty list; only its log line is lost.
-    if !type_acquisition.include.is_empty() {
+    // Go `Include != nil`: an explicit empty list still logs.
+    if let Some(include) = &type_acquisition.include {
         add_inferred_typings(
             fs,
             logger,
             &mut inferred_typings,
-            &type_acquisition.include,
+            include,
             "Explicitly included types",
         );
     }
-    let exclude = &type_acquisition.exclude;
+    let exclude = type_acquisition.exclude.as_deref().unwrap_or_default();
 
     // Directories to search for package.json, bower.json and other typing information
     let compiler_options = typings_info

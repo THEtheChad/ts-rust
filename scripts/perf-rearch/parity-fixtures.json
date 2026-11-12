@@ -30,6 +30,14 @@
    "packages/b/tsconfig.json": "{\n  \"compilerOptions\": {\n    \"composite\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"target\": \"es2020\",\n    \"lib\": [\n      \"es2020\"\n    ],\n    \"types\": [],\n    \"strict\": true,\n    \"rootDir\": \"src\",\n    \"outDir\": \"dist\",\n    \"paths\": {\n      \"a-src/*\": [\n        \"../a/src/*\"\n      ],\n      \"a-built/*\": [\n        \"./node_modules/a/dist/*\"\n      ]\n    }\n  },\n  \"include\": [\n    \"src\"\n  ],\n  \"references\": [\n    {\n      \"path\": \"../a\"\n    },\n    {\n      \"path\": \"../c\"\n    },\n    {\n      \"path\": \"../d\"\n    }\n  ]\n}\n",
    "packages/b/tsconfig.preserve.json": "{\n  \"compilerOptions\": {\n    \"preserveSymlinks\": true,\n    \"outDir\": \"dist-preserve\",\n    \"tsBuildInfoFile\": \"dist-preserve/tsconfig.preserve.tsbuildinfo\"\n  },\n  \"extends\": \"./tsconfig.json\",\n  \"references\": [\n    {\n      \"path\": \"../a\"\n    },\n    {\n      \"path\": \"../c\"\n    },\n    {\n      \"path\": \"../d\"\n    }\n  ]\n}\n",
    "packages/b/src/index.ts": "import { a, wrap, type Inner } from \"a\";\nimport { a as aBuilt } from \"a/dist/index\";\nimport { inner } from \"a-src/inner\";\nimport { inner as builtInner } from \"a-built/inner\";\nimport { c } from \"@scope/c\";\nimport { d } from \"d\";\nexport const b: Inner = wrap(a + aBuilt + inner.v + builtInner.v + c + d);\n"
+  },
+  "buildinfo-int-range": {
+   "a.ts": "export const a: number = \"x\";\nexport const b = 1;\n",
+   "c.ts": "export const c = 2;\n",
+   "g.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}",
+   "out/tsconfig.tsbuildinfo": "{\"version\":\"7.1.0-beta\",\"root\":[[1,3]],\"fileNames\":[\"../a.ts\",\"../c.ts\",\"../g.d.ts\"],\"fileInfos\":[\"64ca241ae742fff6c0fbf992a129e8ce\",\"bbedadd08a63163cac726279ad57f6a7\",{\"version\":\"ec998214e48f76679658ad8eb5056cab\",\"affectsGlobalScope\":true,\"impliedNodeFormat\":1}],\"options\":{\"outDir\":\"./\"},\"semanticDiagnosticsPerFile\":[[1,[{\"pos\":13,\"end\":14,\"code\":4294969296,\"category\":1,\"messageKey\":\"Type_0_is_not_assignable_to_type_1_2322\",\"messageArgs\":[\"string\",\"number\"]}]]]}",
+   "package.json": "{\"name\": \"buildinfo-int-range\", \"private\": true}\n",
+   "tsconfig.json": "{\"compilerOptions\": {\"incremental\": true, \"noLib\": true, \"outDir\": \"out\"}, \"files\": [\"a.ts\", \"c.ts\", \"g.d.ts\"]}\n"
   }
  }
 }

@@ -968,6 +968,7 @@ pub fn repopulate_diagnostic_message_chain(
             // Convert to buildInfoDiagnosticWithFileName and repopulate
             // PORT: `repopulate_diagnostic_chain` reads the Go offsets in `file`.
             let (pos, end) = go_text_range(file, c.loc());
+            let (pos, end) = (i64::from(pos), i64::from(end));
             let mut b = BuildInfoDiagnosticWithFileName {
                 pos,
                 end,
@@ -1011,6 +1012,7 @@ pub fn repopulate_diagnostic_message_chain(
 pub fn ast_diag_to_build_info_diag(d: &Diagnostic) -> BuildInfoDiagnosticWithFileName {
     // PORT: Go byte offsets (see `go_text_range`).
     let (pos, end) = go_text_range(d.file(), d.loc());
+    let (pos, end) = (i64::from(pos), i64::from(end));
     let mut b = BuildInfoDiagnosticWithFileName {
         pos,
         end,

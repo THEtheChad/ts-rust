@@ -1,0 +1,224 @@
+[
+ {
+  "method": "initialize",
+  "params": null
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nimport './b';\n",
+     "/probe/b.ts": "export {};\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "batchRequests",
+  "params": {
+   "requests": [
+    {
+     "method": "ping"
+    },
+    {
+     "method": "ping"
+    }
+   ],
+   "maxResponseBytesPerPage": 4294967296
+  }
+ },
+ {
+  "method": "batchRequests",
+  "params": {
+   "requests": [
+    {
+     "method": "ping"
+    },
+    {
+     "method": "ping"
+    }
+   ],
+   "maxResponseBytesPerPage": 9007199254740991
+  }
+ },
+ {
+  "method": "batchRequests",
+  "params": {
+   "requests": [
+    {
+     "method": "ping"
+    },
+    {
+     "method": "ping"
+    }
+   ],
+   "maxResponseBytesPerPage": 9223372036854775808
+  }
+ },
+ {
+  "method": "getSymbolAtPosition",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 2147483648
+  }
+ },
+ {
+  "method": "getSymbolAtPosition",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 4294967295
+  }
+ },
+ {
+  "method": "getTypeAtPosition",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 2147483648
+  }
+ },
+ {
+  "method": "getSymbolsAtPositions",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "positions": [
+    2147483648,
+    0
+   ]
+  }
+ },
+ {
+  "method": "getTypesAtPositions",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "positions": [
+    2147483648,
+    13
+   ]
+  }
+ },
+ {
+  "method": "getModeForResolutionAtIndex",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "index": 4294967296
+  }
+ },
+ {
+  "method": "getModeForResolutionAtIndex",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "index": 0
+  }
+ },
+ {
+  "method": "getSourceFile",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/b.ts"
+  }
+ },
+ {
+  "method": "formatNodeForInsertion",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 2147483648,
+   "data": "$data"
+  }
+ },
+ {
+  "method": "formatNodeForInsertion",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 1000,
+   "data": "$data"
+  }
+ },
+ {
+  "method": "formatNodeForInsertion",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "file": "/probe/a.ts",
+   "position": 4294967295,
+   "data": "$data"
+  }
+ },
+ {
+  "method": "getReferencedSymbolsForNode",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "node": "1.308./probe/a.ts",
+   "position": 0
+  }
+ },
+ {
+  "method": "getReferencedSymbolsForNode",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "node": "1.308./probe/a.ts",
+   "position": 4294967296
+  }
+ },
+ {
+  "method": "getReferencedSymbolsForNode",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "node": "1.308./probe/a.ts",
+   "position": -4294967296
+  }
+ },
+ {
+  "method": "getReferencedSymbolsForNode",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "node": "1.308./probe/a.ts",
+   "position": 2147483648
+  }
+ },
+ {
+  "method": "getReferencedSymbolsForNode",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project",
+   "node": "1.308./probe/a.ts",
+   "position": 9223372036854775808
+  }
+ }
+]

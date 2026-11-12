@@ -4,13 +4,34 @@ use crate::frontend::json_ext::unmarshal_struct_fields;
 use crate::frontend::prelude::*;
 
 // Go: core/options_generated.go:853 TypeAcquisition (ts#64457 generates it)
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+// PORT: Go `[]string` with `omitzero` is `Option<Vec<String>>`: `None` is
+// the nil slice (omitted from JSON, skipped by ATA's `Include != nil`) and
+// `Some(vec![])` is `"include": []`.
+#[derive(Clone, Debug, Default)]
 pub struct TypeAcquisition {
     pub enable: Tristate,
-    pub include: Vec<String>,
-    pub exclude: Vec<String>,
+    pub include: Option<Vec<String>>,
+    pub exclude: Option<Vec<String>>,
     pub disable_filename_based_type_acquisition: Tristate,
 }
+
+// Go: core/typeacquisition.go:5 Equals, without the pointer checks. Go
+// `slices.Equal` treats a nil slice and an empty one as equal. A Go struct
+// with slices has no `==`, so every comparison goes through `Equals`.
+impl PartialEq for TypeAcquisition {
+    fn eq(&self, other: &Self) -> bool {
+        fn slices_equal(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
+            a.as_deref().unwrap_or_default() == b.as_deref().unwrap_or_default()
+        }
+        self.enable == other.enable
+            && slices_equal(&self.include, &other.include)
+            && slices_equal(&self.exclude, &other.exclude)
+            && self.disable_filename_based_type_acquisition
+                == other.disable_filename_based_type_acquisition
+    }
+}
+
+impl Eq for TypeAcquisition {}
 
 // Go: core/projectreference.go:5 ProjectReference
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -300,12 +300,8 @@ impl crate::frontend::core_ext::TypeAcquisition {
             return false;
         };
 
-        // Go: slices.Equal treats nil and empty slices as equal, as `Vec` `==` does.
-        ta.enable == other.enable
-            && ta.include == other.include
-            && ta.exclude == other.exclude
-            && ta.disable_filename_based_type_acquisition
-                == other.disable_filename_based_type_acquisition
+        // `==` is the field compare with Go `slices.Equal` semantics.
+        ta == other
     }
 }
 

@@ -384,11 +384,12 @@ fn as_str(value: &CompilerOptionsValue) -> Option<&str> {
     }
 }
 
-/// Go `val.(float64)` then `int(f)`.
+/// Go `val.(float64)` then `int(f)` (etscore/options_parser.go:167, :188,
+/// :363 at `@effect/tsgo@0.51.1`), as amd64 converts it: out of range and
+/// NaN give `math.MinInt64`.
 fn as_int(value: &CompilerOptionsValue) -> Option<i64> {
     match value {
-        #[allow(clippy::cast_possible_truncation)]
-        CompilerOptionsValue::Number(f) => Some(*f as i64),
+        CompilerOptionsValue::Number(f) => Some(crate::gostd::conv::float64_to_int64(*f)),
         CompilerOptionsValue::Int(i) => Some(*i),
         _ => None,
     }
@@ -1022,6 +1023,21 @@ fn override_options_value(options: &OverrideOptions) -> IndexMap<String, Compile
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Lane B9 (audit A6): Go `int(f)` of a float64 option
+    // (etscore/options_parser.go:167 at `@effect/tsgo@0.51.1`) on amd64:
+    // out of range and NaN give `math.MinInt64`, not a saturated value.
+    #[test]
+    fn as_int_is_go_amd64_int_conversion() {
+        assert_eq!(as_int(&CompilerOptionsValue::Number(3.9)), Some(3));
+        assert_eq!(as_int(&CompilerOptionsValue::Number(1e19)), Some(i64::MIN));
+        assert_eq!(as_int(&CompilerOptionsValue::Number(-1e19)), Some(i64::MIN));
+        assert_eq!(
+            as_int(&CompilerOptionsValue::Number(f64::NAN)),
+            Some(i64::MIN)
+        );
+        assert_eq!(as_int(&CompilerOptionsValue::Int(7)), Some(7));
+    }
 
     #[test]
     fn parse_severity_matches_go() {

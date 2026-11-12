@@ -1992,6 +1992,518 @@
      }
     }
    ]
+  },
+  {
+   "name": "raw-options-target-int32",
+   "about": "B9 (audit A2): raw compiler options with an enum value outside int32 (target, module, moduleResolution, jsx, newLine, moduleDetection); Go tsoptions floatOrInt32ToFlag converts float64 to int32 as amd64 does (out of range gives -2147483648), so the options echo it and the emit follows it (no \"use strict\" for target -2147483648)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "target": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "target": 4294967297
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "module": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "moduleResolution": 2147483648,
+      "module": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "jsx": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "newLine": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "moduleDetection": -2147483649
+     }
+    }
+   ],
+   "requests": [
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
+   "name": "typeacq-empty-include",
+   "about": "B9 (audit B1): a tsconfig with typeAcquisition include and exclude set to [] (Go keeps the non-nil empty slices and writes them, omitzero), and one whose include is not an array (nil, omitted) and exclude has a name; createSnapshot's parsedCommandLine.typeAcquisition shows both",
+   "disk": {
+    "tsconfig.json": "{\"compilerOptions\": {\"noLib\": true}, \"files\": [\"a.ts\", \"g.d.ts\"], \"typeAcquisition\": {\"include\": [], \"exclude\": []}}",
+    "tsconfig.mixed.json": "{\"compilerOptions\": {\"noLib\": true}, \"files\": [\"a.ts\", \"g.d.ts\"], \"typeAcquisition\": {\"include\": \"jquery\", \"exclude\": [\"lodash\"], \"disableFilenameBasedTypeAcquisition\": true}}",
+    "a.ts": "export const a = 1;\n",
+    "g.d.ts": "@GLOBALS@"
+   },
+   "openProjects": [
+    "@ROOT@/tsconfig.json",
+    "@ROOT@/tsconfig.mixed.json"
+   ],
+   "requests": [
+    "getConfigFileParsingDiagnostics",
+    "getSourceFileNames"
+   ]
+  },
+  {
+   "name": "batch-page-cap-int64",
+   "about": "B9 (audit A1): batchRequests maxResponseBytesPerPage is a Go int (api/proto.go:862): 2^32 and 2^53-1 decode and give one page, 2^63 is Go's out-of-range error, 0 is the default cap; the port's int32 failed the decode of the whole batch",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const x = 1;\nimport './b';\n",
+     "@ROOT@/b.ts": "export {};\n",
+     "@ROOT@/c.ts": "// é ünïcödé\nexport const y = 'ẞ';\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/c.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames"
+   ],
+   "calls": [
+    {
+     "method": "batchRequests",
+     "params": {
+      "requests": [
+       {
+        "method": "ping"
+       },
+       {
+        "method": "ping"
+       }
+      ],
+      "maxResponseBytesPerPage": 4294967296
+     }
+    },
+    {
+     "method": "batchRequests",
+     "params": {
+      "requests": [
+       {
+        "method": "ping"
+       },
+       {
+        "method": "ping"
+       }
+      ],
+      "maxResponseBytesPerPage": 9007199254740991
+     }
+    },
+    {
+     "method": "batchRequests",
+     "params": {
+      "requests": [
+       {
+        "method": "ping"
+       },
+       {
+        "method": "ping"
+       }
+      ],
+      "maxResponseBytesPerPage": 9223372036854775808
+     }
+    },
+    {
+     "method": "batchRequests",
+     "params": {
+      "requests": [
+       {
+        "method": "ping"
+       },
+       {
+        "method": "ping"
+       }
+      ],
+      "maxResponseBytesPerPage": 0
+     }
+    },
+    {
+     "method": "batchRequests",
+     "params": {
+      "requests": [
+       {
+        "method": "ping"
+       },
+       {
+        "method": "ping"
+       }
+      ],
+      "maxResponseBytesPerPage": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "format-insertion-past-int32",
+   "about": "B9 (audit A3): formatNodeForInsertion with a uint32 position at or past 2^31 (Go session.go:4167 keeps it a 64-bit int, so GetIndentation's past-EOF branch answers) in an ASCII and a non-ASCII file, and positions inside the text; the node is b.ts's source file from getSourceFile",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const x = 1;\nimport './b';\n",
+     "@ROOT@/b.ts": "export {};\n",
+     "@ROOT@/c.ts": "// é ünïcödé\nexport const y = 'ẞ';\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/c.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames"
+   ],
+   "calls": [
+    {
+     "method": "getSourceFile",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/b.ts"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 0,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 20,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 1000,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 2147483647,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 2147483648,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 4294967295,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 0,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 20,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 1000,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 2147483647,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 2147483648,
+      "data": "@ANSWER:0:result.data@"
+     }
+    },
+    {
+     "method": "formatNodeForInsertion",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 4294967295,
+      "data": "@ANSWER:0:result.data@"
+     }
+    }
+   ]
+  },
+  {
+   "name": "positions-index-int64",
+   "about": "B9 (audit A4, A3b): Go int request fields: getReferencedSymbolsForNode position (proto.go:1553) and getModeForResolutionAtIndex index (proto.go:1396) outside int32 decode and run (Go: [] and \"invalid resolution index\"); 2^63 is Go's decode error; getSymbolAtPosition and getTypeAtPosition past 2^31 (uint32, unchanged) give the module symbol",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const x = 1;\nimport './b';\n",
+     "@ROOT@/b.ts": "export {};\n",
+     "@ROOT@/c.ts": "// é ünïcödé\nexport const y = 'ẞ';\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/c.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true
+     }
+    }
+   ],
+   "requests": [
+    "getSourceFileNames"
+   ],
+   "calls": [
+    {
+     "method": "getSymbolAtPosition",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "position": 2147483648
+     }
+    },
+    {
+     "method": "getTypeAtPosition",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/c.ts",
+      "position": 4294967295
+     }
+    },
+    {
+     "method": "getReferencedSymbolsForNode",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "node": "@ANSWER:0:result.valueDeclaration@",
+      "position": 0
+     }
+    },
+    {
+     "method": "getReferencedSymbolsForNode",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "node": "@ANSWER:0:result.valueDeclaration@",
+      "position": 2147483648
+     }
+    },
+    {
+     "method": "getReferencedSymbolsForNode",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "node": "@ANSWER:0:result.valueDeclaration@",
+      "position": 4294967296
+     }
+    },
+    {
+     "method": "getReferencedSymbolsForNode",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "node": "@ANSWER:0:result.valueDeclaration@",
+      "position": -4294967296
+     }
+    },
+    {
+     "method": "getReferencedSymbolsForNode",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "node": "@ANSWER:0:result.valueDeclaration@",
+      "position": 9223372036854775808
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": 0
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": 1
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": -1
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": 4294967296
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": -4294967296
+     }
+    },
+    {
+     "method": "getModeForResolutionAtIndex",
+     "params": {
+      "snapshot": "@SNAPSHOT@",
+      "project": "@PROJECT@",
+      "file": "@ROOT@/a.ts",
+      "index": 9223372036854775808
+     }
+    }
+   ]
   }
  ]
 }

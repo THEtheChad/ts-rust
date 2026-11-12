@@ -2764,7 +2764,8 @@ pub struct BatchRequestsParams {
     pub requests: Vec<BatchRequest>,
     // ts#64061
     pub continuation_token: String,
-    pub max_response_bytes_per_page: i32,
+    // Go `int`
+    pub max_response_bytes_per_page: i64,
 }
 
 proto_json!(both BatchRequestsParams {
@@ -3924,7 +3925,8 @@ pub struct GetModeForResolutionAtIndexParams {
     pub snapshot: SnapshotID,
     pub project: project::ID,
     pub file: DocumentIdentifier,
-    pub index: i32,
+    // Go `int`
+    pub index: i64,
 }
 
 proto_json!(both GetModeForResolutionAtIndexParams {
@@ -4259,7 +4261,8 @@ pub struct GetReferencedSymbolsForNodeParams {
     pub snapshot: SnapshotID,
     pub project: project::ID,
     pub node: NodeHandle,
-    pub position: i32,
+    // Go `int`
+    pub position: i64,
 }
 
 proto_json!(both GetReferencedSymbolsForNodeParams {

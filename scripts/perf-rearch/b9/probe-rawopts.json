@@ -1,0 +1,322 @@
+[
+ {
+  "method": "initialize",
+  "params": null
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "target": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "target": 4294967297,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "module": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "moduleResolution": 2147483648,
+      "module": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "jsx": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "newLine": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "createSnapshot",
+  "params": {
+   "fileSystem": {
+    "kind": "full",
+    "files": {
+     "/probe/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "/probe/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "/probe/a.ts",
+      "/probe/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "moduleDetection": 2147483648,
+      "noLib": true
+     }
+    }
+   ]
+  }
+ },
+ {
+  "method": "getProgramDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "getSemanticDiagnostics",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ },
+ {
+  "method": "emitToString",
+  "params": {
+   "snapshot": "$snapshot",
+   "project": "$project"
+  }
+ }
+]

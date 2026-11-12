@@ -354,7 +354,14 @@ pub fn get_add_to_existing_import_fix(file: Node, fix: &Fix) -> AddToExistingImp
     if fix.kind != lsproto::AutoImportFixKind::ADD_TO_EXISTING {
         crate::core::go_panic("expected add to existing import fix".to_string());
     }
-    let module_specifier = source_file_imports(file).get(fix.import_index as usize);
+    // Go `file.Imports()[fix.ImportIndex]`: an index the client echoed back
+    // (`completionItem/resolve` data) can be out of range.
+    let imports = source_file_imports(file);
+    let index = i64::from(fix.import_index);
+    let module_specifier = match usize::try_from(index) {
+        Ok(at) if at < imports.len() => imports.get(at),
+        _ => crate::gostd::slices::go_index_out_of_range(index, imports.len()),
+    };
     let import_node = try_get_import_from_module_specifier(module_specifier);
     if import_node.is_nil() {
         crate::core::go_panic("expected import declaration".to_string());
@@ -2180,5 +2187,47 @@ fn compare_module_specifier_relativity(
             b.module_specifier_kind == modulespecifiers::ResultKind::Relative,
         ),
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::parser::{SourceFileParseOptions, parse_source_file};
+
+    // Lane B9 (audit A9): Go `file.Imports()[fix.ImportIndex]`
+    // (fix.go:173). `importIndex` comes back from the client in the
+    // `completionItem/resolve` data; the length check at fix.go:74 lets a
+    // negative one through, and Go panics with its index text.
+    #[test]
+    fn negative_import_index_panics_with_go_index_text() {
+        let file = std::rc::Rc::new(parse_source_file(
+            &SourceFileParseOptions {
+                file_name: "/a.ts".to_string(),
+                path: tspath::Path("/a.ts".to_string()),
+                ..Default::default()
+            },
+            "import { x } from \"./b\";\nx;\n",
+            ScriptKind::TS,
+        ));
+        crate::program::note_parsed_source_file(&file);
+        crate::program::publish_parsed_files("/");
+        for (index, text) in [
+            (-1, "runtime error: index out of range [-1]"),
+            (1, "runtime error: index out of range [1] with length 1"),
+        ] {
+            let fix = Fix {
+                auto_import_fix: lsproto::AutoImportFix {
+                    kind: lsproto::AutoImportFixKind::ADD_TO_EXISTING,
+                    import_index: index,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let got = crate::core::go_panic_text(|| {
+                let _ = get_add_to_existing_import_fix(file.root, &fix);
+            });
+            assert_eq!(got, text, "index {index}");
+        }
     }
 }
