@@ -7,10 +7,11 @@
 //! `new_diagnostic_for_node`, finish it, then call `self.add_diagnostic` (the
 //! same two steps Go `error` does).
 //!
-//! PORT: Go `module.GetResolutionDiagnostic` and a few `core` helpers have
-//! no port in this crate. Private copies that follow the Go code exactly live
-//! in the `module_p17` and `core_p17` modules at the end of this file. The
-//! `tspath_p17` module there names the tspath functions this unit uses.
+//! PORT: a few `core` helpers have private copies that follow the Go code
+//! exactly in the `core_p17` module at the end of this file. The
+//! `tspath_p17` module there names the tspath functions this unit uses, with
+//! PERF forms of some of them. Go `module.GetResolutionDiagnostic` is the
+//! frontend's (`frontend::module::get_resolution_diagnostic`).
 //!
 //! PORT: Go `c.program.X(...)` methods are free functions with the Go snake
 //! names (see `PORTING.md`, Program section). `*module.ResolvedModule` is
@@ -531,10 +532,10 @@ impl Checker {
 
         let mut resolution_diagnostic: Option<&'static Message> = None;
         if error_node.is_some() && is_resolved_p17(resolved_module) {
-            resolution_diagnostic = module_p17::get_resolution_diagnostic(
+            resolution_diagnostic = crate::frontend::module::get_resolution_diagnostic(
                 self.compiler_options,
                 resolved_module.unwrap(),
-                importing_source_file,
+                || with_source_file_info(importing_source_file, |info| info.is_declaration_file),
             );
         }
 
@@ -2171,85 +2172,6 @@ mod core_p17 {
             && (suffix.is_empty()
                 || (candidate[candidate.len() - 1] == suffix[suffix.len() - 1]
                     && candidate.ends_with(suffix)))
-    }
-}
-
-/// Private copy of Go `module.GetResolutionDiagnostic`.
-mod module_p17 {
-    use super::tspath_p17::*;
-    use crate::diagnostics::Message;
-    use crate::prelude::*;
-
-    // Go: module/util.go:132 GetResolutionDiagnostic
-    pub fn get_resolution_diagnostic(
-        options: &CompilerOptions,
-        resolved_module: &ResolvedModule,
-        file: Node,
-    ) -> Option<&'static Message> {
-        let need_jsx = || -> Option<&'static Message> {
-            if options.jsx != JsxEmit::NONE {
-                return None;
-            }
-            Some(diag::Module_0_was_resolved_to_1_but_jsx_is_not_set)
-        };
-
-        let need_allow_js = || -> Option<&'static Message> {
-            if options.get_allow_js()
-                || !options
-                    .no_implicit_any
-                    .default_if_unknown(options.strict)
-                    .is_true()
-            {
-                return None;
-            }
-            Some(diag::Could_not_find_a_declaration_file_for_module_0_1_implicitly_has_an_any_type)
-        };
-
-        let need_resolve_json_module = || -> Option<&'static Message> {
-            if options.get_resolve_json_module() {
-                return None;
-            }
-            Some(diag::Module_0_was_resolved_to_1_but_resolveJsonModule_is_not_used)
-        };
-
-        let need_allow_arbitrary_extensions = || -> Option<&'static Message> {
-            if with_source_file_info(file, |info| info.is_declaration_file)
-                || options.allow_arbitrary_extensions.is_true()
-            {
-                return None;
-            }
-            Some(diag::Module_0_was_resolved_to_1_but_allowArbitraryExtensions_is_not_set)
-        };
-
-        // tsgo#4712: a content mapper extension is always allowed.
-        if resolved_module.resolved_using_extra_extensions {
-            return None;
-        }
-
-        let ext = resolved_module.extension.as_str();
-        if ext == EXTENSION_TS
-            || ext == EXTENSION_DTS
-            || ext == EXTENSION_MTS
-            || ext == EXTENSION_DMTS
-            || ext == EXTENSION_CTS
-            || ext == EXTENSION_DCTS
-        {
-            // These are always allowed.
-            None
-        } else if ext == EXTENSION_TSX {
-            need_jsx()
-        } else if ext == EXTENSION_JSX {
-            if let Some(message) = need_jsx() {
-                return Some(message);
-            }
-            need_allow_js()
-        } else if ext == EXTENSION_JS || ext == EXTENSION_MJS || ext == EXTENSION_CJS {
-            need_allow_js()
-        } else if ext == EXTENSION_JSON {
-            need_resolve_json_module()
-        } else {
-            need_allow_arbitrary_extensions()
-        }
     }
 }
 
