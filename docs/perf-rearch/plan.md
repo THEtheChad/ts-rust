@@ -2352,3 +2352,11 @@ once a **reconciliation step** is built and tested.
     pass.
   - **base-current** moved to `b8-e2941610d-full` (everything through B8,
     B6 included).
+- **F6 started:**
+  - B3 F6 markers: (b)/(d) to the pin's names, (e) fixed, dead pre-pin
+    functions removed;
+  - gorel learns Go fields and vars;
+  - stdlib and x/text ports scored against GOROOT and x/text v0.42.0;
+  - a "Δ less residue" column beside the raw Δ.
+
+  B9's files are excluded.
