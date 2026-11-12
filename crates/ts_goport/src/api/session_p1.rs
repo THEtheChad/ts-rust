@@ -1163,6 +1163,10 @@ pub struct Session {
     /// (`System::client_writes`): the server sets it when the client
     /// answers the `writeFile` callback.
     pub client_writes: Cell<Option<ClientWrites>>,
+    /// PORT: not in Go. The client answers reads of the session file
+    /// system (`System::client_reads`): the server sets it when a read
+    /// callback is on.
+    pub client_reads: Cell<bool>,
 }
 
 // Go: api/session.go batchResponsePage (ts#64061)
@@ -1260,6 +1264,7 @@ pub fn new_session(
         next_source_file_lease_id: Cell::new(0),
         cpu_profiler: crate::pprof::CpuProfiler::default(),
         client_writes: Cell::new(None),
+        client_reads: Cell::new(false),
     };
     if let Some(options) = options {
         s.use_binary_responses = options.use_binary_responses;
@@ -3311,6 +3316,7 @@ impl Session {
             current_directory,
             start: std::time::Instant::now(),
             client_writes: self.client_writes.get(),
+            client_reads: self.client_reads.get(),
         })
     }
 
@@ -3827,6 +3833,8 @@ pub struct ApiBuildSystem {
     start: std::time::Instant,
     /// PORT: not in Go. `Session::client_writes`.
     client_writes: Option<ClientWrites>,
+    /// PORT: not in Go. `Session::client_reads`.
+    client_reads: bool,
 }
 
 impl crate::execute::tsc::System for ApiBuildSystem {
@@ -3881,6 +3889,9 @@ impl crate::execute::tsc::System for ApiBuildSystem {
     }
     fn client_writes(&self) -> Option<ClientWrites> {
         self.client_writes
+    }
+    fn client_reads(&self) -> bool {
+        self.client_reads
     }
 }
 

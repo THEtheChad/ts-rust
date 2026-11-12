@@ -137,6 +137,16 @@ pub trait System {
     fn client_writes(&self) -> Option<crate::execute::incremental::emit_files::ClientWrites> {
         None
     }
+
+    /// PORT: not in Go. True when the client answers reads of `fs()` (the
+    /// API build with read callbacks, `--callbacks`). Only this thread can
+    /// make those calls, so the checker threads of a program ask this
+    /// thread (`program::serve_worker_host_queries`), and the port makes
+    /// no read that Go does not (`Orchestrator::outputs_overlap`): the
+    /// client sees each call.
+    fn client_reads(&self) -> bool {
+        false
+    }
 }
 
 // Go: execute/tsc/compile.go:37 newContentMapperLogger

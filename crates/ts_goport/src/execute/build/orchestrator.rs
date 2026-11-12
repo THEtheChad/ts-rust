@@ -1003,6 +1003,11 @@ impl Orchestrator {
     /// PORT: not in Go (determinism). `outputs_overlap` for the tasks at
     /// `paths` (the build order of `build_all_tasks`).
     fn outputs_overlap(&self, paths: &[Path]) -> bool {
+        // A client file system (`System::client_reads`) sees each lookup,
+        // and Go makes none of these: every task finishes in build order.
+        if self.opts.sys.client_reads() {
+            return true;
+        }
         let configs: Vec<_> = paths
             .iter()
             .map(|path| self.get_task(path).borrow().resolved.clone())
@@ -1608,7 +1613,8 @@ impl TaskSchedule {
                     .expect("the position is in the queue");
             }
             if !o.free_released() {
-                let index = self.ready_calls.recv().expect("this thread keeps a sender");
+                let index = crate::program::recv_serving(&self.ready_calls)
+                    .expect("this thread keeps a sender");
                 self.signal_arrived(index);
             }
         }

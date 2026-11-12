@@ -279,6 +279,16 @@ impl StdioServer {
             }));
         }
 
+        // PORT: not in Go. The client answers the reads of the session file
+        // system (`Session::client_reads`): each callback but the writes, in
+        // any form (`<name>:error` panics where the read would call).
+        if self.options.callbacks.iter().any(|name| {
+            let name = name.split(':').next().unwrap_or_default();
+            !matches!(name, "writeFile" | "removeFile")
+        }) {
+            session.client_reads.set(true);
+        }
+
         // ts#64276
         server_run_error(ctx, conn.run(ctx))
     }
