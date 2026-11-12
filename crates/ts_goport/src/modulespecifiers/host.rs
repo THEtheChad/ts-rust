@@ -320,6 +320,11 @@ impl OutputPathsHost for ProgramHost {
 
 impl ModuleSpecifierGenerationHost for ProgramHost {
     // Go: compiler/program.go:2343 GetSymlinkCache
+    // PORT: a per-thread `Rc` copy of the program's thread-safe copy
+    // (`program::get_go_symlink_cache`); the port is
+    // `frontend::compiler::NewProgram::get_symlink_cache`. The copy exists
+    // because `ModuleSpecifierGenerationHost` returns an `Rc`, as the
+    // frontend program holds it.
     fn get_symlink_cache(&self) -> Option<Rc<KnownSymlinks>> {
         if let Some(cached) = with_program_caches(|c| c.known_symlinks.clone()) {
             return Some(cached);

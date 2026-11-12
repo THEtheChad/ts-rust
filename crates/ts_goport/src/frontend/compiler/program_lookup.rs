@@ -464,6 +464,9 @@ impl NewProgram {
 
     // Go: program.go:2343 (*Program).GetSymlinkCache
     // PORT: `known_symlinks` is Go `knownSymlinks lazyValue[*symlinks.KnownSymlinks]`.
+    // This is the port. The emit-side program's `program::get_go_symlink_cache`
+    // and `modulespecifiers::ProgramHost::get_symlink_cache` are copies of
+    // its value for other threads, not other ports.
     pub fn get_symlink_cache(&self) -> Rc<KnownSymlinks> {
         self.known_symlinks
             .get_value(|| Rc::new(self.build_symlink_cache()))

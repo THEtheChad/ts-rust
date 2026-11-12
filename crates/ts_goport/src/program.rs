@@ -3429,8 +3429,14 @@ pub fn get_resolved_project_references() -> Vec<Option<Arc<ResolvedProjectRefere
 }
 
 // Go: compiler/program.go:2343 GetSymlinkCache
-// PORT: the Go frontend program has the port, and this is a copy of its
-// value, built on first use (`go_frontend::known_symlinks`).
+// PORT: the Go frontend program has the port
+// (`frontend::compiler::NewProgram::get_symlink_cache`), and this is a
+// thread-safe copy of its value, built on first use
+// (`go_frontend::known_symlinks`). `modulespecifiers::ProgramHost` keeps a
+// per-thread `Rc` copy of this one. The layers exist because the two
+// program forms hold the cache differently (`Rc` on the loading thread, an
+// `Arc` here); see `docs/perf-rearch/cleanup/f5.md` for what one cache
+// would take.
 pub fn get_go_symlink_cache() -> Option<Arc<crate::modulespecifiers::symlinks::KnownSymlinks>> {
     // Go: ls/autoimport/aliasresolver.go:150 GetSymlinkCache (unimplemented)
     alias_resolver_unimplemented();
