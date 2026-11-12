@@ -313,9 +313,13 @@ def run_measured(argv, cwd, timeout, env_extra=None):
     }
 
 
-def gated_run(rec, desc, fn, ungated=False):
-    """Load gate + repeat rule around fn() -> result dict with wall and cpu."""
+def gated_run(rec, desc, fn, ungated=False, setup=None):
+    """Load gate + repeat rule around fn() -> result dict with wall and cpu. setup() (the scenario's untimed
+    preparation, already done once by the caller) runs again before each repeat, so a repeated cold build or
+    incr-edit is cold or edited again rather than a no-op (C2 close-out: repeats of build-cold were warm)."""
     for attempt in range(3):
+        if attempt and setup:
+            setup()
         before = load1() if ungated else wait_quiet(rec.log)
         r = fn()
         after = load1()
@@ -360,7 +364,10 @@ def scratch_copy(src, dst):
     Path(dst).mkdir(parents=True)
     files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=src,
                            capture_output=True, check=True).stdout
-    subprocess.run(["rsync", "-a", "--files-from=-", "--from0", f"{src}/", f"{dst}/"], input=files, check=True)
+    # The inputs are read-only (brief, 2026-11-10); the copy must not be: runs write into it (emit next to sources
+    # outside the common root, -b outputs, incr-edit's edit) and the next scratch_copy deletes it.
+    subprocess.run(["rsync", "-a", "--chmod=u+w", "--files-from=-", "--from0", f"{src}/", f"{dst}/"], input=files,
+                   check=True)
     # The top-level node_modules becomes a link to the original. A package's own node_modules (pnpm: links,
     # relative, into the top-level store and to the workspace's packages) is copied as it is, links kept, so
     # workspace packages resolve inside the copy and their sources stay under the copy's root.
@@ -375,6 +382,7 @@ def scratch_copy(src, dst):
             link.symlink_to(nm)
         else:
             subprocess.run(["cp", "-a", nm, str(link)], check=True)
+            subprocess.run(["chmod", "-R", "u+w", str(link)], check=True)  # links are not followed
 
 
 def clean_copy(repo, dst):
@@ -568,7 +576,8 @@ def incr_edit_prep(name, lab, b, scratch, repo, cfg, args):
         edited = d / rel
         if not d.exists():
             scratch_copy(str(repo), str(d))
-            _ie_orig[(name, lab)] = edited.read_text()
+        # The original comes from the (read-only) input, so a resumed bench whose copy already exists has it too.
+        _ie_orig.setdefault((name, lab), (Path(repo) / rel).read_text())
         edited.write_text(_ie_orig[(name, lab)])
         edit = lambda: edited.write_text(_ie_orig[(name, lab)] + extra)
     comp = INCR_COMP.get(name, ["--composite", "false"])
@@ -625,7 +634,8 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
             a, c = prep(lab, b)
             env = label_env(args, lab, variant)
             r = gated_run(rec, f"{variant} {name} {lab} run{i + 1}",
-                          lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"))
+                          lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"),
+                          setup=lambda: prep(lab, b))
             if variant.startswith("emit") or variant.startswith("icount-emit"):
                 r["emit_hash"] = tree_hash(scratch / f"{variant}-{name}-{lab}")
             if variant == "incr-edit":
