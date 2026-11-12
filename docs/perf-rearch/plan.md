@@ -2472,3 +2472,15 @@ once a **reconciliation step** is built and tested.
   - **Round 2:** that parity fixture, the docs, a lazy content-mapper read
     after the guards, and the triage corrections. B10 gets Astra's caller
     inputs.
+- **F5 round 2 done; merged.** Root accepts it without a further Astra
+  round: the changes are narrow and each one is checked.
+  - **Cli item `resolution-mode-source-phase`:** DIFF on `9429e8a57`
+    (`import("a").X`), MATCH on the head (`import("b").X`, as in Go).
+    The fold is documented as a correctness fix.
+  - **Also:**
+    - the content-mapper read is lazy again (no corpus project uses
+      mappers, so there is no workload to measure);
+    - the triage is corrected (80 output, 159 internal, 7 test, of 246);
+    - the duplicate `entityNameToString` is deleted.
+  - **Gate:** `runs/20261112-043308-full-70fb2aa783` PARITY OK;
+    single-threaded icount within ±0.007%.
