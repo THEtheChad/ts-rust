@@ -15,7 +15,17 @@ End-to-end checks (about 10 s; real sessions with the Go oracle, nothing cached)
                the sources (readFile of each root file)
   empty-tree   the same build with an empty served tree: the server finds no tsconfig.json (the files came
                from the callbacks, not from anywhere else)
+  dts-mtime    callback-build-dts-mtime: the stat callback of out/a.d.ts in the rebuild answers the scripted
+               2030 time with the d.ts's mode and size as the server sees them, and after the rebuild the
+               d.ts on the server's disk has that time (after the first build it has another)
+  interleave   callback-build-interleave: the second build is sent during the first one's callback, and
+               both answers come
+
+Round 3 unit checks: a scripted stat reads the sandbox's view (a fake sandbox root), never this process's
+file system (a file at the same path here is not seen); no sandbox root is a failure, not a guess; the
+recorded mtimes; an armed trigger runs once, before its callback is answered.
 """
+import os
 import json
 import sys
 import tempfile
@@ -72,6 +82,7 @@ def unit():
         check('a callback whose path is not a string is malformed', True)
     disk = session.Callbacks({'enable': ['stat'], 'stat': {'@ROOT@/out/a.d.ts': '2030-01-01T00:00:00Z'}}, ROOT)
     check('without a tree every read is useOS', disk.answer('readFile', f'{ROOT}/src/a.ts') == {'kind': 'useOS'})
+    sandbox_unit()
 
     base = {'name': 'b8-unit', 'about': 'x'}
     for bad, why in [({'callbacks': {'enable': []}, 'disk': {'a': 'b'}}, 'empty enable'),
@@ -103,6 +114,44 @@ def unit():
     v = api.view(with_cb)
     check('a callback transcript compares its callbacks and the client files',
           v['steps'][0]['callbacks'] == ['readFile /r/a'] and v['clientFiles'] == {'/r/a': 'x'} and v['callbacksAfter'] == [])
+
+
+def sandbox_unit():
+    with tempfile.TemporaryDirectory() as here, tempfile.TemporaryDirectory() as fake:
+        root = f'{here}/root'
+        os.makedirs(f'{root}/out')
+        with open(f'{root}/out/a.d.ts', 'w') as f:  # this process's file at the scripted path
+            f.write('export {};\n')
+        when = '2030-01-01T00:00:00Z'
+        cb = session.Callbacks({'enable': ['stat'], 'stat': {'@ROOT@/out/a.d.ts': when}}, root, lambda: fake)
+        check('a scripted stat does not see this process\'s file at the path',
+              cb.answer('stat', f'{root}/out/a.d.ts') == {'kind': 'missing'})
+        check('mtimes: missing in the sandbox', cb.mtimes() == {f'{root}/out/a.d.ts': 'missing'})
+        os.makedirs(f'{fake}{root}/out')
+        with open(f'{fake}{root}/out/a.d.ts', 'w') as f:
+            f.write('export declare const v: 1;\n')
+        got = cb.answer('stat', f'{root}/out/a.d.ts')
+        st = os.stat(f'{fake}{root}/out/a.d.ts')
+        check('a scripted stat: the sandbox file\'s mode and size, the scripted mtime',
+              got == {'kind': 'value', 'value': {'mode': st.st_mode, 'size': 27, 'mtime': when}}, got)
+        check('the record holds the scripted answer', any(m.startswith(f'stat {root}/out/a.d.ts -> ') and '2030' in m
+                                                          for m in cb.take()))
+        check('mtimes: a time the server set is "other"', cb.mtimes() == {f'{root}/out/a.d.ts': 'other'})
+        t = 1893456000  # 2030-01-01T00:00:00Z
+        os.utime(f'{fake}{root}/out/a.d.ts', (t, t))
+        check('mtimes: the scripted time is named', cb.mtimes() == {f'{root}/out/a.d.ts': when})
+        none = session.Callbacks({'enable': ['stat'], 'stat': {'@ROOT@/out/a.d.ts': when}}, root, lambda: None)
+        try:
+            none.answer('stat', f'{root}/out/a.d.ts')
+            check('no sandbox root: a failure, not this process\'s view', False)
+        except session.Malformed:
+            check('no sandbox root: a failure, not this process\'s view', True)
+        fired = []
+        cb.arm(f'fileExists {root}/x', lambda: fired.append(len(cb.made)))
+        cb.answer('fileExists', f'{root}/y')
+        cb.answer('fileExists', f'{root}/x')
+        cb.answer('fileExists', f'{root}/x')
+        check('an armed trigger runs once, at its callback, before the answer', fired == [2] and cb.armed is None, fired)
 
 
 TSCONFIG = '{"compilerOptions":{"noLib":true,"outDir":"out","rootDir":"src","module":"esnext","moduleResolution":"bundler"},"files":["src/a.ts","src/g.d.ts"]}'
@@ -139,10 +188,37 @@ def e2e():
               'tsconfig.json' in answer and not e.get('clientFiles') and any('tsconfig.json' in c for c in made), answer[:300])
 
 
+def e2e_round3():
+    by_name = {s['name']: s for s in api.load_scenarios()}
+    with tempfile.TemporaryDirectory(dir=session.SCRATCH.parent) as work:
+        sc = by_name['callback-build-dts-mtime']
+        fixture, _ = api.fixture_snapshot(sc)
+        t = session.run_session(str(api.GO), sc, Path(work) / 'mtime', fixture)
+        root = session.root_of(sc)
+        dts = f'{root}/out/a.d.ts'
+        builds = [s for s in t['steps'] if s['method'] == 'build']
+        rebuild = builds[-1]
+        answers = [c for c in rebuild.get('callbacks', []) if c.startswith(f'stat {dts} -> ')]
+        value = json.loads(answers[0].split(' -> ', 1)[1]) if answers else {}
+        check('dts-mtime: the session is clean', t['failure'] is None, t.get('why'))
+        check('dts-mtime: the rebuild\'s stat of the d.ts answers 2030 with its real size',
+              value.get('kind') == 'value' and value['value']['mtime'] == '2030-01-01T00:00:00Z' and value['value']['size'] > 0,
+              answers)
+        check('dts-mtime: after the first build the d.ts has the time of its write', builds[0].get('mtimes') == {dts: 'other'},
+              builds[0].get('mtimes'))
+        check('dts-mtime: after the rebuild the d.ts has the scripted time (Go restored it)',
+              rebuild.get('mtimes') == {dts: '2030-01-01T00:00:00Z'}, rebuild.get('mtimes'))
+        i = session.run_session(str(api.GO), by_name['callback-build-interleave'], Path(work) / 'interleave')
+        step = i['steps'][-1]
+        check('interleave: both builds answer', i['failure'] is None and step.get('then', {}).get('sent')
+              and '"status":0' in step['then'].get('answer', '') and 'answer' in step, step.get('then'))
+
+
 def main():
     unit()
     if '--unit' not in sys.argv:
         e2e()
+        e2e_round3()
     print('B8 SELFTEST FAIL' if FAILED else 'B8 SELFTEST OK')
     return 1 if FAILED else 0
 

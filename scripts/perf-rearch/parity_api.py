@@ -300,7 +300,7 @@ def answers(t):
     sort_changed_projects), and how the session ended."""
     steps = []
     for s in t['steps']:
-        step = {k: s[k] for k in ('method', 'params', 'answer', 'failure', 'callbacks') if k in s}
+        step = {k: s[k] for k in ('method', 'params', 'answer', 'failure', 'callbacks', 'mtimes', 'then') if k in s}
         if isinstance(step.get('answer'), str):
             step['answer'] = sort_changed_projects(step['answer'])
         steps.append(step)
