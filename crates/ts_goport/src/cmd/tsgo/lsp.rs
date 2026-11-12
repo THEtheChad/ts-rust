@@ -108,23 +108,24 @@ pub fn run_lsp(args: &[String]) -> i32 {
 // newParentProcessWatchdog returns a SetParentProcessID callback if the platform
 // supports process-alive checking and no client process ID override was provided,
 // or nil otherwise.
-// PORT: Go `clientProcessID` is an `int` (64 bits, see `FlagValue`); the
-// watchdog takes the `i32` pid, as Linux `kill` takes a 32-bit `pid_t`.
+// Go `clientProcessID` and the pids are Go `int` (64 bits, see
+// `FlagValue`); `is_process_alive` truncates to the 32-bit `pid_t` only at
+// `kill`, as Go's syscall does.
 pub fn new_parent_process_watchdog(
     ctx: &Context,
     stop: &CancelFunc,
     client_process_id: i64,
-) -> Option<Box<dyn Fn(i32) + Send + Sync>> {
+) -> Option<Box<dyn Fn(i64) + Send + Sync>> {
     if !PROCESS_ALIVE_SUPPORTED {
         return None;
     }
     if client_process_id > 0 {
-        start_parent_process_watchdog(ctx, stop, client_process_id as i32);
+        start_parent_process_watchdog(ctx, stop, client_process_id);
         return None;
     }
     let ctx = ctx.clone();
     let stop = stop.clone();
-    Some(Box::new(move |parent_pid: i32| {
+    Some(Box::new(move |parent_pid: i64| {
         start_parent_process_watchdog(&ctx, &stop, parent_pid);
     }))
 }
@@ -133,7 +134,7 @@ pub fn new_parent_process_watchdog(
 // startParentProcessWatchdog starts a goroutine that monitors the parent process
 // and cancels the context if the parent dies. This prevents orphaned language
 // server processes when the editor crashes or is killed.
-pub fn start_parent_process_watchdog(ctx: &Context, stop: &CancelFunc, parent_pid: i32) {
+pub fn start_parent_process_watchdog(ctx: &Context, stop: &CancelFunc, parent_pid: i64) {
     if parent_pid <= 0 {
         return;
     }

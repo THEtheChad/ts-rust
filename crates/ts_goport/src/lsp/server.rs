@@ -166,7 +166,7 @@ pub struct ServerOptions {
     // `contentmapper::Spawner`).
     pub spawn: Option<Rc<contentmapper::SpawnFn>>,
     pub progress_delay: Duration, // delay before showing progress UI; 0 means no delay
-    pub set_parent_process_id: Option<Box<dyn Fn(i32) + Send + Sync>>,
+    pub set_parent_process_id: Option<Box<dyn Fn(i64) + Send + Sync>>,
 }
 
 // Go: server.go:61 NewServer
@@ -540,7 +540,7 @@ pub struct ServerShared {
     pub progress_delay: Duration,
     pub project_progress: OnceLock<Arc<ProjectLoadingProgress>>,
 
-    pub start_watchdog: Option<Box<dyn Fn(i32) + Send + Sync>>,
+    pub start_watchdog: Option<Box<dyn Fn(i64) + Send + Sync>>,
 
     // PORT: written once by `handle_initialize` on the reader thread.
     pub flake_logging: OnceLock<lsproto::DiagnosticFlakeLogLevel>,
@@ -3467,7 +3467,8 @@ impl ServerShared {
         if let Some(start_watchdog) = &self.start_watchdog
             && let Some(process_id) = params.process_id.integer
         {
-            start_watchdog(process_id);
+            // Go `int(*params.ProcessId.Integer)`
+            start_watchdog(i64::from(process_id));
         }
 
         let response = lsproto::InitializeResult {

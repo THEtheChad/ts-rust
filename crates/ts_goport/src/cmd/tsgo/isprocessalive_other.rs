@@ -10,6 +10,6 @@ use crate::cmd::tsgo::prelude::*;
 pub const PROCESS_ALIVE_SUPPORTED: bool = false;
 
 // Go: cmd/tsc/isprocessalive_other.go:7 isProcessAlive
-pub fn is_process_alive(_pid: i32) -> bool {
+pub fn is_process_alive(_pid: i64) -> bool {
     panic!("isProcessAlive is not supported on this platform");
 }
