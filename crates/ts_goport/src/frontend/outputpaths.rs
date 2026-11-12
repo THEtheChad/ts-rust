@@ -75,42 +75,69 @@ pub struct ForceEmitPaths {
     pub declaration_map: bool,
 }
 
-// Go: outputpaths/outputpaths.go:52 GetOutputPathsFor (ts#64581)
-pub fn get_output_paths_for(
-    source_file: &ParsedSourceFile,
-    options: &CompilerOptions,
-    host: &dyn OutputPathsHost,
-    force: ForceEmitPaths,
-) -> OutputPaths {
-    get_output_paths_for_file(
-        source_file.file_name(),
-        source_file.script_kind,
-        source_file.content_mapper(),
-        options,
-        host,
-        force,
-    )
+/// The `*ast.SourceFile` fields that Go's emit decisions read:
+/// `GetOutputPathsFor` here and `sourceFileMayBeEmitted`
+/// (`compiler::source_file_may_be_emitted`).
+// PORT: the program has two representations of a source file: the
+// frontend's `ParsedSourceFile` and the emit side's arena `Node`, whose
+// fields sit behind a file guard (`program::with_emit_source_file`). Each
+// gives this view of its file, so one port of each Go function serves both.
+#[derive(Clone, Copy, Debug)]
+pub struct EmitSourceFile<'a> {
+    /// Go `sourceFile.FileName()`.
+    pub file_name: &'a str,
+    /// Go `sourceFile.ScriptKind`: `ast.IsJsonSourceFile` and
+    /// `ast.IsSourceFileJS` read it.
+    pub script_kind: ScriptKind,
+    /// Go `sourceFile.IsDeclarationFile`.
+    pub is_declaration_file: bool,
+    /// Go `sourceFile.ContentMapper()`: "" when no content mapper made the
+    /// file (#4712).
+    pub content_mapper: &'static str,
 }
 
-/// Go `GetOutputPathsFor` with the three source file fields it reads.
-/// Checker threads have no `ParsedSourceFile`, only the file name, the
-/// script kind and the content mapper (Go `sourceFile.ContentMapper()`,
-/// "" when no content mapper made the file).
-pub fn get_output_paths_for_file(
-    file_name: &str,
-    script_kind: ScriptKind,
-    content_mapper: &str,
+impl EmitSourceFile<'_> {
+    /// Go `ast.IsJsonSourceFile` of the file.
+    #[inline]
+    pub fn is_json(&self) -> bool {
+        self.script_kind == ScriptKind::JSON
+    }
+
+    /// Go `ast.IsSourceFileJS` of the file.
+    #[inline]
+    pub fn is_js(&self) -> bool {
+        matches!(self.script_kind, ScriptKind::JS | ScriptKind::JSX)
+    }
+}
+
+impl<'a> From<&'a ParsedSourceFile> for EmitSourceFile<'a> {
+    #[inline]
+    fn from(file: &'a ParsedSourceFile) -> Self {
+        EmitSourceFile {
+            file_name: file.file_name(),
+            script_kind: file.script_kind,
+            is_declaration_file: file.is_declaration_file,
+            content_mapper: file.content_mapper(),
+        }
+    }
+}
+
+// Go: outputpaths/outputpaths.go:52 GetOutputPathsFor (ts#64581)
+pub fn get_output_paths_for(
+    source_file: &EmitSourceFile<'_>,
     options: &CompilerOptions,
     host: &dyn OutputPathsHost,
     force: ForceEmitPaths,
 ) -> OutputPaths {
+    let file_name = source_file.file_name;
+    let content_mapper = source_file.content_mapper;
     let own_output_file_path = get_own_emit_output_file_path(
         file_name,
         options,
         host,
         get_output_extension(file_name, options.jsx),
     );
-    let is_json_file = script_kind == ScriptKind::JSON;
+    let is_json_file = source_file.is_json();
     // If json file emits to the same location skip writing it, if emitDeclarationOnly skip writing it
     let is_json_emitted_to_same_location = is_json_file
         && compare_rooted_text(
@@ -130,7 +157,7 @@ pub fn get_output_paths_for_file(
         && !is_json_emitted_to_same_location
     {
         paths.js_file_path = own_output_file_path;
-        if script_kind != ScriptKind::JSON {
+        if !source_file.is_json() {
             paths.source_map_file_path = get_source_map_file_path(&paths.js_file_path, options);
         }
     }
@@ -166,7 +193,7 @@ pub fn for_each_emitted_file(
         // #4699: Go `ForceEmitPaths{Dts: forceDtsEmit}`.
         if action(
             &get_output_paths_for(
-                source_file,
+                &EmitSourceFile::from(&**source_file),
                 options,
                 host,
                 ForceEmitPaths {
@@ -655,10 +682,13 @@ mod tests {
         let input = format!("{ROOT}/src/data.json");
         let output = format!("{ROOT}/SRC/data.json");
         assert_eq!(get_output_js_file_name(&input, &options, &host), output);
-        let paths = get_output_paths_for_file(
-            &input,
-            ScriptKind::JSON,
-            "",
+        let paths = get_output_paths_for(
+            &EmitSourceFile {
+                file_name: &input,
+                script_kind: ScriptKind::JSON,
+                is_declaration_file: false,
+                content_mapper: "",
+            },
             &options,
             &host,
             ForceEmitPaths::default(),

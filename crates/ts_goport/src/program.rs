@@ -17,7 +17,6 @@
 //! checker pool of each version, by program id.
 
 use crate::execute::tsc::compile::CompileTimes;
-use crate::frontend::compiler::json_file_may_be_emitted;
 use crate::frontend::parser::ExternalModuleIndicatorOptions;
 use crate::frontend::tspath;
 use crate::gostd::{Context, context};
@@ -3960,55 +3959,74 @@ pub fn source_file_may_be_emitted(source_file: Node, force_dts_emit: bool) -> bo
     source_file_may_be_emitted_worker(source_file, force_dts_emit, false)
 }
 
-// Go: compiler/emitter.go:478 sourceFileMayBeEmitted
+/// `frontend::compiler::source_file_may_be_emitted` on this thread's
+/// program (`CurrentProgram`).
+#[inline]
 fn source_file_may_be_emitted_worker(
     source_file: Node,
     force_dts_emit: bool,
     force_js_emit: bool,
 ) -> bool {
-    let options = &prog().options;
-    let info = source_file_info(source_file);
-    // Js files are emitted only if option is enabled
-    if !force_js_emit && options.no_emit_for_js_files.is_true() && is_source_file_js(source_file) {
-        return false;
-    }
-    // Declaration files are not emitted
-    if info.is_declaration_file {
-        return false;
-    }
-    // #4712
-    // Runtime output for content-mapped files is owned by the external content mapper or build tool. Only
-    // include them in the emit set when their transformed TypeScript can produce declarations.
-    if !source_file_content_mapper(source_file).is_empty()
-        && !force_dts_emit
-        && !options.get_emit_declarations()
-    {
-        return false;
-    }
-    // Source file from node_modules are not emitted
-    if is_source_file_from_external_library(source_file) {
-        return false;
-    }
-    // forcing dts emit => file needs to be emitted
-    if force_dts_emit || force_js_emit {
-        return true;
-    }
-    // Source files from referenced projects are not emitted
-    if get_project_reference_from_source(&info.path).is_some() {
-        return false;
-    }
-    // Any non json file should be emitted
-    if !is_json_source_file(source_file) {
-        return true;
-    }
-    // The JSON part is the frontend's (`json_file_may_be_emitted`), so the
-    // two hosts give one answer.
-    json_file_may_be_emitted(
-        &info.file_name,
-        options,
-        base_directory(),
-        use_case_sensitive_file_names(),
+    crate::frontend::compiler::source_file_may_be_emitted(
+        &source_file,
+        &CurrentProgram,
+        force_dts_emit,
+        force_js_emit,
     )
+}
+
+/// Runs `read` on the fields of source file `file` that Go's emit decisions
+/// read (`EmitSourceFile`), with the file's info guard held.
+fn with_emit_source_file<R>(
+    file: Node,
+    read: impl FnOnce(&crate::frontend::outputpaths::EmitSourceFile<'_>) -> R,
+) -> R {
+    let info = source_file_info(file);
+    read(&crate::frontend::outputpaths::EmitSourceFile {
+        file_name: &info.file_name,
+        script_kind: info.script_kind,
+        is_declaration_file: info.is_declaration_file,
+        content_mapper: source_file_content_mapper(file),
+    })
+}
+
+/// This thread's program as Go's `SourceFileMayBeEmittedHost`: the emit
+/// side's host of `frontend::compiler::source_file_may_be_emitted`.
+struct CurrentProgram;
+
+impl crate::frontend::compiler::SourceFileMayBeEmittedHost for CurrentProgram {
+    type File = Node;
+
+    #[inline]
+    fn with_source_file<R>(
+        &self,
+        file: &Node,
+        read: impl FnOnce(&crate::frontend::outputpaths::EmitSourceFile<'_>) -> R,
+    ) -> R {
+        with_emit_source_file(*file, read)
+    }
+
+    fn options(&self) -> &CompilerOptions {
+        options()
+    }
+
+    fn is_source_file_from_external_library(&self, file: &Node) -> bool {
+        is_source_file_from_external_library(*file)
+    }
+
+    fn has_project_reference_from_source(&self, file: &Node) -> bool {
+        with_source_file_info(*file, |info| {
+            get_project_reference_from_source(&info.path).is_some()
+        })
+    }
+
+    fn base_directory(&self) -> Cow<'_, str> {
+        Cow::Borrowed(base_directory())
+    }
+
+    fn use_case_sensitive_file_names(&self) -> bool {
+        use_case_sensitive_file_names()
+    }
 }
 
 // Go: compiler/program.go:2107 GetSourceFile
@@ -4103,26 +4121,19 @@ pub fn get_source_file_from_reference(origin: Node, r: &FileReference) -> Node {
     with_go(|go| go.get_source_file_from_reference(origin, r))
 }
 
-// Go: outputpaths/outputpaths.go:52 GetOutputPathsFor, called by
-// compiler/emitHost.go:91 emitHost.GetOutputPathsFor and Program.Emit with
-// the program options.
-// PORT: Go reads three fields of the source file (#4712: the content
-// mapper). It is named for the emit host method so it does not clash with
-// the frontend `get_output_paths_for` in the frontend prelude.
+/// `outputpaths::get_output_paths_for` of source file `file`, with the
+/// program options: Go `GetOutputPathsFor` as `emitHost.GetOutputPathsFor`
+/// (compiler/emitHost.go:91) and `Program.Emit` call it.
+// PORT: named for the emit host method so it does not clash with the
+// frontend `get_output_paths_for` in the frontend prelude.
 pub fn get_output_paths_for_source_file(
     file: Node,
     host: &dyn crate::frontend::outputpaths::OutputPathsHost,
     force: crate::frontend::outputpaths::ForceEmitPaths,
 ) -> crate::frontend::outputpaths::OutputPaths {
-    let info = source_file_info(file);
-    crate::frontend::outputpaths::get_output_paths_for_file(
-        &info.file_name,
-        info.script_kind,
-        source_file_content_mapper(file),
-        options(),
-        host,
-        force,
-    )
+    with_emit_source_file(file, |source_file| {
+        crate::frontend::outputpaths::get_output_paths_for(source_file, options(), host, force)
+    })
 }
 
 // Go: compiler/program.go:2241 GetJSXRuntimeImportSpecifier
@@ -6754,6 +6765,7 @@ pub fn checker_index_of_file(file: Node) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::compiler::json_file_may_be_emitted;
 
     // startexit1: the index sort with ranked file names gives the order and
     // the merges of Go's `SortAndDeduplicateDiagnostics` (compiler/program.go:
