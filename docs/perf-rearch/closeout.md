@@ -6,7 +6,23 @@ The code-quality phase ran from `e81a14807` (the end of the perf phase: C2 follo
 - every timing is still ≤ Go;
 - the quality before and after.
 
-No compiler source changed in this lane. The one tool fix is listed under "Timing".
+No compiler source changed in this lane. Three timing-tool bugs in `scripts/perf-rearch/bench.py` were fixed
+before the numbers below; they are listed under "Timing".
+
+Lane data is in `~/.cache/perf-rearch/closeout/`: bins, logs, `w2/`, `icount.tsv`, the quality reports,
+`dups-*.txt` and `unresolved-*.jsonl`.
+
+**Summary:**
+- **Parity:** PARITY OK, 0 lost.
+- **Timing:** 93 of 93 cells are ≤ Go; the head is flat against the phase start.
+- **icount:** single-threaded cells are within +0.05%.
+- **Quality:**
+  - functions over cognitive 25: 713 → 541;
+  - port-bloat rows: 166 → 10;
+  - own code over 25: 117 → 0;
+  - duplication: 3.58% → 3.16%;
+  - `clippy::all`: 2,120 → 1,132;
+  - shipped env names: 19 → 11.
 
 ## Parity
 
