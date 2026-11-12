@@ -354,7 +354,14 @@ impl<'a> EmitFilesHandler<'a> {
     ) -> bool {
         // Go: emitfileshandler.go:124 `h.program.program.SingleThreaded()`.
         let single_threaded = self.program.program().single_threaded();
-        let Some(failures) = flush_writes(writes, order, write_file, single_threaded) else {
+        // Go `h.program.host`: the build host, which only this thread
+        // reaches in the API build (`flush_writes_on_this_thread`).
+        let m_times = match &self.program.host {
+            Some(host) if FLUSH_ON_THIS_THREAD.get() => MTimes::Host(&**host),
+            _ => MTimes::Os,
+        };
+        let Some(failures) = flush_writes(writes, order, write_file, single_threaded, m_times)
+        else {
             return false;
         };
         *self.shared.lock().expect("emit files lock") = EmitFilesShared::default();
@@ -713,6 +720,7 @@ impl OutputWriter {
                     text,
                     data,
                     differs_only_in_map,
+                    MTimes::Os,
                 ),
             },
             Writes::Direct => write_output(
@@ -721,9 +729,23 @@ impl OutputWriter {
                 text,
                 data,
                 differs_only_in_map,
+                MTimes::Os,
             ),
         }
     }
+}
+
+/// Where `write_output` gets and sets the modified time of an output (Go
+/// `h.program.host.GetMTime` and `SetMTime`, incremental/host.go:21-34).
+#[derive(Clone, Copy)]
+enum MTimes<'a> {
+    /// The OS file system of this thread: the program host's file system on
+    /// a thread that cannot reach the host, when the host is the OS file
+    /// system (`tsc -b`, and a write on a checker thread).
+    Os,
+    /// The program's incremental host, on its thread (the flush of the API
+    /// build, whose host can be the client's file system).
+    Host(&'a dyn super::incremental::Host),
 }
 
 // Go: the end of the `getEmitOptions` WriteFile callback
@@ -735,10 +757,14 @@ fn write_output(
     text: &str,
     data: &mut WriteFileData,
     differs_only_in_map: bool,
+    m_times: MTimes<'_>,
 ) -> Result<(), String> {
     let mut a_time = None;
     if differs_only_in_map {
-        a_time = osvfs_fs().stat(file_name).and_then(|info| info.mod_time());
+        a_time = match m_times {
+            MTimes::Os => osvfs_fs().stat(file_name).and_then(|info| info.mod_time()),
+            MTimes::Host(host) => host.get_m_time(file_name),
+        };
     }
     let mut err = match write_file {
         Some(write_file) => write_file(file_name, text, data),
@@ -746,9 +772,11 @@ fn write_output(
     };
     if err.is_ok() && differs_only_in_map {
         // Revert the time to original one
-        err = osvfs_fs()
-            .chtimes(file_name, None, a_time)
-            .map_err(|err| fs_error_text(&err));
+        err = match m_times {
+            MTimes::Os => osvfs_fs().chtimes(file_name, None, a_time),
+            MTimes::Host(host) => host.set_m_time(file_name, a_time),
+        }
+        .map_err(|err| fs_error_text(&err));
     }
     err
 }
@@ -872,6 +900,7 @@ fn flush_writes(
     order: &[Path],
     write_file: Option<&WriteFile>,
     single_threaded: bool,
+    m_times: MTimes<'_>,
 ) -> Option<FlushFailures> {
     let order: FxHashMap<&Path, usize> = order
         .iter()
@@ -889,7 +918,7 @@ fn flush_writes(
     if let Some(calls) = CLIENT_WRITES.get()
         && !single_threaded
     {
-        return flush_client_writes(writes, calls, write_file);
+        return flush_client_writes(writes, calls, write_file, m_times);
     }
     let files: Vec<&mut [BufferedWrite]> =
         writes.chunk_by_mut(|a, b| a.source == b.source).collect();
@@ -903,7 +932,7 @@ fn flush_writes(
     };
     let files = Mutex::new(files.into_iter());
     let failures = Mutex::new(FlushFailures::default());
-    let work = || {
+    let work = |m_times: MTimes<'_>| {
         loop {
             let next = files.lock().unwrap_or_else(PoisonError::into_inner).next();
             let Some(file) = next else {
@@ -920,6 +949,7 @@ fn flush_writes(
                         &write.text,
                         &mut write.data,
                         write.differs_only_in_map,
+                        m_times,
                     ) {
                         Ok(()) => continue,
                         Err(err) => Some(err),
@@ -939,13 +969,13 @@ fn flush_writes(
         // the parse and config prefetch threads).
         for _ in 1..threads {
             if std::thread::Builder::new()
-                .spawn_scoped(scope, work)
+                .spawn_scoped(scope, move || work(MTimes::Os))
                 .is_err()
             {
                 break;
             }
         }
-        work();
+        work(m_times);
     });
     let failures = failures
         .into_inner()
@@ -992,6 +1022,7 @@ fn flush_client_writes(
     writes: Vec<BufferedWrite>,
     calls: ClientWrites,
     write_file: Option<&WriteFile>,
+    m_times: MTimes<'_>,
 ) -> Option<FlushFailures> {
     // (declaration, the output's place among its file's outputs of that
     // kind, the file), and the write.
@@ -1020,6 +1051,7 @@ fn flush_client_writes(
             .map(|&((.., file), _)| file)
             .collect(),
         write_file,
+        m_times,
         failed: FxHashSet::default(),
         doomed: None,
         failures: FlushFailures::default(),
@@ -1048,6 +1080,7 @@ fn flush_client_writes(
 struct ClientFlush<'a> {
     reads_diagnostics: FxHashSet<usize>,
     write_file: Option<&'a WriteFile>,
+    m_times: MTimes<'a>,
     /// The files with a failed output.
     failed: FxHashSet<usize>,
     /// The file whose d.ts panics.
@@ -1068,6 +1101,7 @@ impl ClientFlush<'_> {
                 &write.text,
                 &mut write.data,
                 write.differs_only_in_map,
+                self.m_times,
             ) {
                 Ok(()) => return false,
                 Err(err) => Some(err),
