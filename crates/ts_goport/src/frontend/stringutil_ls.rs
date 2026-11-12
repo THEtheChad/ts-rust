@@ -307,3 +307,59 @@ pub fn equal_fold(s: &[u8], t: &[u8]) -> bool {
     }
     i == s.len() && j == t.len()
 }
+
+#[cfg(test)]
+mod has_prefix_tests {
+    use super::{has_prefix, has_prefix_and_suffix_without_overlap, has_suffix};
+    use crate::scanner_util::go_string_from_bytes;
+
+    /// Go bytes to the port form (see `scanner_util::GO_STRING_MARKER`).
+    fn port(bytes: &[u8]) -> String {
+        go_string_from_bytes(bytes.to_vec())
+    }
+
+    // Go `HasPrefix`, `HasSuffix` and `HasPrefixAndSuffixWithoutOverlap`
+    // (stringutil/compare.go:74-100 at the pin), each case-sensitive then
+    // insensitive, as go1.27.1 prints them for these Go strings (lane B10,
+    // `docs/perf-rearch/cleanup/b10.md`).
+    #[test]
+    fn go_bytes_and_equal_fold() {
+        #[rustfmt::skip]
+        let cases: &[(&[u8], &[u8], &[u8], [bool; 6])] = &[
+            ("Ä/x".as_bytes(), "ä/".as_bytes(), b"", [false, true, true, true, false, true]),
+            (b"x\xc3\x84.ts", b"", "ä.ts".as_bytes(), [true, true, false, true, false, true]),
+            // The slice is by bytes: the Kelvin sign (3 bytes) is not "k" + 2 bytes.
+            ("\u{212A}x".as_bytes(), b"k", b"", [false, false, true, true, false, false]),
+            (b"kx", "\u{212A}".as_bytes(), b"", [false, false, true, true, false, false]),
+            ("kſſ/b".as_bytes(), "\u{212A}ss/".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("ßſ/z".as_bytes(), "\u{1E9E}S/".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("src/älpha/t".as_bytes(), "SRC/ÄLPHA/".as_bytes(), b"", [false, true, true, true, false, true]),
+            // An invalid byte is one RuneError in Go; the port form's
+            // marker unit must not match a real U+10F780.
+            (b"x\x80.ts", b"", "\u{10F780}.ts".as_bytes(), [true, true, false, false, false, false]),
+            (b"x\x80.ts", b"", b"\x81.ts", [true, true, false, true, false, true]),
+            (b"x\x80.ts", b"", "\u{FFFD}.ts".as_bytes(), [true, true, false, false, false, false]),
+            // A Go slice that cuts a rune.
+            ("é".as_bytes(), b"\xc3", b"", [true, true, true, true, true, true]),
+            ("é".as_bytes(), b"", b"\xa9", [true, true, true, true, true, true]),
+            (b"ab", b"ab", b"b", [true, true, true, true, false, false]),
+            ("İ".as_bytes(), b"i", b"", [false, false, true, true, false, false]),
+            ("ı".as_bytes(), b"I", b"", [false, false, true, true, false, false]),
+            ("ϑ".as_bytes(), "θ".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("ǅ".as_bytes(), "ǆ".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("Σ".as_bytes(), "ς".as_bytes(), b"", [false, true, true, true, false, true]),
+        ];
+        for (s, p, x, want) in cases {
+            let (s, p, x) = (port(s), port(p), port(x));
+            let got = [
+                has_prefix(&s, &p, true),
+                has_prefix(&s, &p, false),
+                has_suffix(&s, &x, true),
+                has_suffix(&s, &x, false),
+                has_prefix_and_suffix_without_overlap(&s, &p, &x, true),
+                has_prefix_and_suffix_without_overlap(&s, &p, &x, false),
+            ];
+            assert_eq!(&got, want, "{s:?} {p:?} {x:?}");
+        }
+    }
+}

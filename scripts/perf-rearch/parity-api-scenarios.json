@@ -2619,19 +2619,21 @@
   },
   {
    "name": "ms-imports-fold-insensitive",
-   "about": "B10: declaration emit through package.json imports patterns #a/* ./SRC/ÄLPHA/*.ts and #s/* ./src/SFX/*-Ü.ts for files under src/älpha and src/sfx/one-ü on an insensitive host: Go HasPrefixAndSuffixWithoutOverlap (compare.go:94, specifiers.go:1320) folds them (#a/thing, #s/one)",
+   "about": "B10: declaration emit through package.json imports patterns on an insensitive host, one per HasPrefixAndSuffixWithoutOverlap call of Go's pattern mode that a .ts target reaches (specifiers.go:1320, :1324, :1328): #a/* ./SRC/ÄLPHA/*.ts and #s/* ./src/SFX/*-Ü.ts against the source file, #o/* ./OUT/SRC/ÖUT/*.js against its JS output and #d/* ./OUT/SRC/DÉCL/*.d.ts against its declaration output (outDir app/out). Go folds each (Go bytes, strings.EqualFold): #a/thing, #s/one, #o/q, #d/r",
    "caseSensitive": false,
    "fs": {
     "kind": "full",
     "files": {
      "@ROOT@/globals.d.ts": "@GLOBALS@",
      "@ROOT@/app/src/package.json": "{}\n",
-     "@ROOT@/app/package.json": "{\"name\": \"app\", \"type\": \"module\", \"imports\": {\"#a/*\": \"./SRC/\\u00c4LPHA/*.ts\", \"#s/*\": \"./src/SFX/*-\\u00dc.ts\", \"#p/*\": \"./SRC/ASCII/*.ts\"}}",
+     "@ROOT@/app/package.json": "{\"name\": \"app\", \"type\": \"module\", \"imports\": {\"#a/*\": \"./SRC/\\u00c4LPHA/*.ts\", \"#s/*\": \"./src/SFX/*-\\u00dc.ts\", \"#p/*\": \"./SRC/ASCII/*.ts\", \"#o/*\": \"./OUT/SRC/\\u00d6UT/*.js\", \"#d/*\": \"./OUT/SRC/D\\u00c9CL/*.d.ts\"}}",
+     "@ROOT@/app/src/öut/q.ts": "export class Q { q = 1; }\nexport function mq(): Q { return new Q(); }\n",
+     "@ROOT@/app/src/décl/r.ts": "export class R { r = 1; }\nexport function mr(): R { return new R(); }\n",
      "@ROOT@/app/src/älpha/thing.ts": "export class Thing { a = 1; }\nexport function make(): Thing { return new Thing(); }\n",
      "@ROOT@/app/src/sfx/one-ü.ts": "export class One { b = 1; }\nexport function one(): One { return new One(); }\n",
      "@ROOT@/app/src/ascii/plain.ts": "export class Plain { d = 1; }\nexport function plain(): Plain { return new Plain(); }\n",
-     "@ROOT@/app/deep/er/re.ts": "export { make } from \"../../src/älpha/thing\";\nexport { one } from \"../../src/sfx/one-ü\";\nexport { plain } from \"../../src/ascii/plain\";\n",
-     "@ROOT@/app/deep/er/main.ts": "import { make, one, plain } from \"./re\";\nexport const v = make();\nexport const o = one();\nexport const p = plain();\n"
+     "@ROOT@/app/deep/er/re.ts": "export { make } from \"../../src/älpha/thing\";\nexport { one } from \"../../src/sfx/one-ü\";\nexport { plain } from \"../../src/ascii/plain\";\nexport { mq } from \"../../src/öut/q\";\nexport { mr } from \"../../src/décl/r\";\n",
+     "@ROOT@/app/deep/er/main.ts": "import { make, one, plain, mq, mr } from \"./re\";\nexport const v = make();\nexport const o = one();\nexport const p = plain();\nexport const q = mq();\nexport const r = mr();\n"
     }
    },
    "createPrograms": [
@@ -2642,7 +2644,7 @@
      ],
      "compilerOptions": {
       "noLib": true,
-      "outDir": "@ROOT@/out",
+      "outDir": "@ROOT@/app/out",
       "declaration": true,
       "module": 99,
       "moduleResolution": 100
@@ -2659,12 +2661,14 @@
     "files": {
      "@ROOT@/globals.d.ts": "@GLOBALS@",
      "@ROOT@/app/src/package.json": "{}\n",
-     "@ROOT@/app/package.json": "{\"name\": \"app\", \"type\": \"module\", \"imports\": {\"#a/*\": \"./SRC/\\u00c4LPHA/*.ts\", \"#s/*\": \"./src/SFX/*-\\u00dc.ts\", \"#p/*\": \"./SRC/ASCII/*.ts\"}}",
+     "@ROOT@/app/package.json": "{\"name\": \"app\", \"type\": \"module\", \"imports\": {\"#a/*\": \"./SRC/\\u00c4LPHA/*.ts\", \"#s/*\": \"./src/SFX/*-\\u00dc.ts\", \"#p/*\": \"./SRC/ASCII/*.ts\", \"#o/*\": \"./OUT/SRC/\\u00d6UT/*.js\", \"#d/*\": \"./OUT/SRC/D\\u00c9CL/*.d.ts\"}}",
+     "@ROOT@/app/src/öut/q.ts": "export class Q { q = 1; }\nexport function mq(): Q { return new Q(); }\n",
+     "@ROOT@/app/src/décl/r.ts": "export class R { r = 1; }\nexport function mr(): R { return new R(); }\n",
      "@ROOT@/app/src/älpha/thing.ts": "export class Thing { a = 1; }\nexport function make(): Thing { return new Thing(); }\n",
      "@ROOT@/app/src/sfx/one-ü.ts": "export class One { b = 1; }\nexport function one(): One { return new One(); }\n",
      "@ROOT@/app/src/ascii/plain.ts": "export class Plain { d = 1; }\nexport function plain(): Plain { return new Plain(); }\n",
-     "@ROOT@/app/deep/er/re.ts": "export { make } from \"../../src/älpha/thing\";\nexport { one } from \"../../src/sfx/one-ü\";\nexport { plain } from \"../../src/ascii/plain\";\n",
-     "@ROOT@/app/deep/er/main.ts": "import { make, one, plain } from \"./re\";\nexport const v = make();\nexport const o = one();\nexport const p = plain();\n"
+     "@ROOT@/app/deep/er/re.ts": "export { make } from \"../../src/älpha/thing\";\nexport { one } from \"../../src/sfx/one-ü\";\nexport { plain } from \"../../src/ascii/plain\";\nexport { mq } from \"../../src/öut/q\";\nexport { mr } from \"../../src/décl/r\";\n",
+     "@ROOT@/app/deep/er/main.ts": "import { make, one, plain, mq, mr } from \"./re\";\nexport const v = make();\nexport const o = one();\nexport const p = plain();\nexport const q = mq();\nexport const r = mr();\n"
     }
    },
    "createPrograms": [
@@ -2675,7 +2679,7 @@
      ],
      "compilerOptions": {
       "noLib": true,
-      "outDir": "@ROOT@/out",
+      "outDir": "@ROOT@/app/out",
       "declaration": true,
       "module": 99,
       "moduleResolution": 100
@@ -2685,18 +2689,19 @@
   },
   {
    "name": "ms-exports-fold-insensitive",
-   "about": "B10: node_modules/pkg's exports ./* to ./DIST/ÄLPHA/*.d.ts and ./sfx/* to ./dist/sfx/*-Ü.d.ts, with the declaration files also root files under their lower-case names (so the program keeps those names, TS1149) on an insensitive host: Go's exports pattern match folds them (pkg/widget, pkg/sfx/gadget, specifiers.go:1312-1328) instead of TS2883",
+   "about": "B10: node_modules/pkg's exports ./* to ./DIST/ÄLPHA/*.d.ts and ./sfx/* to ./dist/sfx/*-Ü.d.ts (the target itself, specifiers.go:1320) and ./jo/* to ./DIST/JÖ/*.js (the extension-swapped target, :1316), with the declaration files also root files under their lower-case names (so the program keeps those names, TS1149) on an insensitive host: Go folds them (pkg/widget, pkg/sfx/gadget, pkg/jo/gizmo) instead of TS2883",
    "caseSensitive": false,
    "fs": {
     "kind": "full",
     "files": {
      "@ROOT@/globals.d.ts": "@GLOBALS@",
      "@ROOT@/package.json": "{\"name\": \"app\", \"dependencies\": {\"pkg\": \"1.0.0\"}}",
-     "@ROOT@/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"exports\": {\"./*\": {\"types\": \"./DIST/\\u00c4LPHA/*.d.ts\", \"default\": \"./DIST/\\u00c4LPHA/*.js\"}, \"./sfx/*\": {\"types\": \"./dist/sfx/*-\\u00dc.d.ts\"}}}",
+     "@ROOT@/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"exports\": {\"./*\": {\"types\": \"./DIST/\\u00c4LPHA/*.d.ts\", \"default\": \"./DIST/\\u00c4LPHA/*.js\"}, \"./sfx/*\": {\"types\": \"./dist/sfx/*-\\u00dc.d.ts\"}, \"./jo/*\": {\"types\": \"./DIST/J\\u00d6/*.js\"}}}",
+     "@ROOT@/node_modules/pkg/dist/jö/gizmo.d.ts": "export declare class Gizmo { z: number; }\nexport declare function makeGizmo(): Gizmo;\n",
      "@ROOT@/node_modules/pkg/dist/älpha/widget.d.ts": "export declare class Widget { w: number; }\nexport declare function makeWidget(): Widget;\n",
      "@ROOT@/node_modules/pkg/dist/sfx/gadget-ü.d.ts": "export declare class Gadget { g: number; }\nexport declare function makeGadget(): Gadget;\n",
-     "@ROOT@/src/re.ts": "export { makeWidget } from \"pkg/widget\";\nexport { makeGadget } from \"pkg/sfx/gadget\";\n",
-     "@ROOT@/src/use.ts": "import { makeWidget, makeGadget } from \"./re\";\nexport const w = makeWidget();\nexport const g = makeGadget();\n"
+     "@ROOT@/src/re.ts": "export { makeWidget } from \"pkg/widget\";\nexport { makeGadget } from \"pkg/sfx/gadget\";\nexport { makeGizmo } from \"pkg/jo/gizmo\";\n",
+     "@ROOT@/src/use.ts": "import { makeWidget, makeGadget, makeGizmo } from \"./re\";\nexport const w = makeWidget();\nexport const g = makeGadget();\nexport const z = makeGizmo();\n"
     }
    },
    "createPrograms": [
@@ -2704,6 +2709,7 @@
      "rootFiles": [
       "@ROOT@/node_modules/pkg/dist/älpha/widget.d.ts",
       "@ROOT@/node_modules/pkg/dist/sfx/gadget-ü.d.ts",
+      "@ROOT@/node_modules/pkg/dist/jö/gizmo.d.ts",
       "@ROOT@/src/re.ts",
       "@ROOT@/src/use.ts",
       "@ROOT@/globals.d.ts"
