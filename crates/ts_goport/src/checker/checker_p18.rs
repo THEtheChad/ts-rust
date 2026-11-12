@@ -38,16 +38,6 @@ struct ExportsOfModuleVisitState {
     type_only_export_star_map: FxHashMap<String, Node>,
 }
 
-// Go: checker/utilities.go:218 entityNameToString
-// PORT: the checker wrapper `entityNameToString(name)` has the same snake
-// name as the ast function `EntityNameToString(name, getTextOfNode)` that is
-// already ported as `entity_name_to_string(name, Option<..>)`. To avoid the
-// glob-import clash, this file calls the ast function with
-// `scanner.GetTextOfNode`, which is exactly what the checker wrapper does.
-fn checker_entity_name_to_string(name: Node) -> String {
-    entity_name_to_string(name, Some(&get_text_of_node))
-}
-
 impl Checker {
     // Go: checker/checker.go:16236 resolveQualifiedName
     pub fn resolve_qualified_name(
@@ -138,7 +128,9 @@ impl Checker {
                 self.error(
                         containing_qualified_name,
                         diag::X_0_refers_to_a_value_but_is_being_used_as_a_type_here_Did_you_mean_typeof_0,
-                        args![checker_entity_name_to_string(containing_qualified_name)],
+                        args![super::utilities_p1::checker_entity_name_to_string(
+                            containing_qualified_name
+                        )],
                     );
                 return SymbolId::NIL;
             }
