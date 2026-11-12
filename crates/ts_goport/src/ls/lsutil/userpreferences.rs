@@ -8,21 +8,13 @@ use crate::modulespecifiers::{
     ImportModuleSpecifierEndingPreference, ImportModuleSpecifierPreference,
 };
 use std::borrow::Cow;
-use std::sync::LazyLock;
 
-// Port of Go `ls/lsutil/userpreferences.go`.
-//
-// PORT: Go walks the preference structs with `reflect`. Here a static field
-// table (`USER_PREFERENCES_FIELDS`) lists every tagged field in Go field
-// order, with the Go `raw` and `config` tag strings and a getter and setter.
-// `collectFieldInfos` parses those tags as Go does. The table order decides
-// the `withConfig` order and the `MarshalJSONTo` input order, as the Go field
-// order does. Go `any` is `LspAny` and Go `map[string]any` is
-// `IndexMap<String, LspAny>`. Go `nil` is `LspAny::Null`.
-//
-// PORT: Go `[]string` fields tell a nil slice from an empty one. Only
-// `MarshalJSONTo` (nil is skipped) sees the difference. A Rust `Vec` has no
-// nil, so an empty `Vec` counts as nil there.
+// Port of Go `ls/lsutil/userpreferences.go`. The parser and serializer that
+// ts#64554 generates (`withConfig`, `applyRawPreferences`, `MarshalJSONTo`,
+// the `parsePreference<Type>` functions) are in `userpreferences_generated.rs`.
+// Go `any` is `LspAny` and Go `map[string]any` is `IndexMap<String, LspAny>`.
+// Go `nil` is `LspAny::Null`. A Go `[]string` field is `Option<Vec<String>>`:
+// `MarshalJSONTo` skips a nil slice and writes an empty one as `[]`.
 
 // Go: ls/lsutil/userpreferences.go:16 NewDefaultUserPreferences
 pub fn new_default_user_preferences() -> UserPreferences {
@@ -49,16 +41,15 @@ pub fn new_default_user_preferences() -> UserPreferences {
     }
 }
 
-// Go: ls/lsutil/userpreferences.go:47 UserPreferences (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:89 UserPreferences)
+// Go: ls/lsutil/userpreferences_generated.go:89 UserPreferences
 // UserPreferences represents TypeScript language service preferences.
-//
-// Fields are populated using two tags:
-//   - `raw:"name"` or `raw:"name,invert"` - TypeScript/raw name for unstable section lookup
-//   - `config:"path.to.setting"` or `config:"path.to.setting,invert"` - VS Code nested config path
-//
-// At least one tag must be present on each preference field.
-// The `,invert` modifier inverts boolean values (e.g., VS Code's "suppress" -> our "include").
-// PORT: the tags are in `USER_PREFERENCES_FIELDS`.
+// PORT: Go embeds `CompletionPreferences` (the completion fields here) and
+// names `InlayHintsPreferences` and `CodeLensUserPreferences` by type; here
+// they are `inlay_hints` and `code_lens`. Some fields keep their names from
+// before ts#64554 (`enable_auto_closing_tags` is Go `AutoClosingTags`,
+// `enable_js_doc_completions` `CompleteJSDocs`, `enable_formatting`
+// `FormatEnabled`, `enable_validation` `ValidateEnabled`,
+// `use_aliases_for_rename` `ProvidePrefixAndSuffixTextForRename`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UserPreferences {
     pub format_code_settings: FormatCodeSettings,
@@ -69,7 +60,8 @@ pub struct UserPreferences {
     // A positive integer indicating the maximum length of a hover text before it is truncated.
     //
     // Default: `500`
-    pub maximum_hover_length: i32, // !!!
+    // PORT: Go `int` (64 bits).
+    pub maximum_hover_length: i64, // !!!
 
     // ------- Completions -------
 
@@ -102,8 +94,8 @@ pub struct UserPreferences {
     pub import_module_specifier_preference: ImportModuleSpecifierPreference, // !!!
     // Determines whether we import `foo/index.ts` as "foo", "foo/index", or "foo/index.js"
     pub import_module_specifier_ending: ImportModuleSpecifierEndingPreference, // !!!
-    pub auto_import_specifier_exclude_regexes: Vec<String>,                    // !!!
-    pub auto_import_file_exclude_patterns: Vec<String>,
+    pub auto_import_specifier_exclude_regexes: Option<Vec<String>>,            // !!!
+    pub auto_import_file_exclude_patterns: Option<Vec<String>>,
     pub auto_import_entrypoint_directory_search: Tristate,
     pub prefer_type_only_auto_imports: Tristate,
 
@@ -216,7 +208,7 @@ impl UserPreferences {
     }
 }
 
-// Go: ls/lsutil/userpreferences.go:209 InlayHintsPreferences (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:77 InlayHintsPreferences)
+// Go: ls/lsutil/userpreferences_generated.go:77 InlayHintsPreferences
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InlayHintsPreferences {
     pub include_inlay_parameter_name_hints: IncludeInlayParameterNameHints,
@@ -229,7 +221,7 @@ pub struct InlayHintsPreferences {
     pub include_inlay_enum_member_value_hints: Tristate,
 }
 
-// Go: ls/lsutil/userpreferences.go:220 CodeLensUserPreferences (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:14 CodeLensUserPreferences)
+// Go: ls/lsutil/userpreferences_generated.go:14 CodeLensUserPreferences
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CodeLensUserPreferences {
     pub references_code_lens_enabled: Tristate,
@@ -322,1337 +314,105 @@ go_enum!(OrganizeImportsTypeOrder, i32 {
     FIRST = 3;
 });
 
-// --- Reflection-based parsing infrastructure ---
-
-// PORT: Go `reflect.Type` of a preference field. It is the key of
-// `typeParsers` and `typeSerializers`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FieldType {
-    Tristate,
-    IndentStyle,
-    SemicolonPreference,
-    QuotePreference,
-    JsxAttributeCompletionStyle,
-    IncludeInlayParameterNameHints,
-    OrganizeImportsSort,
-    OrganizeImportsCollation,
-    OrganizeImportsCaseFirst,
-    OrganizeImportsTypeOrder,
-    ImportModuleSpecifierPreference,
-    ImportModuleSpecifierEndingPreference,
-    WorkspaceSymbolsScope,
-    Int,
-    String,
-    Bool,
-    StringSlice,
+// Go: ls/lsutil/userpreferences.go:107 parsePreferenceTristate
+pub(super) fn parse_preference_tristate(value: &LspAny) -> Tristate {
+    if let LspAny::Bool(value) = value {
+        return bool_to_tristate(*value);
+    }
+    Tristate::Unknown
 }
 
-// PORT: Go `reflect.Kind` of the preference field types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FieldKind {
-    Bool,
-    Int,
-    Uint8,
-    String,
-    Slice,
-}
-
-impl FieldType {
-    // PORT: Go `reflect.Type.Kind` (`core.Tristate` is a `byte`).
-    fn kind(self) -> FieldKind {
-        match self {
-            FieldType::Tristate => FieldKind::Uint8,
-            FieldType::IndentStyle
-            | FieldType::OrganizeImportsSort
-            | FieldType::OrganizeImportsCaseFirst
-            | FieldType::OrganizeImportsTypeOrder
-            | FieldType::Int => FieldKind::Int,
-            FieldType::OrganizeImportsCollation | FieldType::Bool => FieldKind::Bool,
-            FieldType::SemicolonPreference
-            | FieldType::QuotePreference
-            | FieldType::JsxAttributeCompletionStyle
-            | FieldType::IncludeInlayParameterNameHints
-            | FieldType::ImportModuleSpecifierPreference
-            | FieldType::ImportModuleSpecifierEndingPreference
-            | FieldType::WorkspaceSymbolsScope
-            | FieldType::String => FieldKind::String,
-            FieldType::StringSlice => FieldKind::Slice,
+// Go: ls/lsutil/userpreferences.go:114 parseOrganizeImportsCaseSensitivity
+pub(super) fn parse_organize_imports_case_sensitivity(value: &LspAny) -> Tristate {
+    if let LspAny::String(value) = value {
+        match strings_to_lower(value).as_str() {
+            "caseinsensitive" => return Tristate::True,
+            "casesensitive" => return Tristate::False,
+            _ => {}
         }
     }
+    parse_preference_tristate(value)
 }
 
-// PORT: a Go `reflect.Value` of a preference field, held by value. The
-// variant is the Go field type.
-#[derive(Clone, Debug, PartialEq)]
-enum FieldValue {
-    Tristate(Tristate),
-    IndentStyle(IndentStyle),
-    SemicolonPreference(SemicolonPreference),
-    QuotePreference(QuotePreference),
-    JsxAttributeCompletionStyle(JsxAttributeCompletionStyle),
-    IncludeInlayParameterNameHints(IncludeInlayParameterNameHints),
-    OrganizeImportsSort(OrganizeImportsSort),
-    OrganizeImportsCollation(OrganizeImportsCollation),
-    OrganizeImportsCaseFirst(OrganizeImportsCaseFirst),
-    OrganizeImportsTypeOrder(OrganizeImportsTypeOrder),
-    ImportModuleSpecifierPreference(ImportModuleSpecifierPreference),
-    ImportModuleSpecifierEndingPreference(ImportModuleSpecifierEndingPreference),
-    WorkspaceSymbolsScope(WorkspaceSymbolsScope),
-    Int(i32),
-    String(String),
-    Bool(bool),
-    StringSlice(Vec<String>),
+// Go: ls/lsutil/userpreferences.go:126 invertPreferenceValue
+fn invert_preference_value(value: LspAny) -> LspAny {
+    if let LspAny::Bool(value) = value {
+        return LspAny::Bool(!value);
+    }
+    value
 }
 
-impl FieldValue {
-    // PORT: Go `reflect.Value.Type`.
-    fn type_(&self) -> FieldType {
-        match self {
-            FieldValue::Tristate(_) => FieldType::Tristate,
-            FieldValue::IndentStyle(_) => FieldType::IndentStyle,
-            FieldValue::SemicolonPreference(_) => FieldType::SemicolonPreference,
-            FieldValue::QuotePreference(_) => FieldType::QuotePreference,
-            FieldValue::JsxAttributeCompletionStyle(_) => FieldType::JsxAttributeCompletionStyle,
-            FieldValue::IncludeInlayParameterNameHints(_) => {
-                FieldType::IncludeInlayParameterNameHints
+// Go: ls/lsutil/userpreferences.go:133 getPreferenceConfigValue
+// PORT: Go returns `(value, ok)`; `None` is `ok == false`. The value is a
+// copy, inverted when its tag says `,invert`.
+pub(super) fn get_preference_config_value(
+    config: &IndexMap<String, LspAny>,
+    paths: &[&str],
+) -> Option<LspAny> {
+    for tag in paths {
+        let (path, modifier) = tag.split_once(',').unwrap_or((tag, ""));
+        if let Some(value) = get_nested_value(config, path) {
+            let value = value.clone();
+            if modifier == "invert" {
+                return Some(invert_preference_value(value));
             }
-            FieldValue::OrganizeImportsSort(_) => FieldType::OrganizeImportsSort,
-            FieldValue::OrganizeImportsCollation(_) => FieldType::OrganizeImportsCollation,
-            FieldValue::OrganizeImportsCaseFirst(_) => FieldType::OrganizeImportsCaseFirst,
-            FieldValue::OrganizeImportsTypeOrder(_) => FieldType::OrganizeImportsTypeOrder,
-            FieldValue::ImportModuleSpecifierPreference(_) => {
-                FieldType::ImportModuleSpecifierPreference
-            }
-            FieldValue::ImportModuleSpecifierEndingPreference(_) => {
-                FieldType::ImportModuleSpecifierEndingPreference
-            }
-            FieldValue::WorkspaceSymbolsScope(_) => FieldType::WorkspaceSymbolsScope,
-            FieldValue::Int(_) => FieldType::Int,
-            FieldValue::String(_) => FieldType::String,
-            FieldValue::Bool(_) => FieldType::Bool,
-            FieldValue::StringSlice(_) => FieldType::StringSlice,
+            return Some(value);
         }
     }
-
-    // PORT: Go `reflect.Value.Bool` (Bool kinds).
-    fn bool_(&self) -> bool {
-        match self {
-            FieldValue::OrganizeImportsCollation(v) => v.0,
-            FieldValue::Bool(v) => *v,
-            _ => panic!(
-                "reflect: call of reflect.Value.Bool on {:?} Value",
-                self.type_()
-            ),
-        }
-    }
-
-    // PORT: Go `reflect.Value.Int` (Int kinds).
-    fn int(&self) -> i64 {
-        match self {
-            FieldValue::IndentStyle(v) => i64::from(v.0),
-            FieldValue::OrganizeImportsSort(v) => i64::from(v.0),
-            FieldValue::OrganizeImportsCaseFirst(v) => i64::from(v.0),
-            FieldValue::OrganizeImportsTypeOrder(v) => i64::from(v.0),
-            FieldValue::Int(v) => i64::from(*v),
-            _ => panic!(
-                "reflect: call of reflect.Value.Int on {:?} Value",
-                self.type_()
-            ),
-        }
-    }
-
-    // PORT: Go `reflect.Value.String` (String kinds). The two
-    // modulespecifiers enums are Go string types; these are their Go values.
-    fn string(&self) -> String {
-        match self {
-            FieldValue::SemicolonPreference(v) => v.0.to_string(),
-            FieldValue::QuotePreference(v) => v.0.to_string(),
-            FieldValue::JsxAttributeCompletionStyle(v) => v.0.to_string(),
-            FieldValue::IncludeInlayParameterNameHints(v) => v.0.to_string(),
-            FieldValue::ImportModuleSpecifierPreference(v) => match v {
-                ImportModuleSpecifierPreference::None => "",
-                ImportModuleSpecifierPreference::Shortest => "shortest",
-                ImportModuleSpecifierPreference::ProjectRelative => "project-relative",
-                ImportModuleSpecifierPreference::Relative => "relative",
-                ImportModuleSpecifierPreference::NonRelative => "non-relative",
-            }
-            .to_string(),
-            FieldValue::ImportModuleSpecifierEndingPreference(v) => match v {
-                ImportModuleSpecifierEndingPreference::None => "",
-                ImportModuleSpecifierEndingPreference::Auto => "auto",
-                ImportModuleSpecifierEndingPreference::Minimal => "minimal",
-                ImportModuleSpecifierEndingPreference::Index => "index",
-                ImportModuleSpecifierEndingPreference::Js => "js",
-            }
-            .to_string(),
-            FieldValue::WorkspaceSymbolsScope(v) => v.0.to_string(),
-            FieldValue::String(v) => v.clone(),
-            _ => format!("<{:?} Value>", self.type_()),
-        }
-    }
-
-    // PORT: Go `reflect.Value.IsZero`. An empty `Vec` stands for a nil slice
-    // (see the file note).
-    fn is_zero(&self) -> bool {
-        match self {
-            FieldValue::Tristate(v) => *v == Tristate::Unknown,
-            FieldValue::IndentStyle(v) => v.0 == 0,
-            FieldValue::SemicolonPreference(v) => v.0.is_empty(),
-            FieldValue::QuotePreference(v) => v.0.is_empty(),
-            FieldValue::JsxAttributeCompletionStyle(v) => v.0.is_empty(),
-            FieldValue::IncludeInlayParameterNameHints(v) => v.0.is_empty(),
-            FieldValue::OrganizeImportsSort(v) => v.0 == 0,
-            FieldValue::OrganizeImportsCollation(v) => !v.0,
-            FieldValue::OrganizeImportsCaseFirst(v) => v.0 == 0,
-            FieldValue::OrganizeImportsTypeOrder(v) => v.0 == 0,
-            FieldValue::ImportModuleSpecifierPreference(v) => {
-                *v == ImportModuleSpecifierPreference::None
-            }
-            FieldValue::ImportModuleSpecifierEndingPreference(v) => {
-                *v == ImportModuleSpecifierEndingPreference::None
-            }
-            FieldValue::WorkspaceSymbolsScope(v) => v.0.is_empty(),
-            FieldValue::Int(v) => *v == 0,
-            FieldValue::String(v) => v.is_empty(),
-            FieldValue::Bool(v) => !*v,
-            FieldValue::StringSlice(v) => v.is_empty(),
-        }
-    }
-}
-
-// Go: ls/lsutil/userpreferences.go:300 typeParsers (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// typeParsers maps reflect.Type to a function that parses a value into that type.
-// PORT: the Go map is a match on the field type. Each enum parser is the
-// generated `parsePreference<Type>` of the pin.
-fn type_parsers(t: FieldType) -> Option<fn(&LspAny) -> FieldValue> {
-    match t {
-        FieldType::Tristate => Some(|val| FieldValue::Tristate(parse_tristate(val))),
-        FieldType::IndentStyle => Some(|val| FieldValue::IndentStyle(parse_indent_style(val))),
-        FieldType::SemicolonPreference => {
-            Some(|val| FieldValue::SemicolonPreference(parse_semicolon_preference(val)))
-        }
-        FieldType::QuotePreference => {
-            Some(|val| FieldValue::QuotePreference(parse_preference_quote_preference(val)))
-        }
-        FieldType::WorkspaceSymbolsScope => Some(|val| {
-            FieldValue::WorkspaceSymbolsScope(parse_preference_workspace_symbols_scope(val))
-        }),
-        FieldType::JsxAttributeCompletionStyle => Some(|val| {
-            FieldValue::JsxAttributeCompletionStyle(
-                parse_preference_jsx_attribute_completion_style(val),
-            )
-        }),
-        FieldType::IncludeInlayParameterNameHints => Some(|val| {
-            FieldValue::IncludeInlayParameterNameHints(
-                parse_preference_include_inlay_parameter_name_hints(val),
-            )
-        }),
-        FieldType::OrganizeImportsSort => {
-            Some(|val| FieldValue::OrganizeImportsSort(parse_preference_organize_imports_sort(val)))
-        }
-        FieldType::OrganizeImportsCollation => Some(|val| {
-            FieldValue::OrganizeImportsCollation(parse_preference_organize_imports_collation(val))
-        }),
-        FieldType::OrganizeImportsCaseFirst => Some(|val| {
-            FieldValue::OrganizeImportsCaseFirst(parse_preference_organize_imports_case_first(val))
-        }),
-        FieldType::OrganizeImportsTypeOrder => Some(|val| {
-            FieldValue::OrganizeImportsTypeOrder(parse_preference_organize_imports_type_order(val))
-        }),
-        FieldType::ImportModuleSpecifierPreference => Some(|val| {
-            FieldValue::ImportModuleSpecifierPreference(
-                parse_preference_import_module_specifier_preference(val),
-            )
-        }),
-        FieldType::ImportModuleSpecifierEndingPreference => Some(|val| {
-            FieldValue::ImportModuleSpecifierEndingPreference(
-                parse_preference_import_module_specifier_ending_preference(val),
-            )
-        }),
-        _ => None,
-    }
-}
-
-/// Go `value.(string)` and `strings.ToLower(value)` of the generated parsers:
-/// the lower-cased text of a string value, `None` for any other value.
-fn lower_string_value(val: &LspAny) -> Option<String> {
-    match val {
-        LspAny::String(s) => Some(strings_to_lower(s)),
-        _ => None,
-    }
-}
-
-/// The `core.Tristate` entry of Go `typeParsers`: a bool is true or false,
-/// anything else unknown.
-fn parse_tristate(val: &LspAny) -> Tristate {
-    match val {
-        LspAny::Bool(true) => Tristate::True,
-        LspAny::Bool(false) => Tristate::False,
-        _ => Tristate::Unknown,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:343 parsePreferenceQuotePreference
-fn parse_preference_quote_preference(val: &LspAny) -> QuotePreference {
-    match lower_string_value(val).as_deref() {
-        Some("auto") => QuotePreference::AUTO,
-        Some("double") => QuotePreference::DOUBLE,
-        Some("single") => QuotePreference::SINGLE,
-        _ => QuotePreference::UNKNOWN,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:371 parsePreferenceWorkspaceSymbolsScope
-// (ts#64554): case-insensitive, and any other value is "".
-fn parse_preference_workspace_symbols_scope(val: &LspAny) -> WorkspaceSymbolsScope {
-    match lower_string_value(val).as_deref() {
-        Some("allopenprojects") => WorkspaceSymbolsScope::ALL_OPEN_PROJECTS,
-        Some("currentproject") => WorkspaceSymbolsScope::CURRENT_PROJECT,
-        _ => WorkspaceSymbolsScope(Cow::Borrowed("")),
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:213 parsePreferenceJsxAttributeCompletionStyle
-fn parse_preference_jsx_attribute_completion_style(val: &LspAny) -> JsxAttributeCompletionStyle {
-    match lower_string_value(val).as_deref() {
-        Some("braces") => JsxAttributeCompletionStyle::BRACES,
-        Some("none") => JsxAttributeCompletionStyle::NONE,
-        _ => JsxAttributeCompletionStyle::AUTO,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:179 parsePreferenceIncludeInlayParameterNameHints
-// (ts#64554): case-insensitive.
-fn parse_preference_include_inlay_parameter_name_hints(
-    val: &LspAny,
-) -> IncludeInlayParameterNameHints {
-    match lower_string_value(val).as_deref() {
-        Some("all") => IncludeInlayParameterNameHints::ALL,
-        Some("literals") => IncludeInlayParameterNameHints::LITERALS,
-        _ => IncludeInlayParameterNameHints::NONE,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:277 parsePreferenceOrganizeImportsSort
-fn parse_preference_organize_imports_sort(val: &LspAny) -> OrganizeImportsSort {
-    match lower_string_value(val).as_deref() {
-        Some("ordinal") => OrganizeImportsSort::ORDINAL,
-        Some("ordinalignorecase") => OrganizeImportsSort::ORDINAL_IGNORE_CASE,
-        Some("natural") => OrganizeImportsSort::NATURAL,
-        Some("naturalignorecase") => OrganizeImportsSort::NATURAL_IGNORE_CASE,
-        _ => OrganizeImportsSort::AUTO,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:254 parsePreferenceOrganizeImportsCollation
-fn parse_preference_organize_imports_collation(val: &LspAny) -> OrganizeImportsCollation {
-    match lower_string_value(val).as_deref() {
-        Some("unicode") => OrganizeImportsCollation::UNICODE,
-        _ => OrganizeImportsCollation::ORDINAL,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:227 parsePreferenceOrganizeImportsCaseFirst
-// (ts#64554): case-insensitive.
-fn parse_preference_organize_imports_case_first(val: &LspAny) -> OrganizeImportsCaseFirst {
-    match lower_string_value(val).as_deref() {
-        Some("lower") => OrganizeImportsCaseFirst::LOWER,
-        Some("upper") => OrganizeImportsCaseFirst::UPPER,
-        _ => OrganizeImportsCaseFirst::FALSE,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:312 parsePreferenceOrganizeImportsTypeOrder
-// (ts#64554): case-insensitive.
-fn parse_preference_organize_imports_type_order(val: &LspAny) -> OrganizeImportsTypeOrder {
-    match lower_string_value(val).as_deref() {
-        Some("last") => OrganizeImportsTypeOrder::LAST,
-        Some("inline") => OrganizeImportsTypeOrder::INLINE,
-        Some("first") => OrganizeImportsTypeOrder::FIRST,
-        _ => OrganizeImportsTypeOrder::AUTO,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:399 parsePreferenceImportModuleSpecifierPreference
-fn parse_preference_import_module_specifier_preference(
-    val: &LspAny,
-) -> ImportModuleSpecifierPreference {
-    match lower_string_value(val).as_deref() {
-        Some("project-relative") => ImportModuleSpecifierPreference::ProjectRelative,
-        Some("relative") => ImportModuleSpecifierPreference::Relative,
-        Some("non-relative") => ImportModuleSpecifierPreference::NonRelative,
-        _ => ImportModuleSpecifierPreference::Shortest,
-    }
-}
-
-// Go: ls/lsutil/userpreferences_generated.go:383 parsePreferenceImportModuleSpecifierEndingPreference
-fn parse_preference_import_module_specifier_ending_preference(
-    val: &LspAny,
-) -> ImportModuleSpecifierEndingPreference {
-    match lower_string_value(val).as_deref() {
-        Some("minimal") => ImportModuleSpecifierEndingPreference::Minimal,
-        Some("index") => ImportModuleSpecifierEndingPreference::Index,
-        Some("js") => ImportModuleSpecifierEndingPreference::Js,
-        _ => ImportModuleSpecifierEndingPreference::Auto,
-    }
-}
-
-// Go: ls/lsutil/userpreferences.go:426 typeSerializers (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// typeSerializers maps reflect.Type to a function that serializes a value of that type.
-// For types which do not serialize as-is (tristate, enums, etc).
-// PORT: the Go map is a match on the field type. The Go type assertion
-// `val.(T)` panics on another type, as the `let .. else` does here.
-fn type_serializers(t: FieldType) -> Option<fn(&FieldValue) -> LspAny> {
-    match t {
-        FieldType::Tristate => Some(serialize_tristate),
-        FieldType::OrganizeImportsSort => Some(serialize_organize_imports_sort),
-        FieldType::OrganizeImportsCollation => Some(serialize_organize_imports_collation),
-        FieldType::OrganizeImportsCaseFirst => Some(serialize_organize_imports_case_first),
-        FieldType::OrganizeImportsTypeOrder => Some(serialize_organize_imports_type_order),
-        // These enums distinguish an unset zero value (e.g. "") from their effective
-        // default (e.g. "auto"): the parser promotes unset/unknown input to the
-        // non-zero default. Plain string serialization would therefore write "" for
-        // an unset field and the parser would read it back as the non-zero default,
-        // breaking round-tripping. Mirror the core.Tristate serializer above and omit
-        // the unset value (return nil) so it decodes back to the zero value. (Enums
-        // whose default already is their zero value, like the OrganizeImports* ones,
-        // round-trip without this.)
-        //
-        // TODO: These three are the only parsers whose fallback is a non-zero value;
-        // every other parser returns its zero value as the fallback. They should be
-        // made consistent: change the parser fallback to return the zero value and
-        // remove this serializer (relying on the default string serialization, which
-        // already omits ""). The consumer must then treat the zero value as the
-        // effective default. The two module-specifier enums are safe to convert (all
-        // read sites already treat the "" zero identically to the promoted default).
-        FieldType::JsxAttributeCompletionStyle => Some(serialize_jsx_attribute_completion_style),
-        FieldType::ImportModuleSpecifierPreference => {
-            Some(serialize_import_module_specifier_preference)
-        }
-        FieldType::ImportModuleSpecifierEndingPreference => {
-            Some(serialize_import_module_specifier_ending_preference)
-        }
-        _ => None,
-    }
-}
-
-/// The `core.Tristate` entry of Go `typeSerializers`: unknown is omitted (nil).
-fn serialize_tristate(val: &FieldValue) -> LspAny {
-    let FieldValue::Tristate(v) = val else {
-        panic!("interface conversion: interface {{}} is not core.Tristate")
-    };
-    match *v {
-        Tristate::True => LspAny::Bool(true),
-        Tristate::False => LspAny::Bool(false),
-        _ => LspAny::Null,
-    }
-}
-
-/// The `OrganizeImportsSort` entry of Go `typeSerializers`.
-fn serialize_organize_imports_sort(val: &FieldValue) -> LspAny {
-    let FieldValue::OrganizeImportsSort(v) = val else {
-        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsSort")
-    };
-    let text = match *v {
-        OrganizeImportsSort::ORDINAL => "ordinal",
-        OrganizeImportsSort::ORDINAL_IGNORE_CASE => "ordinalIgnoreCase",
-        OrganizeImportsSort::NATURAL => "natural",
-        OrganizeImportsSort::NATURAL_IGNORE_CASE => "naturalIgnoreCase",
-        _ => "auto",
-    };
-    LspAny::String(text.to_string())
-}
-
-/// The `OrganizeImportsCollation` entry of Go `typeSerializers`.
-fn serialize_organize_imports_collation(val: &FieldValue) -> LspAny {
-    let FieldValue::OrganizeImportsCollation(v) = val else {
-        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsCollation")
-    };
-    if *v == OrganizeImportsCollation::UNICODE {
-        return LspAny::String("unicode".to_string());
-    }
-    LspAny::String("ordinal".to_string())
-}
-
-/// The `OrganizeImportsCaseFirst` entry of Go `typeSerializers`.
-fn serialize_organize_imports_case_first(val: &FieldValue) -> LspAny {
-    let FieldValue::OrganizeImportsCaseFirst(v) = val else {
-        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsCaseFirst")
-    };
-    let text = match *v {
-        OrganizeImportsCaseFirst::LOWER => "lower",
-        OrganizeImportsCaseFirst::UPPER => "upper",
-        _ => "default",
-    };
-    LspAny::String(text.to_string())
-}
-
-/// The `OrganizeImportsTypeOrder` entry of Go `typeSerializers`.
-fn serialize_organize_imports_type_order(val: &FieldValue) -> LspAny {
-    let FieldValue::OrganizeImportsTypeOrder(v) = val else {
-        panic!("interface conversion: interface {{}} is not lsutil.OrganizeImportsTypeOrder")
-    };
-    let text = match *v {
-        OrganizeImportsTypeOrder::LAST => "last",
-        OrganizeImportsTypeOrder::INLINE => "inline",
-        OrganizeImportsTypeOrder::FIRST => "first",
-        _ => "auto",
-    };
-    LspAny::String(text.to_string())
-}
-
-/// The `JsxAttributeCompletionStyle` entry of Go `typeSerializers`: the unset
-/// value is omitted (see the note in `type_serializers`).
-fn serialize_jsx_attribute_completion_style(val: &FieldValue) -> LspAny {
-    // TODO: make consistent with other enums (see note above). Unlike the
-    // module-specifier enums, the consumer in completions.go distinguishes
-    // JsxAttributeCompletionStyleUnknown from ...Auto, so converting this one
-    // requires updating that consumer to treat the zero value as "auto".
-    let FieldValue::JsxAttributeCompletionStyle(v) = val else {
-        panic!("interface conversion: interface {{}} is not lsutil.JsxAttributeCompletionStyle")
-    };
-    if *v != JsxAttributeCompletionStyle::UNKNOWN {
-        return LspAny::String(v.0.to_string());
-    }
-    LspAny::Null
-}
-
-/// The `ImportModuleSpecifierPreference` entry of Go `typeSerializers`: the
-/// unset value is omitted (see the note in `type_serializers`).
-fn serialize_import_module_specifier_preference(val: &FieldValue) -> LspAny {
-    // TODO: make consistent with other enums (see note above): have the parser
-    // return the zero value (None) as its fallback and drop this serializer.
-    let FieldValue::ImportModuleSpecifierPreference(_) = val else {
-        panic!(
-            "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierPreference"
-        )
-    };
-    non_empty_string_or_null(val.string())
-}
-
-/// The `ImportModuleSpecifierEndingPreference` entry of Go `typeSerializers`:
-/// the unset value is omitted (see the note in `type_serializers`).
-fn serialize_import_module_specifier_ending_preference(val: &FieldValue) -> LspAny {
-    // TODO: make consistent with other enums (see note above): have the parser
-    // return the zero value (None) as its fallback and drop this serializer.
-    let FieldValue::ImportModuleSpecifierEndingPreference(_) = val else {
-        panic!(
-            "interface conversion: interface {{}} is not modulespecifiers.ImportModuleSpecifierEndingPreference"
-        )
-    };
-    non_empty_string_or_null(val.string())
-}
-
-/// A string value, or nil (omitted) for "".
-fn non_empty_string_or_null(v: String) -> LspAny {
-    if v.is_empty() {
-        return LspAny::Null;
-    }
-    LspAny::String(v)
-}
-
-// Go: ls/lsutil/userpreferences.go:525 configPathParsers (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// configPathParsers provides field-specific config value parsers that override the default
-// type-based parser when the VS Code config value format differs from the Go field type.
-// PORT: the Go map is a match on the config path.
-fn config_path_parsers(path: &str) -> Option<fn(&LspAny) -> FieldValue> {
-    match path {
-        // VS Code sends caseSensitivity as a string ("auto"/"caseSensitive"/"caseInsensitive"),
-        // but OrganizeImportsIgnoreCase is a core.Tristate.
-        "preferences.organizeImports.caseSensitivity" => Some(|val: &LspAny| -> FieldValue {
-            if let LspAny::String(s) = val {
-                match strings_to_lower(s).as_str() {
-                    "caseinsensitive" => return FieldValue::Tristate(Tristate::True),
-                    "casesensitive" => return FieldValue::Tristate(Tristate::False),
-                    _ => {}
-                }
-            }
-            if let LspAny::Bool(b) = val {
-                if *b {
-                    return FieldValue::Tristate(Tristate::True);
-                }
-                return FieldValue::Tristate(Tristate::False);
-            }
-            FieldValue::Tristate(Tristate::Unknown)
-        }),
-        _ => None,
-    }
-}
-
-// PORT: one Go struct field as `reflect` sees it: the Go field name, the Go
-// `raw`, `config` and `fallbackConfig` tags, and accessors that stand for the
-// Go field index path.
-struct StructField {
-    name: &'static str,
-    raw_tag: &'static str,
-    config_tag: &'static str,
-    fallback_config_tag: &'static str,
-    get: fn(&UserPreferences) -> FieldValue,
-    set: fn(&mut UserPreferences, FieldValue),
-}
-
-// PORT: builds one `StructField`. `$variant` is the Go field type and the
-// path is the field inside `UserPreferences`. `set` panics like Go
-// `reflect.Value.Set` when the value has another type. The form with
-// `fallback:` sets the Go `fallbackConfig` tag.
-macro_rules! pref_field {
-    ($name:literal, $raw:literal, $config:literal, $variant:ident, $($path:ident).+) => {
-        pref_field!($name, $raw, $config, fallback: "", $variant, $($path).+)
-    };
-    ($name:literal, $raw:literal, $config:literal, fallback: $fallback:literal, $variant:ident, $($path:ident).+) => {
-        StructField {
-            name: $name,
-            raw_tag: $raw,
-            config_tag: $config,
-            fallback_config_tag: $fallback,
-            get: |p| FieldValue::$variant(p.$($path).+.clone()),
-            set: |p, v| match v {
-                FieldValue::$variant(x) => p.$($path).+ = x,
-                other => panic!(
-                    "reflect.Set: value of type {:?} is not assignable to type {}",
-                    other.type_(),
-                    stringify!($variant)
-                ),
-            },
-        }
-    };
-}
-
-// PORT: the fields of `UserPreferences` in Go field order. Go
-// `collectFieldInfos` recurses into the untagged struct fields
-// (`FormatCodeSettings`, its embedded `EditorSettings`, `InlayHints`,
-// `CodeLens`) at their place in the order; they are listed inline here.
-static USER_PREFERENCES_FIELDS: &[StructField] = &[
-    // FormatCodeSettings.EditorSettings
-    pref_field!(
-        "BaseIndentSize",
-        "baseIndentSize",
-        "format.baseIndentSize",
-        Int,
-        format_code_settings.editor_settings.base_indent_size
-    ),
-    pref_field!(
-        "IndentSize",
-        "indentSize",
-        "format.indentSize",
-        Int,
-        format_code_settings.editor_settings.indent_size
-    ),
-    pref_field!(
-        "TabSize",
-        "tabSize",
-        "format.tabSize",
-        Int,
-        format_code_settings.editor_settings.tab_size
-    ),
-    pref_field!(
-        "NewLineCharacter",
-        "newLineCharacter",
-        "format.newLineCharacter",
-        String,
-        format_code_settings.editor_settings.new_line_character
-    ),
-    pref_field!(
-        "ConvertTabsToSpaces",
-        "convertTabsToSpaces",
-        "format.convertTabsToSpaces",
-        Tristate,
-        format_code_settings.editor_settings.convert_tabs_to_spaces
-    ),
-    pref_field!(
-        "IndentStyle",
-        "indentStyle",
-        "format.indentStyle",
-        IndentStyle,
-        format_code_settings.editor_settings.indent_style
-    ),
-    pref_field!(
-        "TrimTrailingWhitespace",
-        "trimTrailingWhitespace",
-        "format.trimTrailingWhitespace",
-        Tristate,
-        format_code_settings
-            .editor_settings
-            .trim_trailing_whitespace
-    ),
-    // FormatCodeSettings
-    pref_field!(
-        "InsertSpaceAfterCommaDelimiter",
-        "insertSpaceAfterCommaDelimiter",
-        "format.insertSpaceAfterCommaDelimiter",
-        Tristate,
-        format_code_settings.insert_space_after_comma_delimiter
-    ),
-    pref_field!(
-        "InsertSpaceAfterSemicolonInForStatements",
-        "insertSpaceAfterSemicolonInForStatements",
-        "format.insertSpaceAfterSemicolonInForStatements",
-        Tristate,
-        format_code_settings.insert_space_after_semicolon_in_for_statements
-    ),
-    pref_field!(
-        "InsertSpaceBeforeAndAfterBinaryOperators",
-        "insertSpaceBeforeAndAfterBinaryOperators",
-        "format.insertSpaceBeforeAndAfterBinaryOperators",
-        Tristate,
-        format_code_settings.insert_space_before_and_after_binary_operators
-    ),
-    pref_field!(
-        "InsertSpaceAfterConstructor",
-        "insertSpaceAfterConstructor",
-        "format.insertSpaceAfterConstructor",
-        Tristate,
-        format_code_settings.insert_space_after_constructor
-    ),
-    pref_field!(
-        "InsertSpaceAfterKeywordsInControlFlowStatements",
-        "insertSpaceAfterKeywordsInControlFlowStatements",
-        "format.insertSpaceAfterKeywordsInControlFlowStatements",
-        Tristate,
-        format_code_settings.insert_space_after_keywords_in_control_flow_statements
-    ),
-    pref_field!(
-        "InsertSpaceAfterFunctionKeywordForAnonymousFunctions",
-        "insertSpaceAfterFunctionKeywordForAnonymousFunctions",
-        "format.insertSpaceAfterFunctionKeywordForAnonymousFunctions",
-        Tristate,
-        format_code_settings.insert_space_after_function_keyword_for_anonymous_functions
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
-        "insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
-        "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_nonempty_parenthesis
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
-        "insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
-        "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_nonempty_brackets
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
-        "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
-        "format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_nonempty_braces
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
-        "insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
-        "format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_empty_braces
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
-        "insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
-        "format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_template_string_braces
-    ),
-    pref_field!(
-        "InsertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
-        "insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
-        "format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
-        Tristate,
-        format_code_settings.insert_space_after_opening_and_before_closing_jsx_expression_braces
-    ),
-    pref_field!(
-        "InsertSpaceAfterTypeAssertion",
-        "insertSpaceAfterTypeAssertion",
-        "format.insertSpaceAfterTypeAssertion",
-        Tristate,
-        format_code_settings.insert_space_after_type_assertion
-    ),
-    pref_field!(
-        "InsertSpaceBeforeFunctionParenthesis",
-        "insertSpaceBeforeFunctionParenthesis",
-        "format.insertSpaceBeforeFunctionParenthesis",
-        Tristate,
-        format_code_settings.insert_space_before_function_parenthesis
-    ),
-    pref_field!(
-        "PlaceOpenBraceOnNewLineForFunctions",
-        "placeOpenBraceOnNewLineForFunctions",
-        "format.placeOpenBraceOnNewLineForFunctions",
-        Tristate,
-        format_code_settings.place_open_brace_on_new_line_for_functions
-    ),
-    pref_field!(
-        "PlaceOpenBraceOnNewLineForControlBlocks",
-        "placeOpenBraceOnNewLineForControlBlocks",
-        "format.placeOpenBraceOnNewLineForControlBlocks",
-        Tristate,
-        format_code_settings.place_open_brace_on_new_line_for_control_blocks
-    ),
-    pref_field!(
-        "InsertSpaceBeforeTypeAnnotation",
-        "insertSpaceBeforeTypeAnnotation",
-        "format.insertSpaceBeforeTypeAnnotation",
-        Tristate,
-        format_code_settings.insert_space_before_type_annotation
-    ),
-    pref_field!(
-        "IndentMultiLineObjectLiteralBeginningOnBlankLine",
-        "indentMultiLineObjectLiteralBeginningOnBlankLine",
-        "format.indentMultiLineObjectLiteralBeginningOnBlankLine",
-        Tristate,
-        format_code_settings.indent_multi_line_object_literal_beginning_on_blank_line
-    ),
-    pref_field!(
-        "Semicolons",
-        "semicolons",
-        "format.semicolons",
-        SemicolonPreference,
-        format_code_settings.semicolons
-    ),
-    pref_field!(
-        "IndentSwitchCase",
-        "indentSwitchCase",
-        "format.indentSwitchCase",
-        Tristate,
-        format_code_settings.indent_switch_case
-    ),
-    // UserPreferences
-    pref_field!(
-        "QuotePreference",
-        "quotePreference",
-        "preferences.quoteStyle",
-        QuotePreference,
-        quote_preference
-    ),
-    pref_field!(
-        "LazyConfiguredProjectsFromExternalProject",
-        "lazyConfiguredProjectsFromExternalProject",
-        "",
-        Tristate,
-        lazy_configured_projects_from_external_project
-    ),
-    pref_field!(
-        "MaximumHoverLength",
-        "maximumHoverLength",
-        "",
-        Int,
-        maximum_hover_length
-    ),
-    pref_field!(
-        "IncludeCompletionsForModuleExports",
-        "includeCompletionsForModuleExports",
-        "suggest.autoImports",
-        Tristate,
-        include_completions_for_module_exports
-    ),
-    pref_field!(
-        "IncludeCompletionsForImportStatements",
-        "includeCompletionsForImportStatements",
-        "suggest.includeCompletionsForImportStatements",
-        Tristate,
-        include_completions_for_import_statements
-    ),
-    pref_field!(
-        "IncludeAutomaticOptionalChainCompletions",
-        "includeAutomaticOptionalChainCompletions",
-        "suggest.includeAutomaticOptionalChainCompletions",
-        Tristate,
-        include_automatic_optional_chain_completions
-    ),
-    pref_field!(
-        "IncludeCompletionsWithClassMemberSnippets",
-        "includeCompletionsWithClassMemberSnippets",
-        "suggest.classMemberSnippets.enabled",
-        Tristate,
-        include_completions_with_class_member_snippets
-    ),
-    pref_field!(
-        "IncludeCompletionsWithObjectLiteralMethodSnippets",
-        "includeCompletionsWithObjectLiteralMethodSnippets",
-        "suggest.objectLiteralMethodSnippets.enabled",
-        Tristate,
-        include_completions_with_object_literal_method_snippets
-    ),
-    pref_field!(
-        "JsxAttributeCompletionStyle",
-        "jsxAttributeCompletionStyle",
-        "preferences.jsxAttributeCompletionStyle",
-        JsxAttributeCompletionStyle,
-        jsx_attribute_completion_style
-    ),
-    pref_field!(
-        "EnableAutoClosingTags",
-        "autoClosingTags",
-        "autoClosingTags.enabled",
-        fallback: "autoClosingTags",
-        Tristate,
-        enable_auto_closing_tags
-    ),
-    pref_field!(
-        "EnableJSDocCompletions",
-        "completeJSDocs",
-        "suggest.jsdoc.enabled",
-        fallback: "suggest.completeJSDocs",
-        Tristate,
-        enable_js_doc_completions
-    ),
-    pref_field!(
-        "GenerateReturnInDocTemplate",
-        "generateReturnInDocTemplate",
-        "suggest.jsdoc.generateReturns",
-        Tristate,
-        generate_return_in_doc_template
-    ),
-    pref_field!(
-        "ImportModuleSpecifierPreference",
-        "importModuleSpecifierPreference",
-        "preferences.importModuleSpecifier",
-        ImportModuleSpecifierPreference,
-        import_module_specifier_preference
-    ),
-    pref_field!(
-        "ImportModuleSpecifierEnding",
-        "importModuleSpecifierEnding",
-        "preferences.importModuleSpecifierEnding",
-        ImportModuleSpecifierEndingPreference,
-        import_module_specifier_ending
-    ),
-    pref_field!(
-        "AutoImportSpecifierExcludeRegexes",
-        "autoImportSpecifierExcludeRegexes",
-        "preferences.autoImportSpecifierExcludeRegexes",
-        StringSlice,
-        auto_import_specifier_exclude_regexes
-    ),
-    pref_field!(
-        "AutoImportFileExcludePatterns",
-        "autoImportFileExcludePatterns",
-        "preferences.autoImportFileExcludePatterns",
-        StringSlice,
-        auto_import_file_exclude_patterns
-    ),
-    pref_field!(
-        "AutoImportEntrypointDirectorySearch",
-        "autoImportEntrypointDirectorySearch",
-        "preferences.autoImportEntrypointDirectorySearch",
-        Tristate,
-        auto_import_entrypoint_directory_search
-    ),
-    pref_field!(
-        "PreferTypeOnlyAutoImports",
-        "preferTypeOnlyAutoImports",
-        "preferences.preferTypeOnlyAutoImports",
-        Tristate,
-        prefer_type_only_auto_imports
-    ),
-    pref_field!(
-        "OrganizeImportsSort",
-        "organizeImportsSort",
-        "preferences.organizeImports.sort",
-        OrganizeImportsSort,
-        organize_imports_sort
-    ),
-    pref_field!(
-        "OrganizeImportsIgnoreCase",
-        "organizeImportsIgnoreCase",
-        "preferences.organizeImports.caseSensitivity",
-        Tristate,
-        organize_imports_ignore_case
-    ),
-    pref_field!(
-        "OrganizeImportsCollation",
-        "organizeImportsCollation",
-        "preferences.organizeImports.unicodeCollation",
-        OrganizeImportsCollation,
-        organize_imports_collation
-    ),
-    pref_field!(
-        "OrganizeImportsLocale",
-        "organizeImportsLocale",
-        "preferences.organizeImports.locale",
-        String,
-        organize_imports_locale
-    ),
-    pref_field!(
-        "OrganizeImportsNumericCollation",
-        "organizeImportsNumericCollation",
-        "preferences.organizeImports.numericCollation",
-        Tristate,
-        organize_imports_numeric_collation
-    ),
-    pref_field!(
-        "OrganizeImportsAccentCollation",
-        "organizeImportsAccentCollation",
-        "preferences.organizeImports.accentCollation",
-        Tristate,
-        organize_imports_accent_collation
-    ),
-    pref_field!(
-        "OrganizeImportsCaseFirst",
-        "organizeImportsCaseFirst",
-        "preferences.organizeImports.caseFirst",
-        OrganizeImportsCaseFirst,
-        organize_imports_case_first
-    ),
-    pref_field!(
-        "OrganizeImportsTypeOrder",
-        "organizeImportsTypeOrder",
-        "preferences.organizeImports.typeOrder",
-        OrganizeImportsTypeOrder,
-        organize_imports_type_order
-    ),
-    pref_field!(
-        "AllowTextChangesInNewFiles",
-        "allowTextChangesInNewFiles",
-        "",
-        Tristate,
-        allow_text_changes_in_new_files
-    ),
-    pref_field!(
-        "UseAliasesForRename",
-        "providePrefixAndSuffixTextForRename",
-        "preferences.useAliasesForRenames",
-        Tristate,
-        use_aliases_for_rename
-    ),
-    pref_field!(
-        "AllowRenameOfImportPath",
-        "allowRenameOfImportPath",
-        "",
-        Tristate,
-        allow_rename_of_import_path
-    ),
-    pref_field!(
-        "ProvideRefactorNotApplicableReason",
-        "provideRefactorNotApplicableReason",
-        "",
-        Tristate,
-        provide_refactor_not_applicable_reason
-    ),
-    // InlayHints
-    pref_field!(
-        "IncludeInlayParameterNameHints",
-        "includeInlayParameterNameHints",
-        "inlayHints.parameterNames.enabled",
-        IncludeInlayParameterNameHints,
-        inlay_hints.include_inlay_parameter_name_hints
-    ),
-    pref_field!(
-        "IncludeInlayParameterNameHintsWhenArgumentMatchesName",
-        "includeInlayParameterNameHintsWhenArgumentMatchesName",
-        "inlayHints.parameterNames.suppressWhenArgumentMatchesName,invert",
-        Tristate,
-        inlay_hints.include_inlay_parameter_name_hints_when_argument_matches_name
-    ),
-    pref_field!(
-        "IncludeInlayFunctionParameterTypeHints",
-        "includeInlayFunctionParameterTypeHints",
-        "inlayHints.parameterTypes.enabled",
-        Tristate,
-        inlay_hints.include_inlay_function_parameter_type_hints
-    ),
-    pref_field!(
-        "IncludeInlayVariableTypeHints",
-        "includeInlayVariableTypeHints",
-        "inlayHints.variableTypes.enabled",
-        Tristate,
-        inlay_hints.include_inlay_variable_type_hints
-    ),
-    pref_field!(
-        "IncludeInlayVariableTypeHintsWhenTypeMatchesName",
-        "includeInlayVariableTypeHintsWhenTypeMatchesName",
-        "inlayHints.variableTypes.suppressWhenTypeMatchesName,invert",
-        Tristate,
-        inlay_hints.include_inlay_variable_type_hints_when_type_matches_name
-    ),
-    pref_field!(
-        "IncludeInlayPropertyDeclarationTypeHints",
-        "includeInlayPropertyDeclarationTypeHints",
-        "inlayHints.propertyDeclarationTypes.enabled",
-        Tristate,
-        inlay_hints.include_inlay_property_declaration_type_hints
-    ),
-    pref_field!(
-        "IncludeInlayFunctionLikeReturnTypeHints",
-        "includeInlayFunctionLikeReturnTypeHints",
-        "inlayHints.functionLikeReturnTypes.enabled",
-        Tristate,
-        inlay_hints.include_inlay_function_like_return_type_hints
-    ),
-    pref_field!(
-        "IncludeInlayEnumMemberValueHints",
-        "includeInlayEnumMemberValueHints",
-        "inlayHints.enumMemberValues.enabled",
-        Tristate,
-        inlay_hints.include_inlay_enum_member_value_hints
-    ),
-    // CodeLens
-    pref_field!(
-        "ReferencesCodeLensEnabled",
-        "referencesCodeLensEnabled",
-        "referencesCodeLens.enabled",
-        Tristate,
-        code_lens.references_code_lens_enabled
-    ),
-    pref_field!(
-        "ImplementationsCodeLensEnabled",
-        "implementationsCodeLensEnabled",
-        "implementationsCodeLens.enabled",
-        Tristate,
-        code_lens.implementations_code_lens_enabled
-    ),
-    pref_field!(
-        "ReferencesCodeLensShowOnAllFunctions",
-        "referencesCodeLensShowOnAllFunctions",
-        "referencesCodeLens.showOnAllFunctions",
-        Tristate,
-        code_lens.references_code_lens_show_on_all_functions
-    ),
-    pref_field!(
-        "ImplementationsCodeLensShowOnInterfaceMethods",
-        "implementationsCodeLensShowOnInterfaceMethods",
-        "implementationsCodeLens.showOnInterfaceMethods",
-        Tristate,
-        code_lens.implementations_code_lens_show_on_interface_methods
-    ),
-    pref_field!(
-        "ImplementationsCodeLensShowOnAllClassMethods",
-        "implementationsCodeLensShowOnAllClassMethods",
-        "implementationsCodeLens.showOnAllClassMethods",
-        Tristate,
-        code_lens.implementations_code_lens_show_on_all_class_methods
-    ),
-    // UserPreferences
-    pref_field!(
-        "PreferGoToSourceDefinition",
-        "preferGoToSourceDefinition",
-        "",
-        Bool,
-        prefer_go_to_source_definition
-    ),
-    pref_field!(
-        "ExcludeLibrarySymbolsInNavTo",
-        "excludeLibrarySymbolsInNavTo",
-        "workspaceSymbols.excludeLibrarySymbols",
-        Tristate,
-        exclude_library_symbols_in_nav_to
-    ),
-    // ts#64554: the raw name `workspaceSymbolsScope` is new.
-    pref_field!(
-        "WorkspaceSymbolsScope",
-        "workspaceSymbolsScope",
-        "workspaceSymbols.scope",
-        WorkspaceSymbolsScope,
-        workspace_symbols_scope
-    ),
-    pref_field!(
-        "EnableFormatting",
-        "formatEnabled",
-        "format.enabled",
-        fallback: "format.enable",
-        Tristate,
-        enable_formatting
-    ),
-    pref_field!(
-        "EnableValidation",
-        "validateEnabled",
-        "validate.enabled",
-        fallback: "validate.enable",
-        Tristate,
-        enable_validation
-    ),
-    pref_field!(
-        "DisableSuggestions",
-        "disableSuggestions",
-        "",
-        Tristate,
-        disable_suggestions
-    ),
-    pref_field!(
-        "DisableLineTextInReferences",
-        "disableLineTextInReferences",
-        "",
-        Tristate,
-        disable_line_text_in_references
-    ),
-    pref_field!(
-        "DisplayPartsForJSDoc",
-        "displayPartsForJSDoc",
-        "",
-        Tristate,
-        display_parts_for_js_doc
-    ),
-    pref_field!(
-        "ReportStyleChecksAsWarnings",
-        "reportStyleChecksAsWarnings",
-        "reportStyleChecksAsWarnings",
-        Tristate,
-        report_style_checks_as_warnings
-    ),
-    // ts#64554: the raw name `locale` is new.
-    pref_field!("Locale", "locale", "locale", String, locale),
-    pref_field!(
-        "DisableAutomaticTypeAcquisition",
-        "disableAutomaticTypeAcquisition",
-        "disableAutomaticTypeAcquisition",
-        Tristate,
-        disable_automatic_type_acquisition
-    ),
-    pref_field!(
-        "AutomaticTypeAcquisitionEnabled",
-        "automaticTypeAcquisitionEnabled",
-        "tsserver.automaticTypeAcquisition.enabled",
-        Tristate,
-        automatic_type_acquisition_enabled
-    ),
-    pref_field!(
-        "CustomConfigFileName",
-        "customConfigFileName",
-        "customConfigFileName",
-        String,
-        custom_config_file_name
-    ),
-];
-
-// Go: ls/lsutil/userpreferences.go:547 fieldInfo (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-#[derive(Clone)]
-struct FieldInfo {
-    raw_name: &'static str, // raw name for unstable section lookup (e.g., "quotePreference")
-    config_path: &'static str, // dotted path for config (e.g., "preferences.quoteStyle")
-    fallback_config_paths: Vec<ConfigPathInfo>,
-    // PORT: Go `fieldPath []int` is the index path to the field in the
-    // struct. The field accessors stand for it.
-    get: fn(&UserPreferences) -> FieldValue,
-    set: fn(&mut UserPreferences, FieldValue),
-    raw_invert: bool,    // whether to invert boolean values for raw name
-    config_invert: bool, // whether to invert boolean values for config path
-}
-
-// Go: ls/lsutil/userpreferences.go:556 configPathInfo (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-#[derive(Clone, Copy)]
-struct ConfigPathInfo {
-    path: &'static str,
-    invert: bool,
-}
-
-// Go: ls/lsutil/userpreferences.go:561 fieldInfoCache (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-static FIELD_INFO_CACHE: LazyLock<Vec<FieldInfo>> =
-    LazyLock::new(|| collect_field_infos(USER_PREFERENCES_FIELDS));
-
-// Go: ls/lsutil/userpreferences.go:566 unstableNameIndex (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// unstableNameIndex maps raw names to fieldInfo index for unstable section lookup.
-static UNSTABLE_NAME_INDEX: LazyLock<FxHashMap<&'static str, usize>> = LazyLock::new(|| {
-    let infos = &*FIELD_INFO_CACHE;
-    let mut index = FxHashMap::with_capacity_and_hasher(infos.len(), Default::default());
-    for (i, info) in infos.iter().enumerate() {
-        if !info.raw_name.is_empty() {
-            index.insert(info.raw_name, i);
-        }
-    }
-    index
-});
-
-// Go: ls/lsutil/userpreferences.go:577 collectFieldInfos (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// PORT: Go takes a `reflect.Type` and an index path and recurses into
-// untagged struct fields. The field table is already flat, so every entry
-// is a tagged field; the Go panic for an untagged non-struct field stays.
-fn collect_field_infos(fields: &'static [StructField]) -> Vec<FieldInfo> {
-    let mut infos = Vec::new();
-    for field in fields {
-        let raw_tag = field.raw_tag;
-        let config_tag = field.config_tag;
-
-        if raw_tag.is_empty() && config_tag.is_empty() {
-            crate::core::go_panic(format!(
-                "raw or config tag required for field {}",
-                field.name
-            ));
-        }
-
-        let fallback_config_tag = field.fallback_config_tag;
-
-        let mut info = FieldInfo {
-            raw_name: "",
-            config_path: "",
-            fallback_config_paths: Vec::new(),
-            get: field.get,
-            set: field.set,
-            raw_invert: false,
-            config_invert: false,
-        };
-
-        // Parse raw tag: "name" or "name,invert"
-        if !raw_tag.is_empty() {
-            let parts: Vec<&'static str> = raw_tag.split(',').collect();
-            info.raw_name = parts[0];
-            for part in &parts[1..] {
-                if *part == "invert" {
-                    info.raw_invert = true;
-                }
-            }
-        }
-
-        // Parse config tag: "path.to.setting" or "path.to.setting,invert"
-        if !config_tag.is_empty() {
-            let config_path = parse_config_path_tag(config_tag);
-            info.config_path = config_path.path;
-            info.config_invert = config_path.invert;
-        }
-        if !fallback_config_tag.is_empty() {
-            for tag in fallback_config_tag.split(';') {
-                info.fallback_config_paths.push(parse_config_path_tag(tag));
-            }
-        }
-
-        infos.push(info);
-    }
-    infos
-}
-
-// Go: ls/lsutil/userpreferences.go:628 parseConfigPathTag (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-fn parse_config_path_tag(tag: &'static str) -> ConfigPathInfo {
-    let mut parts = tag.split(',');
-    let mut info = ConfigPathInfo {
-        path: parts.next().unwrap_or(""),
-        invert: false,
-    };
-    for part in parts {
-        if part == "invert" {
-            info.invert = true;
-        }
-    }
-    info
+    None
 }
 
 // Go: ls/lsutil/userpreferences.go:147 getNestedValue
-// PORT: Go starts from `any(config)`. `current` is `None` only for that root
-// map, before the first part is read.
-fn get_nested_value(config: &IndexMap<String, LspAny>, path: &str) -> (LspAny, bool) {
-    let parts = path.split('.');
-    let mut current: Option<&LspAny> = None;
+// PORT: Go returns `(value, ok)`; `None` is `ok == false`.
+fn get_nested_value<'a>(config: &'a IndexMap<String, LspAny>, path: &str) -> Option<&'a LspAny> {
+    let mut parts = path.split('.');
+    let mut current = config.get(parts.next()?)?;
     for part in parts {
-        let m = match current {
-            None => config,
-            Some(LspAny::Object(m)) => m,
-            Some(_) => return (LspAny::Null, false),
+        let LspAny::Object(m) = current else {
+            return None;
         };
-        match m.get(part) {
-            Some(v) => current = Some(v),
-            None => return (LspAny::Null, false),
+        current = m.get(part)?;
+    }
+    Some(current)
+}
+
+/// Go `any` in the config map of `MarshalJSONTo`: the values it holds.
+/// PORT: Go writes an `int` as an integer token; an `LspAny` number is an
+/// `f64`, which would round one past 2^53.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ConfigValue {
+    Bool(bool),
+    Int(i64),
+    String(String),
+    Strings(Vec<String>),
+    Map(IndexMap<String, ConfigValue>),
+}
+
+impl MarshalerTo for ConfigValue {
+    fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
+        match self {
+            ConfigValue::Bool(v) => v.marshal_json_to(enc),
+            ConfigValue::Int(v) => v.marshal_json_to(enc),
+            ConfigValue::String(v) => v.marshal_json_to(enc),
+            ConfigValue::Strings(v) => v.marshal_json_to(enc),
+            ConfigValue::Map(v) => v.marshal_json_to(enc),
         }
     }
-    (current.cloned().unwrap_or(LspAny::Null), true)
 }
 
 // Go: ls/lsutil/userpreferences.go:162 setNestedValue
-fn set_nested_value(config: &mut IndexMap<String, LspAny>, path: &str, value: LspAny) {
+pub(super) fn set_nested_value(
+    config: &mut IndexMap<String, ConfigValue>,
+    path: &str,
+    value: ConfigValue,
+) {
     let parts: Vec<&str> = path.split('.').collect();
     let mut current = config;
     for part in &parts[..parts.len() - 1] {
-        if !matches!(current.get(*part), Some(LspAny::Object(_))) {
-            current.insert(part.to_string(), LspAny::Object(IndexMap::new()));
+        if !matches!(current.get(*part), Some(ConfigValue::Map(_))) {
+            current.insert(part.to_string(), ConfigValue::Map(IndexMap::new()));
         }
-        let Some(LspAny::Object(next)) = current.get_mut(*part) else {
+        let Some(ConfigValue::Map(next)) = current.get_mut(*part) else {
             unreachable!("the map was just set")
         };
         current = next;
@@ -1660,260 +420,15 @@ fn set_nested_value(config: &mut IndexMap<String, LspAny>, path: &str, value: Ls
     current.insert(parts[parts.len() - 1].to_string(), value);
 }
 
-// Go: ls/lsutil/userpreferences.go:669 setRawFieldsFromConfig (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// PORT: Go takes the struct as a `reflect.Value`; here it is `p`.
-fn set_raw_fields_from_config(
-    p: &mut UserPreferences,
-    infos: &[FieldInfo],
-    settings: &IndexMap<String, LspAny>,
-) {
-    let index = &*UNSTABLE_NAME_INDEX;
-    // PORT: Go ranges over a map in random order. Each raw name sets its own
-    // field, so the order does not change the result.
-    for (name, value) in settings {
-        if let Some(&idx) = index.get(name.as_str()) {
-            let info = &infos[idx];
-            let mut value = value.clone();
-            if info.raw_invert
-                && let LspAny::Bool(b) = value
-            {
-                value = LspAny::Bool(!b);
-            }
-            set_field_from_value(p, info, &value);
-        }
+// Go: ls/lsutil/userpreferences.go:176 normalizeCustomConfigFileName
+// PORT: Go `strings.TrimSpace` trims Unicode White_Space, as `str::trim`
+// does.
+pub(super) fn normalize_custom_config_file_name(name: &str) -> String {
+    let name = name.trim();
+    if name.contains(['/', '\\']) || name == ".." || name == "." {
+        return String::new();
     }
-}
-
-impl UserPreferences {
-    // Go: ls/lsutil/userpreferences.go:685 (UserPreferences).withConfig (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:637 UserPreferences.withConfig)
-    // PORT: Go has a value receiver; this works on a copy of `self`.
-    pub(crate) fn with_config(&self, config: &IndexMap<String, LspAny>) -> UserPreferences {
-        let mut p = self.clone();
-        let infos = &*FIELD_INFO_CACHE;
-
-        // Raw UserPreferences can be provided directly, notably via LSP initializationOptions.
-        set_raw_fields_from_config(&mut p, infos, config);
-
-        // Process "unstable" section first - allows any field to be set by raw name.
-        // This mirrors VS Code's behavior: { ...config.get('unstable'), ...stableOptions }
-        // where stable options are spread after and take precedence.
-        if let Some(LspAny::Object(unstable)) = config.get("unstable") {
-            set_raw_fields_from_config(&mut p, infos, unstable);
-        }
-
-        // Process path-based config (VS Code style nested paths).
-        // These run after unstable, so stable config values take precedence.
-        for info in infos {
-            if info.config_path.is_empty() {
-                continue;
-            }
-            let mut config_path = ConfigPathInfo {
-                path: info.config_path,
-                invert: info.config_invert,
-            };
-            let (mut val, mut ok) = get_nested_value(config, config_path.path);
-            if !ok {
-                for fallback_config_path in &info.fallback_config_paths {
-                    (val, ok) = get_nested_value(config, fallback_config_path.path);
-                    if ok {
-                        config_path = *fallback_config_path;
-                        break;
-                    }
-                }
-            }
-            if !ok {
-                continue;
-            }
-
-            if config_path.invert
-                && let LspAny::Bool(b) = val
-            {
-                val = LspAny::Bool(!b);
-            }
-            if let Some(parser) = config_path_parsers(config_path.path) {
-                (info.set)(&mut p, parser(&val));
-                continue;
-            }
-            set_field_from_value(&mut p, info, &val);
-        }
-
-        // Validate CustomConfigFileName for path traversal
-        if !p.custom_config_file_name.is_empty() {
-            // PORT: Go `strings.TrimSpace` trims Unicode White_Space, as
-            // `str::trim` does.
-            let name = p.custom_config_file_name.trim().to_string();
-            if name.contains(['/', '\\']) || name == ".." || name == "." {
-                p.custom_config_file_name = String::new();
-            } else {
-                p.custom_config_file_name = name;
-            }
-        }
-
-        p
-    }
-}
-
-// Go: ls/lsutil/userpreferences.go:746 getFieldByPath (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// PORT: not ported. `FieldInfo.get` and `FieldInfo.set` stand for the field
-// that Go finds by its index path.
-
-// Go: ls/lsutil/userpreferences.go:753 setFieldFromValue (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// PORT: Go takes the field as a `reflect.Value`. Here the field is `info` on
-// `p`. Go also accepts a Go `int` for an int field; an `LspAny` number is
-// always the Go `float64` case. Go `int64(float64)` keeps 64 bits; the Rust
-// field is `i32` (PORTING `int` -> `i32`), so a value outside the `i32` range
-// differs from Go.
-fn set_field_from_value(p: &mut UserPreferences, info: &FieldInfo, val: &LspAny) {
-    if matches!(val, LspAny::Null) {
-        return;
-    }
-    let field_type = (info.get)(p).type_();
-
-    // Check custom parsers first (for types like Tristate, enums, etc.)
-    if let Some(parser) = type_parsers(field_type) {
-        (info.set)(p, parser(val));
-        return;
-    }
-
-    match field_type.kind() {
-        FieldKind::Bool => {
-            if let LspAny::Bool(b) = val {
-                (info.set)(p, FieldValue::Bool(*b));
-            }
-        }
-        FieldKind::Int => {
-            if let LspAny::Number(v) = val {
-                (info.set)(p, FieldValue::Int(*v as i64 as i32));
-            }
-        }
-        FieldKind::String => {
-            if let LspAny::String(s) = val {
-                // PORT: only plain `string` fields reach this point; every
-                // string type has a parser.
-                (info.set)(p, FieldValue::String(s.clone()));
-            }
-        }
-        FieldKind::Slice => {
-            if let LspAny::Array(arr) = val {
-                let mut result: Vec<String> = Vec::with_capacity(arr.len());
-                for item in arr {
-                    if let LspAny::String(s) = item {
-                        result.push(s.clone());
-                    }
-                }
-                (info.set)(p, FieldValue::StringSlice(result));
-            }
-        }
-        FieldKind::Uint8 => {}
-    }
-}
-
-// Go: ls/lsutil/userpreferences.go:793 (*UserPreferences).MarshalJSONTo (at 673a5f17d713; ts#64554 generates it: ls/lsutil/userpreferences_generated.go:1053 UserPreferences.MarshalJSONTo)
-impl MarshalerTo for UserPreferences {
-    fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
-        let mut config: IndexMap<String, LspAny> = IndexMap::new();
-
-        for info in FIELD_INFO_CACHE.iter() {
-            let field = (info.get)(self);
-
-            let mut val = serialize_field(&field);
-            if matches!(val, LspAny::Null) {
-                continue;
-            }
-
-            // Prefer config path if available, otherwise use unstable section
-            if !info.config_path.is_empty() {
-                if info.config_invert
-                    && let LspAny::Bool(b) = val
-                {
-                    val = LspAny::Bool(!b);
-                }
-                set_nested_value(&mut config, info.config_path, val);
-            } else if !info.raw_name.is_empty() {
-                if info.raw_invert
-                    && let LspAny::Bool(b) = val
-                {
-                    val = LspAny::Bool(!b);
-                }
-                set_nested_value(&mut config, &format!("unstable.{}", info.raw_name), val);
-            }
-        }
-
-        // PORT: Go marshals with `json.Deterministic(true)`, which writes the
-        // keys of every `map[string]any` in `slices.Sort` order (bytewise).
-        sort_keys_deterministic(&mut config);
-        config.marshal_json_to(enc)
-    }
-}
-
-// PORT: the Go `json.Deterministic(true)` map key order, applied to every
-// nested object. `String` `Ord` is the bytewise Go `slices.Sort` order.
-fn sort_keys_deterministic(m: &mut IndexMap<String, LspAny>) {
-    m.sort_keys();
-    for v in m.values_mut() {
-        sort_any_keys_deterministic(v);
-    }
-}
-
-fn sort_any_keys_deterministic(v: &mut LspAny) {
-    match v {
-        LspAny::Object(m) => sort_keys_deterministic(m),
-        LspAny::Array(items) => {
-            for item in items {
-                sort_any_keys_deterministic(item);
-            }
-        }
-        _ => {}
-    }
-}
-
-// Go: ls/lsutil/userpreferences.go:826 serializeField (at 673a5f17d713; removed by ts#64554, which generates the per-field code in ls/lsutil/userpreferences_generated.go)
-// PORT: Go `nil` is `LspAny::Null`. A Go `int` is written as a JSON number;
-// `LspAny::Number` is an `f64`, which holds every `i32` exactly.
-fn serialize_field(field: &FieldValue) -> LspAny {
-    // Check custom serializers first (for types like Tristate, enums, etc.)
-    if let Some(serializer) = type_serializers(field.type_()) {
-        return serializer(field);
-    }
-
-    match field.type_().kind() {
-        FieldKind::Bool => LspAny::Bool(field.bool_()),
-        FieldKind::Int => {
-            // Zero means "unset" for these preference fields. Omit it so a partial
-            // config does not clobber defaults with zeros when round-tripped through
-            // withConfig.
-            let i = field.int();
-            if i == 0 {
-                return LspAny::Null;
-            }
-            LspAny::Number(i as f64)
-        }
-        FieldKind::String => {
-            // Zero ("") means "unset"; omit it for the same reason as int above.
-            let s = field.string();
-            if s.is_empty() {
-                return LspAny::Null;
-            }
-            LspAny::String(s)
-        }
-        FieldKind::Slice => {
-            let FieldValue::StringSlice(v) = field else {
-                unreachable!("the only slice field type is []string")
-            };
-            // PORT: an empty `Vec` stands for a nil slice (see the file note).
-            if v.is_empty() {
-                return LspAny::Null;
-            }
-            let mut result: Vec<LspAny> = Vec::with_capacity(v.len());
-            for s in v {
-                result.push(LspAny::String(s.clone()));
-            }
-            LspAny::Array(result)
-        }
-        // PORT: Go returns `field.Interface()`. Every field type of this kind
-        // (`core.Tristate`) has a serializer, so this is not reached.
-        FieldKind::Uint8 => unreachable!("core.Tristate has a type serializer"),
-    }
+    name.to_string()
 }
 
 // Go: ls/lsutil/userpreferences.go:184 (*UserPreferences).UnmarshalJSONFrom
@@ -1937,7 +452,8 @@ impl UserPreferences {
             import_module_specifier_ending: self.import_module_specifier_ending,
             auto_import_specifier_exclude_regexes: self
                 .auto_import_specifier_exclude_regexes
-                .clone(),
+                .clone()
+                .unwrap_or_default(),
         }
     }
 
@@ -1948,7 +464,9 @@ impl UserPreferences {
         use_case_sensitive_file_names: bool,
     ) -> Option<crate::frontend::vfs::vfsmatch::SpecMatcher> {
         crate::frontend::vfs::vfsmatch::new_spec_matcher(
-            &self.auto_import_file_exclude_patterns,
+            self.auto_import_file_exclude_patterns
+                .as_deref()
+                .unwrap_or_default(),
             "",
             crate::frontend::vfs::vfsmatch::Usage::Exclude,
             use_case_sensitive_file_names,
@@ -1959,7 +477,9 @@ impl UserPreferences {
     pub fn is_module_specifier_excluded(&self, module_specifier: &str) -> bool {
         crate::modulespecifiers::is_excluded_by_regex(
             module_specifier,
-            &self.auto_import_specifier_exclude_regexes,
+            self.auto_import_specifier_exclude_regexes
+                .as_deref()
+                .unwrap_or_default(),
         )
     }
 }
@@ -2001,16 +521,6 @@ pub fn parse_user_preferences(items: &IndexMap<String, LspAny>) -> UserPreferenc
     prefs
 }
 
-// PORT: Go `strings.ToLower` maps each rune with the simple (one rune)
-// `unicode.ToLower`. The first char of Rust `char::to_lowercase` is that
-// mapping (U+0130 is the only multi-char case, and it starts with 'i'). Rust
-// `str::to_lowercase` also applies the final-sigma rule, which Go does not.
-fn strings_to_lower(s: &str) -> String {
-    s.chars()
-        .map(|c| c.to_lowercase().next().unwrap_or(c))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2032,8 +542,6 @@ mod tests {
     }
 
     // Go: ls/lsutil/userpreferences_test.go:13 TestUserPreferencesParsingEdgeCases (ts#64554)
-    // PORT: "empty array is not nil" has no Rust subject (a Vec has no nil);
-    // the case is kept and checks the empty Vec.
     #[test]
     fn test_user_preferences_parsing_edge_cases() {
         type Expected = fn(&mut UserPreferences);
@@ -2116,7 +624,7 @@ mod tests {
                     p.maximum_hover_length = 9;
                     p.format_code_settings.editor_settings.indent_style = IndentStyle::BLOCK;
                     p.auto_import_file_exclude_patterns =
-                        vec!["first".to_string(), "second".to_string()];
+                        Some(vec!["first".to_string(), "second".to_string()]);
                 },
             ),
             (
@@ -2125,7 +633,7 @@ mod tests {
                     "autoImportFileExcludePatterns",
                     LspAny::Array(vec![]),
                 )]),
-                |p| p.auto_import_file_exclude_patterns = Vec::new(),
+                |p| p.auto_import_file_exclude_patterns = Some(Vec::new()),
             ),
             (
                 "invalid module specifier preference uses its default",
@@ -2149,4 +657,229 @@ mod tests {
             assert_eq!(base.with_config(&config), want, "{name}");
         }
     }
+
+    /// Go `json.Unmarshal([]byte(text), &config)` with `config map[string]any`.
+    fn json_config(text: &str) -> IndexMap<String, LspAny> {
+        let mut config: IndexMap<String, LspAny> = IndexMap::new();
+        crate::frontend::json::json_unmarshal(text.as_bytes(), &mut config, &[]).expect("json");
+        config
+    }
+
+    // Go: ls/lsutil/userpreferences_test.go:254 TestUserPreferencesParseUnstable
+    #[test]
+    fn test_user_preferences_parse_unstable() {
+        type Expected = fn(&mut UserPreferences);
+        let tests: Vec<(&str, &str, Expected)> = vec![
+            (
+                "unstable fields with correct casing",
+                r#"{"unstable": {"disableSuggestions": true, "maximumHoverLength": 100, "allowRenameOfImportPath": true}}"#,
+                |p| {
+                    p.disable_suggestions = Tristate::True;
+                    p.maximum_hover_length = 100;
+                    p.allow_rename_of_import_path = Tristate::True;
+                },
+            ),
+            (
+                "nested preferences path",
+                r#"{"preferences": {"quoteStyle": "single", "useAliasesForRenames": true}}"#,
+                |p| {
+                    p.quote_preference = QuotePreference::SINGLE;
+                    p.use_aliases_for_rename = Tristate::True;
+                },
+            ),
+            (
+                "suggest section",
+                r#"{"suggest": {"autoImports": false, "includeCompletionsForImportStatements": true}}"#,
+                |p| {
+                    p.include_completions_for_module_exports = Tristate::False;
+                    p.include_completions_for_import_statements = Tristate::True;
+                },
+            ),
+            (
+                "inlayHints with invert",
+                r#"{"inlayHints": {"parameterNames": {"enabled": "all", "suppressWhenArgumentMatchesName": true}}}"#,
+                |p| {
+                    p.inlay_hints.include_inlay_parameter_name_hints =
+                        IncludeInlayParameterNameHints::ALL;
+                    p.inlay_hints
+                        .include_inlay_parameter_name_hints_when_argument_matches_name =
+                        Tristate::False; // inverted
+                },
+            ),
+            (
+                "mixed config",
+                r#"{"unstable": {"displayPartsForJSDoc": true}, "preferences": {"importModuleSpecifier": "relative"}, "workspaceSymbols": {"excludeLibrarySymbols": true, "scope": "currentProject"}}"#,
+                |p| {
+                    p.display_parts_for_js_doc = Tristate::True;
+                    p.import_module_specifier_preference =
+                        ImportModuleSpecifierPreference::Relative;
+                    p.exclude_library_symbols_in_nav_to = Tristate::True;
+                    p.workspace_symbols_scope = WorkspaceSymbolsScope::CURRENT_PROJECT;
+                },
+            ),
+            (
+                "stable config overrides unstable",
+                r#"{"unstable": {"quotePreference": "double"}, "preferences": {"quoteStyle": "single"}}"#,
+                |p| p.quote_preference = QuotePreference::SINGLE, // stable wins
+            ),
+            (
+                "unstable sets value when no stable config",
+                r#"{"unstable": {"includeAutomaticOptionalChainCompletions": false}}"#,
+                |p| p.include_automatic_optional_chain_completions = Tristate::False,
+            ),
+            (
+                "any field can be passed via unstable by its raw name",
+                r#"{"unstable": {"quotePreference": "double", "includeCompletionsForModuleExports": true, "excludeLibrarySymbolsInNavTo": true}}"#,
+                |p| {
+                    p.quote_preference = QuotePreference::DOUBLE;
+                    p.include_completions_for_module_exports = Tristate::True;
+                    p.exclude_library_symbols_in_nav_to = Tristate::True;
+                },
+            ),
+            (
+                "TypeScript raw names work in unstable section",
+                r#"{"unstable": {"includeCompletionsForModuleExports": true, "quotePreference": "single", "providePrefixAndSuffixTextForRename": true, "includeInlayParameterNameHints": "all", "organizeImportsLocale": "en"}}"#,
+                |p| {
+                    p.include_completions_for_module_exports = Tristate::True;
+                    p.quote_preference = QuotePreference::SINGLE;
+                    p.use_aliases_for_rename = Tristate::True;
+                    p.organize_imports_locale = "en".to_string();
+                    p.inlay_hints.include_inlay_parameter_name_hints =
+                        IncludeInlayParameterNameHints::ALL;
+                },
+            ),
+            (
+                "old raw organize imports unicode preferences load as raw state",
+                r#"{"unstable": {"organizeImportsCollation": "unicode", "organizeImportsCaseFirst": "upper", "organizeImportsIgnoreCase": false, "organizeImportsNumericCollation": true}}"#,
+                |p| {
+                    p.organize_imports_collation = OrganizeImportsCollation::UNICODE;
+                    p.organize_imports_case_first = OrganizeImportsCaseFirst::UPPER;
+                    p.organize_imports_ignore_case = Tristate::False;
+                    p.organize_imports_numeric_collation = Tristate::True;
+                },
+            ),
+            (
+                "old top-level raw organize imports unicode preferences load as raw state",
+                r#"{"organizeImportsCollation": "unicode", "organizeImportsIgnoreCase": true}"#,
+                |p| {
+                    p.organize_imports_collation = OrganizeImportsCollation::UNICODE;
+                    p.organize_imports_ignore_case = Tristate::True;
+                },
+            ),
+            (
+                "new top-level raw organize imports sort is accepted",
+                r#"{"organizeImportsSort": "natural"}"#,
+                |p| p.organize_imports_sort = OrganizeImportsSort::NATURAL,
+            ),
+            (
+                "old raw organize imports ignore case loads as raw state",
+                r#"{"unstable": {"organizeImportsIgnoreCase": true}}"#,
+                |p| p.organize_imports_ignore_case = Tristate::True,
+            ),
+            (
+                "new raw organize imports sort loads alongside old raw preferences",
+                r#"{"unstable": {"organizeImportsSort": "ordinal", "organizeImportsCollation": "unicode", "organizeImportsIgnoreCase": true}}"#,
+                |p| {
+                    p.organize_imports_sort = OrganizeImportsSort::ORDINAL;
+                    p.organize_imports_collation = OrganizeImportsCollation::UNICODE;
+                    p.organize_imports_ignore_case = Tristate::True;
+                },
+            ),
+            (
+                "old nested organize imports unicode preferences load as raw state",
+                r#"{"preferences": {"organizeImports": {"unicodeCollation": "unicode", "caseSensitivity": "caseSensitive", "numericCollation": true, "caseFirst": "upper"}}}"#,
+                |p| {
+                    p.organize_imports_collation = OrganizeImportsCollation::UNICODE;
+                    p.organize_imports_ignore_case = Tristate::False;
+                    p.organize_imports_numeric_collation = Tristate::True;
+                    p.organize_imports_case_first = OrganizeImportsCaseFirst::UPPER;
+                },
+            ),
+            (
+                "new nested organize imports sort loads alongside old nested preferences",
+                r#"{"preferences": {"organizeImports": {"sort": "ordinalIgnoreCase", "unicodeCollation": "unicode", "caseSensitivity": "caseSensitive"}}}"#,
+                |p| {
+                    p.organize_imports_sort = OrganizeImportsSort::ORDINAL_IGNORE_CASE;
+                    p.organize_imports_collation = OrganizeImportsCollation::UNICODE;
+                    p.organize_imports_ignore_case = Tristate::False;
+                },
+            ),
+        ];
+        for (name, json, expected) in tests {
+            let mut want = UserPreferences::default();
+            expected(&mut want);
+            let parsed = UserPreferences::default().with_config(&json_config(json));
+            assert_eq!(parsed, want, "{name}");
+        }
+    }
+
+    // Lane B6 (the lsp prefs battery, lsp/prefs init hover): Go `int` is 64
+    // bits, and a float64 out of its range converts to the minimum on amd64.
+    #[test]
+    fn test_user_preferences_go_int_width() {
+        let parsed = UserPreferences::default().with_config(&json_config(
+            r#"{"maximumHoverLength": 4294967306, "indentStyle": 4294967296}"#,
+        ));
+        assert_eq!(parsed.maximum_hover_length, 4_294_967_306);
+        assert_eq!(
+            parsed.format_code_settings.editor_settings.indent_style,
+            IndentStyle(4_294_967_296)
+        );
+        let parsed = UserPreferences::default().with_config(&json_config(
+            r#"{"unstable": {"maximumHoverLength": 1e19}, "format": {"indentStyle": -1e300}}"#,
+        ));
+        assert_eq!(parsed.maximum_hover_length, i64::MIN);
+        assert_eq!(
+            parsed.format_code_settings.editor_settings.indent_style,
+            IndentStyle(i64::MIN)
+        );
+    }
+
+    // Lane B6 round 2: `MarshalJSONTo` against Go's output at the pin (`json.Marshal`
+    // of the same values, a scratch Go test in ls/lsutil): nil slices are omitted,
+    // empty ones are `[]`, and an `int` is an integer token.
+    #[test]
+    fn test_user_preferences_marshal_matches_go() {
+        let marshal =
+            |p: &UserPreferences| crate::frontend::json::json_marshal(p, &[]).expect("marshal");
+        let strings = |v: &[&str]| Some(v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let zero = UserPreferences::default();
+        assert_eq!(marshal(&zero), ZERO);
+        let empty = UserPreferences {
+            auto_import_file_exclude_patterns: strings(&[]),
+            auto_import_specifier_exclude_regexes: strings(&[]),
+            ..UserPreferences::default()
+        };
+        assert_eq!(marshal(&empty), EMPTY_SLICES);
+        let slices = UserPreferences {
+            auto_import_file_exclude_patterns: strings(&["a"]),
+            auto_import_specifier_exclude_regexes: strings(&["^b", "c"]),
+            ..UserPreferences::default()
+        };
+        assert_eq!(marshal(&slices), SLICES);
+        for (input, want) in ROUND_TRIPS {
+            let mut parsed = UserPreferences::default();
+            crate::frontend::json::json_unmarshal(input.as_bytes(), &mut parsed, &[])
+                .expect("unmarshal");
+            assert_eq!(marshal(&parsed), *want, "{input}");
+        }
+    }
+
+    const ZERO: &str = r#"{"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const EMPTY_SLICES: &str = r#"{"preferences":{"autoImportFileExcludePatterns":[],"autoImportSpecifierExcludeRegexes":[],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const SLICES: &str = r#"{"preferences":{"autoImportFileExcludePatterns":["a"],"autoImportSpecifierExcludeRegexes":["^b","c"],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"unstable":{"preferGoToSourceDefinition":false}}"#;
+    const ROUND_TRIPS: &[(&str, &str)] = &[
+        (
+            r#"{"maximumHoverLength":1e19}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":2,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":4,"trimTrailingWhitespace":true},"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"maximumHoverLength":-9223372036854775808,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+        (
+            r#"{"maximumHoverLength":4294967306,"indentStyle":4294967296,"tabSize":-4294967292}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":4294967296,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":-4294967292,"trimTrailingWhitespace":true},"preferences":{"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"maximumHoverLength":4294967306,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+        (
+            r#"{"preferences":{"autoImportFileExcludePatterns":[1,false]}}"#,
+            r#"{"autoClosingTags":{"enabled":true},"format":{"convertTabsToSpaces":true,"enabled":true,"indentSize":4,"indentStyle":2,"indentSwitchCase":true,"insertSpaceAfterCommaDelimiter":true,"insertSpaceAfterConstructor":false,"insertSpaceAfterFunctionKeywordForAnonymousFunctions":false,"insertSpaceAfterKeywordsInControlFlowStatements":true,"insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces":true,"insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets":false,"insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis":false,"insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces":false,"insertSpaceAfterSemicolonInForStatements":true,"insertSpaceBeforeAndAfterBinaryOperators":true,"insertSpaceBeforeFunctionParenthesis":false,"newLineCharacter":"\n","placeOpenBraceOnNewLineForControlBlocks":false,"placeOpenBraceOnNewLineForFunctions":false,"semicolons":"ignore","tabSize":4,"trimTrailingWhitespace":true},"preferences":{"autoImportFileExcludePatterns":[],"organizeImports":{"caseFirst":"default","sort":"auto","typeOrder":"auto","unicodeCollation":"ordinal"}},"reportStyleChecksAsWarnings":true,"suggest":{"autoImports":true,"includeCompletionsForImportStatements":true,"jsdoc":{"enabled":true,"generateReturns":true}},"unstable":{"allowRenameOfImportPath":true,"disableLineTextInReferences":true,"displayPartsForJSDoc":true,"preferGoToSourceDefinition":false,"provideRefactorNotApplicableReason":true},"validate":{"enabled":true},"workspaceSymbols":{"excludeLibrarySymbols":true,"scope":"allOpenProjects"}}"#,
+        ),
+    ];
 }

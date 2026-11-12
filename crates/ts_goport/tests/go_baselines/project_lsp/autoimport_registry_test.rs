@@ -975,7 +975,7 @@ child_test! {
 
         // Change the file exclude patterns preference
         let mut new_preferences = import_preferences();
-        new_preferences.auto_import_file_exclude_patterns = vec!["**/node_modules/**/*.d.ts".to_string()];
+        new_preferences.auto_import_file_exclude_patterns = Some(vec!["**/node_modules/**/*.d.ts".to_string()]);
         session.configure(new_preferences.clone());
 
         // IsPreparedForImportingFile should return false since exclude patterns changed

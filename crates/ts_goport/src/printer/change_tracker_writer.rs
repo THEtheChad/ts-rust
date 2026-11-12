@@ -65,12 +65,12 @@ impl TriviaPositions {
 
 // Go: printer/changetrackerwriter.go:24 NewChangeTrackerWriter
 #[must_use]
-pub fn new_change_tracker_writer(newline: &str, indent_size: i32) -> ChangeTrackerWriter {
+pub fn new_change_tracker_writer(newline: &str, indent_size: i64) -> ChangeTrackerWriter {
     let mut indent_size = indent_size;
     // TODO: Callers passing -1 should pass actual indent options once indent-related formatting is ported.
     if indent_size < 0 {
         // PORT: Go `defaultIndentSize`, private in text_writer.rs.
-        indent_size = get_default_indent_size();
+        indent_size = i64::from(get_default_indent_size());
     }
     let mut ctw = ChangeTrackerWriter {
         // PORT: Go sets only the promoted `newLine` and `indentSize` fields of

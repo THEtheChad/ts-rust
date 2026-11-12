@@ -19,7 +19,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 #[derive(Clone, Debug, Default)]
 pub struct VerbosityContext {
     pub level: i32,
-    pub max_truncation_length: i32,
+    // PORT: Go `int` (64 bits).
+    pub max_truncation_length: i64,
     pub can_increase_verbosity: Rc<Cell<bool>>,
     pub truncated: Rc<Cell<bool>>,
 }
@@ -236,14 +237,15 @@ impl Checker {
         // bytes with no copy (strings.Builder); the writer is not used again.
         let result = writer.borrow_mut().take_string();
 
-        let mut max_length = DEFAULT_MAXIMUM_TRUNCATION_LENGTH * 2;
+        // PORT: Go `int` (64 bits); `* 10` wraps as Go's does.
+        let mut max_length = i64::from(DEFAULT_MAXIMUM_TRUNCATION_LENGTH * 2);
         if let Some(vc) = vc
             && vc.max_truncation_length > 0
         {
-            max_length = vc.max_truncation_length * 10; // hard cutoff matching Strada's absoluteMaximumLength
+            max_length = vc.max_truncation_length.wrapping_mul(10); // hard cutoff matching Strada's absoluteMaximumLength
         }
         if no_truncation {
-            max_length = NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH * 2;
+            max_length = i64::from(NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH * 2);
         }
         // PORT: Go `len(result)` and the slice count Go bytes. `result` is a
         // port form (see `scanner_util::GO_STRING_MARKER`), so this uses its

@@ -88,6 +88,9 @@ import { parseArgs } from "node:util";
 import { runBench, summarize } from "./bench.mjs";
 import { pickFiles, rel } from "./project.mjs";
 import { SCENARIOS, runScenario, scenarioInfo } from "./scenario.mjs";
+// The user-preference scenarios (lane B6): registered into SCENARIOS by this import; their sessions are
+// keyed on prefs.mjs (parity_lsp.py `sources`), the other sessions are not.
+import { PREFS_SCENARIOS, runPrefsScenario } from "./prefs.mjs";
 import { parseEntry, parseKeep, scan } from "./json.mjs";
 import { applyJsReferee } from "./referee.mjs";
 import { runSession } from "./session.mjs";
@@ -292,7 +295,7 @@ if (mode === "diff") {
   // One server run of the session (or scenario): its log.
   const runOne = (name, cmd, env) =>
     scenario
-      ? runScenario(cmd, scenario, root, { files, stderr, env, ataStore: opt["ata-store"], ataManifest: opt["ata-manifest"], serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
+      ? (PREFS_SCENARIOS.has(scenario) ? runPrefsScenario : runScenario)(cmd, scenario, root, { files, stderr, env, ataStore: opt["ata-store"], ataManifest: opt["ata-manifest"], serverLog: opt["server-logs"] ? join(outDir, `${name}.server.log`) : undefined })
       : runSession(cmd, root, files, { positions: Number(opt.positions), stderr, env });
   // { log, broken, session }: a crash or a timeout ends the run with the answers it gave; session is
   // the server's result (sandbox.mjs), mandatory for every run.

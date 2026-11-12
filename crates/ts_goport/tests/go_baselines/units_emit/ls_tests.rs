@@ -2,9 +2,11 @@
 //! internal/ls/lsutil/utilities_test.go and
 //! internal/ls/lsutil/userpreferences_test.go.
 //!
-//! Not ported (blocked, see bugs/S3.md): TestUserPreferencesParseUnstable
-//! and the `withConfig` subtest of TestUserPreferencesRoundtrip
-//! (`UserPreferences::with_config` is `pub(crate)`).
+//! TestUserPreferencesParseUnstable calls the unexported `withConfig`, so it
+//! is a unit test in `src/ls/lsutil/userpreferences.rs`. Not ported: the
+//! `withConfig` subtest of TestUserPreferencesRoundtrip
+//! (`UserPreferences::with_config` is `pub(crate)`; the UnmarshalJSONFrom
+//! subtest runs it on the same JSON).
 
 use super::{Subtests, assert_equal, leak};
 use indexmap::IndexMap;
@@ -875,8 +877,8 @@ fn fill_non_zero_values() -> UserPreferences {
         generate_return_in_doc_template: f,
         import_module_specifier_preference: ImportModuleSpecifierPreference::Relative,
         import_module_specifier_ending: ImportModuleSpecifierEndingPreference::Js,
-        auto_import_specifier_exclude_regexes: test(),
-        auto_import_file_exclude_patterns: test(),
+        auto_import_specifier_exclude_regexes: Some(test()),
+        auto_import_file_exclude_patterns: Some(test()),
         auto_import_entrypoint_directory_search: f,
         prefer_type_only_auto_imports: f,
         organize_imports_sort: OrganizeImportsSort(1),

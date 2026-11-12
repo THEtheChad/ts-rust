@@ -244,6 +244,10 @@ print(json.dumps(r.finish()))
           rw.returncode == 125 and 'setup' in rw.stdout, (rw.returncode, rw.stdout[-300:], rw.stderr[-300:]))
     check('key: the sandbox init and json.mjs are session sources (a change resets every Go fill)',
           {'../../parity_sandbox_init.py', 'json.mjs'} <= set(parity_lsp.SESSION_SOURCES))
+    own = {s['name']: s.get('sources') for s in parity_lsp.FULL if s.get('sources')}
+    check('key (lane B6): prefs.mjs keys the prefs session alone, and is no source of every session',
+          own == {'prefs': ['prefs.mjs']} and 'prefs.mjs' not in parity_lsp.SESSION_SOURCES
+          and parity_lsp.scenario_sources_sha(('prefs.mjs',)) != parity_lsp.scenario_sources_sha(), own)
     check('key: the ancestors keyed are the ones a server sees (none in a hidden dir)',
           parity_lsp.ancestor_dirs(str(Path.home() / 'x/y')) == ['/'] and parity_lsp.ancestor_dirs('/usr/lib/x') == ['/', '/usr', '/usr/lib'],
           parity_lsp.ancestor_dirs(str(Path.home() / 'x/y')))

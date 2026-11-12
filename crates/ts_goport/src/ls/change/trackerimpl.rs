@@ -323,8 +323,8 @@ impl Tracker {
         let format_options =
             get_format_code_settings_for_writing(self.format_settings.clone(), target_source_file);
 
-        let mut delta: i32 = 0;
-        let initial_indentation: i32 = match options.indentation {
+        let mut delta: i64 = 0;
+        let initial_indentation: i64 = match options.indentation {
             None => format::get_indentation(
                 pos,
                 source_file,
