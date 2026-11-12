@@ -422,12 +422,6 @@ impl Session {
         locale::with_locale(ctx, client.get_locale())
     }
 
-    // Go: project/session.go:283 Trace (at 673a5f17d713; removed by ts#64159)
-    // Trace implements module.ResolutionHost
-    pub fn trace(&self, _msg: &str) {
-        crate::core::go_panic("ATA module resolution should not use tracing".to_string());
-    }
-
     // Go: project/session.go:286 Configure
     // PORT: `configureMu` and `userConfigRWMu` are dropped (one thread).
     pub fn configure(self: &Rc<Self>, config: lsutil::UserPreferences) {

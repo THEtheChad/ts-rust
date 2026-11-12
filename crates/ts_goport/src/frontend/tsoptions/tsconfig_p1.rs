@@ -136,35 +136,6 @@ pub struct ConfigFileSpecs {
 }
 
 impl ConfigFileSpecs {
-    // Go: tsoptions/tsconfigparsing.go:108 (*configFileSpecs).matchesExclude (at 673a5f17d713;
-    // removed by ts#64159)
-    pub fn matches_exclude(
-        &self,
-        file_name: &str,
-        compare_paths_options: &ComparePathsOptions,
-    ) -> bool {
-        if self.validated_exclude_specs.is_empty() {
-            return false;
-        }
-        let Some(exclude_matcher) = new_spec_matcher(
-            &self.validated_exclude_specs,
-            &compare_paths_options.current_directory,
-            Usage::Exclude,
-            compare_paths_options.use_case_sensitive_file_names,
-        ) else {
-            return false;
-        };
-        if exclude_matcher.match_string(file_name) {
-            return true;
-        }
-        if !has_extension(file_name)
-            && exclude_matcher.match_string(&ensure_trailing_directory_separator(file_name))
-        {
-            return true;
-        }
-        false
-    }
-
     // Go: tsoptions/tsconfigparsing.go:53 (*configFileSpecs).getMatchedIncludeSpec
     pub fn get_matched_include_spec(
         &self,
