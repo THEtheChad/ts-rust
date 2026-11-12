@@ -120,6 +120,10 @@ pub struct AsyncConn {
     // PORT: when the reader thread ended the read loop, if that end set
     // `terminal` (`end_read_loop`).
     end_terminal: Cell<Option<Instant>>,
+    // PORT: the requests that arrived while a request they must wait for
+    // ran (`Handler::must_wait`), in arrival order, with the `ctx` and
+    // `read_at` of their dispatch (`dispatch`).
+    held: RefCell<VecDeque<(Context, Message, Option<Instant>)>>,
 }
 
 // Go: ipc/conn_async.go:41 NewAsyncConn
@@ -154,6 +158,7 @@ pub fn new_async_conn_with_protocol(
         reader: RefCell::new(None),
         frames: RefCell::new(Vec::new()),
         end_terminal: Cell::new(None),
+        held: RefCell::new(VecDeque::new()),
     })
 }
 
@@ -340,10 +345,23 @@ impl AsyncConn {
     /// notification run inline (Go `c.handlers.Go(...)`, ts#64163), also
     /// when `call` read them. `read_at`: when the reader thread read the
     /// message (`read_on_thread`).
+    ///
+    /// PORT: a request that must wait for a running request
+    /// (`Handler::must_wait`; Go: its goroutine blocks on a lock) is held,
+    /// and runs when a request returns and it no longer must wait, in
+    /// arrival order (`run_held`). So a request that a client sends while
+    /// a build waits for its callback answer runs after that build, and the
+    /// answer still reaches the build.
     fn dispatch(&self, ctx: &Context, msg: Message, read_at: Option<Instant>) {
         if msg.is_response() {
             self.handle_response(msg, read_at, false);
         } else if msg.is_request() {
+            if self.handler.must_wait(&msg.method) {
+                self.held
+                    .borrow_mut()
+                    .push_back((ctx.clone(), msg, read_at));
+                return;
+            }
             if let Err(request_err) = self.handle_request(ctx, msg)
                 && self.record_request_error(request_err)
             {
@@ -353,8 +371,26 @@ impl AsyncConn {
                 // a blocking `os.Stdin` (transport.rs `StdioIn`).
                 let _ = self.rwc.close();
             }
+            self.run_held();
         } else if msg.is_notification() {
             self.handle_notification(ctx, msg);
+        }
+    }
+
+    /// Dispatches the held requests that no longer must wait, in arrival
+    /// order (see `dispatch`).
+    fn run_held(&self) {
+        loop {
+            let next = {
+                let mut held = self.held.borrow_mut();
+                held.iter()
+                    .position(|(_, msg, _)| !self.handler.must_wait(&msg.method))
+                    .and_then(|at| held.remove(at))
+            };
+            let Some((ctx, msg, read_at)) = next else {
+                return;
+            };
+            self.dispatch(&ctx, msg, read_at);
         }
     }
 

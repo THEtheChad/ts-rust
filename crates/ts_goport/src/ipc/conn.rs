@@ -35,6 +35,16 @@ pub trait Handler {
         method: &str,
         params: JsonValue,
     ) -> Result<(), GoError>;
+
+    /// PORT: not in Go. True when a request of `method` that arrives now
+    /// must wait for a request that is running: in Go its handler blocks on
+    /// a lock that the running one holds (the API session's `buildMu`). The
+    /// async connection runs it once the running request returned, and
+    /// handles the responses and the other requests meanwhile
+    /// (`AsyncConn::dispatch`), as Go's goroutines do.
+    fn must_wait(&self, _method: &str) -> bool {
+        false
+    }
 }
 
 // Go: ipc/conn.go:24 Conn

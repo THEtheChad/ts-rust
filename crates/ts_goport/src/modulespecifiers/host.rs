@@ -225,8 +225,9 @@ fn get_package_json_info_for_directory(package_directory: &str) -> Option<Arc<In
     // PORT: the OS file system in the port form (see
     // `scanner_util::GO_STRING_MARKER`); Go parses the file's bytes. Go
     // reads the program host's file system, which is the OS file system
-    // for a compile; a language server program reads on the loading
-    // thread.
+    // here: a language service program reads on the loading thread, and a
+    // program whose host reads through client calls asks it
+    // (`ProgramHost::get_package_json_info`).
     let fs = osvfs_fs();
     let directory_exists = fs.directory_exists(package_directory);
     if directory_exists && fs.file_exists(&package_json_path) {
@@ -391,11 +392,19 @@ impl ModuleSpecifierGenerationHost for ProgramHost {
     // as Go does: its cache holds the package.json files of the program
     // load, and it reads the program host's file system (in the language
     // server, the snapshot with the open files). Another thread cannot read
-    // them, so it looks up the package.json files itself, on the OS file
-    // system (`get_package_json_info_for_directory`).
+    // them. When the host reads through client calls, it asks the loading
+    // thread (`program::ask_host`). Else the host is the OS file system, and
+    // it looks up the package.json files itself, on the OS file system
+    // (`get_package_json_info_for_directory`).
     fn get_nearest_ancestor_directory_with_package_json(&self, dirname: &str) -> String {
         if let Some(frontend) = crate::program::loading_thread_frontend() {
             return frontend.get_nearest_ancestor_directory_with_package_json(dirname);
+        }
+        let asked = dirname.to_string();
+        if let Some(directory) = crate::program::ask_host(move |frontend| {
+            frontend.get_nearest_ancestor_directory_with_package_json(&asked)
+        }) {
+            return directory;
         }
         match get_package_scope_for_path(dirname) {
             Some(scoped) if scoped.exists() => scoped.package_directory.clone(),
@@ -410,6 +419,14 @@ impl ModuleSpecifierGenerationHost for ProgramHost {
             return frontend
                 .get_package_json_info(pkg_json_path)
                 .map(|entry| frontend_package_json_entry(&entry));
+        }
+        let asked = pkg_json_path.to_string();
+        if let Some(info) = crate::program::ask_host(move |frontend| {
+            frontend
+                .get_package_json_info(&asked)
+                .map(|entry| frontend_package_json_entry(&entry))
+        }) {
+            return info;
         }
         let directory = tspath::get_directory_path(pkg_json_path);
         match get_package_scope_for_path(&directory) {

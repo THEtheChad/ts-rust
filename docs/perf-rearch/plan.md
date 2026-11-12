@@ -2304,3 +2304,82 @@ once a **reconciliation step** is built and tested.
     requests, and runs in the full tier only. A possible later trim: a
     shorter settle for steps with no ATA or watch.
 - **B9 next:** the A1 audit fixes (B6's helper is now merged).
+- **B8 round 2 done** (head `8d2816119`).
+  - **A callback mode in the api harness:** files are served by the client,
+    and the callback set is compared. All api keys changed and were
+    refilled. B8 SELFTEST OK.
+  - **5 callback-build items DIFF before and MATCH after:** index sibling,
+    import-ext, pkgjson, d.ts mtime, and a control. Go and tsc-rs are each
+    stable over 4 runs.
+  - **The fixes:**
+    - `program/host_queries.rs`: worker misses and package.json lookups go
+      to the loading thread for `client_reads` programs, and every wait
+      answers queries;
+    - the d.ts mtime revert goes through the host in the API flush;
+    - `outputs_overlap` (port-only) makes no lookups when the client reads
+      files. This was a third difference: it made stat/realpath callbacks
+      Go never makes.
+    - 184 stale API `// Go:` lines are fixed in a mechanical commit.
+  - **Gate:** `runs/b8-8d2816119-full` PARITY OK, api 62 MATCH;
+    single-threaded icount flat.
+  - **Astra recheck** running (round 2 of 3), focused on deadlock and
+    starvation and on whether `outputs_overlap` should go for OS hosts too.
+- **B8 recheck: REJECT** (`reviews/2026-11-11-astra-b8-r2.md`).
+  - A nested API build dispatched inside a callback wait can deadlock (Go
+    has `buildMu`).
+  - The timestamp item's `stat` callback can't see the sandboxed output, so
+    the restore is unproven.
+
+  The wait inventory, polling and ownership are confirmed. Round 3 sent,
+  the last.
+- **B8 round 3 done; merged.** Root accepts it without a further Astra
+  round.
+  - **The `buildMu` port:** `Handler::must_wait` queues create, dispose,
+    build, buildReferences, cleanBuild and cleanReferences while one is
+    running, and callback responses keep dispatching.
+  - **The harness:** a scripted stat reads the server's view through
+    `/proc/<init>/root`, and the scripted path's mtime is recorded after
+    each step.
+  - **Root's checks:**
+    - `callback-build-interleave` timed out (`build: no answer in 60 s`)
+      on `8d2816119`;
+    - all 6 callback items MATCH in `runs/b8-e2941610d-full`;
+    - the d.ts ends at the 2030 mtime under Go and tsc-rs.
+  - **CI break from B6 found by B8:** wasm32 `clippy --all-targets` failed
+    on `gostd/strings.rs`'s `1 << 48` usize test. Root fixed it
+    (`f3b31678a`): the exact-maxAlloc assertion runs on 64-bit targets
+    only. The wasm32 clippy commands and the `goport_util` strings tests
+    pass.
+  - **base-current** moved to `b8-e2941610d-full` (everything through B8,
+    B6 included).
+- **F6 started:**
+  - B3 F6 markers: (b)/(d) to the pin's names, (e) fixed, dead pre-pin
+    functions removed;
+  - gorel learns Go fields and vars;
+  - stdlib and x/text ports scored against GOROOT and x/text v0.42.0;
+  - a "Δ less residue" column beside the raw Δ.
+
+  B9's files are excluded.
+- **B9 done; Astra review running.** Head `5c16bed1a` (based on
+  `f608986a3`).
+  - **Fixed, each pinned against Go's answer:** A1, B1/B1b, A2, A3, A4
+    (position), A5/A5b, A6 (Effect Go checked at @effect/tsgo@0.51.1), A7,
+    A8, A9.
+  - **New items:** api `typeacq-empty-include` and `raw-options-target-int32`;
+    cli `buildinfo-int-range/code-int32/{noemit,emit,incr}`.
+  - **Gate:** `runs/b9-7647e02d8-full` PARITY OK; single-threaded icount
+    within ±0.005%.
+  - **Left, now unblocked by B8's merge:**
+    - A4's `index` field (`proto.rs`, `session_p1.rs:4216`);
+    - the api `{method, params}` request form, to make A1, A3 and A4 api
+      items. `b9/api_probe.py` has the requests.
+  - **Not fixed:** B2 (log only), B3 (reachable with `"contentMappers": []`
+    under `--watch`, no printed difference found yet), B4 (needs
+    `core.rs`).
+- **B9 review: REJECT** (`reviews/2026-11-11-astra-b9.md`).
+  - **Findings:** A7 `-1` assumed alive; A3's clamp isn't past EOF in a
+    file of exactly 2^31−1 bytes; A5's root range overflow, where Go hangs.
+  - **Root's decision:** fix 1 and 2. For 3, Go hangs and tsc-rs answers,
+    so it's GO-BROKEN under "Better than Go": a PORT note plus a test, not
+    a reproduced hang. B3 is closed (nil both ways at the pin).
+  - **Round 2 also** takes A4's index and the api `{method, params}` form.

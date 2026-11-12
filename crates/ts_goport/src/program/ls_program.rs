@@ -1909,21 +1909,34 @@ fn new_emit_host(p: &NewProgram, ctx: &Context, file: Node) -> (Rc<EmitHost>, Re
 }
 
 // Go: compiler/program.go:1903 Program.Emit
-// PORT: the language service form of `program_emit::emit` (#4710: the
-// language server flake check; the API emit methods call Go `Program.Emit`
-// too). Each file's emit host gets its checker from the checker pool of `p`
-// (`new_emit_host`), as in Go, so the emit uses the checkers that the
-// diagnostics use, not a compile worker pool. Go runs the files on a
-// WorkGroup. On the dispatch thread they run one after another, in file
-// order. A language service program has no Go `opts.Tracing`, so there is
-// no trace event. Go returns nil when `ctx` is done after
+// PORT: the language service form of `program_emit::emit`, for the language
+// server flake check (#4710) and the API emit methods (Go `Program.Emit` of a
+// project program). Each file's emit host gets its checker from the checker
+// pool of `p` (`new_emit_host`), as in Go, so the emit uses the checkers that
+// the diagnostics use, not a compile worker pool. So it also runs where the
+// program's host file system is: the module specifier and import extension
+// probes of the emit (`program::file_exists`, the package.json lookups) ask
+// that file system (the snapshot's, with the API's request file system), as
+// Go's do. A compile worker thread would ask the OS file system. Go runs the
+// files on a WorkGroup. On the dispatch thread they run one after another,
+// in file order. A language service program has no Go `opts.Tracing`, so
+// there is no trace event. Go returns nil when `ctx` is done after
 // `HandleNoEmitOptions` gave nil; here that is `EmitResult::default()`.
 pub fn emit(p: &NewProgram, ctx: &Context, options: EmitOptions) -> EmitResult {
+    // collect results from emit, preserving input order
+    combine_emit_results(emit_file_results(p, ctx, options))
+}
+
+/// `emit` without the final `combine_emit_results`: one result per file, in
+/// file order, or the one result of `handle_no_emit_options`. The API emit
+/// uses it to add its late write failures to the result of their file
+/// (`program_emit::add_write_failures`).
+pub fn emit_file_results(p: &NewProgram, ctx: &Context, options: EmitOptions) -> Vec<EmitResult> {
     let _program = enter(p);
     if !options.force_emit && options.emit_only != EmitOnly::BuilderSignature {
         let result = handle_no_emit_options(p, ctx, options.target_source_files.as_deref());
         if result.is_some() || ctx.err().is_some() {
-            return result.unwrap_or_default();
+            return vec![result.unwrap_or_default()];
         }
     }
 
@@ -1937,7 +1950,7 @@ pub fn emit(p: &NewProgram, ctx: &Context, options: EmitOptions) -> EmitResult {
         force_js_emit,
     );
 
-    let results: Vec<EmitResult> = source_files
+    source_files
         .into_iter()
         .map(|source_file| {
             let (host, done) = new_emit_host(p, ctx, source_file);
@@ -1974,10 +1987,7 @@ pub fn emit(p: &NewProgram, ctx: &Context, options: EmitOptions) -> EmitResult {
             done.call();
             emitter.emit_result
         })
-        .collect();
-
-    // collect results from emit, preserving input order
-    combine_emit_results(results)
+        .collect()
 }
 
 // Go: compiler/program.go:2012 HandleNoEmitOptions

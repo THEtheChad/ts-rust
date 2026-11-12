@@ -70,7 +70,6 @@ mod tests {
         assert_eq!(repeat("ab", 1), "ab");
         assert_eq!(repeat("\t", 3), "\t\t\t");
         assert_eq!(repeat("", 1 << 62), "");
-        assert_eq!(repeat_len(1, 1 << 48), 1 << 48);
         assert_eq!(
             panic_text(|| drop(repeat(" ", -1))),
             "strings: negative Repeat count"
@@ -89,5 +88,13 @@ mod tests {
             }),
             "runtime error: makeslice: len out of range"
         );
+    }
+
+    /// A length of exactly `maxAlloc` passes Go's checks. Its `usize` only exists on 64-bit
+    /// targets, which is also where `MAX_ALLOC` is Go's figure (wasm32 builds lint the tests).
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn repeat_len_up_to_max_alloc_is_go() {
+        assert_eq!(repeat_len(1, 1 << 48), 1 << 48);
     }
 }

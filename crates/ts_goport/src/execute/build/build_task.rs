@@ -1122,6 +1122,10 @@ impl BuildTask {
         let np = crate::execute::execute_tsc::new_frontend_program(compiler_host, resolved);
         crate::program::mark_freeable_parses(&np);
         let program = crate::program::new_program_version(&np, None);
+        if sys.client_reads() {
+            // Go's checkers ask the host (`sys.FS()`), the client.
+            crate::program::serve_worker_host_queries(program);
+        }
         drop(np);
         compile_times.borrow_mut().parse_time = elapsed(&*sys, parse_start);
         let written_build_info: WrittenBuildInfo = Arc::default();
