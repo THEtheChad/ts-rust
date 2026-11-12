@@ -2360,3 +2360,19 @@ once a **reconciliation step** is built and tested.
   - a "Δ less residue" column beside the raw Δ.
 
   B9's files are excluded.
+- **B9 done; Astra review running.** Head `5c16bed1a` (based on
+  `f608986a3`).
+  - **Fixed, each pinned against Go's answer:** A1, B1/B1b, A2, A3, A4
+    (position), A5/A5b, A6 (Effect Go checked at @effect/tsgo@0.51.1), A7,
+    A8, A9.
+  - **New items:** api `typeacq-empty-include` and `raw-options-target-int32`;
+    cli `buildinfo-int-range/code-int32/{noemit,emit,incr}`.
+  - **Gate:** `runs/b9-7647e02d8-full` PARITY OK; single-threaded icount
+    within ±0.005%.
+  - **Left, now unblocked by B8's merge:**
+    - A4's `index` field (`proto.rs`, `session_p1.rs:4216`);
+    - the api `{method, params}` request form, to make A1, A3 and A4 api
+      items. `b9/api_probe.py` has the requests.
+  - **Not fixed:** B2 (log only), B3 (reachable with `"contentMappers": []`
+    under `--watch`, no printed difference found yet), B4 (needs
+    `core.rs`).
