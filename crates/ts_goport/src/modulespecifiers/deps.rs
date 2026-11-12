@@ -26,12 +26,15 @@ pub fn index_after(s: &str, pattern: &str, start_index: usize) -> isize {
 // Go: stringutil/compare.go:74 HasPrefix
 // PORT: compares the Go bytes of the port forms (see
 // `scanner_util::GO_STRING_MARKER`).
-// PORT: the frontend port (`frontend::stringutil_ls::has_prefix`) differs:
-// it compares the port forms' own bytes, and folds case with Go
-// `strings.EqualFold` (Unicode), where this one folds ASCII only. Go is
-// Go bytes and `EqualFold`; the two differ only for case-insensitive names
-// that differ by a non-ASCII case or hold a lone surrogate (lane F5,
-// `docs/perf-rearch/cleanup/f5.md`).
+// PORT: the frontend port (`frontend::stringutil_ls::has_prefix`) differs.
+// Go slices by byte length and folds with `strings.EqualFold` (Unicode).
+// This one has Go's bytes but folds ASCII only, so it differs from Go for a
+// case-insensitive name that differs by a non-ASCII case. The frontend one
+// folds as Go does but compares the port forms' own bytes, so it differs
+// from Go even case-sensitively for names that hold an invalid UTF-8 byte or
+// a lone surrogate. Its encoding of byte 0x80 in `b"x\x80.ts"` matches the
+// suffix `"\u{10F780}.ts"`, which Go's bytes do not. Lane B10 fixes both
+// (`docs/perf-rearch/cleanup/f5.md`).
 pub fn has_prefix(s: &str, prefix: &str, case_sensitive: bool) -> bool {
     let (s, prefix) = (go_string_bytes(s), go_string_bytes(prefix));
     if case_sensitive {
