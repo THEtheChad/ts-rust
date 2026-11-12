@@ -2464,3 +2464,11 @@ once a **reconciliation step** is built and tested.
 - **B10 started:** the `HasPrefix`/`HasSuffix` copies against Go (byte-wise
   with Unicode case folding): a Go note, callers, probes, one port, parity
   items. It builds on F5's head.
+- **F5 review: REJECT as behaviour-neutral** (`reviews/2026-11-12-astra-f5.md`).
+  - The resolution-mode fold fixed a real difference silently: a `.cts`
+    file with `import.source("a")` gave `import("a").X`, where Go gives
+    `import("b").X`.
+  - The other folds are confirmed equal.
+  - **Round 2:** that parity fixture, the docs, a lazy content-mapper read
+    after the guards, and the triage corrections. B10 gets Astra's caller
+    inputs.
