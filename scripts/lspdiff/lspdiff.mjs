@@ -8,7 +8,10 @@
 // Options: --go <bin> (default ~/.local/bin/tsgo-lsp-oracle-3e9236361fa9), --rs <bin>
 // (default $TSC_RS_BIN or target/release/tsgo), --out <dir> (default /tmp/lspdiff/out),
 // --only go|rs (bench one server), --reuse (diff the answers saved by the last run),
-// --pulls all|no-diagnostics|none (background pulls per keystroke), --modes concurrent,one-at-a-time. Each server is run on its own, never both at once.
+// --pulls all|no-diagnostics|none (background pulls per keystroke), --modes concurrent,one-at-a-time,
+// --trace (bench: write trace-<server>-<mode>-<run>.json per run with request ids, send and answer
+// times, keystrokes and the server's log lines; the server then gets 10 minutes to exit, so a
+// wrapping profiler can write its file). Each server is run on its own, never both at once.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -34,6 +37,7 @@ const { positionals, values: opt } = parseArgs({
     pulls: { type: "string", default: "all" },
     modes: { type: "string", default: "concurrent,one-at-a-time" },
     verbose: { type: "boolean", default: false },
+    trace: { type: "boolean", default: false },
   },
 });
 const mode = positionals[0];
@@ -109,9 +113,14 @@ if (mode === "diff") {
     if (opt.only && opt.only !== name) continue;
     for (const serial of opt.modes.split(",").map((m) => m === "one-at-a-time")) {
       for (let run = 0; run < Number(opt.runs); run++) {
-        const samples = await runBench(cmd, root, files, { serial, interval: Number(opt.interval), pulls: opt.pulls, stderr });
-        results.push({ server: name, mode: serial ? "one-at-a-time" : "concurrent", run, samples });
-        console.log(`${name} ${serial ? "one-at-a-time" : "concurrent"} run ${run + 1}: ${samples.length} samples`);
+        const mode = serial ? "one-at-a-time" : "concurrent";
+        let samples = await runBench(cmd, root, files, { serial, interval: Number(opt.interval), pulls: opt.pulls, stderr, trace: opt.trace, killAfter: opt.trace ? 600_000 : undefined });
+        if (opt.trace) {
+          writeFileSync(join(outDir, `trace-${name}-${mode}-${run}.json`), JSON.stringify(samples.trace));
+          samples = samples.samples;
+        }
+        results.push({ server: name, mode, run, samples });
+        console.log(`${name} ${mode} run ${run + 1}: ${samples.length} samples`);
       }
     }
   }

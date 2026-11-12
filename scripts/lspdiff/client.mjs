@@ -19,28 +19,50 @@ export class LspClient {
     });
   }
 
+  // bufSince: when the first byte still in `buf` arrived (the next message's first byte, close
+  // enough: a message that starts inside a chunk gets that chunk's time).
+  // A large message's chunks are kept in `parts` until it is complete (`need` bytes), so it is
+  // copied once instead of once per chunk.
   #onData(chunk) {
-    this.buf = Buffer.concat([this.buf, chunk]);
+    const now = performance.now();
+    if (!this.buf.length && !this.parts?.length) this.bufSince = now;
+    if (this.need !== undefined) {
+      this.parts.push(chunk);
+      this.partsLength += chunk.length;
+      if (this.partsLength < this.need) return;
+      this.buf = Buffer.concat(this.parts, this.partsLength);
+      this.parts = [];
+      this.need = undefined;
+    } else this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
     for (;;) {
       const headerEnd = this.buf.indexOf("\r\n\r\n");
       if (headerEnd < 0) return;
       const header = this.buf.subarray(0, headerEnd).toString("ascii");
       const length = Number(/Content-Length: *(\d+)/i.exec(header)?.[1]);
-      if (this.buf.length < headerEnd + 4 + length) return;
+      if (this.buf.length < headerEnd + 4 + length) {
+        this.need = headerEnd + 4 + length;
+        this.parts = [this.buf];
+        this.partsLength = this.buf.length;
+        this.buf = Buffer.alloc(0);
+        return;
+      }
       const body = this.buf.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
       this.buf = this.buf.subarray(headerEnd + 4 + length);
-      this.#onMessage(JSON.parse(body));
+      const wire = { firstByte: this.bufSince, lastByte: now, bytes: length };
+      this.bufSince = now;
+      this.#onMessage(JSON.parse(body), wire);
     }
   }
 
-  #onMessage(msg) {
+  // wire: the message's first and last byte times and its body size, for timing splits.
+  #onMessage(msg, wire) {
     const at = performance.now();
     if (msg.id !== undefined && msg.method) return this.#onServerRequest(msg);
     if (msg.id !== undefined) {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start });
+      p.resolve({ id: msg.id, method: p.method, result: msg.result, error: msg.error, ms: at - p.start, start: p.start, end: at, ...wire });
       return;
     }
     this.notifications.push({ method: msg.method, params: msg.params, at });
