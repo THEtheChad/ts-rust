@@ -29,7 +29,7 @@ RULES: list[tuple[set[str], str, str]] = [
     ({"frontend/packagejson", "modulespecifiers/host"}, "output",
      "modulespecifiers' package.json cache reads its thread-safe copy (Rc vs Arc)"),
     ({"frontend/stringutil_ls", "modulespecifiers/deps"}, "output",
-     "copies differ (Go bytes vs Unicode fold): needs a Go-side probe and a parity item (F5 open item)"),
+     "copies differ, and neither is Go (ASCII-only fold; port-form bytes, case-sensitive too): lane B10"),
     ({"execute/tsc/diagnostics", "program"}, "test",
      "program.rs's diagnostic writer serves tests and goport_live_programs; tsc uses execute/tsc"),
     ({"execute/tsc/diagnostics", "ls/lsconv/converters"}, "output",
@@ -109,11 +109,40 @@ RULES: list[tuple[set[str], str, str]] = [
 ]
 
 
-def classify(fams: set[str]) -> tuple[str, str]:
+# Go functions whose copies were read one by one (F5 round 2); these win over RULES.
+NAMES: dict[str, tuple[str, str]] = {
+    "MarshalIndent": ("output", "two JSON formatting implementations (json.rs and json_ext.rs), not one wrapped"),
+    "hasRelativePathSegment": ("output", "the API session has its own implementation beside tspath's (and its Go-shaped form)"),
+    "Format": ("output", "two placeholder formatters for diagnostic text (Message::format and diagnostics_loc::format)"),
+    "SourceFile.resolveJSDoc": ("output", "two lazy JSDoc paths: the file store's and the Go frontend's static files"),
+    "SnapshotHost.CloneSnapshot": ("output", "the API session's own clone with its request fields, beside the snapshot host's"),
+    "MutableNode.SetModifiers": ("output", "the reparser's Go-switch subset (panics as Go does) beside the factory's full setter"),
+    "Node.Text": ("output", "organize imports' own Node.Text over the kinds Go handles"),
+    "FindAncestor": ("internal", "a PERF form over the frozen store's blocks beside the port"),
+    "runMain": ("internal", "the bin's entry point and cmd/tsgo's: the bin adds our own modes, then dispatches"),
+    "singleThreadedWorkGroup.RunAndWait": ("internal", "the loader's own queues beside the work group port (our own machinery)"),
+    "entityNameToString": ("internal", "folded in F5 round 2: was two identical forwarding wrappers"),
+    "GetGlobalTypingsCacheLocation": ("internal", "name match only: os_dir_fs is Go os.DirFS"),
+    "emitHost.BaseDirectory": ("internal", "name match only: host accessors of the current directory"),
+    "FunctionLikeBase.FullSignature": ("internal", "an accessor and a child-visitor hook"),
+    "GetTrailingCommentRanges": ("internal", "a wrapper over the scanner port"),
+    "NewReferenceResolver": ("internal", "a wrapper over the binder port"),
+    "NodeFactory.NewSourceFile": ("internal", "the arena factory and the parser's factory of the two AST forms"),
+    "Program.GetResolvedTypeReferenceDirectives": ("internal", "an accessor and the incremental reader of it"),
+    "Program.GetSourceFileFromReference": ("internal", "the emit-side façade delegating to the Go frontend's answers"),
+    "Transformer.TransformSourceFile": ("internal", "Go's interface method on each transformer"),
+    "osSys.Spawn": ("internal", "the API system delegating to tsc's"),
+    "redirectsFile.FileName": ("internal", "a trait method delegating to the field accessor"),
+}
+
+
+def classify(fams: set[str], go_name: str = "") -> tuple[str, str]:
+    if go_name in NAMES:
+        return NAMES[go_name]
     for need, cls, reason in RULES:
         if all(any(f == n or f.startswith(n + "/") for f in fams) for n in need):
             return cls, reason
-    return "internal", "same Go name on another type (an interface method or a wrapper); no second logic found by name"
+    return "internal", "same Go name on another type (an interface method or a wrapper); not read one by one"
 
 
 def load(p: str) -> dict[str, dict]:
@@ -129,7 +158,7 @@ def main(argv: list[str]) -> int:
     lines = ["| Go function | Rust copies (head) | class | reason |", "|---|---|---|---|"]
     for go, r in sorted(after.items(), key=lambda kv: (-kv[1]["go_cog"], kv[1]["go_name"])):
         fams = {gorel.family(x["file"]).removeprefix(STRIP) for x in r["rust"]}
-        cls, reason = classify(fams)
+        cls, reason = classify(fams, r["go_name"])
         counts[cls] = counts.get(cls, 0) + 1
         copies = "<br>".join(f"`{x['file'].removeprefix(STRIP)}:{x['start']}` {x['fn'].split('::')[-1]}" for x in r["rust"])
         lines.append(f"| `{r['go_name']}` ({go.removeprefix('internal/')}, cog {r['go_cog']}) | {copies} | {cls} | {reason} |")
