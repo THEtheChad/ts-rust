@@ -12,8 +12,10 @@
 //!   Rust elements are values, so a `null` element is an unmarshal error
 //!   (the reader then returns no buildinfo). Go writes such an element only
 //!   in `emitDiagnosticsPerFile` (`BuildInfoDiagnosticsOfFilePtr`).
-//! - Go `int` is `i32` (PORTING.md). Integers are read like the v2 int
-//!   arshaler: digits only, no fraction or exponent.
+//! - Go `int` is `i64` (64 bits on amd64) and Go `int32` is `i32`, read
+//!   with Go's range check: an `int32` field out of range is an unmarshal
+//!   error, so the reader returns no buildinfo. Integers are read like the
+//!   v2 int arshaler: digits only, no fraction or exponent.
 
 use super::hash::*;
 use crate::contentmapper;
@@ -83,9 +85,15 @@ fn parse_go_int(raw: &str) -> Result<i64, JsonError> {
     })
 }
 
-fn unmarshal_i32(dec: &mut JsonDecoder<'_>) -> Result<i32, JsonError> {
-    // PORT: Go `int` is 64 bits; the Rust port uses `i32`.
-    Ok(unmarshal_int(dec)? as i32)
+// Go v2 int arshaler for a Go `int32` (or a named `~int32` type): a value
+// out of range is an error, as in `unmarshal_int`.
+fn unmarshal_int32(dec: &mut JsonDecoder<'_>) -> Result<i32, JsonError> {
+    let n = unmarshal_int(dec)?;
+    i32::try_from(n).map_err(|_| {
+        json_error(format!(
+            "cannot unmarshal JSON number {n} into Go int32: value out of range"
+        ))
+    })
 }
 
 fn unmarshal_string(dec: &mut JsonDecoder<'_>) -> Result<String, JsonError> {
@@ -191,8 +199,8 @@ fn unmarshal_bytes_with<T>(
 }
 
 // Go v2 `[N]int` arshaler: exactly N elements.
-fn unmarshal_int_array<const N: usize>(dec: &mut JsonDecoder<'_>) -> Result<[i32; N], JsonError> {
-    let mut out = [0i32; N];
+fn unmarshal_int_array<const N: usize>(dec: &mut JsonDecoder<'_>) -> Result<[i64; N], JsonError> {
+    let mut out = [0i64; N];
     match dec.peek_kind() {
         b'n' => {
             dec.read_token()?;
@@ -205,7 +213,7 @@ fn unmarshal_int_array<const N: usize>(dec: &mut JsonDecoder<'_>) -> Result<[i32
                 if i >= N {
                     return Err(json_error("too many array elements"));
                 }
-                out[i] = unmarshal_i32(dec)?;
+                out[i] = unmarshal_int(dec)?;
                 i += 1;
             }
             dec.read_token()?;
@@ -446,22 +454,22 @@ impl<'a> ObjectWriter<'a> {
 
 // Go: incremental/buildInfo.go:19 BuildInfoFileId
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct BuildInfoFileId(pub i32);
+pub struct BuildInfoFileId(pub i64);
 
 // Go: incremental/buildInfo.go:20 BuildInfoFileIdListId
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct BuildInfoFileIdListId(pub i32);
+pub struct BuildInfoFileIdListId(pub i64);
 
 impl UnmarshalerFrom for BuildInfoFileId {
     fn unmarshal_json_from(&mut self, dec: &mut JsonDecoder<'_>) -> Result<(), JsonError> {
-        self.0 = unmarshal_i32(dec)?;
+        self.0 = unmarshal_int(dec)?;
         Ok(())
     }
 }
 
 impl MarshalerTo for BuildInfoFileId {
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
-        marshal_int(enc, i64::from(self.0));
+        marshal_int(enc, self.0);
         Ok(())
     }
 }
@@ -505,7 +513,7 @@ impl UnmarshalerFrom for BuildInfoRoot {
         }
         let data = dec.read_value()?;
         match unmarshal_bytes_with(data, unmarshal_int_array::<2>) {
-            Err(_) => match unmarshal_bytes_with(data, unmarshal_i32) {
+            Err(_) => match unmarshal_bytes_with(data, unmarshal_int) {
                 Err(_) => match unmarshal_bytes::<String>(data) {
                     Err(_) => Err(json_error(format!(
                         "invalid BuildInfoRoot: {}",
@@ -567,7 +575,7 @@ impl UnmarshalerFrom for BuildInfoFileInfoNoSignature {
                 "version" => self.version = unmarshal_string(dec)?,
                 "noSignature" => self.no_signature = unmarshal_bool(dec)?,
                 "affectsGlobalScope" => self.affects_global_scope = unmarshal_bool(dec)?,
-                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_i32(dec)?),
+                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_int32(dec)?),
                 _ => return Ok(false),
             }
             Ok(true)
@@ -607,7 +615,7 @@ impl UnmarshalerFrom for BuildInfoFileInfoWithSignature {
                 "version" => self.version = unmarshal_string(dec)?,
                 "signature" => self.signature = unmarshal_string(dec)?,
                 "affectsGlobalScope" => self.affects_global_scope = unmarshal_bool(dec)?,
-                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_i32(dec)?),
+                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_int32(dec)?),
                 _ => return Ok(false),
             }
             Ok(true)
@@ -668,7 +676,7 @@ impl UnmarshalerFrom for BuildInfoFileInfoMembers {
                 "signature" => self.signature = unmarshal_string(dec)?,
                 "noSignature" => self.no_signature = unmarshal_bool(dec)?,
                 "affectsGlobalScope" => self.affects_global_scope = unmarshal_bool(dec)?,
-                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_i32(dec)?),
+                "impliedNodeFormat" => self.implied_node_format = ModuleKind(unmarshal_int32(dec)?),
                 _ => return Ok(false),
             }
             Ok(true)
@@ -853,9 +861,9 @@ impl MarshalerTo for BuildInfoReferenceMapEntry {
     // Go: incremental/buildInfo.go:189 MarshalJSON
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
         enc.push('[');
-        marshal_int(enc, i64::from(self.file_id.0));
+        marshal_int(enc, self.file_id.0);
         enc.push(',');
-        marshal_int(enc, i64::from(self.file_id_list_id.0));
+        marshal_int(enc, self.file_id_list_id.0);
         enc.push(']');
         Ok(())
     }
@@ -889,8 +897,10 @@ pub struct BuildInfoDiagnostic {
     // BuildInfoFileId if it is for a File thats other than its stored for
     pub file: BuildInfoFileId,
     pub no_file: bool,
-    pub pos: i32,
-    pub end: i32,
+    // Go `int`
+    pub pos: i64,
+    pub end: i64,
+    // Go `int32` and `diagnostics.Category` (`int32`)
     pub code: i32,
     pub category: i32,
     pub source: String,
@@ -908,10 +918,10 @@ pub struct BuildInfoDiagnostic {
 impl MarshalerTo for BuildInfoDiagnostic {
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
         let mut w = ObjectWriter::new(enc);
-        w.int_omitzero("file", i64::from(self.file.0));
+        w.int_omitzero("file", self.file.0);
         w.bool_omitzero("noFile", self.no_file);
-        w.int_omitzero("pos", i64::from(self.pos));
-        w.int_omitzero("end", i64::from(self.end));
+        w.int_omitzero("pos", self.pos);
+        w.int_omitzero("end", self.end);
         w.int_omitzero("code", i64::from(self.code));
         w.int_omitzero("category", i64::from(self.category));
         w.string_omitzero("source", &self.source)?;
@@ -935,12 +945,12 @@ impl UnmarshalerFrom for BuildInfoDiagnostic {
     fn unmarshal_json_from(&mut self, dec: &mut JsonDecoder<'_>) -> Result<(), JsonError> {
         unmarshal_object(dec, |name, dec| {
             match name {
-                "file" => self.file = BuildInfoFileId(unmarshal_i32(dec)?),
+                "file" => self.file = BuildInfoFileId(unmarshal_int(dec)?),
                 "noFile" => self.no_file = unmarshal_bool(dec)?,
-                "pos" => self.pos = unmarshal_i32(dec)?,
-                "end" => self.end = unmarshal_i32(dec)?,
-                "code" => self.code = unmarshal_i32(dec)?,
-                "category" => self.category = unmarshal_i32(dec)?,
+                "pos" => self.pos = unmarshal_int(dec)?,
+                "end" => self.end = unmarshal_int(dec)?,
+                "code" => self.code = unmarshal_int32(dec)?,
+                "category" => self.category = unmarshal_int32(dec)?,
                 "source" => self.source = unmarshal_string(dec)?,
                 "messageText" => self.message_text = unmarshal_string(dec)?,
                 "messageKey" => self.message_key = unmarshal_string(dec)?,
@@ -981,7 +991,7 @@ pub struct BuildInfoRepopulateInfo {
 impl MarshalerTo for BuildInfoRepopulateInfo {
     fn marshal_json_to(&self, enc: &mut String) -> Result<(), JsonError> {
         let mut w = ObjectWriter::new(enc);
-        marshal_int(w.name("kind"), i64::from(self.kind.0));
+        marshal_int(w.name("kind"), self.kind.0);
         w.string_omitzero("moduleReference", &self.module_reference)?;
         w.int_omitzero("mode", i64::from(self.mode.0));
         w.string_omitzero("packageName", &self.package_name)?;
@@ -994,9 +1004,9 @@ impl UnmarshalerFrom for BuildInfoRepopulateInfo {
     fn unmarshal_json_from(&mut self, dec: &mut JsonDecoder<'_>) -> Result<(), JsonError> {
         unmarshal_object(dec, |name, dec| {
             match name {
-                "kind" => self.kind = RepopulateDiagnosticKind(unmarshal_i32(dec)?),
+                "kind" => self.kind = RepopulateDiagnosticKind(unmarshal_int(dec)?),
                 "moduleReference" => self.module_reference = unmarshal_string(dec)?,
-                "mode" => self.mode = ModuleKind(unmarshal_i32(dec)?),
+                "mode" => self.mode = ModuleKind(unmarshal_int32(dec)?),
                 "packageName" => self.package_name = unmarshal_string(dec)?,
                 _ => return Ok(false),
             }
@@ -1194,7 +1204,7 @@ impl MarshalerTo for BuildInfoFilePendingEmit {
             return file_list_ids.marshal_json_to(enc);
         }
         enc.push('[');
-        marshal_int(enc, i64::from(self.file_id.0));
+        marshal_int(enc, self.file_id.0);
         enc.push(',');
         marshal_int(enc, i64::from(self.emit_kind.0));
         enc.push(']');
@@ -1226,14 +1236,14 @@ impl UnmarshalerFrom for BuildInfoFilePendingEmit {
                 match int_tuple.len() {
                     1 => {
                         *self = BuildInfoFilePendingEmit {
-                            file_id: BuildInfoFileId(int_tuple[0] as i32),
+                            file_id: BuildInfoFileId(int_tuple[0]),
                             emit_kind: FileEmitKind::DTS,
                         };
                         Ok(())
                     }
                     2 => {
                         *self = BuildInfoFilePendingEmit {
-                            file_id: BuildInfoFileId(int_tuple[0] as i32),
+                            file_id: BuildInfoFileId(int_tuple[0]),
                             emit_kind: FileEmitKind(int_tuple[1] as u32),
                         };
                         Ok(())
@@ -1355,8 +1365,11 @@ impl UnmarshalerFrom for BuildInfoEmitSignature {
             )));
         }
         let file_id = match &file_id_and_signature[0] {
-            // Go `BuildInfoFileId(id)` converts float64 to int by truncation.
-            CompilerOptionsValue::Number(id) => BuildInfoFileId(*id as i32),
+            // Go `BuildInfoFileId(id)` converts float64 to int (amd64:
+            // toward zero; out of range and NaN give `math.MinInt64`).
+            CompilerOptionsValue::Number(id) => {
+                BuildInfoFileId(crate::gostd::conv::float64_to_int64(*id))
+            }
             other => {
                 return Err(json_error(format!(
                     "invalid fileId in BuildInfoEmitSignature: expected float64, got {other:?}"
@@ -1553,7 +1566,7 @@ impl UnmarshalerFrom for BuildInfo {
                 "fileIdsList" => {
                     self.file_ids_list = unmarshal_slice(dec, |dec| {
                         Ok(
-                            unmarshal_slice(dec, |dec| Ok(BuildInfoFileId(unmarshal_i32(dec)?)))?
+                            unmarshal_slice(dec, |dec| Ok(BuildInfoFileId(unmarshal_int(dec)?)))?
                                 .unwrap_or_default(),
                         )
                     })?;
@@ -1569,7 +1582,7 @@ impl UnmarshalerFrom for BuildInfo {
                 }
                 "changeFileSet" => {
                     self.change_file_set =
-                        unmarshal_slice(dec, |dec| Ok(BuildInfoFileId(unmarshal_i32(dec)?)))?;
+                        unmarshal_slice(dec, |dec| Ok(BuildInfoFileId(unmarshal_int(dec)?)))?;
                 }
                 "affectedFilesPendingEmit" => {
                     self.affected_files_pending_emit = unmarshal_slice(dec, unmarshal_elem)?;
@@ -1946,6 +1959,82 @@ mod tests {
         let signatures = info.emit_signatures.as_ref().unwrap();
         assert!(signatures[2].differs_only_in_dts_map);
         assert!(signatures[3].differs_in_options);
+    }
+
+    // Lane B9 (audit A5, A5b): Go `int` fields (file ids, id list ids, `pos`,
+    // `end`, the repopulate `kind`) keep 64 bits through a read and a write.
+    // A float file id of an emit signature converts as amd64 does
+    // (buildInfo.go:409-412: 1e19 gives `math.MinInt64`).
+    #[test]
+    fn go_int_fields_keep_64_bits() {
+        const WIDE: &str = r#"{"version":"v","root":[[4294967297,4294967298],4294967299],"fileIdsList":[[4294967297]],"referencedMap":[[4294967297,4294967298]],"semanticDiagnosticsPerFile":[[4294967297,[{"file":4294967298,"pos":4294967309,"end":-4294967296,"code":2322,"category":1,"messageKey":"k","messageChain":[{"code":1,"messageKey":"m","repopulateInfo":{"kind":4294967297,"mode":99}}]}]]],"changeFileSet":[4294967297],"affectedFilesPendingEmit":[4294967297,[4294967298],[4294967299,17]],"resolvedRoot":[[4294967297,4294967298]]}"#;
+        let mut info = BuildInfo::default();
+        json_unmarshal(WIDE.as_bytes(), &mut info, &[]).unwrap();
+        assert_eq!(json_marshal(&info, &[]).unwrap(), WIDE);
+        assert_eq!(
+            info.change_file_set.as_deref(),
+            Some(&[BuildInfoFileId(4_294_967_297)][..])
+        );
+
+        for (signature, want) in [
+            (r#"[4294967297.0,"s"]"#, 4_294_967_297),
+            (r#"[1e19,"s"]"#, i64::MIN),
+            (r#"[-2.5,"s"]"#, -2),
+        ] {
+            let data = format!(r#"{{"version":"v","emitSignatures":[{signature}]}}"#);
+            let mut info = BuildInfo::default();
+            json_unmarshal(data.as_bytes(), &mut info, &[]).unwrap();
+            assert_eq!(
+                info.emit_signatures.as_ref().unwrap()[0].file_id,
+                BuildInfoFileId(want),
+                "{signature}"
+            );
+        }
+    }
+
+    // Lane B9 (audit A5): Go `int32` fields (`code`, `category`,
+    // `impliedNodeFormat`, the repopulate `mode`) reject a value out of
+    // range, so the whole build info is unreadable (incremental.go:31) and
+    // the build starts fresh. The port wrapped them and kept the cache.
+    #[test]
+    fn go_int32_fields_are_range_checked() {
+        let diagnostic = |member: &str| {
+            format!(
+                r#"{{"version":"v","fileNames":["a.ts"],"fileInfos":["h"],"semanticDiagnosticsPerFile":[[1,[{{"pos":1,"end":2,{member},"messageKey":"k"}}]]]}}"#
+            )
+        };
+        let file_info = |format: &str| {
+            format!(
+                r#"{{"version":"v","fileNames":["a.ts"],"fileInfos":[{{"version":"h","impliedNodeFormat":{format}}}]}}"#
+            )
+        };
+        let mode = |mode: &str| {
+            diagnostic(&format!(
+                r#""code":1,"messageChain":[{{"code":1,"messageKey":"m","repopulateInfo":{{"kind":1,"mode":{mode}}}}}]"#
+            ))
+        };
+        for good in [
+            diagnostic(r#""code":2147483647,"category":-2147483648"#),
+            file_info("2147483647"),
+            mode("-2147483648"),
+        ] {
+            assert!(
+                super::super::incremental::parse_build_info(&good).is_some(),
+                "{good}"
+            );
+        }
+        for bad in [
+            diagnostic(r#""code":4294969296,"category":1"#),
+            diagnostic(r#""code":2322,"category":4294967297"#),
+            diagnostic(r#""code":2322,"category":-2147483649"#),
+            file_info("2147483648"),
+            mode("4294967395"),
+        ] {
+            assert!(
+                super::super::incremental::parse_build_info(&bad).is_none(),
+                "{bad}"
+            );
+        }
     }
 
     // The one-pass object decode (`BuildInfoFileInfoMembers`) gives what Go's

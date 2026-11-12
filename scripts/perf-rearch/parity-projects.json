@@ -266,6 +266,23 @@
           ]
         }
       ]
+    },
+    {
+      "name": "buildinfo-int-range",
+      "fixture": "buildinfo-int-range",
+      "configs": [
+        {
+          "label": "code-int32",
+          "config": "tsconfig.json",
+          "skipVariants": [
+            "decl",
+            "listfiles",
+            "extdiag",
+            "pretty",
+            "showconfig"
+          ]
+        }
+      ]
     }
   ]
 }

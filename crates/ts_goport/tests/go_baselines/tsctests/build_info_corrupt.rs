@@ -466,3 +466,94 @@ fn far_positions_in_a_file_with_raw_bytes_panic_as_go() {
         assert_eq!(tsgo(&dir.0, &["-p", ".", "--pretty"]), want, "end {end}");
     }
 }
+
+// Lane B9 (audit A5): Go `BuildInfoFileId` is a Go `int`
+// (execute/incremental/buildInfo.go:19). An id of 2^32 + 1 stays as it is
+// and `t.filePaths[fileId-1]` (buildinfotosnapshot.go:59) panics. The port
+// read it as an `i32`, so it wrapped to 1 and used the first file.
+#[test]
+fn file_id_past_int32_panics_index_out_of_range() {
+    check(
+        "int64-id",
+        r#""semanticDiagnosticsPerFile":[[5,"#,
+        r#""semanticDiagnosticsPerFile":[[4294967297,"#,
+        "",
+        "runtime error: index out of range [4294967296] with length 5",
+    );
+}
+
+/// Builds the project, replaces `from` (once) with `to` in its build info,
+/// removes `dist`, and checks `tsgo -p .` and `tsgo -b`: Go's JSON reader
+/// fails on `to`, so the build info is unreadable (incremental.go:31) and the
+/// project builds fresh. It reports the error of `src/b.ts`, emits both files
+/// and writes a new build info without `to` (pin oracle).
+fn check_unreadable(name: &str, from: &str, to: &str) {
+    let dir = TmpDir::new(&format!("build-info-{name}"));
+    dir.write(
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "outDir": "dist", "rootDir": "src", "incremental": true, "strict": true, "lib": ["es5"] }, "include": ["src"] }"#,
+    );
+    dir.write("src/a.ts", "export const a: number = 1;\n");
+    dir.write(
+        "src/b.ts",
+        "import { a } from \"./a\"; export const b: string = a;\n",
+    );
+    let first = tsgo(&dir.0, &["-p", "."]);
+    assert_eq!(first.code, Some(2), "first build: {first:?}");
+    let build_info_path = dir.0.join("tsconfig.tsbuildinfo");
+    let build_info = std::fs::read_to_string(&build_info_path).expect("build info");
+    assert_eq!(
+        build_info.matches(from).count(),
+        1,
+        "{from:?} once in {build_info}"
+    );
+    let bad = build_info.replace(from, to);
+    for args in [&["-p", "."][..], &["-b"][..]] {
+        dir.write("tsconfig.tsbuildinfo", &bad);
+        std::fs::remove_dir_all(dir.0.join("dist")).expect("remove dist");
+        let want = Run {
+            code: Some(2),
+            stdout:
+                "src/b.ts(1,39): error TS2322: Type 'number' is not assignable to type 'string'.\n"
+                    .to_string(),
+            panic: String::new(),
+        };
+        assert_eq!(tsgo(&dir.0, args), want, "{name} {args:?}");
+        for emitted in ["dist/a.js", "dist/b.js"] {
+            assert!(
+                dir.0.join(emitted).exists(),
+                "{name} {args:?}: {emitted} not emitted"
+            );
+        }
+        let written = std::fs::read_to_string(&build_info_path).expect("build info");
+        assert!(
+            !written.contains(to),
+            "{name} {args:?}: {to:?} still in {written}"
+        );
+    }
+}
+
+// Lane B9 (audit A5): `BuildInfoDiagnostic.Code` is a Go `int32`
+// (buildInfo.go:211); 2^32 + 2322 is out of its range. The port wrapped it
+// to 2322 and kept the old build.
+#[test]
+fn diagnostic_code_past_int32_makes_the_build_info_unreadable() {
+    check_unreadable("int64-code", r#""code":2322"#, r#""code":4294969618"#);
+}
+
+// Lane B9 (audit A5): `diagnostics.Category` is a Go `int32`.
+#[test]
+fn diagnostic_category_past_int32_makes_the_build_info_unreadable() {
+    check_unreadable("int64-cat", r#""category":1,"#, r#""category":4294967297,"#);
+}
+
+// Lane B9 (audit A5): `impliedNodeFormat` is a `core.ResolutionMode`
+// (`ModuleKind`, a Go `int32`).
+#[test]
+fn implied_node_format_past_int32_makes_the_build_info_unreadable() {
+    check_unreadable(
+        "int64-format",
+        r#""impliedNodeFormat":1},"9cad"#,
+        r#""impliedNodeFormat":4294967297},"9cad"#,
+    );
+}

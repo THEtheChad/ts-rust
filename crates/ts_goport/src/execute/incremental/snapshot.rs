@@ -36,8 +36,9 @@ pub struct BuildInfoDiagnosticWithFileName {
     // filename if it is for a File thats other than its stored for
     pub file: Path,
     pub no_file: bool,
-    pub pos: i32,
-    pub end: i32,
+    // Go `int`
+    pub pos: i64,
+    pub end: i64,
     pub code: i32,
     pub category: i32,
     pub source: String,
@@ -71,8 +72,11 @@ pub fn go_text_range(file: Node, loc: TextRange) -> (i32, i32) {
 }
 
 /// The port text range of the Go byte offsets `pos` and `end` in `file` (see
-/// `go_text_range`).
-pub fn port_text_range(file: Node, pos: i32, end: i32) -> TextRange {
+/// `go_text_range`). Go `core.NewTextRange(pos, end int)` narrows each to a
+/// `TextPos` (`int32`), so an offset of a bad `.tsbuildinfo` outside `int32`
+/// wraps there as in Go.
+pub fn port_text_range(file: Node, pos: i64, end: i64) -> TextRange {
+    let (pos, end) = (pos as i32, end as i32);
     if file.is_nil() {
         return TextRange::new(pos, end);
     }

@@ -5,6 +5,7 @@ use super::hash::FileInfo;
 use super::hash::*;
 use super::snapshot::*;
 use crate::frontend::prelude::*;
+use crate::gostd::slices::go_index;
 use std::sync::Arc;
 
 // Go: incremental/buildinfotosnapshot.go:12 buildInfoToSnapshot
@@ -109,15 +110,12 @@ impl ToSnapshot<'_> {
     // Go: incremental/buildinfotosnapshot.go:61 toFilePath (at 673a5f17d713; ts#64159
     // renames it filePathKey, buildinfotosnapshot.go:58)
     fn to_file_path(&self, file_id: BuildInfoFileId) -> Path {
-        go_index(&self.file_paths, i64::from(file_id.0) - 1).clone()
+        go_index(&self.file_paths, file_id.0 - 1).clone()
     }
 
     // Go: incremental/buildinfotosnapshot.go:62 toFilePathSet
     fn to_file_path_set(&self, file_id_list_id: BuildInfoFileIdListId) -> Arc<FxIndexSet<Path>> {
-        Arc::clone(go_index(
-            &self.file_path_set,
-            i64::from(file_id_list_id.0) - 1,
-        ))
+        Arc::clone(go_index(&self.file_path_set, file_id_list_id.0 - 1))
     }
 
     // Go: incremental/buildinfotosnapshot.go:66 toBuildInfoDiagnosticsWithFileName
@@ -188,7 +186,7 @@ impl ToSnapshot<'_> {
         let is_composite = self.snapshot.options.composite.is_true();
         for (index, build_info_file_info) in self.build_info.file_infos.iter().flatten().enumerate()
         {
-            let path = self.to_file_path(BuildInfoFileId(index as i32 + 1));
+            let path = self.to_file_path(BuildInfoFileId(index as i64 + 1));
             let info = build_info_file_info.get_file_info();
             // Add default emit signature as file's signature
             if !info.signature.is_empty() && is_composite {
@@ -328,20 +326,6 @@ impl ToSnapshot<'_> {
                 .map(|package_json| self.to_absolute_path(package_json))
                 .collect(),
         );
-    }
-}
-
-/// Go `s[i]`. An id of a bad `.tsbuildinfo` can be out of range, and Go
-/// panics with the runtime text.
-#[track_caller]
-fn go_index<T>(s: &[T], i: i64) -> &T {
-    match usize::try_from(i).ok().and_then(|at| s.get(at)) {
-        Some(item) => item,
-        None if i < 0 => go_panic(format!("runtime error: index out of range [{i}]")),
-        None => go_panic(format!(
-            "runtime error: index out of range [{i}] with length {}",
-            s.len()
-        )),
     }
 }
 

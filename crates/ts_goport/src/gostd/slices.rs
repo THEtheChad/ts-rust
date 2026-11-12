@@ -17,10 +17,36 @@
 //! Also the capacity that Go `append` gives a full slice
 //! (`go_byte_slice_grow`, `go_ptr_slice_grow`) for ports whose result depends
 //! on it.
+//!
+//! And Go's index expression `s[i]` with its bounds check (`go_index`).
 
 use crate::prelude::*;
 
 pub use by_index::{sort_func, sort_slice, sort_stable_func, stable_sort_by};
+
+/// Go `s[i]` for a Go `int` index: out of range, Go panics with the runtime
+/// text (`runtime error: index out of range [i] with length n`, or
+/// `[i]` alone for a negative index). For an index of a bad input (a
+/// `.tsbuildinfo` id, an LSP line, data a client echoes back) that Go does
+/// not check.
+#[track_caller]
+pub fn go_index<T>(s: &[T], i: i64) -> &T {
+    match usize::try_from(i).ok().and_then(|at| s.get(at)) {
+        Some(item) => item,
+        None => go_index_out_of_range(i, s.len()),
+    }
+}
+
+/// Go's panic for `s[i]` out of range, for a list that is not a Rust slice.
+#[track_caller]
+pub fn go_index_out_of_range(i: i64, len: usize) -> ! {
+    if i < 0 {
+        crate::core::go_panic(format!("runtime error: index out of range [{i}]"))
+    }
+    crate::core::go_panic(format!(
+        "runtime error: index out of range [{i}] with length {len}"
+    ))
+}
 #[cfg(target_family = "wasm")]
 pub use by_index::{
     sort_func as sort_func_hot, sort_stable_func as sort_stable_func_hot,
