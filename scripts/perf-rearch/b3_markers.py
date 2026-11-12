@@ -24,8 +24,9 @@ and two staleness signals (the pre-pin port check of lane B3):
                                        starts_with_directory, trim_file_path_prefix, get_relative_path_*)
 A row with go_dyn and rust_legacy but not rust_dyn is the shape of Astra's W2-FE finding 2.
 
-For each Rust production function whose `// Go:` marker gorel.py does not resolve (the
-`markers_unresolved` count of `quality.sh report`), one JSON object:
+For each Rust production function whose `// Go:` marker gorel.py does not resolve, at the pin or in
+the Go trees outside it (GOROOT `src`, x/text; the `markers_unresolved` count of `quality.sh
+report`), one JSON object:
   key, file, fn, start, end, cog       the Rust function (rca)
   marker                               the first `// Go:` marker text
   path, line, recv, name               the marker parsed (gorel.parse_marker)
@@ -63,9 +64,11 @@ def mapped(rev: str):
     snap = quality.build_snapshot(sha, False)
     gof = gorel.go_functions(quality.CACHE)
     gi = gorel.GoIndex(gof["funcs"])
+    ext, _ = gorel.ext_functions(quality.CACHE)
+    xi = gorel.GoIndex(ext) if ext else None
     files = sorted({f["file"] for f in snap["funcs"]})
     lines_of = gorel.read_blobs(sha, files, quality.REPO)
-    rfs = gorel.map_functions(snap["funcs"], lines_of, gi)
+    rfs = gorel.map_functions(snap["funcs"], lines_of, gi, xi)
     return gof, gi, lines_of, rfs
 
 
@@ -156,7 +159,7 @@ def cmd_unresolved(rev: str) -> list[dict]:
     external = {p for p, (n, ok) in marks.items() if n >= 3 and ok < 0.5 * n}
     rows = []
     for rf in rfs:
-        if not rf["marker"] or rf["conf"].startswith(("marker", "prose")):
+        if not rf["marker"] or rf["conf"].startswith(("marker", "prose", "ext")):
             continue
         mks = [m for m in gorel.order_markers(gorel.markers_above(lines_of[rf["file"]], rf["start"]), rf) if m["kind"] == "go"]
         mk = mks[0]

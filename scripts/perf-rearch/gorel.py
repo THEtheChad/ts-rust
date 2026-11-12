@@ -9,6 +9,14 @@ defines the metric, the fairness rule and the mapping. Results are cached under
 
 Go side: scripts/perf-rearch/gocog (go/ast, standard library only), built once per source hash with
 GOTOOLCHAIN=local and GOPROXY=off, run on <go root>/internal and <go root>/cmd, cached per Go tree.
+gocog also lists struct fields and package-level vars and consts (`kind`), which only a marker can
+name, and each function's tagless-switch residue.
+
+Go outside the pin (EXT_TREES): the standard library of GOROOT (`src`, the toolchain the pin's go.mod
+names, go1.27.1) and golang.org/x/text v0.42.0 (the version the pin's go.mod selects) from the module
+cache. Their packages are named `std/<path>` and `x/text/<path>`. Only markers resolve there: a
+Rust function whose marker names nothing at the pin (outside effect/) is looked up in these trees
+by the marker's path as written (`internal/language/parse.go` is x/text's internal package).
 
 Mapping, per Rust function (rca's list: prod functions, closures folded into their function):
 1. Marker: the `// Go: [<path>.go[:<line>]] <sym>` comment in the comment and attribute block right
@@ -28,6 +36,11 @@ Mapping, per Rust function (rca's list: prod functions, closures folded into the
    unless it maps to a Go function of its own; then it has its own row and its parent's figure
    excludes it.
 Everything else is own code.
+
+Each port-bloat row also carries `residue`, the tagless-switch residue of its Go side (gocog), and
+`diff_less_residue` = diff - min(residue, max(diff, 0)): what is left of a positive Δ once the
+else-if chains that mirror Go's tagless switches are paid for. Targets stay on the raw Δ; the
+column explains rows (docs/perf-rearch/quality.md, "Tagless-switch residue").
 """
 
 from __future__ import annotations
@@ -42,12 +55,18 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GOREL_VERSION = 8  # bump when the mapping or the rows change (invalidates the cache)
+GOREL_VERSION = 9  # bump when the mapping or the rows change (invalidates the cache)
 HERE = Path(__file__).resolve().parent
 GOCOG_SRC = HERE / "gocog"
 GO_BIN = Path(os.environ.get("PERF_QUALITY_GO", Path.home() / ".local/go/bin/go"))
 GO_ROOT = Path(os.environ.get("PERF_QUALITY_GO_ROOT", Path.home() / ".explore/repos/microsoft__TypeScript@3e9236361fa9/tsc"))
 GO_DIRS = ("internal", "cmd")
+# Go outside the pin: (pkg prefix, label, root, the dirs gocog reads; None: every top-level dir but these)
+GOROOT_SRC = Path(os.environ.get("PERF_QUALITY_GOROOT_SRC", Path.home() / ".local/go/src"))
+XTEXT_ROOT = Path(os.environ.get("PERF_QUALITY_XTEXT", Path.home() / "go/pkg/mod/golang.org/x/text@v0.42.0"))
+EXT_SKIP_DIRS = {"cmd", "vendor", "testdata"}
+EXT_TREES = (("std", "GOROOT src", GOROOT_SRC), ("x/text", "golang.org/x/text", XTEXT_ROOT))
+EXT_NO_LOOKUP = ("effect/",)  # Effect's markers name its Go plugin, which is not on disk
 SRC = "crates/ts_goport/src/"
 OWN_LIMIT = 25
 LONG_NAME = 10  # normalized length a name needs for a match through file affinity alone
@@ -69,7 +88,7 @@ DIR_PKGS = {
     "modulespecifiers": ["internal/modulespecifiers", "internal/tspath", "internal/packagejson", "internal/module"],
     "astdata": ["internal/ast"],
     "scanner_util": ["internal/scanner"],
-    "gostd": [],  # a port of Go's standard library, not of the pinned tree
+    "gostd": [],  # a port of Go's standard library: its markers resolve in EXT_TREES, not at the pin
     "effect": [],  # our own
 }
 # root files and frontend/*.rs whose stem is not a Go package name
@@ -161,14 +180,14 @@ def _run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw).stdout
 
 
-def go_tree_key(root: Path) -> str:
+def go_tree_key(root: Path, dirs: tuple[str, ...] = GO_DIRS) -> str:
     try:
-        head = _run(["git", "-C", str(root), "rev-parse", *[f"HEAD:{d}" for d in GO_DIRS]]).split()
-        dirty = _run(["git", "-C", str(root), "status", "--porcelain", "--", *GO_DIRS])
+        head = _run(["git", "-C", str(root), "rev-parse", *[f"HEAD:{d}" for d in dirs]]).split()
+        dirty = _run(["git", "-C", str(root), "status", "--porcelain", "--", *dirs])
         return hashlib.sha1(("".join(head) + dirty).encode()).hexdigest()[:16]
     except (subprocess.CalledProcessError, FileNotFoundError):
-        h = hashlib.sha1()
-        for d in GO_DIRS:
+        h = hashlib.sha1(str(root).encode())
+        for d in dirs:
             for p in sorted((root / d).rglob("*.go")):
                 st = p.stat()
                 h.update(f"{p}:{st.st_size}:{st.st_mtime_ns}".encode())
@@ -193,18 +212,42 @@ def gocog_binary(cache: Path) -> Path:
     return exe
 
 
-def go_functions(cache: Path, root: Path = GO_ROOT) -> dict:
-    key = f"{go_tree_key(root)}-{gocog_hash()}"
+def go_functions(cache: Path, root: Path = GO_ROOT, dirs: tuple[str, ...] = GO_DIRS) -> dict:
+    key = f"{go_tree_key(root, dirs)}-{gocog_hash()}"
     f = cache / "go" / f"{key}.json"
     if f.exists():
         return json.loads(f.read_text())
-    out = json.loads(_run([str(gocog_binary(cache)), str(root), *GO_DIRS]))
+    out = json.loads(_run([str(gocog_binary(cache)), str(root), *dirs]))
     out["key"] = key
     out["root"] = str(root)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.with_suffix(".tmp").write_text(json.dumps(out))
     f.with_suffix(".tmp").replace(f)
     return out
+
+
+def tree_version(prefix: str, root: Path) -> str:
+    """go1.27.1 (GOROOT's VERSION file) or v0.42.0 (the module directory's @version)."""
+    if prefix == "std":
+        v = root.parent / "VERSION"
+        return v.read_text().split("\n", 1)[0].strip() if v.exists() else "?"
+    return root.name.rpartition("@")[2] or "?"
+
+
+def ext_functions(cache: Path, trees=EXT_TREES) -> tuple[list[dict], list[dict]]:
+    """The Go trees outside the pin: (functions with `std/` or `x/text/` package names, a note per tree)."""
+    funcs, notes = [], []
+    for prefix, label, root in trees:
+        if not root.is_dir():
+            notes.append({"prefix": prefix, "label": label, "root": str(root), "missing": True})
+            continue
+        dirs = tuple(sorted(p.name for p in root.iterdir() if p.is_dir() and p.name not in EXT_SKIP_DIRS and not p.name.startswith(".")))
+        out = go_functions(cache, root, dirs)
+        for g in out["funcs"]:
+            funcs.append({**g, "pkg": f"{prefix}/{g['pkg']}"})
+        notes.append({"prefix": prefix, "label": label, "root": str(root), "key": out["key"], "version": tree_version(prefix, root),
+                      "functions": sum(1 for g in out["funcs"] if not g.get("kind"))})
+    return funcs, notes
 
 
 # --------------------------------------------------------------------------
@@ -218,7 +261,7 @@ PROSE_PART_RE = re.compile(r"\b(?:body|part|rest|half|tail|remainder|arms|cases|
 PROSE_NAME_RE = re.compile(r"\bGo(?:'s)? (?:`(?P<a>\w+)`|(?P<b>[a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*))")
 PROSE_RANGE_RE = re.compile(r"\b(?:internal/)?(?P<path>[\w/]+\.go):(?P<a>\d+)(?:-(?:\w+\.go:)?(?P<b>\d+))?")
 # a Go reference inside a `// Go:` paragraph, and the joiner that makes two references one compound
-REF_RE = re.compile(r"(?:internal/)?(?P<path>[\w./-]+\.go)(?::(?P<line>\d+))?\s+(?P<sym>\((?:\w+\s+)?\*?\w+(?:\[[^\]]*\])?\)\.?\s*\w+|\w+(?:\.\w+)?)")
+REF_RE = re.compile(r"(?P<raw>(?:internal/)?(?P<path>[\w./-]+\.go))(?::(?P<line>\d+))?\s+(?P<sym>\((?:\w+\s+)?\*?\w+(?:\[[^\]]*\])?\)\.?\s*\w+|\w+(?:\.\w+)?)")
 JOIN_RE = re.compile(r"^[^.;:]{0,40}$")
 JOIN_WORD_RE = re.compile(r"\b(?:and|with|plus)\b|,|\+")
 PARA_STOP_RE = re.compile(r"^\s*(?://+\s*(?:Go:|PORT|PERF|TODO|NOTE|SAFETY)|///|//!)")
@@ -245,16 +288,17 @@ def parse_marker(text: str) -> dict | None:
     if not m:
         return None
     rest = m.group("rest").strip()
-    path = line = None
+    path = line = raw_path = None
     pm = PATH_RE.match(rest)
     if pm:
         path, line = pm.group("path"), pm.group("line")
+        raw_path = pm.group(0).split(":")[0].split()[0]
         rest = rest[pm.end():]
     s = SYM_RE.match(rest)
     if not s:
         return None
-    return {"kind": "go", "path": path, "line": int(line) if line else None, "recv": s.group("recv1") or s.group("recv2"),
-            "name": s.group("name"), "text": m.group("rest").strip()}
+    return {"kind": "go", "path": path, "raw_path": raw_path, "line": int(line) if line else None,
+            "recv": s.group("recv1") or s.group("recv2"), "name": s.group("name"), "text": m.group("rest").strip()}
 
 
 def paragraph_refs(mk: dict, para: str) -> None:
@@ -268,7 +312,7 @@ def paragraph_refs(mk: dict, para: str) -> None:
         sym = SYM_RE.match(r.group("sym") + " ")
         if not sym:
             continue
-        ref = {"kind": "go", "path": r.group("path"), "line": int(r.group("line")) if r.group("line") else None,
+        ref = {"kind": "go", "path": r.group("path"), "raw_path": r.group("raw"), "line": int(r.group("line")) if r.group("line") else None,
                "recv": sym.group("recv1") or sym.group("recv2"), "name": sym.group("name"), "text": r.group(0)}
         between = para[prev_end:r.start()]
         depth = para[:r.start()].count("(") - para[:r.start()].count(")")
@@ -323,19 +367,27 @@ def markers_above(lines: list[str], start: int) -> list[dict]:
 # mapping
 
 class GoIndex:
+    """Go functions (and the fields, vars and consts gocog lists, `kind`) of one or more trees. The
+    name matcher (`by_norm`, `closures`) sees functions only; markers (`by_name`, `in_file`) see all."""
+
     def __init__(self, gofuncs: list[dict]):
-        self.funcs = gofuncs
+        self.funcs = [g for g in gofuncs if not g.get("kind")]
+        self.members = [g for g in gofuncs if g.get("kind")]
         self.pkgs = sorted({g["pkg"] for g in gofuncs})
         self.by_norm: dict[str, list[dict]] = defaultdict(list)
         self.by_name: dict[str, list[dict]] = defaultdict(list)
         self.in_file: dict[tuple[str, str], list[dict]] = defaultdict(list)
         self.closures: dict[str, list[tuple[dict, dict]]] = defaultdict(list)
         for g in gofuncs:
-            g["id"] = f"{g['pkg']}/{g['file']}:{g['line']}"
-            self.by_norm[norm(g["name"])].append(g)
+            g["id"] = f"{g['pkg']}/{g['file']}:{g['line']}" + (f":{g['name']}" if g.get("kind") else "")
+            g.setdefault("residue", 0)
             self.by_name[g["name"]].append(g)
             self.in_file[(g["pkg"], g["file"])].append(g)
+            if g.get("kind"):
+                continue
+            self.by_norm[norm(g["name"])].append(g)
             for c in g.get("closures") or ():
+                c.setdefault("residue", 0)
                 self.closures[norm(c["name"])].append((g, c))
         self.pkg_last = defaultdict(list)
         for p in self.pkgs:
@@ -409,11 +461,13 @@ def by_line(cands: list, line: int | None, line_of) -> list:
 
 def family_sum(fs: list[dict]) -> dict:
     """One Go "function" standing for a method family: the same name on several receivers in one file
-    (ast_generated.go's ForEachChild per node type), which a Rust enum dispatch ports as one fn."""
+    (ast_generated.go's ForEachChild per node type), which a Rust enum dispatch ports as one fn. A
+    field name on several structs (ast_generated.go's `Body`) is a family the same way."""
     g0 = min(fs, key=lambda g: g["line"])
     return {"pkg": g0["pkg"], "file": g0["file"], "line": g0["line"], "end": max(g["end"] for g in fs), "recv": f"*{len(fs)}",
             "name": g0["name"], "cog": sum(g["cog"] for g in fs), "cyc": sum(g["cyc"] for g in fs),
-            "lines": sum(g["lines"] for g in fs), "id": f"{g0['pkg']}/{g0['file']}:*{g0['name']}", "closures": []}
+            "lines": sum(g["lines"] for g in fs), "residue": sum(g.get("residue", 0) for g in fs),
+            "id": f"{g0['pkg']}/{g0['file']}:*{g0['name']}", "closures": [], "kind": g0.get("kind", "")}
 
 
 def related(go_name: str, rust_fn: str) -> bool:
@@ -437,10 +491,14 @@ def resolve_marker(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) -> tuple[dic
             cs = [g for g in cs if g["recv"] == r or g["pkg"].endswith("/" + r)] or cs
         return cs
 
+    def funcs_first(cs):
+        """A function of that name over a field, var or const of it (as before gocog listed those)."""
+        return [g for g in cs if not g.get("kind")] or cs
+
     if mk["path"]:
         files = gi.files_named(mk["path"], pkgs)
         if files:
-            fs = [g for k in files for g in gi.in_file[k] if g["name"] == name]
+            fs = funcs_first([g for k in files for g in gi.in_file[k] if g["name"] == name])
             fs = recv_filter(fs, recv)
             if len(fs) > 1 and not recv and rf["recv"]:
                 fs = [g for g in fs if recv_eq(rf["recv"], g["recv"])] or fs
@@ -457,7 +515,7 @@ def resolve_marker(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) -> tuple[dic
             cl = [(g, c) for k in files for g in gi.in_file[k] for c in g.get("closures") or () if c["name"] == name]
             cl = by_line(cl, mk["line"], lambda gc: gc[1]["line"])
             return cl[0] if len(cl) == 1 else None
-    cs = recv_filter(gi.by_name.get(name, []), recv)
+    cs = recv_filter(funcs_first(gi.by_name.get(name, [])), recv)
     if mk["path"] and "/" in mk["path"]:
         pkgpart = mk["path"].rpartition("/")[0]
         cs = [g for g in cs if g["pkg"] == "internal/" + pkgpart or g["pkg"].endswith("/" + pkgpart)]
@@ -481,7 +539,8 @@ def compound(fs: list[dict]) -> dict:
     g0 = fs[0]
     return {"pkg": g0["pkg"], "file": g0["file"], "line": g0["line"], "end": g0["end"], "recv": g0["recv"],
             "name": " + ".join(g["name"] for g in fs), "cog": sum(g["cog"] for g in fs), "cyc": sum(g["cyc"] for g in fs),
-            "lines": sum(g["lines"] for g in fs), "id": "+".join(g["id"] for g in fs), "closures": []}
+            "lines": sum(g["lines"] for g in fs), "residue": sum(g.get("residue", 0) for g in fs),
+            "id": "+".join(g["id"] for g in fs), "closures": []}
 
 
 def resolve_marker_paragraph(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) -> tuple[dict, dict | None] | None:
@@ -503,6 +562,28 @@ def resolve_marker_paragraph(mk: dict, rf: dict, gi: GoIndex, pkgs: set[str]) ->
         if len(fs) > 1:
             return compound(fs), None
     return hit
+
+
+def resolve_external(mks: list[dict], rf: dict, xi: GoIndex) -> tuple[dict, dict | None] | None:
+    """A `// Go:` marker resolved in the trees outside the pin (EXT_TREES), by its path as written
+    (`internal/language/parse.go` is not `language/parse.go` there). A marker with no path counts only
+    with a qualifier that the hit agrees with (`time.daysIn`: package `time` or receiver `time`)."""
+
+    def as_written(ref):
+        return {**ref, "path": ref.get("raw_path") or ref["path"]}
+
+    for mk in mks:
+        if mk["kind"] != "go" or not (mk["path"] or mk["recv"]):
+            continue
+        m = {**as_written(mk), "alt": [as_written(r) for r in mk.get("alt", [])], "also": [as_written(r) for r in mk.get("also", [])]}
+        hit = resolve_marker_paragraph(m, rf, xi, set())
+        if hit is None:
+            continue
+        g = hit[0]
+        if not mk["path"] and not (g["recv"] == mk["recv"] or g["pkg"].endswith("/" + mk["recv"])):
+            continue
+        return hit
+    return None
 
 
 def order_markers(mks: list[dict], rf: dict) -> list[dict]:
@@ -600,7 +681,7 @@ def family(path: str) -> str:
     return d + "/" + file_stem(base)
 
 
-def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex) -> list[dict]:
+def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex, xi: GoIndex | None = None) -> list[dict]:
     rfs = []
     for f in funcs:
         fn, recv = split_rust_name(f["name"])
@@ -623,15 +704,19 @@ def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex
             if hit:
                 rf["via"] = mk["kind"]
                 break
-        rf["marker_hit"] = hit
         if rf["marker"]:
             file_marks[path][0] += 1
             file_marks[path][1] += bool(hit)
+        if hit is None and xi is not None and rf["marker"] and not path.removeprefix(SRC).startswith(EXT_NO_LOOKUP):
+            hit = resolve_external(mks, rf, xi)
+            if hit:
+                rf["via"] = "ext"
+        rf["marker_hit"] = hit
     # markers of a file mostly naming code outside the pin: a port of other Go (Effect's, Go's std, x/text)
     external = {p for p, (n, ok) in file_marks.items() if n >= 3 and ok < 0.5 * n}
     # Rust impl types that hold another Go type's methods (Checker <- Relater, NodeBuilderImpl), from the markers
     pairs = Counter((rf["recv"].lower(), rf["marker_hit"][0]["recv"].lower()) for rf in rfs
-                    if rf["marker_hit"] and rf["recv"] and rf["marker_hit"][0]["recv"])
+                    if rf["marker_hit"] and rf["via"] != "ext" and rf["recv"] and rf["marker_hit"][0]["recv"])
     recv_ok = {p for p, n in pairs.items() if n >= 3}
     aff = file_affinity(rfs, gi)
     # pass 2: names, and the choice
@@ -648,7 +733,7 @@ def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex
         rf["go"], rf["conf"] = None, "none"
         if hit:
             rf["go"], rf["closure"] = hit
-            rf["conf"] = "marker" if rf["via"] == "go" else "prose"
+            rf["conf"] = {"go": "marker", "ext": "ext"}.get(rf["via"], "prose")
         elif rf["marker"] and (pkgs is None or path in external):
             pass  # a marker naming code outside the pin
         elif rf["parent"] is not None and conf != "high":
@@ -694,6 +779,14 @@ def map_functions(funcs: list[dict], lines_of: dict[str, list[str]], gi: GoIndex
 
 # --------------------------------------------------------------------------
 # rows
+
+def tree_of(pkg: str) -> str:
+    """"pin", or the EXT_TREES prefix of a package outside the pin ("std", "x/text")."""
+    for prefix, _, _ in EXT_TREES:
+        if pkg.startswith(prefix + "/"):
+            return prefix
+    return "pin"
+
 
 def build_rows(rfs: list[dict]) -> tuple[list[dict], list[dict]]:
     children = defaultdict(list)
@@ -745,9 +838,11 @@ def build_rows(rfs: list[dict]) -> tuple[list[dict], list[dict]]:
             c = rf["closure"]
             go_cog, go_cyc, go_lines, go_line = c["cog"], c["cyc"], c["lines"], c["line"]
             go_name = (g["recv"] + "." if g["recv"] else "") + g["name"] + " closure " + c["name"]
+            residue = c.get("residue", 0)
         else:
             go_cog, go_cyc, go_lines, go_line = g["cog"], g["cyc"], g["lines"], g["line"]
-            go_name = (g["recv"] + "." if g["recv"] else "") + g["name"]
+            go_name = (g["recv"] + "." if g["recv"] else "") + g["name"] + (f" ({g['kind']})" if g.get("kind") else "")
+            residue = g.get("residue", 0)
         extra = []
         # the same name again in the file family is a `#[cfg]` variant (unix/windows) or a trait method
         # delegating to the inherent one: one of them runs, so the row takes the larger
@@ -765,11 +860,13 @@ def build_rows(rfs: list[dict]) -> tuple[list[dict], list[dict]]:
                 # Go's figure counts the closure in place (one nesting deeper); Rust's counts it standalone
                 go_cog += p["closure"]["cog"] - p["closure"]["cog_inplace"]
             extra.append({"name": p["name"], "cog": pc, "kind": "closure" if p["closure"] is not None else "split"})
+        diff = cog - go_cog
         row.update({
             "conf": rf["conf"], "cog": cog, "cyc": cyc,
-            "go": f"{g['pkg']}/{g['file']}:{go_line}", "go_name": go_name,
+            "go": f"{g['pkg']}/{g['file']}:{go_line}", "go_name": go_name, "tree": tree_of(g["pkg"]),
             "go_cog": go_cog, "go_cyc": go_cyc, "go_lines": go_lines,
-            "diff": cog - go_cog, "ratio": round(cog / max(1, go_cog), 2),
+            "diff": diff, "ratio": round(cog / max(1, go_cog), 2),
+            "residue": residue, "diff_less_residue": diff - min(residue, max(diff, 0)),
         })
         if extra:
             row["parts"] = extra
@@ -791,6 +888,10 @@ def summarize_rows(rfs, ports, own) -> dict:
         "port_rust_gt_go": sum(1 for r in ports if r["diff"] > 0),
         "port_diff_ge10": sum(1 for r in ports if r["diff"] >= 10),
         "port_diff_ge25": sum(1 for r in ports if r["diff"] >= 25),
+        # the residue column: of the Δ ≥ 10 targets, those still ≥ 10 once the residue is paid for
+        "port_diff_ge10_less_residue_ge10": sum(1 for r in ports if r["diff"] >= 10 and r["diff_less_residue"] >= 10),
+        "port_target_residue": sum(r["diff"] - r["diff_less_residue"] for r in ports if r["diff"] >= 10),
+        "port_ext_rows": dict(Counter(r["tree"] for r in ports if r["tree"] != "pin")),
         "port_ratio_ge1_5_cog_gt25": sum(1 for r in ports if r["ratio"] >= 1.5 and r["cog"] > OWN_LIMIT),
         "port_excess_sum": sum(max(0, r["diff"]) for r in ports),
         "port_cog_gt25": sum(1 for r in ports if r["cog"] > OWN_LIMIT),
@@ -809,7 +910,9 @@ def summarize_rows(rfs, ports, own) -> dict:
         "by_conf": {c: [sum(1 for rf in both if rf["name_conf"] == c and rf["name_match"] == rf["go"]["id"]),
                         sum(1 for rf in both if rf["name_conf"] == c)] for c in ("high", "medium", "low")},
     }
-    s["markers_unresolved"] = sum(1 for rf in rfs if rf["marker"] and not rf["conf"].startswith(("marker", "prose")))
+    s["markers_unresolved"] = sum(1 for rf in rfs if rf["marker"] and not rf["conf"].startswith(("marker", "prose", "ext")))
+    s["markers_ext"] = sum(1 for rf in rfs if rf["marker"] and rf["conf"].startswith("ext"))
+    s["markers_member"] = sum(1 for rf in rfs if rf["conf"].startswith(("marker", "prose")) and rf["go"].get("kind"))
     # calibration: on functions placed by a marker, a faithful port should score as Go does
     cal = [r for r in ports if r["conf"].startswith(("marker", "prose"))]
     s["calibration"] = {
@@ -828,28 +931,34 @@ def area_totals(ports, own) -> dict:
             "ported": len(p), "port_diff_ge10": sum(1 for r in p if r["diff"] >= 10),
             "port_diff_ge25": sum(1 for r in p if r["diff"] >= 25), "port_excess_sum": sum(max(0, r["diff"]) for r in p),
             "port_target_excess": sum(r["diff"] for r in p if r["diff"] >= 10),
+            "port_target_less_residue": sum(r["diff_less_residue"] for r in p if r["diff"] >= 10),
+            "port_diff_ge10_less_residue_ge10": sum(1 for r in p if r["diff"] >= 10 and r["diff_less_residue"] >= 10),
             "own": len(o), "own_gt25": sum(1 for r in o if r["cog"] > OWN_LIMIT),
             "own_excess_sum": sum(max(0, r["cog"] - OWN_LIMIT) for r in o),
             "files_with_targets": len({r["file"] for r in p if r["diff"] >= 10} | {r["file"] for r in o if r["cog"] > OWN_LIMIT}),
         }
-        subs = defaultdict(lambda: [0, 0, 0, 0])
+        subs = defaultdict(lambda: [0, 0, 0, 0, 0])
         for r in p:
             if r["diff"] >= 10:
                 subs[r["subarea"]][0] += 1
                 subs[r["subarea"]][1] += r["diff"]
+                subs[r["subarea"]][4] += r["diff_less_residue"]
         for r in o:
             if r["cog"] > OWN_LIMIT:
                 subs[r["subarea"]][2] += 1
                 subs[r["subarea"]][3] += r["cog"] - OWN_LIMIT
-        out[a]["subareas"] = {k: {"port_diff_ge10": v[0], "port_excess": v[1], "own_gt25": v[2], "own_excess": v[3]}
+        out[a]["subareas"] = {k: {"port_diff_ge10": v[0], "port_excess": v[1], "port_excess_less_residue": v[4], "own_gt25": v[2],
+                                  "own_excess": v[3]}
                               for k, v in sorted(subs.items(), key=lambda kv: -(kv[1][1] + kv[1][3]))}
     return out
 
 
-def go_relative(snap: dict, repo: Path, cache: Path, go_root: Path = GO_ROOT) -> dict:
+def go_relative(snap: dict, repo: Path, cache: Path, go_root: Path = GO_ROOT, ext_trees=EXT_TREES) -> dict:
     t0 = time.time()
     gof = go_functions(cache, go_root)
-    key = f"{snap['tree']}-{gof['key']}-r{GOREL_VERSION}"
+    ext, ext_notes = ext_functions(cache, ext_trees)
+    ext_key = hashlib.sha1("".join(n.get("key", "missing:" + n["root"]) for n in ext_notes).encode()).hexdigest()[:8]
+    key = f"{snap['tree']}-{gof['key']}-{ext_key}-r{GOREL_VERSION}"
     cf = cache / "gorel" / f"{key}.json"
     if cf.exists():
         out = json.loads(cf.read_text())
@@ -857,17 +966,19 @@ def go_relative(snap: dict, repo: Path, cache: Path, go_root: Path = GO_ROOT) ->
         out["cached"] = True
         return out
     gi = GoIndex(gof["funcs"])
+    xi = GoIndex(ext) if ext else None
     files = sorted({f["file"] for f in snap["funcs"]})
     lines_of = read_blobs(snap["sha"], files, repo)
-    rfs = map_functions(snap["funcs"], lines_of, gi)
+    rfs = map_functions(snap["funcs"], lines_of, gi, xi)
     ports, own = build_rows(rfs)
     ports.sort(key=lambda r: (-r["diff"], -r["cog"]))
     own.sort(key=lambda r: -r["cog"])
     summary = summarize_rows(rfs, ports, own)
-    summary["go_functions"] = len(gof["funcs"])
-    summary["go_closures_named"] = sum(len(g.get("closures") or ()) for g in gof["funcs"])
+    summary["go_functions"] = len(gi.funcs)
+    summary["go_members"] = dict(Counter(g["kind"] for g in gi.members))
+    summary["go_closures_named"] = sum(len(g.get("closures") or ()) for g in gi.funcs)
     out = {
-        "version": GOREL_VERSION, "tree": snap["tree"], "go_root": gof["root"], "go_key": gof["key"],
+        "version": GOREL_VERSION, "tree": snap["tree"], "go_root": gof["root"], "go_key": gof["key"], "ext_trees": ext_notes,
         "summary": summary, "areas": area_totals(ports, own),
         "port_bloat": ports, "own": own,
         "ambiguous": [{"key": rf["key"], "name": rf["name"], "file": rf["file"], "line": rf["start"], "cog": rf["cog"],
@@ -892,11 +1003,12 @@ def short(path: str) -> str:
 
 
 def md_port_rows(rows: list[dict], top: int) -> list[str]:
-    o = ["| Δcog | ratio | Rust cog | Go cog | Rust lines | Go lines | conf | Rust function | Go function |",
-         "|---:|---:|---:|---:|---:|---:|---|---|---|"]
+    o = ["| Δcog | Δ less residue | residue | ratio | Rust cog | Go cog | Rust lines | Go lines | conf | Rust function | Go function |",
+         "|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|"]
     for r in rows[:top]:
         lift = (" (+ " + ", ".join(f"{x['kind']} {x['name'].split('::')[-1]} {x['cog']}" for x in r["parts"]) + ")") if r.get("parts") else ""
-        o.append(f"| {r['diff']:+d} | {r['ratio']} | {r['cog']} | {r['go_cog']} | {r['sloc']} | {r['go_lines']} | {r['conf']} | "
+        o.append(f"| {r['diff']:+d} | {r['diff_less_residue']:+d} | {r['residue']} | {r['ratio']} | {r['cog']} | {r['go_cog']} | {r['sloc']} | "
+                 f"{r['go_lines']} | {r['conf']} | "
                  f"`{short(r['file'])}:{r['line']}` {r['name']}{lift} | `{r['go'].removeprefix('internal/')}` {r['go_name']} |")
     return o
 
@@ -912,14 +1024,17 @@ def md_own_rows(rows: list[dict], top: int) -> list[str]:
 
 
 def md_areas(areas: dict) -> list[str]:
-    o = ["| area | ported rows | Δ≥10 (targets) | Δ≥25 | Σ Δ of targets | Σ positive Δ | own fns | own >25 (targets) | Σ (cog − 25) of targets | files with targets |",
-         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    o = ["| area | ported rows | Δ≥10 (targets) | of them Δ less residue ≥10 | Δ≥25 | Σ Δ of targets | Σ Δ less residue of targets | "
+         "Σ positive Δ | own fns | own >25 (targets) | Σ (cog − 25) of targets | files with targets |",
+         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     tot = Counter()
     for a, v in areas.items():
         tot.update({k: x for k, x in v.items() if isinstance(x, int)})
-        o.append(f"| {a} | {v['ported']:,} | {v['port_diff_ge10']} | {v['port_diff_ge25']} | {v['port_target_excess']:,} | {v['port_excess_sum']:,} | "
+        o.append(f"| {a} | {v['ported']:,} | {v['port_diff_ge10']} | {v['port_diff_ge10_less_residue_ge10']} | {v['port_diff_ge25']} | "
+                 f"{v['port_target_excess']:,} | {v['port_target_less_residue']:,} | {v['port_excess_sum']:,} | "
                  f"{v['own']:,} | {v['own_gt25']} | {v['own_excess_sum']:,} | {v['files_with_targets']} |")
-    o.append(f"| **all** | {tot['ported']:,} | {tot['port_diff_ge10']} | {tot['port_diff_ge25']} | {tot['port_target_excess']:,} | {tot['port_excess_sum']:,} | "
+    o.append(f"| **all** | {tot['ported']:,} | {tot['port_diff_ge10']} | {tot['port_diff_ge10_less_residue_ge10']} | {tot['port_diff_ge25']} | "
+             f"{tot['port_target_excess']:,} | {tot['port_target_less_residue']:,} | {tot['port_excess_sum']:,} | "
              f"{tot['own']:,} | {tot['own_gt25']} | {tot['own_excess_sum']:,} | {tot['files_with_targets']} |")
     return o
 
@@ -930,21 +1045,31 @@ def md_summary(g: dict) -> list[str]:
     c = Counter()
     for k, v in s["confidence"].items():
         c[k.split("+")[0]] += v
+    mem = s.get("go_members", {})
+    ext = "; ".join(f"{n['label']} {n['version']} at `{n['root']}` ({n['functions']:,} functions)" if not n.get("missing")
+                    else f"{n['label']}: not on disk at `{n['root']}`" for n in g.get("ext_trees", []))
+    exts = s.get("port_ext_rows", {})
     return [
-        f"- Go at `{g['go_root']}`: {s['go_functions']:,} functions, {s['go_closures_named']} named closures.",
-        f"- Rust prod functions {s['rust_functions']:,}: by `// Go:` marker {c['marker']:,}, by prose in the doc comment {c['prose']:,}, by name high {c['high']:,} / medium {c['medium']:,} / "
+        f"- Go at `{g['go_root']}`: {s['go_functions']:,} functions, {s['go_closures_named']} named closures; "
+        f"for markers also {mem.get('field', 0):,} struct fields, {mem.get('var', 0):,} vars and {mem.get('const', 0):,} consts.",
+        f"- Go outside the pin, for markers that name nothing at the pin: {ext or 'none'}.",
+        f"- Rust prod functions {s['rust_functions']:,}: by `// Go:` marker {c['marker']:,} ({s['markers_member']} of them a field, var or const), "
+        f"by a marker naming Go outside the pin {c['ext']:,}, by prose in the doc comment {c['prose']:,}, by name high {c['high']:,} / medium {c['medium']:,} / "
         f"low {c['low']:,}, lifted by name {c['lifted']}, ambiguous {c['ambiguous']}, none {c['none']:,}. "
         f"{s['parts']} are summed into another function's row (splits, same-named variants and lifted Go closures, {s['lifted_closures']} of them closures); "
-        f"{s['nested_folded']:,} nested fns stay folded in their parent. Markers naming nothing at the pin: {s['markers_unresolved']:,}.",
+        f"{s['nested_folded']:,} nested fns stay folded in their parent. Markers naming nothing in any Go tree: {s['markers_unresolved']:,}.",
         f"- Name matcher checked against the markers: it places {nv['name_matcher_placed']:,} of {nv['marker_resolved']:,} marked functions "
         f"and agrees on {nv['agree']:,} ({100 * nv['agree'] / max(1, nv['name_matcher_placed']):.1f}%); by confidence "
         + ", ".join(f"{k} {v[0]:,}/{v[1]:,}" for k, v in nv["by_conf"].items()) + ".",
         f"- Calibration (rows placed by a marker): Rust cog = Go cog in {100 * s['calibration']['exact'] / max(1, s['calibration']['rows']):.0f}%, "
         f"within 2 in {100 * s['calibration']['within2'] / max(1, s['calibration']['rows']):.0f}% of {s['calibration']['rows']:,}; "
         f"Σ Rust {s['calibration']['rust_sum']:,} vs Σ Go {s['calibration']['go_sum']:,}.",
-        f"- Port bloat: {s['ported_rows']:,} ported rows; Rust above Go {s['port_rust_gt_go']:,}, Δcog ≥10 {s['port_diff_ge10']}, "
+        f"- Port bloat: {s['ported_rows']:,} ported rows ({', '.join(f'{k} {v:,}' for k, v in sorted(exts.items())) or 'none'} of them against Go outside the pin); "
+        f"Rust above Go {s['port_rust_gt_go']:,}, Δcog ≥10 {s['port_diff_ge10']}, "
         f"≥25 {s['port_diff_ge25']}, ratio ≥1.5 with Rust cog >{OWN_LIMIT} {s['port_ratio_ge1_5_cog_gt25']}; Σ positive Δ {s['port_excess_sum']:,}. "
         f"Rows with Rust cog >{OWN_LIMIT}: {s['port_cog_gt25']}, with Go cog >{OWN_LIMIT}: {s['port_go_cog_gt25']}.",
+        f"- Tagless-switch residue (explains rows; targets stay on the raw Δ): the {s['port_diff_ge10']} rows with Δ ≥10 hold "
+        f"{s['port_target_residue']} points of it; {s['port_diff_ge10_less_residue_ge10']} of them stay ≥10 once it is paid for (Δ less residue).",
         f"- Own code: {s['own_rows']:,} functions; >{OWN_LIMIT} {s['own_gt25']}, >50 {s['own_gt50']}; Σ (cog − {OWN_LIMIT}) {s['own_excess_sum']:,}.",
     ]
 
@@ -969,7 +1094,8 @@ def md_go_relative(g: dict, top: int = 20) -> list[str]:
     return o
 
 
-SUMMARY_KEYS = ("ported_rows", "port_diff_ge10", "port_diff_ge25", "port_excess_sum", "own_rows", "own_gt25", "own_gt50", "own_excess_sum")
+SUMMARY_KEYS = ("ported_rows", "port_diff_ge10", "port_diff_ge10_less_residue_ge10", "port_diff_ge25", "port_excess_sum", "own_rows",
+                "own_gt25", "own_gt50", "own_excess_sum")
 
 
 def delta(base: dict, rev: dict) -> dict:
@@ -1028,9 +1154,12 @@ def md_planning(g: dict, rev: str, sha: str, top: int = 60, files_per_area: int 
     o = [f"# Q0 ranking: Go-relative complexity at {rev} ({sha[:9]})", "",
          f"Generated by `scripts/perf-rearch/quality.sh ranking {rev} --top {top}` (gorel.py version {g['version']}); "
          "docs/perf-rearch/quality.md, \"Go-relative complexity\", defines every figure.", "",
-         "- **Port bloat** (ported code): Δ = Rust cognitive − Go cognitive of the counterpart at the pin. "
+         "- **Port bloat** (ported code): Δ = Rust cognitive − Go cognitive of the counterpart at the pin (or, for ports of Go's "
+         "standard library and x/text, in GOROOT `src` and x/text). "
          "Both sides count their closures; Rust helpers that are splits of the Go function or lifted Go closures are summed into its row. "
          "A target is Δ ≥ 10.",
+         "- **Residue** is the tagless-switch residue of the Go side: Σ (clauses − 1) over its `switch {` statements, the points an "
+         "else-if chain pays for them. **Δ less residue** = Δ − min(residue, max(Δ, 0)). It explains a row; targets stay on the raw Δ.",
          f"- **Own code** (no Go counterpart): the limit is cognitive {OWN_LIMIT}. A target is cog > {OWN_LIMIT}; excess = cog − {OWN_LIMIT}.",
          "- Areas are the wave-2 lane areas, by path under `crates/ts_goport/src/`: checker (`checker/`); "
          "frontend (`frontend/`, `program/`, `program.rs`, `scanner_util*`); ls (`ls/`, with autoimport); "
@@ -1044,9 +1173,9 @@ def md_planning(g: dict, rev: str, sha: str, top: int = 60, files_per_area: int 
         v = g["areas"][a]
         o += ["", f"### {a}", ""]
         if v["subareas"]:
-            o += ["| subarea | port targets | Σ Δ | own targets | Σ own excess |", "|---|---:|---:|---:|---:|"]
+            o += ["| subarea | port targets | Σ Δ | Σ Δ less residue | own targets | Σ own excess |", "|---|---:|---:|---:|---:|---:|"]
             for k, x in v["subareas"].items():
-                o.append(f"| {k} | {x['port_diff_ge10']} | {x['port_excess']:,} | {x['own_gt25']} | {x['own_excess']:,} |")
+                o.append(f"| {k} | {x['port_diff_ge10']} | {x['port_excess']:,} | {x['port_excess_less_residue']:,} | {x['own_gt25']} | {x['own_excess']:,} |")
             files = sorted(((f, x) for f, x in ft.items() if x["area"] == a), key=lambda fx: -(fx[1]["port_excess"] + fx[1]["own_excess"]))
             shown = f"top {files_per_area} of {len(files)}" if len(files) > files_per_area else f"{len(files)} files"
             o += ["", f"Files by Σ excess ({shown}):", "",

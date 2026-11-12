@@ -24,8 +24,21 @@
 # - Go-relative (in report, on by default; --no-go-relative skips it): each Rust prod function mapped to
 #   its Go counterpart at the pin (`// Go:` markers, then names; gorel.py, Go side scripts/perf-rearch/gocog),
 #   ranked as port bloat (Rust cog - Go cog) and own code over cog 25, with per-area totals and, with
-#   --base, the rows that moved. About 3 s per new crates/ tree, cached per crates/ tree and Go tree.
+#   --base, the rows that moved. About 5 s per new crates/ tree, cached per crates/ tree and Go trees.
 #   Go tree: PERF_QUALITY_GO_ROOT (default the 3e9236361fa9 checkout), go: PERF_QUALITY_GO.
+#   Markers may name Go struct fields and package vars and consts (gocog lists them; the name matcher
+#   does not use them). Ports of Go outside the pin are scored against that Go: GOROOT's src
+#   (PERF_QUALITY_GOROOT_SRC, default ~/.local/go/src, go1.27.1) and golang.org/x/text v0.42.0
+#   (PERF_QUALITY_XTEXT, default the module cache copy), the versions the pin's go.mod names. A
+#   marker that names nothing at the pin is looked up there by its path as written (not in effect/).
+#   A tree that is not on disk is skipped, and the report says so.
+# - Residue (a column, not a target): the tagless-switch residue of a port row is, over the Go side's
+#   `switch` statements with no tag (`switch {`, `switch x := f(); {`, in its function literals too),
+#   the sum of (number of clauses - 1), `default` counted as a clause. It is exactly what a Rust
+#   if / else-if / else chain for those switches costs more under rca's rules (+1 per `else`; Go's
+#   case labels cost 0; the `if` costs what the `switch` does). "Δ less residue" = Δ - min(residue,
+#   max(Δ, 0)), shown beside the raw Δ in the rankings and the per-area tables. Targets (Δ >= 10)
+#   stay on the raw Δ; the column explains a row. gorel_test.py checks the rule on a Go/Rust pair.
 # - ranking: the Go-relative planning page (top N of each ranking, per-area and per-file totals).
 # - history: a snapshot at --base and at every first-parent merge of --branch since --base (and its head),
 #   each delta against the previous point; no clippy. About 10 s per new crates/ tree, cached.
