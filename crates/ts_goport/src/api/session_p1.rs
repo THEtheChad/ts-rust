@@ -4275,7 +4275,7 @@ impl Session {
         let source_file = self.resolve_optional_source_file(program, Some(&params.file))?;
         let resolution_count = {
             let info = source_file_info(source_file);
-            let mut resolution_count = info.imports.len() as i32;
+            let mut resolution_count = info.imports.len() as i64;
             for &augmentation in &info.module_augmentations {
                 if augmentation.kind() == SyntaxKind::StringLiteral {
                     resolution_count += 1;

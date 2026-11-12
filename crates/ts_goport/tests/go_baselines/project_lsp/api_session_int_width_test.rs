@@ -173,3 +173,59 @@ child_test! {
         session.close();
     }
 }
+
+// Audit A4: Go `GetModeForResolutionAtIndexParams.Index` is a Go `int`
+// (proto.go:1396): 2^32 decodes and fails the range check with "invalid
+// resolution index" (session.go:2578); the import at 0 is ESNext (99).
+child_test! {
+    fn mode_for_resolution_index_is_a_go_int() {
+        let (init, _) = projecttestutil::get_session_init_options(
+            files(&[
+                ("/home/projects/p/src/a.ts", "export const x = 1;\nimport './b';\n"),
+                ("/home/projects/p/src/b.ts", "export {};\n"),
+            ]),
+            None,
+            TypingsInstallerOptions::default(),
+        );
+        let session = api::new_standalone_session(&init, None);
+        let created = nil_error(session.handle_create_snapshot(
+            &bg(),
+            &api::CreateSnapshotParams {
+                snapshot_request_changes_params: api::SnapshotRequestChangesParams {
+                    create_programs: Some(vec![Some(program_params(
+                        &["/home/projects/p/src/a.ts"],
+                        no_lib(),
+                    ))]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ));
+        let project = json_marshal(&created.projects[0].id, &[])
+            .unwrap_or_else(|err| panic!("marshal: {err:?}"));
+        let snapshot = created.snapshot.0;
+        let ask_index = |index: &str| {
+            ask(
+                &session,
+                "getModeForResolutionAtIndex",
+                &format!(
+                    r#"{{"snapshot":{snapshot},"project":{project},"file":"/home/projects/p/src/a.ts","index":{index}}}"#
+                ),
+            )
+        };
+        for index in ["4294967296", "-4294967296", "1"] {
+            let response = ask_index(index);
+            assert_eq!(
+                field(&response, "error"),
+                Some(&LspAny::String(
+                    "api: client error: invalid resolution index".to_string()
+                )),
+                "index {index}"
+            );
+        }
+        let response = ask_index("0");
+        assert_eq!(field(&response, "error"), None);
+        assert_eq!(field(&response, "result"), Some(&LspAny::Number(99.0)));
+        session.close();
+    }
+}

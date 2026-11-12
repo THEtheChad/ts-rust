@@ -3925,7 +3925,8 @@ pub struct GetModeForResolutionAtIndexParams {
     pub snapshot: SnapshotID,
     pub project: project::ID,
     pub file: DocumentIdentifier,
-    pub index: i32,
+    // Go `int`
+    pub index: i64,
 }
 
 proto_json!(both GetModeForResolutionAtIndexParams {
