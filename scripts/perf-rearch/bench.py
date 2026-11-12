@@ -576,7 +576,8 @@ def incr_edit_prep(name, lab, b, scratch, repo, cfg, args):
         edited = d / rel
         if not d.exists():
             scratch_copy(str(repo), str(d))
-            _ie_orig[(name, lab)] = edited.read_text()
+        # The original comes from the (read-only) input, so a resumed bench whose copy already exists has it too.
+        _ie_orig.setdefault((name, lab), (Path(repo) / rel).read_text())
         edited.write_text(_ie_orig[(name, lab)])
         edit = lambda: edited.write_text(_ie_orig[(name, lab)] + extra)
     comp = INCR_COMP.get(name, ["--composite", "false"])
