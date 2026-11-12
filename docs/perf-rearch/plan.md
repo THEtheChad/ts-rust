@@ -2443,3 +2443,24 @@ once a **reconciliation step** is built and tested.
   - Q9's guard is now shared: `tests/common/mtime_order.rs`.
   - `tsgo` is byte-identical. The whole go_baselines set runs in the
     close-out gate.
+- **F5 done; Astra review running.** Head `3ff7037bb`.
+  - **Folded to one port each:**
+    - `sourceFileMayBeEmitted` and `GetOutputPathsFor` (generic over Go's
+      host trait, through an `EmitSourceFile` view);
+    - `tspath_extension.rs`, the `deps.rs` copies,
+      `GetResolutionDiagnostic` and `ensurePathIsNonModuleName`, plus small
+      checker copies;
+    - the resolution-mode functions, where `program.rs` had a stale copy
+      missing ts#63915. Probes show no output difference, and the review
+      is asked to look further.
+  - **Left with PORT notes:** `GetSymlinkCache` and packagejson (`Rc`
+    against `Arc`, a program-type restructure);
+    `HasPrefix`/`HasSuffix`/`HasPrefixAndSuffixWithoutOverlap`, two copies
+    that differ, neither Go's.
+  - **dups.txt:** 280 → 247, triaged as 73 output-path, 167 internal, 7
+    test.
+  - Duplication 3.32% → 3.16%.
+  - **Gate:** `runs/20261112-031159-full-3689a455b4` PARITY OK; icount flat.
+- **B10 started:** the `HasPrefix`/`HasSuffix` copies against Go (byte-wise
+  with Unicode case folding): a Go note, callers, probes, one port, parity
+  items. It builds on F5's head.
