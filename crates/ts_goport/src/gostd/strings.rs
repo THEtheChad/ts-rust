@@ -84,7 +84,9 @@ mod tests {
             "runtime error: makeslice: len out of range"
         );
         assert_eq!(
-            panic_text(|| drop(repeat_len(1, (1 << 48) + 1))),
+            panic_text(|| {
+                let _ = repeat_len(1, (1 << 48) + 1);
+            }),
             "runtime error: makeslice: len out of range"
         );
     }
