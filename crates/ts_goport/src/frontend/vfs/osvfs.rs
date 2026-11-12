@@ -1092,7 +1092,7 @@ fn filepath_abs(path: &str) -> Result<String, FsError> {
     Ok(filepath_clean(&go_string_from_os(full_path)))
 }
 
-// Go: path/filepath/path.go Clean (unix)
+// Go: internal/filepathlite/path.go Clean (unix; path/filepath.Clean calls it)
 // PORT: Go standard library. Lexical cleanup only.
 #[cfg(not(windows))]
 pub fn filepath_clean(path: &str) -> String {
