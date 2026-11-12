@@ -2332,3 +2332,23 @@ once a **reconciliation step** is built and tested.
 
   The wait inventory, polling and ownership are confirmed. Round 3 sent,
   the last.
+- **B8 round 3 done; merged.** Root accepts it without a further Astra
+  round.
+  - **The `buildMu` port:** `Handler::must_wait` queues create, dispose,
+    build, buildReferences, cleanBuild and cleanReferences while one is
+    running, and callback responses keep dispatching.
+  - **The harness:** a scripted stat reads the server's view through
+    `/proc/<init>/root`, and the scripted path's mtime is recorded after
+    each step.
+  - **Root's checks:**
+    - `callback-build-interleave` timed out (`build: no answer in 60 s`)
+      on `8d2816119`;
+    - all 6 callback items MATCH in `runs/b8-e2941610d-full`;
+    - the d.ts ends at the 2030 mtime under Go and tsc-rs.
+  - **CI break from B6 found by B8:** wasm32 `clippy --all-targets` failed
+    on `gostd/strings.rs`'s `1 << 48` usize test. Root fixed it
+    (`f3b31678a`): the exact-maxAlloc assertion runs on 64-bit targets
+    only. The wasm32 clippy commands and the `goport_util` strings tests
+    pass.
+  - **base-current** moved to `b8-e2941610d-full` (everything through B8,
+    B6 included).
