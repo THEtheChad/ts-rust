@@ -2324,3 +2324,11 @@ once a **reconciliation step** is built and tested.
     single-threaded icount flat.
   - **Astra recheck** running (round 2 of 3), focused on deadlock and
     starvation and on whether `outputs_overlap` should go for OS hosts too.
+- **B8 recheck: REJECT** (`reviews/2026-11-11-astra-b8-r2.md`).
+  - A nested API build dispatched inside a callback wait can deadlock (Go
+    has `buildMu`).
+  - The timestamp item's `stat` callback can't see the sandboxed output, so
+    the restore is unproven.
+
+  The wait inventory, polling and ownership are confirmed. Round 3 sent,
+  the last.
