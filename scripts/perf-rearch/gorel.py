@@ -1014,6 +1014,9 @@ def md_port_rows(rows: list[dict], top: int) -> list[str]:
 
 
 def md_own_rows(rows: list[dict], top: int) -> list[str]:
+    rows = [r for r in rows if r["cog"] > OWN_LIMIT]
+    if not rows:
+        return ["None."]
     o = ["| cog | cyc | lines | area | Rust function | note |", "|---:|---:|---:|---|---|---|"]
     for r in rows[:top]:
         note = ("ambiguous: " + "; ".join(r["ambiguous"][:3]) if r.get("ambiguous")
