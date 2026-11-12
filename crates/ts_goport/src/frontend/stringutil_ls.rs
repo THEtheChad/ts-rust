@@ -3,9 +3,10 @@
 //!
 //! PORT: Go strings can hold invalid UTF-8; Rust `&str` cannot. Go decodes
 //! runes with `utf8.DecodeRuneInString`, which gives U+FFFD for an invalid
-//! byte. Over a `&str` that case only happens where Go slices bytes inside a
-//! rune (`HasPrefix`, `HasSuffix`), so those compare byte slices with
-//! `equal_fold` below.
+//! byte. `HasPrefix`, `HasSuffix` and `HasPrefixAndSuffixWithoutOverlap`
+//! slice and compare the Go bytes of the port forms (`go_string_bytes`, see
+//! `scanner_util::GO_STRING_MARKER`) with `equal_fold` below, as Go does.
+//! They are the one port: modulespecifiers re-exports them.
 
 use crate::frontend::prelude::*;
 
@@ -87,26 +88,46 @@ pub fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> Comparison {
 
 // Go: stringutil/compare.go:74 HasPrefix
 pub fn has_prefix(s: &str, prefix: &str, case_sensitive: bool) -> bool {
+    has_prefix_bytes(
+        &go_string_bytes(s),
+        &go_string_bytes(prefix),
+        case_sensitive,
+    )
+}
+
+/// `has_prefix` on Go bytes.
+// PORT: Go `s[0:len(prefix)]` can end inside a rune; `equal_fold` decodes
+// the cut bytes as Go does.
+fn has_prefix_bytes(s: &[u8], prefix: &[u8], case_sensitive: bool) -> bool {
     if case_sensitive {
         return s.starts_with(prefix);
     }
     if prefix.len() > s.len() {
         return false;
     }
-    // PORT: Go `s[0:len(prefix)]` can end inside a rune; compare bytes.
-    equal_fold(&s.as_bytes()[0..prefix.len()], prefix.as_bytes())
+    equal_fold(&s[0..prefix.len()], prefix)
 }
 
 // Go: stringutil/compare.go:84 HasSuffix
 pub fn has_suffix(s: &str, suffix: &str, case_sensitive: bool) -> bool {
+    has_suffix_bytes(
+        &go_string_bytes(s),
+        &go_string_bytes(suffix),
+        case_sensitive,
+    )
+}
+
+/// `has_suffix` on Go bytes.
+// PORT: Go `s[len(s)-len(suffix):]` can start inside a rune; see
+// `has_prefix_bytes`.
+fn has_suffix_bytes(s: &[u8], suffix: &[u8], case_sensitive: bool) -> bool {
     if case_sensitive {
         return s.ends_with(suffix);
     }
     if suffix.len() > s.len() {
         return false;
     }
-    // PORT: Go `s[len(s)-len(suffix):]` can start inside a rune; compare bytes.
-    equal_fold(&s.as_bytes()[s.len() - suffix.len()..], suffix.as_bytes())
+    equal_fold(&s[s.len() - suffix.len()..], suffix)
 }
 
 // Go: stringutil/compare.go:94 HasPrefixAndSuffixWithoutOverlap
@@ -116,11 +137,16 @@ pub fn has_prefix_and_suffix_without_overlap(
     suffix: &str,
     case_sensitive: bool,
 ) -> bool {
+    let (s, prefix, suffix) = (
+        go_string_bytes(s),
+        go_string_bytes(prefix),
+        go_string_bytes(suffix),
+    );
     if prefix.len() + suffix.len() > s.len() {
         return false;
     }
 
-    has_prefix(s, prefix, case_sensitive) && has_suffix(s, suffix, case_sensitive)
+    has_prefix_bytes(&s, &prefix, case_sensitive) && has_suffix_bytes(&s, &suffix, case_sensitive)
 }
 
 // Go: stringutil/compare.go:102 CompareStringsCaseInsensitiveThenSensitive
@@ -280,4 +306,60 @@ pub fn equal_fold(s: &[u8], t: &[u8]) -> bool {
         return false;
     }
     i == s.len() && j == t.len()
+}
+
+#[cfg(test)]
+mod has_prefix_tests {
+    use super::{has_prefix, has_prefix_and_suffix_without_overlap, has_suffix};
+    use crate::scanner_util::go_string_from_bytes;
+
+    /// Go bytes to the port form (see `scanner_util::GO_STRING_MARKER`).
+    fn port(bytes: &[u8]) -> String {
+        go_string_from_bytes(bytes.to_vec())
+    }
+
+    // Go `HasPrefix`, `HasSuffix` and `HasPrefixAndSuffixWithoutOverlap`
+    // (stringutil/compare.go:74-100 at the pin), each case-sensitive then
+    // insensitive, as go1.27.1 prints them for these Go strings (lane B10,
+    // `docs/perf-rearch/cleanup/b10.md`).
+    #[test]
+    fn go_bytes_and_equal_fold() {
+        #[rustfmt::skip]
+        let cases: &[(&[u8], &[u8], &[u8], [bool; 6])] = &[
+            ("Ä/x".as_bytes(), "ä/".as_bytes(), b"", [false, true, true, true, false, true]),
+            (b"x\xc3\x84.ts", b"", "ä.ts".as_bytes(), [true, true, false, true, false, true]),
+            // The slice is by bytes: the Kelvin sign (3 bytes) is not "k" + 2 bytes.
+            ("\u{212A}x".as_bytes(), b"k", b"", [false, false, true, true, false, false]),
+            (b"kx", "\u{212A}".as_bytes(), b"", [false, false, true, true, false, false]),
+            ("kſſ/b".as_bytes(), "\u{212A}ss/".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("ßſ/z".as_bytes(), "\u{1E9E}S/".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("src/älpha/t".as_bytes(), "SRC/ÄLPHA/".as_bytes(), b"", [false, true, true, true, false, true]),
+            // An invalid byte is one RuneError in Go; the port form's
+            // marker unit must not match a real U+10F780.
+            (b"x\x80.ts", b"", "\u{10F780}.ts".as_bytes(), [true, true, false, false, false, false]),
+            (b"x\x80.ts", b"", b"\x81.ts", [true, true, false, true, false, true]),
+            (b"x\x80.ts", b"", "\u{FFFD}.ts".as_bytes(), [true, true, false, false, false, false]),
+            // A Go slice that cuts a rune.
+            ("é".as_bytes(), b"\xc3", b"", [true, true, true, true, true, true]),
+            ("é".as_bytes(), b"", b"\xa9", [true, true, true, true, true, true]),
+            (b"ab", b"ab", b"b", [true, true, true, true, false, false]),
+            ("İ".as_bytes(), b"i", b"", [false, false, true, true, false, false]),
+            ("ı".as_bytes(), b"I", b"", [false, false, true, true, false, false]),
+            ("ϑ".as_bytes(), "θ".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("ǅ".as_bytes(), "ǆ".as_bytes(), b"", [false, true, true, true, false, true]),
+            ("Σ".as_bytes(), "ς".as_bytes(), b"", [false, true, true, true, false, true]),
+        ];
+        for (s, p, x, want) in cases {
+            let (s, p, x) = (port(s), port(p), port(x));
+            let got = [
+                has_prefix(&s, &p, true),
+                has_prefix(&s, &p, false),
+                has_suffix(&s, &x, true),
+                has_suffix(&s, &x, false),
+                has_prefix_and_suffix_without_overlap(&s, &p, &x, true),
+                has_prefix_and_suffix_without_overlap(&s, &p, &x, false),
+            ];
+            assert_eq!(&got, want, "{s:?} {p:?} {x:?}");
+        }
+    }
 }

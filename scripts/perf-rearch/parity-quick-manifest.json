@@ -58,6 +58,9 @@
   "json-module",
   "layer-emit-disk",
   "layer-emit-mixed-dirs-insensitive",
+  "ms-exports-fold-insensitive",
+  "ms-imports-fold-insensitive",
+  "ms-paths-fold-insensitive",
   "update-mixed-dirs-insensitive",
   "update-reconfigure-emit"
  ],
