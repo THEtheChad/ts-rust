@@ -313,9 +313,13 @@ def run_measured(argv, cwd, timeout, env_extra=None):
     }
 
 
-def gated_run(rec, desc, fn, ungated=False):
-    """Load gate + repeat rule around fn() -> result dict with wall and cpu."""
+def gated_run(rec, desc, fn, ungated=False, setup=None):
+    """Load gate + repeat rule around fn() -> result dict with wall and cpu. setup() (the scenario's untimed
+    preparation, already done once by the caller) runs again before each repeat, so a repeated cold build or
+    incr-edit is cold or edited again rather than a no-op (C2 close-out: repeats of build-cold were warm)."""
     for attempt in range(3):
+        if attempt and setup:
+            setup()
         before = load1() if ungated else wait_quiet(rec.log)
         r = fn()
         after = load1()
@@ -629,7 +633,8 @@ def run_cell(rec, name, variant, bins, argv_fn, pre, cwd, args, scratch, proj, r
             a, c = prep(lab, b)
             env = label_env(args, lab, variant)
             r = gated_run(rec, f"{variant} {name} {lab} run{i + 1}",
-                          lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"))
+                          lambda: run_measured(a, c, args.timeout, env), ungated=variant.startswith("icount"),
+                          setup=lambda: prep(lab, b))
             if variant.startswith("emit") or variant.startswith("icount-emit"):
                 r["emit_hash"] = tree_hash(scratch / f"{variant}-{name}-{lab}")
             if variant == "incr-edit":
