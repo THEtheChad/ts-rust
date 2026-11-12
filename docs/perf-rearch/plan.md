@@ -2276,3 +2276,12 @@ once a **reconciliation step** is built and tested.
   - **Gate:** `runs/b8-1d01f5998-full` PARITY OK, 0 lost; icount flat. API
     emit is now serial per file where Go is parallel; no timing cell covers
     it.
+- **B8 review: REJECT** (`reviews/2026-11-11-astra-b8.md`). Both fixes are
+  confirmed faithful.
+  - **Two gaps that predate B8:**
+    - API builds with a callback FS still use the disk (TS2835 against
+      TS2834);
+    - the incremental d.ts timestamp restore bypasses the host's
+      `GetMTime`/`SetMTime`.
+  - **Round 2:** a callback-FS mode for the api harness, then a worker→owner
+    query channel and the host metadata in the flush.
