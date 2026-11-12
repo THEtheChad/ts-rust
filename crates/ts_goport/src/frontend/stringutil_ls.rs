@@ -3,9 +3,10 @@
 //!
 //! PORT: Go strings can hold invalid UTF-8; Rust `&str` cannot. Go decodes
 //! runes with `utf8.DecodeRuneInString`, which gives U+FFFD for an invalid
-//! byte. Over a `&str` that case only happens where Go slices bytes inside a
-//! rune (`HasPrefix`, `HasSuffix`), so those compare byte slices with
-//! `equal_fold` below.
+//! byte. `HasPrefix`, `HasSuffix` and `HasPrefixAndSuffixWithoutOverlap`
+//! slice and compare the Go bytes of the port forms (`go_string_bytes`, see
+//! `scanner_util::GO_STRING_MARKER`) with `equal_fold` below, as Go does.
+//! They are the one port: modulespecifiers re-exports them.
 
 use crate::frontend::prelude::*;
 
@@ -87,26 +88,46 @@ pub fn get_string_comparer(ignore_case: bool) -> fn(&str, &str) -> Comparison {
 
 // Go: stringutil/compare.go:74 HasPrefix
 pub fn has_prefix(s: &str, prefix: &str, case_sensitive: bool) -> bool {
+    has_prefix_bytes(
+        &go_string_bytes(s),
+        &go_string_bytes(prefix),
+        case_sensitive,
+    )
+}
+
+/// `has_prefix` on Go bytes.
+// PORT: Go `s[0:len(prefix)]` can end inside a rune; `equal_fold` decodes
+// the cut bytes as Go does.
+fn has_prefix_bytes(s: &[u8], prefix: &[u8], case_sensitive: bool) -> bool {
     if case_sensitive {
         return s.starts_with(prefix);
     }
     if prefix.len() > s.len() {
         return false;
     }
-    // PORT: Go `s[0:len(prefix)]` can end inside a rune; compare bytes.
-    equal_fold(&s.as_bytes()[0..prefix.len()], prefix.as_bytes())
+    equal_fold(&s[0..prefix.len()], prefix)
 }
 
 // Go: stringutil/compare.go:84 HasSuffix
 pub fn has_suffix(s: &str, suffix: &str, case_sensitive: bool) -> bool {
+    has_suffix_bytes(
+        &go_string_bytes(s),
+        &go_string_bytes(suffix),
+        case_sensitive,
+    )
+}
+
+/// `has_suffix` on Go bytes.
+// PORT: Go `s[len(s)-len(suffix):]` can start inside a rune; see
+// `has_prefix_bytes`.
+fn has_suffix_bytes(s: &[u8], suffix: &[u8], case_sensitive: bool) -> bool {
     if case_sensitive {
         return s.ends_with(suffix);
     }
     if suffix.len() > s.len() {
         return false;
     }
-    // PORT: Go `s[len(s)-len(suffix):]` can start inside a rune; compare bytes.
-    equal_fold(&s.as_bytes()[s.len() - suffix.len()..], suffix.as_bytes())
+    equal_fold(&s[s.len() - suffix.len()..], suffix)
 }
 
 // Go: stringutil/compare.go:94 HasPrefixAndSuffixWithoutOverlap
@@ -116,11 +137,16 @@ pub fn has_prefix_and_suffix_without_overlap(
     suffix: &str,
     case_sensitive: bool,
 ) -> bool {
+    let (s, prefix, suffix) = (
+        go_string_bytes(s),
+        go_string_bytes(prefix),
+        go_string_bytes(suffix),
+    );
     if prefix.len() + suffix.len() > s.len() {
         return false;
     }
 
-    has_prefix(s, prefix, case_sensitive) && has_suffix(s, suffix, case_sensitive)
+    has_prefix_bytes(&s, &prefix, case_sensitive) && has_suffix_bytes(&s, &suffix, case_sensitive)
 }
 
 // Go: stringutil/compare.go:102 CompareStringsCaseInsensitiveThenSensitive

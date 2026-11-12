@@ -14,6 +14,7 @@ use crate::frontend::prelude::*;
 
 use crate::core::if_else;
 use crate::flags_macros::go_enum;
+use crate::frontend::stringutil_ls::has_prefix_and_suffix_without_overlap;
 
 /// Go `(*resolved).isResolved` on a possibly nil `*resolved`.
 fn is_resolved(resolved: &Option<Resolved>) -> bool {
@@ -476,9 +477,8 @@ impl ResolutionState<'_> {
     }
 
     // Go: module/resolver.go:2632 getMatchedStarForPatternEntrypoint
-    // PORT: Go slices bytes; a case-insensitive match can end inside a
-    // character, so the bytes are copied (`from_utf8_lossy`) instead of
-    // slicing the `&str`.
+    // PORT: Go slices the Go bytes; a case-insensitive match can end inside
+    // a character (`go_slice`, see `scanner_util::GO_STRING_MARKER`).
     pub fn get_matched_star_for_pattern_entrypoint(
         &self,
         file: &str,
@@ -486,38 +486,28 @@ impl ResolutionState<'_> {
         trailing_slice: &str,
         case_sensitive: bool,
     ) -> (String, bool) {
-        if crate::frontend::stringutil_ls::has_prefix_and_suffix_without_overlap(
+        let star = |s: &str| {
+            go_slice(s, go_len(leading_slice), go_len(s) - go_len(trailing_slice)).into_owned()
+        };
+        if has_prefix_and_suffix_without_overlap(
             file,
             leading_slice,
             trailing_slice,
             case_sensitive,
         ) {
-            return (
-                String::from_utf8_lossy(
-                    &file.as_bytes()[leading_slice.len()..file.len() - trailing_slice.len()],
-                )
-                .into_owned(),
-                true,
-            );
+            return (star(file), true);
         }
 
         let js_extension = try_get_js_extension_for_file(file, &self.compiler_options);
         if !js_extension.is_empty() {
             let swapped = crate::frontend::tspath::change_full_extension(file, js_extension);
-            if crate::frontend::stringutil_ls::has_prefix_and_suffix_without_overlap(
+            if has_prefix_and_suffix_without_overlap(
                 &swapped,
                 leading_slice,
                 trailing_slice,
                 case_sensitive,
             ) {
-                return (
-                    String::from_utf8_lossy(
-                        &swapped.as_bytes()
-                            [leading_slice.len()..swapped.len() - trailing_slice.len()],
-                    )
-                    .into_owned(),
-                    true,
-                );
+                return (star(&swapped), true);
             }
         }
 

@@ -2,9 +2,8 @@
 //! `internal/stringutil` that modulespecifiers uses.
 //!
 //! The `module` and `core` functions are the frontend ports, re-exported.
-//! `index_after` has no other port. `has_prefix`, `has_suffix` and
-//! `has_prefix_and_suffix_without_overlap` differ from the frontend's
-//! (`frontend::stringutil_ls`): see the PORT note on `has_prefix`.
+//! `index_after` has no other port. The `stringutil` functions are the
+//! frontend's (`frontend::stringutil_ls`), re-exported.
 
 use crate::prelude::*;
 
@@ -12,6 +11,9 @@ pub use crate::frontend::module::{
     Pattern, get_conditions, get_package_name_from_types_package_name,
     is_applicable_versioned_types_key, match_pattern_or_exact, try_get_js_extension_for_file,
     try_parse_patterns,
+};
+pub use crate::frontend::stringutil_ls::{
+    has_prefix, has_prefix_and_suffix_without_overlap, has_suffix,
 };
 pub use crate::scanner_util::compare_booleans;
 
@@ -21,52 +23,4 @@ pub fn index_after(s: &str, pattern: &str, start_index: usize) -> isize {
         None => -1,
         Some(matched) => (matched + start_index) as isize,
     }
-}
-
-// Go: stringutil/compare.go:74 HasPrefix
-// PORT: compares the Go bytes of the port forms (see
-// `scanner_util::GO_STRING_MARKER`).
-// PORT: the frontend port (`frontend::stringutil_ls::has_prefix`) differs:
-// it compares the port forms' own bytes, and folds case with Go
-// `strings.EqualFold` (Unicode), where this one folds ASCII only. Go is
-// Go bytes and `EqualFold`; the two differ only for case-insensitive names
-// that differ by a non-ASCII case or hold a lone surrogate (lane F5,
-// `docs/perf-rearch/cleanup/f5.md`).
-pub fn has_prefix(s: &str, prefix: &str, case_sensitive: bool) -> bool {
-    let (s, prefix) = (go_string_bytes(s), go_string_bytes(prefix));
-    if case_sensitive {
-        return s.starts_with(&prefix);
-    }
-    if prefix.len() > s.len() {
-        return false;
-    }
-    s[..prefix.len()].eq_ignore_ascii_case(&prefix)
-}
-
-// Go: stringutil/compare.go:84 HasSuffix
-// PORT: see `has_prefix`.
-pub fn has_suffix(s: &str, suffix: &str, case_sensitive: bool) -> bool {
-    let (s, suffix) = (go_string_bytes(s), go_string_bytes(suffix));
-    if case_sensitive {
-        return s.ends_with(&suffix);
-    }
-    if suffix.len() > s.len() {
-        return false;
-    }
-    s[s.len() - suffix.len()..].eq_ignore_ascii_case(&suffix)
-}
-// PORT: Go uses strings.EqualFold (Unicode simple folding). This compares
-// ASCII case only, which matches for the ASCII paths in practice.
-
-// Go: stringutil/compare.go:94 HasPrefixAndSuffixWithoutOverlap
-pub fn has_prefix_and_suffix_without_overlap(
-    s: &str,
-    prefix: &str,
-    suffix: &str,
-    case_sensitive: bool,
-) -> bool {
-    if go_len(prefix) + go_len(suffix) > go_len(s) {
-        return false;
-    }
-    has_prefix(s, prefix, case_sensitive) && has_suffix(s, suffix, case_sensitive)
 }
