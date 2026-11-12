@@ -2260,3 +2260,19 @@ once a **reconciliation step** is built and tested.
 
   Round 3 sent, the last. It also trims the battery per Astra's redundancy
   list and moves prefs to the full tier only.
+- **B8 done; Astra review running.** The `WORKER_FS` suspect was real.
+  - **API emit over a virtual FS:** module specifiers, TS2835 and
+    package.json lookups read the OS disk. 3 api items DIFF before and
+    MATCH after, plus a control. **The fix:** the API emit runs on the
+    program's own checkers on the dispatch thread, as Go's `Program.Emit`
+    does.
+  - **`tsc -w`:** a file only a checker probe looked for wasn't seen, so
+    creating it started no rebuild. **The fix:** the full-build program
+    records worker misses as seen files. Test
+    `tsctests::watch_checker_file_probes`.
+  - **The LSP is unaffected:** it checks on the dispatch thread.
+  - **Known gaps:** search threads (no answer changes); the API build
+    orchestrator with a callback FS, which is untested.
+  - **Gate:** `runs/b8-1d01f5998-full` PARITY OK, 0 lost; icount flat. API
+    emit is now serial per file where Go is parallel; no timing cell covers
+    it.
