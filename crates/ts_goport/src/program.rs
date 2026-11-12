@@ -31,6 +31,7 @@ mod go_frontend;
 pub(crate) use go_frontend::cached_lazy_js_doc;
 #[cfg(feature = "diagnostics")]
 pub mod checker_call_log_diag;
+mod host_queries;
 pub mod ls_program;
 #[cfg(feature = "diagnostics")]
 pub mod reuse_verify;
@@ -525,6 +526,7 @@ impl CheckerPool {
             .filter_map(|worker| {
                 let (sender, receiver) = std::sync::mpsc::channel();
                 let base = base.clone();
+                let waker = host_queries::waker();
                 worker
                     .send(Box::new(move || {
                         let ids = worker_symbol_ids(&base);
@@ -532,6 +534,7 @@ impl CheckerPool {
                         // lineage ids back (`ast::carry_symbol_ids`).
                         drop(base);
                         let _ = sender.send(ids);
+                        drop(waker);
                     }))
                     .ok()?;
                 Some(receiver)
@@ -539,7 +542,7 @@ impl CheckerPool {
             .collect();
         receivers
             .into_iter()
-            .filter_map(|receiver| receiver.recv().ok())
+            .filter_map(|receiver| host_queries::recv_serving(&receiver).ok())
             .collect()
     }
 
@@ -718,7 +721,7 @@ impl<R> EmitPoolJob<R> {
     /// Waits for the job. `Err` holds the payload of its panic.
     pub fn join(self) -> std::thread::Result<R> {
         #[cfg(not(target_family = "wasm"))]
-        return self.0.recv().expect("emit thread stopped");
+        return host_queries::recv_serving(&self.0).expect("emit thread stopped");
         #[cfg(target_family = "wasm")]
         Ok(self.0.0)
     }
@@ -857,10 +860,12 @@ pub fn send_emit_pool_jobs<R: Send + 'static>(
             .map(|f| {
                 let (sender, receiver) = std::sync::mpsc::channel();
                 let token = Arc::clone(&emit.token);
+                let waker = host_queries::waker();
                 let job: Job = Box::new(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
                     let _ = sender.send(result);
                     drop(token);
+                    drop(waker);
                 });
                 emit.queue.send(job).expect("emit thread stopped");
                 EmitPoolJob(receiver)
@@ -956,7 +961,7 @@ pub struct JobReceiver<R>(R);
 /// Waits for the result of a job (native), or takes it (wasm).
 fn job_result<R>(receiver: JobReceiver<R>) -> JobResult<R> {
     #[cfg(not(target_family = "wasm"))]
-    return receiver.recv().expect("checker thread stopped");
+    return host_queries::recv_serving(&receiver).expect("checker thread stopped");
     #[cfg(target_family = "wasm")]
     Ok(receiver.0)
 }
@@ -1024,6 +1029,10 @@ pub(crate) struct VersionTables {
     /// `trackingvfs.FS`, the host of a `tsc --watch` full build,
     /// execute/watcher.go:480). Set by `track_worker_file_probes`.
     worker_seen_files: OnceLock<Mutex<FxHashSet<String>>>,
+    /// The channel to the loading thread for the questions of worker
+    /// threads to the program's host file system, when that file system
+    /// reads through client calls (`serve_worker_host_queries`).
+    host_queries: OnceLock<host_queries::HostQueries>,
     /// The entries of the resolver's package.json cache that module
     /// specifier generation reads and fills on any thread
     /// (`with_host_fs_cache`). Only its package.json part is used. A version
@@ -1092,6 +1101,7 @@ impl VersionTables {
             declaration_diagnostic_cache: Mutex::new(FxHashMap::default()),
             host_fs_cache: Default::default(),
             worker_seen_files: OnceLock::new(),
+            host_queries: OnceLock::new(),
             package_json_cache: Arc::default(),
             go: None,
             file_versions: Vec::new(),
@@ -3255,6 +3265,50 @@ pub(crate) fn track_worker_file_probes(program: &'static GoProgram) {
     assert!(tracked.is_ok(), "worker file probes are already tracked");
 }
 
+/// Makes the worker threads of `program` ask its host file system through
+/// this thread (`host_queries`), for a program whose host file system reads
+/// through client calls (`System::client_reads`: the API build over
+/// `--callbacks`). Go's checkers ask the program host
+/// (compiler/program.go:146 `FileExists`, :169 and :178 the package.json
+/// lookups), which here only this thread can reach. Call it on the loading
+/// thread before any check of `program`.
+pub(crate) fn serve_worker_host_queries(program: &'static GoProgram) {
+    let tables = held_tables(program);
+    let served = tables
+        .host_queries
+        .set(host_queries::HostQueries::new(program));
+    assert!(served.is_ok(), "the host queries of the program are served");
+}
+
+/// The answer of the current program's host file system to `f`, asked on
+/// its loading thread, from a worker thread of a program that
+/// `serve_worker_host_queries` made. None when the program has no channel
+/// (its host is the OS file system, which the worker asks itself), or when
+/// its loading thread released it.
+pub(crate) fn ask_host<R: Send + 'static>(
+    f: impl FnOnce(&Rc<crate::frontend::compiler::NewProgram>) -> R + Send + 'static,
+) -> Option<R> {
+    with_tables(|tables| tables.host_queries.get().and_then(|queries| queries.ask(f)))
+}
+
+/// The frontend program of `program` when this thread loaded it and has
+/// not released it.
+fn frontend_of_this_thread(
+    program: &'static GoProgram,
+) -> Option<Rc<crate::frontend::compiler::NewProgram>> {
+    FRONTENDS.with(|frontends| frontends.borrow().get(&program.id).cloned())
+}
+
+/// `receiver.recv()` on the loading thread of a program whose workers ask
+/// its host (`serve_worker_host_queries`): it answers them while it waits.
+/// A plain `recv` on any other thread. Every wait of a loading thread for
+/// its workers goes through it.
+pub(crate) fn recv_serving<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+) -> Result<T, std::sync::mpsc::RecvError> {
+    host_queries::recv_serving(receiver)
+}
+
 /// Calls `f` with each path that the worker threads of the current program
 /// asked its host file system about since `track_worker_file_probes`, in no
 /// order (Go `trackingvfs.FS.SeenFiles`). Nothing when not tracked.
@@ -3575,6 +3629,8 @@ fn release_program_with(
         "program {} is released while it is current",
         program.id
     );
+    // A worker that asks the host from now on answers itself.
+    host_queries::close(program.id);
     // The stop of a pool that carries hands on the ids of every checker.
     #[cfg(target_family = "wasm")]
     make_unmade_checkers(program.id);
@@ -4648,7 +4704,8 @@ pub fn send_checker_barrier<T: Send + 'static>(signal: impl Fn() -> T) -> usize 
             return 0;
         };
         for worker in &pool.workers {
-            let value = signal();
+            // The waker drops after the value (`host_queries`).
+            let value = (signal(), host_queries::waker());
             worker
                 .send(Box::new(move || drop_after_dts_twin(value)))
                 .expect("checker thread stopped");
@@ -4661,7 +4718,7 @@ pub fn send_checker_barrier<T: Send + 'static>(signal: impl Fn() -> T) -> usize 
             .0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(Box::new(signal()));
+            .push(Box::new((signal(), host_queries::waker())));
         pool.workers.len() + 1
     })
 }
@@ -4728,7 +4785,9 @@ fn send_thread_job<R: Send + 'static>(
     with_pool(|pool| {
         let pending = Arc::clone(&pool.pending);
         pending.fetch_add(1, Ordering::Relaxed);
+        let waker = host_queries::waker();
         let job: Job = Box::new(move || {
+            let _waker = waker;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
             #[cfg(feature = "diagnostics")]
             checker_call_log_diag::checker_call_log_event_here(|| "job".to_string());

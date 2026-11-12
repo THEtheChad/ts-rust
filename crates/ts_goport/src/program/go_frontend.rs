@@ -163,10 +163,11 @@ thread_local! {
     /// dead file version go, and so do its JSDoc nodes (a file scope,
     /// `resolve_lazy_js_doc`).
     static LAZY_JSDOC: RefCell<PerFileMap<&'static [Node]>> = const { RefCell::new(PerFileMap::new()) };
-    /// The file system of a checker worker thread (Go `host.FS()` without
-    /// the cache; the program's `HostFsCache` caches its answers): the OS
-    /// file system, the host of every program that checks on worker threads
-    /// (see `file_exists`).
+    /// The file system of a worker thread (Go `host.FS()` without the
+    /// cache; the program's `HostFsCache` caches its answers): the OS file
+    /// system. It is the host of the programs that check on worker threads,
+    /// except one whose host reads through client calls: its workers ask
+    /// the loading thread (`host_queries`; see `file_exists`).
     static WORKER_FS: Rc<dyn Fs> = bundled::wrap_fs(osvfs_fs());
 }
 
@@ -794,16 +795,16 @@ pub(crate) fn cached_lazy_js_doc(node: Node) -> Option<&'static [Node]> {
 // generation probes the same paths for many types (`tryGetAnyFileFromPath`):
 // realworld3 lexical made 8.6M uncached stat calls, Go 8,768.
 // The worker's copy is the OS file system, which is the host file system of
-// the programs that run checker workers: those of `tsc`, `tsc -b` and
-// `tsc -w` (with a tracking host in a watch full build: `worker_seen_files`).
-// A language service program (the language server, the API) checks and
-// emits on its loading thread (`ls_program`), so its probes ask its own
-// host, the snapshot's file system. Two worker threads still ask the OS for
-// a host that is not the OS: a language server search thread
-// (`ls/search_thread.rs`; references, implementations and rename make no
-// module specifier, and its checker's diagnostics are not reported), and a
-// check of the API build orchestrator over a client callback file system
-// (`api/callbackfs.rs`), where Go asks the client (not covered by a test).
+// `tsc`, `tsc -b` and `tsc -w` (with a tracking host in a watch full build:
+// `worker_seen_files`), and of the API build without client reads. When
+// the host reads through client calls (the API build over `--callbacks`),
+// a miss goes to the loading thread instead (`host_queries`), which asks
+// the host. A language service program (the language server, the API)
+// checks and emits on its loading thread (`ls_program`), so its probes ask
+// its own host, the snapshot's file system. A language server search
+// thread (`ls/search_thread.rs`) still asks the OS: the references,
+// implementations and rename that run there make no module specifier
+// today, and its checker's diagnostics are not reported.
 pub(super) fn file_exists(path: &str) -> bool {
     let id = prog().id;
     if let Some(go) = FRONTENDS.with(|frontends| frontends.borrow().get(&id).cloned()) {
@@ -815,6 +816,12 @@ pub(super) fn file_exists(path: &str) -> bool {
                 seen.lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .insert(path.to_string());
+            }
+            if let Some(queries) = tables.host_queries.get() {
+                let asked = path.to_string();
+                if let Some(exists) = queries.ask(move |frontend| frontend.file_exists(&asked)) {
+                    return exists;
+                }
             }
             WORKER_FS.with(|fs| fs.file_exists(path))
         })
