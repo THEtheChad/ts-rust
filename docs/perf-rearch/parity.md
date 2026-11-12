@@ -353,7 +353,7 @@ in order (seen on a low-load run). Go runs 4 times when a scenario's cache entry
 | `watch-narrow-umami-f12` | full | `watch` on umami with the workspace folder at `umami/src` |
 | `second-project-query` | full | query: `query-core` loads (diagnostics, hover, completion), then a `react-query` file opens: a second tsconfig project's first load with the session's caches warm (diagnostics, hover, definition into query-core, references, completion), then auto-import completion and resolves in it |
 | `ata-overlay` | quick, full | fixture `ata-small` (JS files in no tsconfig, so an inferred project with type acquisition on) with ATA on against a private typings cache and the stand-in npm (see "ATA in the watch scenarios"): the first load and ATA's registry and typings installs, the refreshes they cause, an overlay (`src/ghost.js`, not on disk) whose import makes ATA install more typings, closing the overlay, and the inferred project's watchers unregistered when the last file closes |
-| `prefs` | quick, full | fixture `prefs-small` (lane B6; `vendor/lspdiff/prefs.mjs`, see "User preferences"): odd preferences in the initialization options, then `workspace/didChangeConfiguration` parse steps, each with a checkpoint (the inlay-hint, code-lens and diagnostic refreshes it causes) and the requests that read the preferences (inlay hints, hovers, auto-import completions and their resolves, an import-statement completion, quick fixes, implement interface, organize imports, formatting, diagnostics, JSX attribute, class member, object literal, optional chain and JSDoc completions, code lens, workspace symbols, rename), then 50 one-preference probes |
+| `prefs` | full | fixture `prefs-small` (lane B6; `vendor/lspdiff/prefs.mjs`, see "User preferences"): odd preferences in the initialization options, then `workspace/didChangeConfiguration` parse steps, each with a checkpoint (the inlay-hint, code-lens and diagnostic refreshes it causes) and the requests that read the preferences (inlay hints, hovers, auto-import completions and their resolves, an import-statement completion, quick fixes, implement interface, organize imports, formatting, diagnostics, JSX attribute, class member, object literal, optional chain and JSDoc completions, code lens, workspace symbols, rename), then 50 one-preference probes |
 
 Go dedupes watchers per glob (`watchRegistry.Acquire`), and inside the workspace it covers the
 project with one `<root>/**/*` glob, plus `bundled:///libs/**/*` and `node_modules/**/*`. With the
@@ -368,14 +368,15 @@ single-worker run differs is `rs-schedule`, even when one of the runs matches Go
 tsc-rs once. `--server-logs` (lspdiff) writes each scenario run's `window/logMessage` stream to
 `<run>.server.log` for diagnosis.
 
-quick runs the same sessions as full, minus hono, watch-umami, watch-narrow-umami, watch-hono and
-second-project, so quick compares directly against a full base.
+quick runs the same sessions as full, minus hono, watch-umami, watch-narrow-umami, watch-hono,
+second-project and prefs (full only since lane B6 round 3: about 2 minutes per server run), so quick
+compares directly against a full base.
 
 **Referees.** An answer after a Go crash or timeout, or where Go's runs differ, is GO-BROKEN, and
 a DIFF of a refereed kind can be JS-AGREES, decided by JS tsserver 6.0.3. See "JS tsserver as the
 LSP referee".
 
-### User preferences (lane B6, 2026-11-11; round 2)
+### User preferences (lane B6, 2026-11-11; rounds 2 and 3)
 
 The `prefs` session pins how a server parses its preferences and what they change. Go at the pin uses
 generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-rs ported in
@@ -384,18 +385,26 @@ generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-r
   section) hold a key in its flat, `unstable` and nested forms. They also hold wrong types
   (`"includeInlayParameterNameHints": 1`, an array for `importModuleSpecifierPreference`, a string for a
   boolean), `"quotePreference": "bogus"`, an unknown key, null on a path and an int beyond 32 bits.
-  The `didChangeConfiguration` steps then cover, each with a checkpoint and the whole battery:
+  The whole battery runs once after them (the only run of range and on-type formatting: a smoke check
+  each). The `didChangeConfiguration` steps then cover, each with a checkpoint and the requests that read
+  what it changes (round 3 trimmed the rest):
   - the precedence of `javascript` < `typescript` < `js/ts`, and of flat < `unstable` < nested in one section;
   - null on raw names, nested paths, fallback paths and whole sections;
   - wrong types, and sections that are not objects;
   - a negative `baseIndentSize`, in a step of its own (Go's formatter panics: `strings: negative Repeat
     count`, an InternalError answer), so the formatter probes of the other steps answer;
+  - a `baseIndentSize` of 2^62, then a hover. Go's `strings.Repeat` grows a builder past the runtime's
+    `maxAlloc` (1 << 48 on amd64), and `bytealg.MakeNoZero` panics: `runtime error: makeslice: len out
+    of range`. Go's LSP recovers it and answers the hover. tsc-rs ports those checks in
+    `gostd::strings` (round 3); before that, it aborted;
   - unknown enum strings, unknown keys and sections, then the off switches;
   - ints beyond 32 and 64 bits: `maximumHoverLength` 1e19 (Go converts it to the minimum int) and
     1844674407370955264 over a 1,100-character literal (Go's cutoff `max * 10` wraps to 1024);
     `tabSize` 4294967296 with tabs (0 tabs and 4 spaces at column 4) and −4294967292 (Go panics), through
     implement interface;
-  - `locale` and `customConfigFileName`, the `editor` section, settings that are not an object, null settings.
+  - `locale` and `customConfigFileName`, the `editor` section, settings that are not an object, null settings;
+  - Go's stale specifier cache, explicitly: warm it with one ending, change the ending alone (Go answers
+    from the cache), then change the exclude regexes too (Go clears the cache).
 - **Probes (round 2).** 50 preferences, one at a time: every value of each (enums: each value, every other
   one upper-cased; booleans: true and false), each followed by the requests that read it (`PROBES` in
   `prefs.mjs`). A probe's steps wait for quiet, with one checkpoint at its end. `validate.enabled` and
@@ -411,7 +420,8 @@ generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-r
 
   Go's auto-import registry keeps its module specifiers until the exclude regexes change
   (`registry.go`), so the quote and specifier probes send a new regex that excludes nothing with every
-  value. `scripts/perf-rearch/prefs_sensitivity.py <go log>` checks a Go log: every value of a probe must
+  value. `scripts/perf-rearch/prefs_sensitivity.py <go log>` (self-test: `prefs_sensitivity_test.py`)
+  checks a Go log, with completion items (`result.items`) sorted: every value of a probe must
   answer differently from every other value. The exception is a group the probe declares alike with Go's
   reason (`caseFirst` `default` = `lower`: Go's default case is lower-first). It prints `SENSITIVITY OK`
   or `SENSITIVITY FAIL`.
@@ -423,8 +433,10 @@ generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-r
   `userPreferences` object, so `runPrefsScenario` swaps that object's contents for the length of the
   run. Two cases can't be sent this way: options that are not an object, and a `workspace/configuration`
   answer (`client.mjs` answers every server request with null). Both need the shared sources.
-- **Cost.** About 117 s per server run (900 answers), so the session adds to the lsp tier: about 6 minutes
-  in full (3 tsc-rs runs, beside the other sessions) and 2 in quick.
+- **Cost.** The session is in the full tier only (round 3). It takes about 123 s per server run after
+  round 3's trim, and 117 s before it. The answers fell from 902 to 635, but the 50 probes' waits are
+  most of the time. In full, the lsp tier took 573 s with the round-2 session; round 3's figure is under
+  "Results".
 - **Results.**
   - Round 1, base `d155ce0d5`: 1 DIFF, the init hover. `maximumHoverLength` 4294967306 wrapped in an
     `i32` to 10.
@@ -437,6 +449,14 @@ generated code (`ls/lsutil/userpreferences_generated.go`, ts#64554), which tsc-r
       whose `* 10` wrapped), and both wide tab sizes (an `i32` wrapped 4294967296 to 0 and
       −4294967292 to 4).
     - Round 2 head: 902 MATCH (`runs/b6r2-prefs-r2-head`, 3 tsc-rs runs).
+  - Round 3 (Go fill `go-cache/<go>/lsp/prefs-7a3740b6f96591494b57e0f3`, sources `93deaebb42b6`; all
+    4 Go logs `SENSITIVITY OK`, all 50 probes): 635 answers.
+    - Round 2 `6fb96eb1e` (`runs/b6r3-prefs-r2-6fb96eb1e`): 93 MATCH and 545 DIFF. tsc-rs aborted
+      (SIGABRT, exit 134) on the formatting request of the 2^62 base indent, and every later answer is
+      missing.
+    - Round 3 (`runs/b6r3-prefs-r3-7fb45b35f`): 635 MATCH.
+    - The full gate `runs/b6r3-9b105c845-full` (`checkoutHead` `9b105c845`): lsp tier 584 s (573 s in
+      round 2's gate). The prefs session took 373 s for its 3 tsc-rs runs and still bounds the tier.
 
 ### fuzz: fixed-seed difffuzz batch (`parity_fuzz.py`, `vendor/difffuzz`)
 
