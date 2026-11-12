@@ -289,7 +289,9 @@ impl compiler::CompilerHost for CompilerHost {
         self.source_fs.without_tracking(f);
     }
 
-    // Go: project/compilerhost.go:86 compilerHost.GetCurrentDirectory (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `compilerHost.GetCurrentDirectory` (project/compilerhost.go at
+    // 673a5f17d713); the port's `CompilerHost` trait keeps the method.
     // GetCurrentDirectory implements compiler.CompilerHost.
     fn get_current_directory(&self) -> String {
         self.current_directory.clone()

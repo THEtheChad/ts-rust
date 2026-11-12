@@ -25,7 +25,7 @@ pub fn new_base_reader(r: Box<dyn BufRead + Send>) -> BaseReader {
 }
 
 impl BaseReader {
-    // Go: promoted jsonrpc.Reader.Read
+    // PORT: Go promotes `Read` from the embedded `*jsonrpc.Reader`.
     pub fn read(&mut self) -> Result<Vec<u8>, GoError> {
         self.reader.read()
     }
@@ -46,7 +46,7 @@ pub fn new_base_writer(w: Box<dyn Write + Send>) -> BaseWriter {
 }
 
 impl BaseWriter {
-    // Go: promoted jsonrpc.Writer.Write
+    // PORT: Go promotes `Write` from the embedded `*jsonrpc.Writer`.
     pub fn write(&mut self, data: &[u8]) -> Result<(), GoError> {
         self.writer.write(data)
     }

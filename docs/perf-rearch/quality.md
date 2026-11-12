@@ -417,6 +417,15 @@ planning page (`docs/perf-rearch/cleanup/q0-ranking.md` is the one for
   and the toolchain with `PERF_QUALITY_GO` (default `~/.local/go/bin/go`).
   gocog is built with `GOTOOLCHAIN=local GOPROXY=off`, so nothing is
   downloaded.
+- **Go outside the pin** (lane F6): ports of Go's standard library and of
+  x/text are scored against that Go, at the versions the pin's `go.mod`
+  names (see "Go outside the pin" under Mapping):
+  - GOROOT's `src`, go1.27.1 (`PERF_QUALITY_GOROOT_SRC`, default
+    `~/.local/go/src`; `cmd/`, `vendor/` and `testdata/` skipped);
+  - golang.org/x/text v0.42.0 (`PERF_QUALITY_XTEXT`, default
+    `~/go/pkg/mod/golang.org/x/text@v0.42.0`).
+
+  A tree that is not on disk is skipped, and the summary says so.
 
 ### Metric definitions
 
@@ -465,6 +474,39 @@ on the Go AST.
   - Rust cog equals Go cog in 76%, and is within 2 in 90%;
   - Σ Rust is 66,451 against Σ Go 65,356;
   - the median difference is 0 at Go cog ≥ 10 and ≥ 25, and 1 at ≥ 50.
+
+### Tagless-switch residue (lane F6)
+
+Go writes a chain of conditions as a `switch` with no tag; a Rust port
+often writes it as an if / else-if / else chain. Under rca's rules (and
+gocog's, which mirror them) the two differ by a fixed amount:
+
+- the `switch` and the chain's first `if` both cost +1 + nesting;
+- each `else` (else-if included) costs +1 flat; Go's case labels cost 0;
+- the conditions and the bodies score alike on both sides (neither an
+  else-if nor a case label resets the boolean sequence or adds nesting).
+
+**Definition.** The residue of a Go function is, over its `switch`
+statements with no tag expression (`switch {`, and `switch x := f(); {`),
+its function literals included, the sum of (number of clauses − 1), with
+`default` counted as a clause. A switch of 3 cases and a default has
+residue 3: the chain is `if … else if … else if … else`.
+
+- gocog reports it per function and per named closure (`residue`).
+- A port row carries the residue of its Go side (`residue`), and
+  `diff_less_residue` = Δ − min(residue, max(Δ, 0)): what is left of a
+  positive Δ once the chains are paid for. It never raises a Δ, and a
+  negative Δ stays as it is.
+- **It is a column, not a correction.** Targets stay on the raw Δ ≥ 10, as
+  root decided after W3; the column shows which part of a row is the accepted
+  chain shape (`w2-brief.md`) and which is real bloat.
+- **What it does not know:** whether the Rust port actually wrote a chain.
+  A `match` with guards, or a run of separate `if … return`s, costs what it
+  costs; the column assumes the chain (W3 found separate `if`s score the
+  same as the chain).
+- **Check:** `gorel_test.py` scores a Go function with two tagless switches
+  (one in a closure) and a tagged one, and its Rust port with else-if chains
+  and a `match`; rca's figure less gocog's must equal gocog's residue (4).
 
 ### Closures and the fairness rule
 
@@ -566,9 +608,32 @@ that succeeds:
      `frontend/vfs/loadview/`, `load_view_scope/`). The same holds in files
      where most markers name Go outside the pin (`locale.rs` ports x/text).
 
-Everything left is **own code**. That includes ports of Go outside the pin:
-Go's standard library in `gostd/`, x/text in `locale.rs`, and Effect's Go
-plugin. Their markers name that code; the own-code table shows the marker.
+- **Fields, vars and consts** (lane F6): gocog also lists the named fields
+  of package-level struct types and the names of package-level `var` and
+  `const` declarations (`kind`). A marker can name one
+  (`// Go: ast/ast_generated.go:160 FullSignature`,
+  `// Go: ls/codeactions.go:71 codeFixProviders`); the marker's line picks
+  the struct when several have the field. A function of the same name wins
+  over a field, var or const. The name matcher does not use them.
+  - Figures: a field scores 0. A var or const scores its value: a function
+    literal like a function (its body at nesting 0), anything else walked
+    at nesting 0.
+- **Go outside the pin** (`ext`, lane F6): a marker that names nothing at
+  the pin is looked up in GOROOT `src` and x/text, whose packages gorel
+  names `std/<path>` and `x/text/<path>`.
+  - The marker's path is used as written: `internal/language/parse.go` is
+    x/text's internal package, not `language/parse.go`.
+  - A marker with no path counts only with a qualifier the hit agrees
+    with (`time.daysIn`: package or receiver `time`).
+  - Not in `effect/`: its markers name Effect's Go plugin, which is not on
+    disk. Only markers resolve there; the name matcher stays on the pin.
+  - The rows rank as ported (`tree` `std` or `x/text`). At `dfaa9dd2b` they
+    are 686 rows (462 std, 224 x/text), which include the 23 rows that W3
+    measured by hand as own code over 25; their figures agree with W3's.
+
+Everything left is **own code**: Effect's Go plugin, perf code with no Go
+counterpart, and markers that name nothing in any tree; the own-code table
+shows the marker.
 
 ### Accuracy (at `e658d4d29`)
 
@@ -626,7 +691,14 @@ plugin. Their markers name that code; the own-code table shows the marker.
 - **A port-bloat row** has:
   - Rust `cog`/`cyc`/`sloc` (parts included) and `go_cog`/`go_cyc`/`go_lines`;
   - `diff` = Rust cog − Go cog, and `ratio` = Rust cog / max(1, Go cog);
-  - the Go file and line, `conf`, and `parts` (closure, split or variant).
+  - `residue` and `diff_less_residue` (see "Tagless-switch residue");
+  - `tree`: `pin`, `std` or `x/text`;
+  - the Go file and line, `conf` (`ext` for Go outside the pin), and
+    `parts` (closure, split or variant).
+- **Tables:** the rankings show "Δ less residue" and "residue" beside Δ.
+  The per-area table adds, beside the Δ ≥ 10 targets, how many of them stay
+  ≥ 10 less residue and Σ Δ less residue of the targets; the subarea tables
+  add Σ Δ less residue.
 
   Targets are Δ ≥ 10. The ratio ranking only lists Rust cog > 25, because
   small functions give noisy ratios.

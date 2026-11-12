@@ -108,10 +108,10 @@ pub fn get_wildcard_directories(
     wildcard_directories
 }
 
-// Go: tsoptions/wildcarddirectories.go:85 toCanonicalKey (at 673a5f17d713; removed by ts#64159,
-// which keys by tspath.CaseSensitivity.PathKey)
-// PORT: Go `PathKey` of a rooted path: the canonical file name
-// (`to_path` of a rooted, normal path).
+// PORT: not in Go at the pin. ts#64159 removed `toCanonicalKey`
+// (wildcarddirectories.go at 673a5f17d713); Go N' keys by
+// `tspath.CaseSensitivity.PathKey`. The `PathKey` of a rooted path is the
+// canonical file name (`to_path` of a rooted, normal path).
 fn to_canonical_key(path: &str, use_case_sensitive_file_names: bool) -> String {
     to_path(path, "", use_case_sensitive_file_names).0
 }

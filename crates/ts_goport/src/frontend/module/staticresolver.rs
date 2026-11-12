@@ -249,13 +249,17 @@ impl Resolver for StaticResolver {
         self.fallback.get_resolution_data()
     }
 
-    // Go: module/staticresolver.go:140 GetPackageScopeForPath (at 673a5f17d713; removed by ts#64519)
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `(*StaticResolver).GetPackageScopeForPath` (staticresolver.go at
+    // 673a5f17d713).
     // PORT: kept with `Resolver::get_package_scope_for_path`.
     fn get_package_scope_for_path(&self, directory: &str) -> Option<Rc<InfoCacheEntry>> {
         self.fallback.get_package_scope_for_path(directory)
     }
 
-    // Go: module/staticresolver.go:144 PackageJsonCacheEntries (at 673a5f17d713; removed by ts#64519)
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `(*StaticResolver).PackageJsonCacheEntries` (staticresolver.go at
+    // 673a5f17d713).
     // PORT: kept with the `Resolver` method.
     fn package_json_cache_entries(
         &self,
@@ -264,7 +268,9 @@ impl Resolver for StaticResolver {
         self.fallback.package_json_cache_entries(f);
     }
 
-    // Go: module/staticresolver.go:148 ResolvePackageDirectory (at 673a5f17d713; removed by ts#64519)
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `(*StaticResolver).ResolvePackageDirectory` (staticresolver.go at
+    // 673a5f17d713).
     // PORT: kept with the `Resolver` method.
     fn resolve_package_directory(
         &self,

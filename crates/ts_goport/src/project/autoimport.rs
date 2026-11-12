@@ -135,7 +135,8 @@ impl module::ResolutionHost for AutoImportRegistryCloneHost {
         &*self.fs
     }
 
-    // Go: project/autoimport.go:94 GetCurrentDirectory (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed `GetCurrentDirectory`
+    // (project/autoimport.go at 673a5f17d713).
     // GetCurrentDirectory implements autoimport.RegistryCloneHost.
     fn get_current_directory(&self) -> &str {
         &self.current_directory

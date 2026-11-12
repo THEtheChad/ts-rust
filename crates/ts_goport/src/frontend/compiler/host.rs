@@ -301,7 +301,9 @@ impl CompilerHost for CompilerHostImpl {
         self.default_library_path.clone()
     }
 
-    // Go: host.go:84 (*compilerHost).GetCurrentDirectory (at 673a5f17d713; removed by ts#64159; use the program base directory, compiler/program.go:151)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `(*compilerHost).GetCurrentDirectory` (compiler/host.go at 673a5f17d713);
+    // Go N' uses the program's base directory (`(*Program).BaseDirectory`).
     fn get_current_directory(&self) -> String {
         self.current_directory.clone()
     }

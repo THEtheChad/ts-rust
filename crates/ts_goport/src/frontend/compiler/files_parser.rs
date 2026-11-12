@@ -98,11 +98,6 @@ impl ParseTask {
         self.normalized_file_path.clone()
     }
 
-    // Go: filesparser.go:55 (*parseTask).Path (at 673a5f17d713; ts#64159 renames it PathKey, compiler/filesparser.go:55)
-    pub fn path(&self) -> Path {
-        self.path.clone()
-    }
-
     // Go: filesparser.go:59 (*parseTask).load
     pub fn load(&mut self, loader: &FileLoader) {
         self.loaded = true;

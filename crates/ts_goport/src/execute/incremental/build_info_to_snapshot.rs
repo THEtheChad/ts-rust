@@ -100,14 +100,14 @@ struct ToSnapshot<'a> {
 }
 
 impl ToSnapshot<'_> {
-    // Go: incremental/buildinfotosnapshot.go:57 toAbsolutePath (at 673a5f17d713; ts#64159
-    // renames it toAbsoluteFileName, buildinfotosnapshot.go:54)
+    // Go: incremental/buildinfotosnapshot.go:54 (*toSnapshot).toAbsoluteFileName
+    // (ts#64159 renamed toAbsolutePath; the port keeps that name)
     fn to_absolute_path(&self, path: &str) -> String {
         get_normalized_absolute_path(path, &self.build_info_directory)
     }
 
-    // Go: incremental/buildinfotosnapshot.go:61 toFilePath (at 673a5f17d713; ts#64159
-    // renames it filePathKey, buildinfotosnapshot.go:58)
+    // Go: incremental/buildinfotosnapshot.go:58 (*toSnapshot).filePathKey
+    // (ts#64159 renamed toFilePath; the port keeps that name)
     fn to_file_path(&self, file_id: BuildInfoFileId) -> Path {
         go_index(&self.file_paths, i64::from(file_id.0) - 1).clone()
     }

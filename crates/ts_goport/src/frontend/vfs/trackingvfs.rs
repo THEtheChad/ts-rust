@@ -22,7 +22,9 @@ pub struct FS {
 
 // Go: trackingvfs.go:23 `var _ vfs.FS = (*FS)(nil)`
 impl Fs for FS {
-    // Go: trackingvfs.go:34 (*FS).UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, vfs/trackingvfs/trackingvfs.go:35)
+    // Go: vfs/trackingvfs/trackingvfs.go:35 (*FS).CaseSensitivity (ts#64159
+    // renamed UseCaseSensitiveFileNames; the port keeps that name and returns
+    // the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         self.inner.use_case_sensitive_file_names()
     }

@@ -5741,12 +5741,14 @@ impl crate::frontend::outputpaths::OutputPathsHost for EmitHost {
         content_mapper_extension_rewrites()
     }
 
-    // Go: compiler/emitHost.go:109 emitHost.GetCurrentDirectory (at 673a5f17d713; ts#64159 makes it BaseDirectory, compiler/emitHost.go:106)
+    // Go: compiler/emitHost.go:106 (*emitHost).BaseDirectory (ts#64159 renamed
+    // GetCurrentDirectory; the port keeps that name)
     fn get_current_directory(&self) -> String {
         get_current_directory().to_string()
     }
 
-    // Go: compiler/emitHost.go:116 emitHost.UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, compiler/emitHost.go:122)
+    // Go: compiler/emitHost.go:122 (*emitHost).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; the port keeps that name and returns the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         use_case_sensitive_file_names()
     }
@@ -5760,7 +5762,8 @@ impl crate::frontend::outputpaths::OutputPathsHost for EmitHost {
 // GetRedirectTargets, GetSymlinkCache, ResolveModuleName). That interface is
 // not ported, so those methods are left out until it is.
 impl crate::declarations::DeclarationEmitHost for EmitHost {
-    // Go: compiler/emitHost.go:109 emitHost.GetCurrentDirectory (at 673a5f17d713; ts#64159 makes it BaseDirectory, compiler/emitHost.go:106)
+    // Go: compiler/emitHost.go:106 (*emitHost).BaseDirectory (ts#64159 renamed
+    // GetCurrentDirectory; the port keeps that name)
     fn get_current_directory(&self) -> String {
         get_current_directory().to_string()
     }
@@ -5770,7 +5773,8 @@ impl crate::declarations::DeclarationEmitHost for EmitHost {
         content_mapper_extension_rewrites()
     }
 
-    // Go: compiler/emitHost.go:116 emitHost.UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, compiler/emitHost.go:122)
+    // Go: compiler/emitHost.go:122 (*emitHost).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; the port keeps that name and returns the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         use_case_sensitive_file_names()
     }
@@ -5821,12 +5825,14 @@ impl crate::printer::EmitHost for EmitHost {
         content_mapper_extension_rewrites()
     }
 
-    // Go: compiler/emitHost.go:116 emitHost.UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, compiler/emitHost.go:122)
+    // Go: compiler/emitHost.go:122 (*emitHost).CaseSensitivity (ts#64159 renamed
+    // UseCaseSensitiveFileNames; the port keeps that name and returns the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         use_case_sensitive_file_names()
     }
 
-    // Go: compiler/emitHost.go:109 emitHost.GetCurrentDirectory (at 673a5f17d713; ts#64159 makes it BaseDirectory, compiler/emitHost.go:106)
+    // Go: compiler/emitHost.go:106 (*emitHost).BaseDirectory (ts#64159 renamed
+    // GetCurrentDirectory; the port keeps that name)
     fn get_current_directory(&self) -> String {
         get_current_directory().to_string()
     }

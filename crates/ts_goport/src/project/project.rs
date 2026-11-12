@@ -126,7 +126,7 @@ impl ID {
         parse_synthetic_project_id(&self.0)
     }
 
-    /// Go: an `ID` passed as an `autoimport.ProjectID` (the Go interface holds
+    /// An `ID` passed as an `autoimport.ProjectID` (the Go interface holds
     /// the `ID`; the Rust type holds its string).
     // PORT: not in Go.
     pub fn as_auto_import_project_id(&self) -> autoimport::ProjectID {
@@ -1052,7 +1052,8 @@ impl Project {
         // !!!
     }
 
-    // Go: project/project.go:601 Project.toPath (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed `Project.toPath`
+    // (project/project.go at 673a5f17d713).
     pub fn to_path(&self, file_name: &str) -> tspath::Path {
         let host = self
             .host

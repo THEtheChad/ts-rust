@@ -1074,12 +1074,6 @@ impl InfoCacheEntry {
         self.contents.as_ref()
     }
 
-    // Go: cache.go:140 GetDirectory (at 673a5f17d713; removed by ts#64159)
-    #[must_use]
-    pub fn get_directory(&self) -> &str {
-        &self.package_directory
-    }
-
     // Go: cache.go:208 WithPackageDirectory
     // WithPackageDirectory returns an entry whose PackageDirectory matches the
     // caller's value. The package.json info cache is keyed by the canonical

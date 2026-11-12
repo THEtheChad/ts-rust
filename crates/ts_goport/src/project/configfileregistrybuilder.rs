@@ -1161,13 +1161,18 @@ impl ConfigFileRegistryBuilder {
         result
     }
 
-    // Go: project/configfileregistrybuilder.go:787 configFileRegistryBuilder.FS (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `configFileRegistryBuilder.FS` (configfileregistrybuilder.go at
+    // 673a5f17d713); the port's `ParseConfigHost` trait keeps the method.
     // FS implements tsoptions.ParseConfigHost.
     pub fn fs(&self) -> Rc<dyn vfs::Fs> {
         self.fs.clone()
     }
 
-    // Go: project/configfileregistrybuilder.go:792 configFileRegistryBuilder.GetCurrentDirectory (at 673a5f17d713; removed by ts#64159)
+    // PORT: not in Go at the pin. ts#64159 removed
+    // `configFileRegistryBuilder.GetCurrentDirectory`
+    // (configfileregistrybuilder.go at 673a5f17d713); the port's
+    // `ParseConfigHost` trait keeps the method.
     // GetCurrentDirectory implements tsoptions.ParseConfigHost.
     pub fn get_current_directory(&self) -> String {
         self.session_options.current_directory.clone()

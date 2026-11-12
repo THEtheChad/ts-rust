@@ -136,35 +136,6 @@ pub struct ConfigFileSpecs {
 }
 
 impl ConfigFileSpecs {
-    // Go: tsoptions/tsconfigparsing.go:108 (*configFileSpecs).matchesExclude (at 673a5f17d713;
-    // removed by ts#64159)
-    pub fn matches_exclude(
-        &self,
-        file_name: &str,
-        compare_paths_options: &ComparePathsOptions,
-    ) -> bool {
-        if self.validated_exclude_specs.is_empty() {
-            return false;
-        }
-        let Some(exclude_matcher) = new_spec_matcher(
-            &self.validated_exclude_specs,
-            &compare_paths_options.current_directory,
-            Usage::Exclude,
-            compare_paths_options.use_case_sensitive_file_names,
-        ) else {
-            return false;
-        };
-        if exclude_matcher.match_string(file_name) {
-            return true;
-        }
-        if !has_extension(file_name)
-            && exclude_matcher.match_string(&ensure_trailing_directory_separator(file_name))
-        {
-            return true;
-        }
-        false
-    }
-
     // Go: tsoptions/tsconfigparsing.go:53 (*configFileSpecs).getMatchedIncludeSpec
     pub fn get_matched_include_spec(
         &self,
@@ -1259,8 +1230,9 @@ pub fn convert_array_literal_expression_to_json(
     (CompilerOptionsValue::List(value), errors)
 }
 
-// Go: tsoptions/tsconfigparsing.go:694 directoryOfCombinedPath (at 673a5f17d713;
-// removed by ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed `directoryOfCombinedPath`
+// (tsconfigparsing.go at 673a5f17d713), whose callers now take the directory
+// of a rooted path; the port's paths are strings, so it keeps the helper.
 pub fn directory_of_combined_path(file_name: &str, base_path: &str) -> String {
     // Use the `getNormalizedAbsolutePath` function to avoid canonicalizing the path, as it must remain noncanonical
     // until consistent casing errors are reported

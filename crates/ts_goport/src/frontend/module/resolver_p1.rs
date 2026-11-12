@@ -87,8 +87,10 @@ pub(crate) fn path_for_dynamic_resolution<'a>(
     Cow::Borrowed(path)
 }
 
-// Go: module/resolver.go:54 resolvePathForModule (ts#64544 at 59f5b0233; ts#64159
-// replaces it with resolutionCandidate)
+// PORT: not in Go at the pin. ts#64159 replaced `resolvePathForModule`
+// (ts#64544, module/resolver.go at 59f5b0233) with the `resolutionCandidate`
+// constructors; this is the string form that `resolutionCandidateFromDirectoryPath`
+// and `resolutionCandidateFromEncodedPaths` build.
 // `path` resolved against `directory`; a directory path ends with "/".
 // PERF: portonly1 item 9. Go N prime resolves a candidate with
 // `RootedDirectoryPath.ResolveFile` or `ResolveDirectory`
@@ -111,8 +113,10 @@ pub(crate) fn resolve_path_for_module(directory: &str, path: &str, directory_onl
     resolved
 }
 
-// Go: module/resolver.go:62 resolveDynamicLogicalPath (ts#64544 at 59f5b0233; removed by
-// ts#64159)
+// PORT: not in Go at the pin. ts#64159 removed `resolveDynamicLogicalPath`
+// (ts#64544, module/resolver.go at 59f5b0233); its body is the encoded-path
+// half of `resolutionCandidateFromDynamicLogicalPath`
+// (`candidate_from_dynamic_logical_path`).
 pub(crate) fn resolve_dynamic_logical_path(
     directory: &str,
     path: &str,
@@ -177,8 +181,10 @@ pub(crate) fn candidate_from_dynamic_logical_path(directory: &str, path: &str) -
     resolve_dynamic_logical_path(directory, path, has_trailing_directory_separator(path))
 }
 
-// Go: module/resolver.go:77 dynamicDirectoryCandidate (ts#64544 at 59f5b0233; ts#64159
-// replaces it with resolutionCandidate.directoryPath)
+// PORT: not in Go at the pin. ts#64159 replaced `dynamicDirectoryCandidate`
+// (ts#64544, module/resolver.go at 59f5b0233) with the `directoryPath` field
+// of a `resolutionCandidate`; the port's candidate is one string, so this
+// computes that field.
 // A dynamic candidate whose last segment is encoded as a directory segment
 // (a file segment keeps its extension outside the escape).
 pub(crate) fn dynamic_directory_candidate(candidate: &str) -> Cow<'_, str> {

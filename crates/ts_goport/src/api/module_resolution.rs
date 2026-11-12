@@ -180,8 +180,9 @@ impl module::Resolver for CallbackModuleResolver {
         self.fallback_resolver.get_resolution_data()
     }
 
-    // Go: api/module_resolution.go callbackModuleResolver.GetPackageScopeForPath
-    // (at 673a5f17d713; removed by ts#64519)
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `callbackModuleResolver.GetPackageScopeForPath` (module_resolution.go at
+    // 673a5f17d713).
     // PORT: kept with `module::Resolver::get_package_scope_for_path`.
     fn get_package_scope_for_path(
         &self,
@@ -190,7 +191,9 @@ impl module::Resolver for CallbackModuleResolver {
         self.fallback_resolver.get_package_scope_for_path(directory)
     }
 
-    // Go: api/module_resolution.go callbackModuleResolver.PackageJsonCacheEntries
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `callbackModuleResolver.PackageJsonCacheEntries` (module_resolution.go
+    // at 673a5f17d713); kept with the `Resolver` method.
     fn package_json_cache_entries(
         &self,
         f: &mut dyn FnMut(
@@ -201,7 +204,9 @@ impl module::Resolver for CallbackModuleResolver {
         self.fallback_resolver.package_json_cache_entries(f);
     }
 
-    // Go: api/module_resolution.go callbackModuleResolver.ResolvePackageDirectory
+    // PORT: not in Go at the pin. ts#64519 removed
+    // `callbackModuleResolver.ResolvePackageDirectory` (module_resolution.go
+    // at 673a5f17d713); kept with the `Resolver` method.
     fn resolve_package_directory(
         &self,
         module_name: &str,

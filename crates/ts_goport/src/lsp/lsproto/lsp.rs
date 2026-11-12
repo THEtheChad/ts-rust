@@ -415,11 +415,11 @@ pub fn unmarshal_go_map<T: UnmarshalerFrom>(
     json_unmarshal_decode(dec, v)
 }
 
-// Go: boolToInt (removed in tsgo#4471)
-// PORT: Go tsgo#4471 replaced the generated union and `Registration`
-// marshal checks with the reflective `marshalUnion` and `countNonNil`
-// (structcodec.go:129, :155). Rust has no reflection, so the generated code
-// keeps its per-field checks and this helper; the behavior is the same.
+// PORT: not in Go at the pin. tsgo#4471 removed `boolToInt` and replaced
+// the generated union and `Registration` marshal checks with the reflective
+// `marshalUnion` and `countNonNil` (structcodec.go:129, :155). Rust has no
+// reflection, so the generated code keeps its per-field checks and this
+// helper; the behavior is the same.
 pub fn bool_to_int(b: bool) -> i32 {
     if b {
         return 1;

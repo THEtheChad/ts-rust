@@ -3,11 +3,29 @@
 //
 // usage: gocog <root> <dir>...   (for example gocog ~/.explore/repos/microsoft__TypeScript@<pin>/tsc internal cmd)
 //
-// It reads every non-test .go file under each <root>/<dir>, skipping testdata directories, and
-// prints one JSON object:
-// {"version": N, "funcs": [{pkg, file, line, end, recv, name, cog, cyc, lines, generated, closures: [...]}]}.
+// It reads every non-test .go file under each <root>/<dir>, skipping testdata and vendor
+// directories, and prints one JSON object:
+// {"version": N, "funcs": [{pkg, file, line, end, recv, name, cog, cyc, lines, residue, kind,
+// generated, closures: [...]}]}.
 // "generated" marks a file headed "Code generated ... DO NOT EDIT." (ast_generated.go and the like):
 // the Rust port writes some of that code by hand, so it stays in the list.
+//
+// "kind" is empty for a function or method. The list also holds the other named things a `// Go:`
+// marker can name:
+//   - "field": a named field of a package-level struct type (recv is the struct's name). An embedded
+//     field has no name of its own and is not listed. cog and cyc are 0.
+//   - "var" and "const": a name declared by a package-level `var` or `const`. Its figures are those
+//     of its value: a function literal is scored like a function (its body at nesting 0, cyc 1 + its
+//     own), any other value is walked at nesting 0, so a function literal inside it counts one
+//     nesting deeper, as a Rust closure in a `static` initializer does. A name with no value of its
+//     own scores 0. Lines span the spec.
+//
+// "residue" is the tagless-switch residue of a function (its function literals included): for each
+// `switch` with no tag expression (`switch {` or `switch x := f(); {`), its number of clauses less
+// one, `default` counted as a clause. A Rust port writes such a switch as an if / else-if / else
+// chain, and rca charges each `else` (else-if included) +1 where Go's case labels cost nothing, so
+// the chain scores exactly this many points more than the switch (the conditions and bodies score
+// alike on both sides). docs/perf-rearch/quality.md, "Tagless-switch residue", has the rule.
 // Standard library only (go/ast, go/parser); it downloads nothing and writes nothing.
 //
 // The metrics mirror rust-code-analysis 0.0.25's Rust rules (src/metrics/cognitive.rs and
@@ -52,7 +70,7 @@ import (
 	"strings"
 )
 
-const version = 2
+const version = 3
 
 var generatedRE = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 
@@ -64,6 +82,7 @@ type Closure struct {
 	Cyc     int    `json:"cyc"`
 	Lines   int    `json:"lines"`
 	InPlace int    `json:"cog_inplace"`
+	Residue int    `json:"residue"`
 }
 
 type Func struct {
@@ -76,6 +95,8 @@ type Func struct {
 	Cog      int       `json:"cog"`
 	Cyc      int       `json:"cyc"`
 	Lines    int       `json:"lines"`
+	Residue  int       `json:"residue"`
+	Kind     string    `json:"kind,omitempty"`
 	Gen      bool      `json:"generated,omitempty"`
 	Closures []Closure `json:"closures,omitempty"`
 }
@@ -96,6 +117,7 @@ type walker struct {
 	fset     *token.FileSet
 	cog      int
 	cyc      int
+	residue  int
 	seq      boolState
 	closures []Closure
 	// named closures are recorded only on the top-level walk
@@ -168,7 +190,7 @@ func (w *walker) funcLit(f *ast.FuncLit, nesting int, name string) {
 		end := w.fset.Position(f.End()).Line
 		w.closures = append(w.closures, Closure{
 			Name: name, Line: start, End: end, Cog: sub.cog, Cyc: sub.cyc, Lines: end - start + 1,
-			InPlace: w.cog - before,
+			InPlace: w.cog - before, Residue: sub.residue,
 		})
 	}
 }
@@ -218,6 +240,9 @@ func (w *walker) node(n ast.Node, nesting int) {
 		w.node(n.X, nesting+1)
 		w.node(n.Body, nesting+1)
 	case *ast.SwitchStmt:
+		if n.Tag == nil && len(n.Body.List) > 1 {
+			w.residue += len(n.Body.List) - 1
+		}
 		w.increaseNesting(nesting)
 		w.node(n.Init, nesting+1)
 		w.node(n.Tag, nesting+1)
@@ -350,10 +375,60 @@ func recvName(fl *ast.FieldList) string {
 }
 
 // Score walks one function declaration.
-func Score(fset *token.FileSet, d *ast.FuncDecl) (cog, cyc int, closures []Closure) {
+func Score(fset *token.FileSet, d *ast.FuncDecl) (cog, cyc, residue int, closures []Closure) {
 	w := &walker{fset: fset, record: true, cyc: 1}
 	w.node(d.Body, 0)
-	return w.cog, w.cyc, w.closures
+	return w.cog, w.cyc, w.residue, w.closures
+}
+
+// scoreValue scores the value of a package-level var or const: a function literal like a function,
+// anything else walked in place (nil scores 0).
+func scoreValue(fset *token.FileSet, v ast.Expr) (cog, cyc, residue int) {
+	w := &walker{fset: fset}
+	if fl, ok := v.(*ast.FuncLit); ok {
+		w.cyc = 1
+		w.node(fl.Body, 0)
+	} else {
+		w.node(v, 0)
+	}
+	return w.cog, w.cyc, w.residue
+}
+
+// members lists the fields of a package-level struct type and the names of a package-level var or
+// const declaration.
+func members(fset *token.FileSet, g *ast.GenDecl, pkg, file string, gen bool) []Func {
+	var out []Func
+	line := func(p token.Pos) int { return fset.Position(p).Line }
+	for _, sp := range g.Specs {
+		switch s := sp.(type) {
+		case *ast.TypeSpec:
+			st, ok := s.Type.(*ast.StructType)
+			if !ok || st.Fields == nil {
+				continue
+			}
+			for _, f := range st.Fields.List {
+				for _, id := range f.Names {
+					l := line(id.Pos())
+					out = append(out, Func{Pkg: pkg, File: file, Line: l, End: line(f.End()), Recv: s.Name.Name,
+						Name: id.Name, Lines: line(f.End()) - l + 1, Kind: "field", Gen: gen})
+				}
+			}
+		case *ast.ValueSpec:
+			kind := "var"
+			if g.Tok == token.CONST {
+				kind = "const"
+			}
+			start, end := line(s.Pos()), line(s.End())
+			for i, id := range s.Names {
+				f := Func{Pkg: pkg, File: file, Line: start, End: end, Name: id.Name, Lines: end - start + 1, Kind: kind, Gen: gen}
+				if len(s.Values) == len(s.Names) {
+					f.Cog, f.Cyc, f.Residue = scoreValue(fset, s.Values[i])
+				}
+				out = append(out, f)
+			}
+		}
+	}
+	return out
 }
 
 func scanFile(fset *token.FileSet, root, path string) ([]Func, error) {
@@ -372,18 +447,23 @@ func scanFile(fset *token.FileSet, root, path string) ([]Func, error) {
 	}
 	rel, _ := filepath.Rel(root, path)
 	rel = filepath.ToSlash(rel)
+	pkg, file := filepath.ToSlash(filepath.Dir(rel)), filepath.Base(rel)
 	var out []Func
 	for _, decl := range f.Decls {
+		if g, ok := decl.(*ast.GenDecl); ok {
+			out = append(out, members(fset, g, pkg, file, gen)...)
+			continue
+		}
 		d, ok := decl.(*ast.FuncDecl)
 		if !ok || d.Body == nil {
 			continue
 		}
-		cog, cyc, cl := Score(fset, d)
+		cog, cyc, residue, cl := Score(fset, d)
 		start := fset.Position(d.Pos()).Line
 		end := fset.Position(d.End()).Line
 		out = append(out, Func{
-			Pkg: filepath.ToSlash(filepath.Dir(rel)), File: filepath.Base(rel), Line: start, End: end,
-			Recv: recvName(d.Recv), Name: d.Name.Name, Cog: cog, Cyc: cyc, Lines: end - start + 1, Gen: gen, Closures: cl,
+			Pkg: pkg, File: file, Line: start, End: end, Recv: recvName(d.Recv), Name: d.Name.Name,
+			Cog: cog, Cyc: cyc, Lines: end - start + 1, Residue: residue, Gen: gen, Closures: cl,
 		})
 	}
 	return out, nil
@@ -403,7 +483,7 @@ func main() {
 				return err
 			}
 			if e.IsDir() {
-				if e.Name() == "testdata" {
+				if e.Name() == "testdata" || e.Name() == "vendor" {
 					return filepath.SkipDir
 				}
 				return nil
@@ -427,7 +507,10 @@ func main() {
 		if funcs[i].File != funcs[j].File {
 			return funcs[i].File < funcs[j].File
 		}
-		return funcs[i].Line < funcs[j].Line
+		if funcs[i].Line != funcs[j].Line {
+			return funcs[i].Line < funcs[j].Line
+		}
+		return funcs[i].Name < funcs[j].Name
 	})
 	enc := json.NewEncoder(os.Stdout)
 	if err := enc.Encode(map[string]any{"version": version, "funcs": funcs}); err != nil {

@@ -795,7 +795,8 @@ impl ProjectReferenceDtsFakingVfs {
         self.host.fs()
     }
 
-    // Go: projectreferencedtsfakinghost.go:125 (*projectReferenceDtsFakingVfs).toPath (at 673a5f17d713; ts#64159 makes it pathKey, compiler/projectreferencedtsfakinghost.go:122)
+    // Go: compiler/projectreferencedtsfakinghost.go:122 (*projectReferenceDtsFakingVfs).pathKey
+    // (ts#64159 renamed toPath; the port keeps that name)
     fn to_path(&self, path: &str) -> Path {
         let current_directory = self.host.get_current_directory();
         to_path(
@@ -983,7 +984,9 @@ impl ProjectReferenceDtsFakingVfs {
 }
 
 impl Fs for ProjectReferenceDtsFakingVfs {
-    // Go: projectreferencedtsfakinghost.go:55 (*projectReferenceDtsFakingVfs).UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, compiler/projectreferencedtsfakinghost.go:52)
+    // Go: compiler/projectreferencedtsfakinghost.go:52 (*projectReferenceDtsFakingVfs).CaseSensitivity
+    // (ts#64159 renamed UseCaseSensitiveFileNames; the port keeps that name
+    // and returns the bool)
     fn use_case_sensitive_file_names(&self) -> bool {
         self.host_fs().use_case_sensitive_file_names()
     }

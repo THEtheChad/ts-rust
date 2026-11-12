@@ -71,7 +71,6 @@ pub fn new_build_info_reader(host: Rc<dyn CompilerHost>) -> Rc<dyn BuildInfoRead
 // PORT: Go `time.Time` is `Option<SystemTime>`; `None` is the Go zero time
 // (as in `vfs::FileInfo::mod_time`).
 pub trait Host {
-    fn fs(&self) -> Rc<dyn Fs>;
     fn get_m_time(&self, file_name: &str) -> Option<SystemTime>;
     fn set_m_time(&self, file_name: &str, m_time: Option<SystemTime>) -> Result<(), FsError>;
 }
@@ -83,11 +82,6 @@ pub struct HostImpl {
 }
 
 impl Host for HostImpl {
-    // Go: incremental/host.go:22 FS (at 673a5f17d713; removed by ts#64159)
-    fn fs(&self) -> Rc<dyn Fs> {
-        self.host.fs()
-    }
-
     // Go: incremental/host.go:33 GetMTime
     fn get_m_time(&self, file_name: &str) -> Option<SystemTime> {
         get_m_time(&*self.host, file_name)

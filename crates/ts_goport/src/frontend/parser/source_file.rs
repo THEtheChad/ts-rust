@@ -180,7 +180,8 @@ impl ParsedSourceFile {
         &self.parse_options.file_name
     }
 
-    // Go: ast/ast.go:2705 Path (at 673a5f17d713; ts#64159 renames it PathKey, ast/ast.go:2707)
+    // Go: ast/ast.go:2632 (*SourceFile).PathKey (ts#64159 renamed Path; the port
+    // keeps that name)
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.parse_options.path
