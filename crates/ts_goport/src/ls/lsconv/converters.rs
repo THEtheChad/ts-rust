@@ -839,7 +839,9 @@ impl Converters {
             return text_len;
         }
 
-        let start = line_map.line_starts[line as usize];
+        // Go `lineMap.LineStarts[line]`: a line of 2^31 or more is a
+        // negative `TextPos`, and Go panics with its index text.
+        let start = *crate::gostd::slices::go_index(&line_map.line_starts, i64::from(line));
 
         // Determine the end of this line (start of next line, or end of text).
         let line_end = if i64::from(line) + 1 < line_map.line_starts.len() as i64 {
@@ -1428,6 +1430,37 @@ mod tests {
         };
         let back = from_lsp_position(&converters, script.clone(), past, Feature::ALL);
         assert_eq!(back[0].position, port_byte_offset(&script.0, 8));
+    }
+
+    // Lane B9 (audit A8): Go `core.TextPos(lineAndCharacter.Line)` makes a
+    // line of 2^31 or more a negative `int32`, which passes the `>= len`
+    // clamp, and `lineMap.LineStarts[line]` panics with Go's index text
+    // (converters.go:366-377). Lines 2^31 - 1 and 3 are past the end.
+    #[test]
+    fn line_past_int32_panics_with_go_index_text() {
+        let script = PortScript("a\nb\n".to_string());
+        let line_map = compute_lsp_line_starts(&script.0);
+        let converters = new_converters(lsproto::PositionEncodingKind::UTF16, move |_| {
+            Some(Rc::clone(&line_map))
+        });
+        let position = |line: u32| lsproto::Position { line, character: 0 };
+        for line in [3, 0x7FFF_FFFF] {
+            let back = from_lsp_position(&converters, script.clone(), position(line), Feature::ALL);
+            assert_eq!(back[0].position, 4, "line {line}");
+        }
+        for (line, text) in [
+            (u32::MAX, "runtime error: index out of range [-1]"),
+            (
+                0x8000_0000,
+                "runtime error: index out of range [-2147483648]",
+            ),
+        ] {
+            let got = crate::core::go_panic_text(|| {
+                let _ =
+                    from_lsp_position(&converters, script.clone(), position(line), Feature::ALL);
+            });
+            assert_eq!(got, text, "line {line}");
+        }
     }
 
     // R151 reviewer: UTF-8 columns scanned each line for markers in any
