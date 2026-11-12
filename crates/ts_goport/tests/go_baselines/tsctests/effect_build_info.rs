@@ -18,12 +18,11 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use ts_goport::execute::incremental::build_info::build_info_version;
 
-/// An mtime older than any build in the test (2001).
-const OLD: Duration = Duration::from_secs(1_000_000_000);
+use crate::support::{OLD_MTIME, set_old_mtime};
 
 /// A composite project in a new dir under the system temp dir; removed on
 /// drop.
@@ -60,13 +59,9 @@ impl Project {
         );
     }
 
-    /// Sets the mtime of `name` to `OLD`.
+    /// Sets the mtime of `name` to `OLD_MTIME`.
     fn make_old(&self, name: &str) {
-        std::fs::File::options()
-            .write(true)
-            .open(self.0.join(name))
-            .and_then(|file| file.set_modified(SystemTime::UNIX_EPOCH + OLD))
-            .unwrap_or_else(|e| panic!("set the mtime of {name}: {e}"));
+        set_old_mtime(&self.0.join(name));
     }
 
     fn build_info(&self) -> PathBuf {
@@ -85,7 +80,7 @@ impl Project {
         let modified = std::fs::metadata(self.build_info())
             .and_then(|m| m.modified())
             .expect("build info mtime");
-        modified == SystemTime::UNIX_EPOCH + OLD
+        modified == SystemTime::UNIX_EPOCH + OLD_MTIME
     }
 
     /// Runs `tsgo` with `args` and `--pretty false`, with the Effect
@@ -150,6 +145,10 @@ fn status_other_version(from: &str, current: &str) -> String {
 fn effect_build_info_is_reused() {
     let effect = build_info_version(true);
     let project = Project::new("effect-build-info-reused", true, CLEAN);
+    // Older than the build info whatever the wall clock does (see
+    // `support::mtime_order`): a config newer than it is out of date.
+    project.make_old("tsconfig.json");
+    project.make_old("src/index.ts");
     assert_eq!(
         project.tsgo(&["-b", "--verbose"]),
         (Some(0), STATUS_BUILT.to_string())

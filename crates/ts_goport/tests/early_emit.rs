@@ -29,8 +29,8 @@
 //! diagnostics test makes its own project there too. So do the k2gaps1
 //! tests: `tsc -p --listFilesOnly` emits nothing, and `tsc -b` of two small
 //! projects runs without a panic (also in the dev profile). An edit after a
-//! build first waits until a new file gets a later mtime than every file of
-//! the build (`Solution::wait_for_a_later_mtime`), so `tsc -b` sees it. So
+//! build is written until it gets a later mtime than every file of the
+//! build (`Solution::edit`), so `tsc -b` sees it. So
 //! does the statistics test: the `--extendedDiagnostics` times of a task
 //! whose check and emit started early. The
 //! barrier test loads the fixture and checks that `send_checker_barrier`
@@ -54,6 +54,9 @@ use ts_goport::emitter::program_emit::emit_can_start_with_check;
 use ts_goport::flags::{ModuleKind, ModuleResolutionKind};
 use ts_goport::options::{CompilerOptions, Tristate};
 use ts_goport::program::{release_program, try_load_version};
+
+#[path = "common/mtime_order.rs"]
+mod mtime_order;
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/emit_pool");
 
@@ -260,8 +263,7 @@ fn build_statistics_time_the_started_check_and_emit() {
         "check time {check}s, total time {total}s:\n{build}"
     );
 
-    solution.wait_for_a_later_mtime();
-    solution.write("tsconfig.json", &config(r#", "removeComments": true"#));
+    solution.edit("tsconfig.json", &config(r#", "removeComments": true"#));
     let (status, emit_only) = solution.build(&["--extendedDiagnostics"]);
     assert_eq!(status, Some(0), "{emit_only}");
     let (check, emit) = (
@@ -557,8 +559,7 @@ fn build_two_composite_projects_without_a_panic() {
         (Some(0), String::new()),
         "the cold build"
     );
-    solution.wait_for_a_later_mtime();
-    solution.write("p1/src/index.ts", "export const v1 = 2;\n");
+    solution.edit("p1/src/index.ts", "export const v1 = 2;\n");
     assert_eq!(
         solution.build(&["tsconfig.json"]),
         (Some(0), String::new()),
@@ -1596,33 +1597,20 @@ impl Solution {
         fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
     }
 
-    /// Waits until a file written now gets a later mtime than every file
-    /// under the root, so `tsc -b` sees the next edit as newer than the
-    /// outputs of the last build. A file system clock can move in steps:
-    /// Linux stamps files with its tick clock (4 ms at 250 Hz) unless the
-    /// file system has fine-grained timestamps (Linux 6.13). An edit right
-    /// after a build can then get the mtime of the project's build info,
-    /// and `tsc -b` sees the project as up to date (Go `getUpToDateStatus`
-    /// rebuilds only for an input newer than the build info). On main CI
-    /// (the Ubuntu 24.04 runner) that once made p1 of
-    /// `build_emit_only_solution` up to date: it finished first, and p3 read
-    /// p2's old output (TS2305).
-    fn wait_for_a_later_mtime(&self) {
-        let newest = newest_mtime(&self.root);
-        let probe = self.root.join("mtime-probe");
-        loop {
-            fs::write(&probe, "")
-                .unwrap_or_else(|error| panic!("write {}: {error}", probe.display()));
-            let probed = fs::metadata(&probe)
-                .and_then(|metadata| metadata.modified())
-                .unwrap_or_else(|error| panic!("mtime of {}: {error}", probe.display()));
-            if probed > newest {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        fs::remove_file(&probe)
-            .unwrap_or_else(|error| panic!("remove {}: {error}", probe.display()));
+    /// Writes `text` to `path` under the root as an edit after a build:
+    /// until it gets a later mtime than every file under the root, so
+    /// `tsc -b` sees it as newer than the outputs of the last build (see
+    /// `mtime_order`). On main CI (the Ubuntu 24.04 runner, whose coarse
+    /// file system clock gave an edit the mtime of the build info) a plain
+    /// write once made p1 of `build_emit_only_solution` up to date: it
+    /// finished first, and p3 read p2's old output (TS2305).
+    fn edit(&self, path: &str, text: &str) {
+        let path = self.root.join(path);
+        let newest = mtime_order::newest_mtime(&self.root);
+        mtime_order::write_until_after(&path, newest, || {
+            fs::write(&path, text)
+                .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        });
     }
 
     /// Removes the scratch dir. A failed test keeps it.
@@ -1630,25 +1618,6 @@ impl Solution {
         fs::remove_dir_all(&self.root)
             .unwrap_or_else(|error| panic!("remove {}: {error}", self.root.display()));
     }
-}
-
-/// The latest mtime of a file under `dir`.
-fn newest_mtime(dir: &Path) -> SystemTime {
-    let entries =
-        fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
-    entries
-        .map(|entry| {
-            let path = entry.expect("a dir entry").path();
-            if path.is_dir() {
-                newest_mtime(&path)
-            } else {
-                fs::metadata(&path)
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or_else(|error| panic!("mtime of {}: {error}", path.display()))
-            }
-        })
-        .max()
-        .unwrap_or(UNIX_EPOCH)
 }
 
 /// The config of a solution project, with `extra` added to its compiler
@@ -1709,9 +1678,8 @@ fn build_emit_only_solution(
     );
     // The cold build: p3 cannot see `v2` yet.
     solution.build(&["tsconfig.json"]);
-    solution.wait_for_a_later_mtime();
-    solution.write("p1/src/index.ts", &big_module("v2"));
-    solution.write(
+    solution.edit("p1/src/index.ts", &big_module("v2"));
+    solution.edit(
         "p2/src/index.ts",
         "export const v1 = 1;\nexport const v2 = 2;\n",
     );

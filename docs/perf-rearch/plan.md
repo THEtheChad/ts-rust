@@ -2405,3 +2405,70 @@ once a **reconciliation step** is built and tested.
     Markers naming nothing in any Go tree 1,168 → 1,153 (Effect's 1,093
     remain). Port bloat Δ ≥ 10 stays 10; own code over 25 stays 0. The
     gorel self-test is OK.
+- **B9 round 2 done; merged.** Root accepts it without a second Astra
+  round: each fix is narrow and pinned against Go.
+  - **The fixes:**
+    - A7: `kill(-1, 0)` is checked;
+    - A3: past EOF is decided on the wide position;
+    - A5's root-range overflow gets a PORT note (Go hangs there, so it is
+      GO-BROKEN) and a test;
+    - A4's index is `i64`.
+  - **Api `calls` request form,** with 3 new items:
+    `batch-page-cap-int64`, `format-insertion-past-int32` and
+    `positions-index-int64`.
+  - **Root's checks:** on `f608986a3` the items give decode errors or a
+    panic where Go answers; B9 SELFTEST OK.
+  - **Gate:** `runs/b9r2-654f71961-full` PARITY OK, api 68 MATCH;
+    single-threaded icount within ±0.003%.
+  - **New flake seen:**
+    `content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error`,
+    a clock step; 5 reruns pass.
+- **F5 started:** one port per Go function for `sourceFileMayBeEmitted`,
+  `GetOutputPathsFor`, `GetSymlinkCache` and the `modulespecifiers/`
+  copies, plus a risk triage of `dups.txt`.
+- **C1 started:** the content-mapper watch flake, fixed the Q9 way, plus a
+  sweep for the same pattern.
+- **Then the close-out:** a full gate on the merged head (which becomes
+  base-current), the window-2 timing against Go on every cell, the final
+  report, and asking Chad about pushing.
+- **C1 done; merged.** The content-mapper watch flake came from the test:
+  `-b`'s up-to-date check compares config and package.json by mtime, and a
+  clock step made the build info older than its config.
+  - **Fix:** the first build's inputs get a 2001 mtime.
+  - **Rates:** base 16 of 2,000 runs, all inside a run that straddled a
+    logged step; head 0 of 2,000.
+  - **Siblings fixed:** `effect_build_info_is_reused` (base 1/1,000),
+    `build_prefetch_rereads` (base 4/1,000), `tsgo_watch_signal` and
+    `early_emit`.
+  - Q9's guard is now shared: `tests/common/mtime_order.rs`.
+  - `tsgo` is byte-identical. The whole go_baselines set runs in the
+    close-out gate.
+- **F5 done; Astra review running.** Head `3ff7037bb`.
+  - **Folded to one port each:**
+    - `sourceFileMayBeEmitted` and `GetOutputPathsFor` (generic over Go's
+      host trait, through an `EmitSourceFile` view);
+    - `tspath_extension.rs`, the `deps.rs` copies,
+      `GetResolutionDiagnostic` and `ensurePathIsNonModuleName`, plus small
+      checker copies;
+    - the resolution-mode functions, where `program.rs` had a stale copy
+      missing ts#63915. Probes show no output difference, and the review
+      is asked to look further.
+  - **Left with PORT notes:** `GetSymlinkCache` and packagejson (`Rc`
+    against `Arc`, a program-type restructure);
+    `HasPrefix`/`HasSuffix`/`HasPrefixAndSuffixWithoutOverlap`, two copies
+    that differ, neither Go's.
+  - **dups.txt:** 280 → 247, triaged as 73 output-path, 167 internal, 7
+    test.
+  - Duplication 3.32% → 3.16%.
+  - **Gate:** `runs/20261112-031159-full-3689a455b4` PARITY OK; icount flat.
+- **B10 started:** the `HasPrefix`/`HasSuffix` copies against Go (byte-wise
+  with Unicode case folding): a Go note, callers, probes, one port, parity
+  items. It builds on F5's head.
+- **F5 review: REJECT as behaviour-neutral** (`reviews/2026-11-12-astra-f5.md`).
+  - The resolution-mode fold fixed a real difference silently: a `.cts`
+    file with `import.source("a")` gave `import("a").X`, where Go gives
+    `import("b").X`.
+  - The other folds are confirmed equal.
+  - **Round 2:** that parity fixture, the docs, a lazy content-mapper read
+    after the guards, and the triage corrections. B10 gets Astra's caller
+    inputs.
