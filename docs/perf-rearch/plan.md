@@ -2504,3 +2504,12 @@ once a **reconciliation step** is built and tested.
     all-targets command and the `goport_util` unit test. `f5.md` now
     points to `b10.md`.
 - **All lanes merged. Close-out next.**
+- **C2 (close-out) started:**
+  - parity full on the merged head, which becomes base-current;
+  - window-2 timing for Go, the phase start (`e81a14807`) and the head,
+    all parts, both tsc-rs sides `--profile goport`;
+  - icount, phase start against end;
+  - quality from the q0 baseline to now;
+  - `docs/perf-rearch/closeout.md`.
+
+  No other lane is running, so the machine is quiet for timing.
