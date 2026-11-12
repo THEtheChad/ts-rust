@@ -668,7 +668,8 @@ fn float_or_int32_to_flag<T>(
 
 // Go: tsoptions/options_generated.go:322 ParseTypeAcquisition (ts#64457 generates it)
 // PORT: Go `allOptions` can be nil; every Rust caller has one, so the nil
-// check is dropped. Go `[]string` fields are `Vec<String>`.
+// check is dropped. Go `[]string` fields are `Option<Vec<String>>`: Go
+// `ParseStringArray` gives nil (`None`) for a value that is not an array.
 pub fn parse_type_acquisition(
     key: &str,
     value: CompilerOptionsValue,
