@@ -3916,7 +3916,7 @@ fn with_emit_source_file<R>(
         file_name: &info.file_name,
         script_kind: info.script_kind,
         is_declaration_file: info.is_declaration_file,
-        content_mapper: source_file_content_mapper(file),
+        root: file,
     })
 }
 

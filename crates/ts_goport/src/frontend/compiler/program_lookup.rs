@@ -1041,7 +1041,8 @@ pub fn source_file_may_be_emitted<H: SourceFileMayBeEmittedHost + ?Sized>(
         // Runtime output for content-mapped files is owned by the external content mapper or build tool. Only
         // include them in the emit set when their transformed TypeScript can produce declarations.
         // tsgo#4712
-        if !file.content_mapper.is_empty() && !force_dts_emit && !options.get_emit_declarations() {
+        if !file.content_mapper().is_empty() && !force_dts_emit && !options.get_emit_declarations()
+        {
             return false;
         }
 

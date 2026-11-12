@@ -91,9 +91,9 @@ pub struct EmitSourceFile<'a> {
     pub script_kind: ScriptKind,
     /// Go `sourceFile.IsDeclarationFile`.
     pub is_declaration_file: bool,
-    /// Go `sourceFile.ContentMapper()`: "" when no content mapper made the
-    /// file (#4712).
-    pub content_mapper: &'static str,
+    /// The file's SourceFile node, whose content mapper `content_mapper`
+    /// reads (`Node::NIL` for none).
+    pub root: Node,
 }
 
 impl EmitSourceFile<'_> {
@@ -108,6 +108,16 @@ impl EmitSourceFile<'_> {
     pub fn is_js(&self) -> bool {
         matches!(self.script_kind, ScriptKind::JS | ScriptKind::JSX)
     }
+
+    /// Go `sourceFile.ContentMapper()`: "" when no content mapper made the
+    /// file (#4712).
+    // PERF: read on demand, as Go reads it: with mappers registered it is a
+    // lock and map lookup, which `sourceFileMayBeEmitted` makes only after
+    // its JS and declaration-file returns.
+    #[inline]
+    pub fn content_mapper(&self) -> &'static str {
+        source_file_content_mapper(self.root)
+    }
 }
 
 impl<'a> From<&'a ParsedSourceFile> for EmitSourceFile<'a> {
@@ -117,7 +127,7 @@ impl<'a> From<&'a ParsedSourceFile> for EmitSourceFile<'a> {
             file_name: file.file_name(),
             script_kind: file.script_kind,
             is_declaration_file: file.is_declaration_file,
-            content_mapper: file.content_mapper(),
+            root: file.root,
         }
     }
 }
@@ -130,7 +140,7 @@ pub fn get_output_paths_for(
     force: ForceEmitPaths,
 ) -> OutputPaths {
     let file_name = source_file.file_name;
-    let content_mapper = source_file.content_mapper;
+    let content_mapper = source_file.content_mapper();
     let own_output_file_path = get_own_emit_output_file_path(
         file_name,
         options,
@@ -687,7 +697,7 @@ mod tests {
                 file_name: &input,
                 script_kind: ScriptKind::JSON,
                 is_declaration_file: false,
-                content_mapper: "",
+                root: Node::NIL,
             },
             &options,
             &host,
