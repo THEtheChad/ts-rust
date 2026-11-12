@@ -2285,3 +2285,22 @@ once a **reconciliation step** is built and tested.
       `GetMTime`/`SetMTime`.
   - **Round 2:** a callback-FS mode for the api harness, then a worker→owner
     query channel and the host metadata in the flush.
+- **B6 round 3 done; merged.** Root accepts it without a further Astra
+  round.
+  - **The fixes:**
+    - `gostd::strings::repeat` ports Go 1.27.1's `strings.Repeat`: a
+      negative count, `MaxInt` overflow and amd64 `maxAlloc` (1 << 48)
+      `makeslice` panics, all before it allocates;
+    - `prefs_sensitivity.py` sorts `result.items`, with a self-test;
+    - the `get_column` PORT note;
+    - the battery trimmed, with an explicit stale-cache sequence;
+    - prefs out of the quick manifest.
+  - **Root's checks:** the round-2 binary gives 93 MATCH and 545 DIFF (it
+    dies with SIGABRT on 2^62); the head gives 635 MATCH; SENSITIVITY
+    SELFTEST OK.
+  - **Gate:** `runs/b6r3-9b105c845-full` PARITY OK; icount flat.
+  - **Cost accepted:** the lsp tier is about 584 s (it was about 300 s);
+    prefs (about 123 s per server run) is bound by settle waits, not
+    requests, and runs in the full tier only. A possible later trim: a
+    shorter settle for steps with no ATA or watch.
+- **B9 next:** the A1 audit fixes (B6's helper is now merged).
