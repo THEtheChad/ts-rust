@@ -2376,3 +2376,10 @@ once a **reconciliation step** is built and tested.
   - **Not fixed:** B2 (log only), B3 (reachable with `"contentMappers": []`
     under `--watch`, no printed difference found yet), B4 (needs
     `core.rs`).
+- **B9 review: REJECT** (`reviews/2026-11-11-astra-b9.md`).
+  - **Findings:** A7 `-1` assumed alive; A3's clamp isn't past EOF in a
+    file of exactly 2^31−1 bytes; A5's root range overflow, where Go hangs.
+  - **Root's decision:** fix 1 and 2. For 3, Go hangs and tsc-rs answers,
+    so it's GO-BROKEN under "Better than Go": a PORT note plus a test, not
+    a reproduced hang. B3 is closed (nil both ways at the pin).
+  - **Round 2 also** takes A4's index and the api `{method, params}` form.
