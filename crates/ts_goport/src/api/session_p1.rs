@@ -1143,7 +1143,8 @@ pub struct Session {
     pub program_resolution_contexts: Rc<ProgramResolutionContexts>,
     pub conn: RefCell<Option<Rc<dyn ipc::Conn>>>,
     // ts#64158
-    // PORT: the Go `buildMu` lock is not ported (one thread).
+    // PORT: the Go `buildMu` lock is `build_running`: a request that Go runs
+    // under it waits for a running one (`Handler::must_wait`).
     // PORT: the orchestrator methods take `&mut self`, so each is in a
     // `RefCell`.
     pub build_orchestrators: RefCell<
@@ -1167,7 +1168,47 @@ pub struct Session {
     /// system (`System::client_reads`): the server sets it when a read
     /// callback is on.
     pub client_reads: Cell<bool>,
+    /// PORT: Go `buildMu` (api/session.go:591) held: a request of
+    /// `BUILD_MU_METHODS` runs (`Handler::must_wait`).
+    pub build_running: Cell<bool>,
 }
+
+/// The requests whose Go handlers take `buildMu` (api/session.go:1874-1937):
+/// one waits while another runs. PORT: Go's `handleCreateBuildOrchestrator`
+/// takes it only to store the new orchestrator, so it parses its build
+/// command line before the running build ends; here the whole request
+/// waits.
+/// `build_running` set until it drops (Go `buildMu.Lock()` and its
+/// deferred `Unlock()`), also on a panic. The async connection holds a
+/// second request until the first returns (`Handler::must_wait`). The sync
+/// connection (msgpack) runs a request that a callback makes inline, as
+/// before; Go's blocks on the lock there.
+struct BuildMu<'a> {
+    running: &'a Cell<bool>,
+    was: bool,
+}
+
+impl<'a> BuildMu<'a> {
+    fn lock(running: &'a Cell<bool>) -> Self {
+        let was = running.replace(true);
+        BuildMu { running, was }
+    }
+}
+
+impl Drop for BuildMu<'_> {
+    fn drop(&mut self) {
+        self.running.set(self.was);
+    }
+}
+
+const BUILD_MU_METHODS: [&str; 6] = [
+    "createBuildOrchestrator",
+    "disposeBuildOrchestrator",
+    "build",
+    "buildReferences",
+    "cleanBuild",
+    "cleanReferences",
+];
 
 // Go: api/session.go batchResponsePage (ts#64061)
 #[derive(Debug, Default)]
@@ -1265,6 +1306,7 @@ pub fn new_session(
         cpu_profiler: crate::pprof::CpuProfiler::default(),
         client_writes: Cell::new(None),
         client_reads: Cell::new(false),
+        build_running: Cell::new(false),
     };
     if let Some(options) = options {
         s.use_binary_responses = options.use_binary_responses;
@@ -1646,6 +1688,10 @@ impl ipc::Handler for Session {
     ) -> Result<Option<Box<dyn AnyValue>>, GoError> {
         // ts#64163
         let ctx = &(self.with_locale)(ctx);
+        // Go `s.buildMu.Lock()` in each of these handlers, until it returns.
+        let _build_mu = BUILD_MU_METHODS
+            .contains(&method)
+            .then(|| BuildMu::lock(&self.build_running));
         // Handle simple methods that don't need param parsing
         match method {
             "echo" => {
@@ -2237,6 +2283,11 @@ impl ipc::Handler for Session {
     ) -> Result<(), GoError> {
         // TODO: Implement notification handling
         Ok(())
+    }
+
+    // PORT: Go `buildMu` (`BUILD_MU_METHODS`, `build_running`).
+    fn must_wait(&self, method: &str) -> bool {
+        self.build_running.get() && BUILD_MU_METHODS.contains(&method)
     }
 }
 

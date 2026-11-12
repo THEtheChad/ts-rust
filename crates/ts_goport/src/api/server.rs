@@ -125,6 +125,10 @@ impl Handler for FreeAfterMessage {
         let _message = self.enter();
         self.inner.handle_notification(ctx, method, params)
     }
+
+    fn must_wait(&self, method: &str) -> bool {
+        self.inner.must_wait(method)
+    }
 }
 
 // Go `defer f()`: runs `f` when the guard leaves scope, on every return
