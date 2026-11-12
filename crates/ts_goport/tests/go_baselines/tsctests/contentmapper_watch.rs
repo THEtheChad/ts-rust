@@ -1299,6 +1299,12 @@ fn content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error() {
             );
             write("b/b.ts", "export const b = 1;\n");
             write(MANIFEST, &good_manifest);
+            // The inputs of the first build are older than its outputs
+            // whatever the wall clock does: a config written right before a
+            // build can get a later mtime than the build's build info after
+            // the clock steps back, and `b` is then out of date in the watch
+            // (see `support::mtime_order`).
+            crate::support::set_old_mtimes(&root);
             std::env::set_current_dir(&root).expect("chdir");
             // The watch events carry the compiler's form of the path.
             let root_name = root.to_string_lossy().replace('\\', "/");

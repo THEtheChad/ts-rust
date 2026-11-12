@@ -13,7 +13,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 /// A new empty dir under the system temp dir; removed on drop.
 struct TmpDir(PathBuf);
@@ -69,8 +68,10 @@ fn two_projects(name: &str, p1_config: &str, extra: impl FnOnce(&TmpDir)) -> Tmp
     dir.write("p1/tsconfig.json", p1_config);
     extra(&dir);
     build(&dir.0);
-    // Past the mtime granularity of the file system.
-    std::thread::sleep(Duration::from_millis(50));
+    // The edit, and p0's outputs that the next build writes again, must be
+    // newer than every file of this build. A wait does not make them so:
+    // the wall clock can step back (see `support::mtime_order`).
+    crate::support::set_old_mtimes(&dir.0);
     dir.write("p0/index.ts", "export const v0 = 2;\n");
     dir
 }
