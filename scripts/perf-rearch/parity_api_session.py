@@ -20,6 +20,13 @@ A scenario (parity-api-scenarios.json) is:
   createPrograms, openProjects   the createSnapshot changes
   requests      per project of the createSnapshot answer, in its order: the methods to call with
                 {snapshot, project} (default PER_PROJECT)
+  calls         a list of {method, params}: raw requests sent in order after the createSnapshot requests
+                (lane B9). In params, a string that is exactly @SNAPSHOT@ is the createSnapshot answer's
+                snapshot id, @PROJECT@ its first project's id, and @ANSWER:<k>:<path>@ the value at the
+                dotted path (keys, or list indexes) of the k-th call's answer message (k counts from 0 and
+                is an earlier call; null when that answer has no such value). The build orchestrator,
+                initialize, createSnapshot, updateSnapshot and release are refused here (their steps
+                have their own keys)
   updates       a list of {changes, requests?, release?}: updateSnapshot {snapshot: the current one,
                 changes}, then the requests per project of its answer (default: the projects so far),
                 then, with release: true, release of the snapshot it replaced
@@ -128,7 +135,7 @@ FIXTURE_DIR_MODE, FIXTURE_FILE_MODE = 0o755, 0o644
 # and signal lines; Rust's panic and stack overflow; an abort.
 CRASH_RE = re.compile(r"^(panic: |fatal error: |goroutine \d+ \[|SIG[A-Z]+: |\[signal |thread '.*' panicked at |.*\bpanicked at "
                       r"|.*has overflowed its stack|Aborted\b|.*core dumped)")
-SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'updates', 'build',
+SCENARIO_KEYS = {'name', 'about', 'caseSensitive', 'fs', 'disk', 'createPrograms', 'openProjects', 'requests', 'calls', 'updates', 'build',
                  'afterBuild', 'callbacks'}
 CALLBACK_NAMES = {'readFile', 'fileExists', 'directoryExists', 'getAccessibleEntries', 'realpath', 'stat', 'writeFile', 'removeFile'}
 CALLBACK_DEFAULTS = {'realpath:identity', 'stat:fakeStat', 'writeFile:noop', 'removeFile:noop'}
@@ -201,6 +208,73 @@ def _validate_callbacks(name, cb):
             raise ScenarioError(f'{name}: callbacks.{k} maps @ROOT@/ paths to strings')
 
 
+# A `calls` placeholder: a whole string, replaced by a JSON value (see the top comment).
+CALL_REF = re.compile(r'^@(SNAPSHOT|PROJECT)@$|^@ANSWER:(\d+):([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)@$')
+# Methods a call may not make: the steps with their own scenario keys.
+CALL_REFUSED = {'initialize', 'createSnapshot', 'updateSnapshot', 'release'}
+
+
+def _call_refs(value):
+    """Every placeholder string in value."""
+    if isinstance(value, str):
+        return [value] if value.startswith('@') and value.endswith('@') and value != '@ROOT@' else []
+    if isinstance(value, list):
+        return [r for v in value for r in _call_refs(v)]
+    if isinstance(value, dict):
+        return [r for v in value.values() for r in _call_refs(v)]
+    return []
+
+
+def _validate_calls(name, calls, has_snapshot):
+    if not isinstance(calls, list):
+        raise ScenarioError(f'{name}: calls is a list of {{method, params}}')
+    for k, c in enumerate(calls):
+        if not isinstance(c, dict) or set(c) != {'method', 'params'} or not isinstance(c['method'], str):
+            raise ScenarioError(f'{name}: call {k} is {{method, params}}')
+        if c['method'] in CALL_REFUSED or c['method'] in BUILD_STEPS.values():
+            raise ScenarioError(f'{name}: call {k}: {c["method"]} has its own scenario key')
+        for ref in _call_refs(c['params']):
+            m = CALL_REF.match(ref)
+            if not m:
+                raise ScenarioError(f'{name}: call {k}: unknown placeholder {ref}')
+            if m.group(2) is not None and int(m.group(2)) >= k:
+                raise ScenarioError(f'{name}: call {k}: {ref} names a call that is not earlier')
+            if m.group(1) is not None and not has_snapshot:
+                raise ScenarioError(f'{name}: call {k}: {ref} needs a createSnapshot')
+
+
+def _call_value(ref, sid, projects, answers):
+    """The JSON value of a placeholder (validated), or None."""
+    m = CALL_REF.match(ref)
+    if m.group(1) == 'SNAPSHOT':
+        return sid
+    if m.group(1) == 'PROJECT':
+        return projects[0] if projects else None
+    raw = answers[int(m.group(2))]
+    try:
+        value = json.loads(raw) if raw is not None else None
+    except ValueError:
+        return None
+    for part in m.group(3).split('.'):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+    return value
+
+
+def _resolve_call(value, sid, projects, answers):
+    if isinstance(value, str) and CALL_REF.match(value):
+        return _call_value(value, sid, projects, answers)
+    if isinstance(value, list):
+        return [_resolve_call(v, sid, projects, answers) for v in value]
+    if isinstance(value, dict):
+        return {k: _resolve_call(v, sid, projects, answers) for k, v in value.items()}
+    return value
+
+
 def validate(sc):
     """Raises ScenarioError on a scenario this harness cannot run hermetically or exactly."""
     name = sc.get('name', '?') if isinstance(sc, dict) else '?'
@@ -225,6 +299,9 @@ def validate(sc):
     for r in sc.get('requests') or []:
         if r not in PER_PROJECT:
             raise ScenarioError(f'{name}: unknown request {r}')
+    if 'calls' in sc:
+        _validate_calls(name, sc['calls'], bool(sc.get('createPrograms') is not None or sc.get('openProjects') is not None
+                                                   or sc.get('fs')))
     for u in (sc.get('updates') or []) + (sc.get('afterBuild') or []):
         if not isinstance(u, dict) or set(u) - {'changes', 'requests', 'release'} or 'changes' not in u:
             raise ScenarioError(f'{name}: an update is {{changes, requests?, release?}}')
@@ -757,6 +834,7 @@ class Session:
             if snap is not None:
                 sid, projects = _result(snap, 'snapshot'), _projects(snap)
                 self.per_project(sid, projects, sc.get('requests'))
+        self.calls(sid, projects, sc.get('calls'))
         sid, projects = self.updates(sid, projects, sc.get('updates'))
         orchestrator, orchestrators = None, []
         for step in sc.get('build') or []:
@@ -772,6 +850,13 @@ class Session:
             else:
                 self.ask(BUILD_STEPS[kind], {'buildOrchestratorID': orchestrator, **({'project': expand(arg, root)} if arg else {})})
         self.updates(sid, projects, sc.get('afterBuild'))
+
+    def calls(self, sid, projects, calls):
+        """The scenario's raw requests (lane B9), each with its placeholders resolved."""
+        answers = []
+        for c in calls or []:
+            params = _resolve_call(expand(c['params'], self.root), sid, projects, answers)
+            answers.append(self.ask(c['method'], params))
 
     def interleave(self, orchestrators, arg):
         """The interleave build step (see the top comment): one step with both answers."""
