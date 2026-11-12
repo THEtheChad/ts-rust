@@ -110,3 +110,66 @@ child_test! {
         session.close();
     }
 }
+
+// Audit A4: Go `GetReferencedSymbolsForNodeParams.Position` is a Go `int`
+// (proto.go:1553), so a position outside int32 decodes and the request
+// runs: for the source file's handle Go answers `[]` at 0, 2^32 and -2^32.
+// The port's `i32` field failed the decode. The handle is the declaration
+// of the module symbol that getSymbolAtPosition gives past the text (Go
+// and the port both give it at 2147483648: audit A3b).
+child_test! {
+    fn referenced_symbols_position_is_a_go_int() {
+        let (init, _) = projecttestutil::get_session_init_options(
+            files(&[("/home/projects/p/src/a.ts", "export const x = 1;\n")]),
+            None,
+            TypingsInstallerOptions::default(),
+        );
+        let session = api::new_standalone_session(&init, None);
+        let created = nil_error(session.handle_create_snapshot(
+            &bg(),
+            &api::CreateSnapshotParams {
+                snapshot_request_changes_params: api::SnapshotRequestChangesParams {
+                    create_programs: Some(vec![Some(program_params(
+                        &["/home/projects/p/src/a.ts"],
+                        no_lib(),
+                    ))]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ));
+        let project = json_marshal(&created.projects[0].id, &[])
+            .unwrap_or_else(|err| panic!("marshal: {err:?}"));
+        let snapshot = created.snapshot.0;
+
+        let symbol = ask(
+            &session,
+            "getSymbolAtPosition",
+            &format!(
+                r#"{{"snapshot":{snapshot},"project":{project},"file":"/home/projects/p/src/a.ts","position":2147483648}}"#
+            ),
+        );
+        let Some(LspAny::String(handle)) = field(&symbol, "result")
+            .and_then(|r| field(r, "valueDeclaration"))
+        else {
+            panic!("no module declaration: {symbol:?}");
+        };
+
+        for position in ["0", "4294967296", "-4294967296"] {
+            let response = ask(
+                &session,
+                "getReferencedSymbolsForNode",
+                &format!(
+                    r#"{{"snapshot":{snapshot},"project":{project},"node":"{handle}","position":{position}}}"#
+                ),
+            );
+            assert_eq!(field(&response, "error"), None, "position {position}");
+            assert_eq!(
+                field(&response, "result"),
+                Some(&LspAny::Array(Vec::new())),
+                "position {position}"
+            );
+        }
+        session.close();
+    }
+}

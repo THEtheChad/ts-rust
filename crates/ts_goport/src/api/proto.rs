@@ -4260,7 +4260,8 @@ pub struct GetReferencedSymbolsForNodeParams {
     pub snapshot: SnapshotID,
     pub project: project::ID,
     pub node: NodeHandle,
-    pub position: i32,
+    // Go `int`
+    pub position: i64,
 }
 
 proto_json!(both GetReferencedSymbolsForNodeParams {

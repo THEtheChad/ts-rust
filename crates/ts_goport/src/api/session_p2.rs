@@ -3112,10 +3112,17 @@ impl Session {
         // (`getReferenceAtPosition`). Port offsets differ from Go offsets
         // after a marker unit (see `scanner_util::GO_STRING_MARKER`), so it
         // is mapped there (`port_byte_offset`).
-        let position = if node.kind() == SyntaxKind::SourceFile {
-            crate::scanner_util::port_byte_offset(&source_file_text(node), params.position)
-        } else {
-            params.position
+        // A Go `int` position outside `i32` is before or past any text, so
+        // `i32::MIN` or `i32::MAX` takes the same branches in
+        // `getReferenceAtPosition`: no reference contains it and the touching
+        // token is the same.
+        let position = match i32::try_from(params.position) {
+            Err(_) if params.position < 0 => i32::MIN,
+            Err(_) => i32::MAX,
+            Ok(position) if node.kind() == SyntaxKind::SourceFile => {
+                crate::scanner_util::port_byte_offset(&source_file_text(node), position)
+            }
+            Ok(position) => position,
         };
         let entries =
             lang_svc.get_referenced_symbols_for_node_exported(ctx, position, node, &source_files);
