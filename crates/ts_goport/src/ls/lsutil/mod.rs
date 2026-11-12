@@ -7,6 +7,7 @@ pub mod formatcodeoptions;
 pub mod organizeimports;
 pub mod symbol_display;
 pub mod userpreferences;
+pub mod userpreferences_generated;
 pub mod utilities;
 
 pub use asi::*;
@@ -16,13 +17,14 @@ pub use formatcodeoptions::*;
 pub use organizeimports::*;
 pub use symbol_display::*;
 pub use userpreferences::*;
+pub use userpreferences_generated::*;
 pub use utilities::*;
 
 /// Glob import for lsutil files: `use crate::ls::lsutil::prelude::*;`.
 pub mod prelude {
     pub use super::{
         asi::*, children::*, completednode::*, formatcodeoptions::*, organizeimports::*,
-        symbol_display::*, userpreferences::*, utilities::*,
+        symbol_display::*, userpreferences::*, userpreferences_generated::*, utilities::*,
     };
     pub use crate::astnav;
     pub use crate::frontend::json_ext::{self, LspAny};

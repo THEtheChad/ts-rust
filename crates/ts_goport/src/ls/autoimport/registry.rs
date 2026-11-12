@@ -214,7 +214,11 @@ pub fn bucket_build_preferences_from_user_preferences(
     prefs: &lsutil::UserPreferences,
 ) -> BucketBuildPreferences {
     BucketBuildPreferences {
-        file_exclude_patterns: prefs.auto_import_file_exclude_patterns.clone(),
+        // PORT: Go keeps the slice; nil and empty compare equal (UnorderedEqual).
+        file_exclude_patterns: prefs
+            .auto_import_file_exclude_patterns
+            .clone()
+            .unwrap_or_default(),
         auto_import_entrypoint_directory_search: prefs.auto_import_entrypoint_directory_search,
     }
 }
@@ -627,10 +631,15 @@ impl Registry {
         if let Some(user_preferences) = &change.user_preferences {
             builder.user_preferences = user_preferences.clone();
             if !unordered_equal(
-                &builder
+                builder
                     .user_preferences
-                    .auto_import_specifier_exclude_regexes,
-                &self.user_preferences.auto_import_specifier_exclude_regexes,
+                    .auto_import_specifier_exclude_regexes
+                    .as_deref()
+                    .unwrap_or_default(),
+                self.user_preferences
+                    .auto_import_specifier_exclude_regexes
+                    .as_deref()
+                    .unwrap_or_default(),
             ) {
                 builder.specifier_cache.clear();
             }

@@ -10,7 +10,7 @@ pub fn get_indentation_for_node(
     ignore_actual_indentation_range: Option<&TextRange>,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     let (startline, startpos) = get_ecma_line_and_byte_offset_of_position(
         source_file,
         get_token_pos_of_node(n, source_file, false),
@@ -35,7 +35,7 @@ pub fn get_indentation(
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
     assume_new_line_before_close_brace: bool,
-) -> i32 {
+) -> i64 {
     if position > source_file_text(source_file).len() as i32 {
         return options.editor_settings.base_indent_size; // past EOF
     }
@@ -154,7 +154,7 @@ pub fn get_comment_indent(
     position: i32,
     options: &lsutil::FormatCodeSettings,
     enclosing_comment_range: &CommentRange,
-) -> i32 {
+) -> i64 {
     let previous_line = get_ecma_line_of_position(source_file, position) - 1;
     let comment_start_line = get_ecma_line_of_position(source_file, enclosing_comment_range.pos());
 
@@ -246,7 +246,7 @@ pub fn get_block_indent(
     source_file: Node,
     position: i32,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     // move backwards until we find a line with a non-whitespace character,
     // then find the first non-whitespace character for that line.
     let mut current = position;
@@ -268,7 +268,7 @@ pub fn get_actual_indentation_for_list_item_before_comma(
     comma_token: Node,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     // previous token is comma that separates items in list - find the previous item and try to derive indentation from it
     if comma_token.parent().is_nil() {
         return -1;
@@ -335,7 +335,7 @@ pub fn get_smart_indent(
     line_at_position: i32,
     assume_new_line_before_close_brace: bool,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     // try to find node that can contribute to indentation and includes 'position' starting from 'precedingToken'
     // if such node is found - compute initial indentation for 'position' inside this node
     let mut previous = Node::NIL;
@@ -402,11 +402,11 @@ pub fn get_indentation_for_node_worker(
     mut current_start_line: i32,
     mut current_start_character: i32,
     ignore_actual_indentation_range: Option<&TextRange>,
-    mut indentation_delta: i32,
+    mut indentation_delta: i64,
     source_file: Node,
     is_next_child: bool,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     let mut parent = current.parent();
 
     // Walk up the tree and collect indentation for parent-child node pairs. Indentation is not added if
@@ -537,7 +537,7 @@ pub fn get_actual_indentation_for_node(
     parent_and_child_share_line: bool,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     // actual indentation is used for statements\declarations if one of cases below is true:
     // - parent is SourceFile - by default immediate children of SourceFile are not indented except when user indents them manually
     // - parent and child are not on the same line
@@ -579,7 +579,7 @@ pub fn get_actual_indentation_for_list_item(
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
     list_indents_child: bool,
-) -> i32 {
+) -> i64 {
     if node.parent().is_some() && node.parent().kind() == SyntaxKind::VariableDeclarationList {
         // VariableDeclarationList has no wrapping tokens
         return -1;
@@ -616,7 +616,7 @@ pub fn get_actual_indentation_for_list_start_line(
     list: NodeList,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     if list.is_nil() {
         return -1;
     }
@@ -630,7 +630,7 @@ pub fn derive_actual_indentation_from_list(
     index: i32,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     crate::go_assert!(list.is_some() && index >= 0 && (index as usize) < list.nodes().len());
 
     let nodes = list.nodes();
@@ -671,7 +671,7 @@ pub fn find_column_for_first_non_whitespace_character_in_line(
     char: i32,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     let line_start = scanner_ls::get_ecma_position_of_line_and_byte_offset(source_file, line, 0);
     find_first_non_whitespace_column(line_start, line_start + char, source_file, options)
 }
@@ -682,7 +682,7 @@ pub fn find_first_non_whitespace_column(
     end_pos: i32,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> i32 {
+) -> i64 {
     let (_, col) =
         find_first_non_whitespace_character_and_column(start_pos, end_pos, source_file, options);
     col
@@ -701,7 +701,7 @@ pub fn find_first_non_whitespace_character_and_column(
     end_pos: i32,
     source_file: Node,
     options: &lsutil::FormatCodeSettings,
-) -> (i32, i32) {
+) -> (i32, i64) {
     let mut column = 0;
     let text = source_file_text(source_file);
     let mut pos = start_pos;

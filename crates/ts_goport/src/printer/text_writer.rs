@@ -7,7 +7,8 @@ use crate::prelude::*;
 #[derive(Clone, Debug, Default)]
 pub struct TextWriter {
     new_line: String,
-    indent_size: i32,
+    // PORT: Go `int` (64 bits): the change tracker passes the user's indentSize.
+    indent_size: i64,
     builder: String,
     // PORT: Go keeps `lastWritten string`; its only reader is
     // `HasTrailingWhitespace`, which decodes the last rune. This keeps that
@@ -67,13 +68,18 @@ impl TextWriter {
     }
 
     // PORT: Go `w.builder.WriteString(getIndentString(w.indent, w.indentSize))`.
-    // This pushes the same spaces from a static string, with no allocation.
+    // This pushes the same spaces from a static string, with no allocation,
+    // after Go `strings.Repeat`'s checks and panics (`gostd::strings::repeat_len`).
     fn push_indent(&mut self) {
         // 64 spaces.
         const SPACES: &str = "                                                                ";
-        // Go `strings.Repeat` panics on a negative count.
-        let mut n = usize::try_from(self.indent * self.indent_size)
-            .expect("strings: negative Repeat count");
+        if self.indent == 0 {
+            return;
+        }
+        let mut n = crate::gostd::strings::repeat_len(
+            1,
+            i64::from(self.indent).wrapping_mul(self.indent_size),
+        );
         while n > 0 {
             let k = n.min(SPACES.len());
             self.builder.push_str(&SPACES[..k]);
@@ -107,8 +113,10 @@ impl EmitTextWriter for TextWriter {
     // Go: printer/textwriter.go:30 Grow
     fn grow(&mut self, n: i32) {
         // Go `strings.Builder.Grow` panics on a negative count.
-        self.builder
-            .reserve(usize::try_from(n).expect("strings.Builder.Grow: negative count"));
+        let Ok(n) = usize::try_from(n) else {
+            panic!("strings.Builder.Grow: negative count");
+        };
+        self.builder.reserve(n);
     }
 
     // Go: printer/textwriter.go:34 DecreaseIndent
@@ -121,7 +129,12 @@ impl EmitTextWriter for TextWriter {
     // for source map compatibility.
     fn get_column(&self) -> i32 {
         if self.line_start {
-            return self.indent * self.indent_size;
+            // PORT: Go `int`; the printer's columns are `i32` here (emitter-wide).
+            // Only source-map generation reads a column, and the change tracker's
+            // printer (the one writer whose indent size comes from the user's
+            // preferences) has no source-map generator, so the narrowing is not
+            // observable.
+            return i64::from(self.indent).wrapping_mul(self.indent_size) as i32;
         }
         // Count UTF-16 code units from the last line start.
         // For ASCII-only output (the common case), this equals the byte count.
@@ -292,20 +305,19 @@ pub fn get_default_indent_size() -> i32 {
 
 // Go: printer/textwriter.go:123 getIndentString
 // PORT: `TextWriter` writes its indent with `push_indent`; other callers use this.
-pub fn get_indent_string(indent: i32, indent_size: i32) -> String {
+pub fn get_indent_string(indent: i32, indent_size: i64) -> String {
     if indent == 0 {
         return String::new();
     }
     // TODO: This is cached in tsc - should it be cached here?
-    // Go `strings.Repeat` panics on a negative count.
-    " ".repeat(usize::try_from(indent * indent_size).expect("strings: negative Repeat count"))
+    crate::gostd::strings::repeat(" ", i64::from(indent).wrapping_mul(indent_size))
 }
 
 // Go: printer/textwriter.go:218 NewTextWriter
 // PORT: Go returns the `EmitTextWriter` interface; this returns the concrete
 // writer, which callers use as `&mut dyn EmitTextWriter`.
 #[must_use]
-pub fn new_text_writer(new_line: &str, indent_size: i32) -> TextWriter {
+pub fn new_text_writer(new_line: &str, indent_size: i64) -> TextWriter {
     let indent_size = if indent_size <= 0 { 4 } else { indent_size };
     let mut w = TextWriter {
         new_line: new_line.to_string(),
@@ -322,7 +334,7 @@ pub fn new_text_writer(new_line: &str, indent_size: i32) -> TextWriter {
 // builds that literal. Unlike `new_text_writer`, it keeps an indent size of 0
 // and does not call `clear`.
 #[must_use]
-pub(crate) fn new_text_writer_literal(new_line: &str, indent_size: i32) -> TextWriter {
+pub(crate) fn new_text_writer_literal(new_line: &str, indent_size: i64) -> TextWriter {
     TextWriter {
         new_line: new_line.to_string(),
         indent_size,

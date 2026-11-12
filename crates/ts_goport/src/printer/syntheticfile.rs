@@ -20,7 +20,7 @@ pub fn print_and_position_node(
     node: Node,
     source_file: Node,
     new_line: &str,
-    indent_size: i32,
+    indent_size: i64,
     emit_context: Option<Rc<EmitContext>>,
 ) -> (String, Node) {
     let writer = Rc::new(RefCell::new(new_change_tracker_writer(

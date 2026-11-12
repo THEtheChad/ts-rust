@@ -85,7 +85,8 @@ pub struct NodeBuilderContext {
     pub host: &'static GoProgram,
     pub tracker: Rc<dyn SymbolTracker>,
     pub approximate_length: i32,
-    pub max_truncation_length: i32,
+    // PORT: Go `int` (64 bits): the user's maximumHoverLength.
+    pub max_truncation_length: i64,
     pub encountered_error: bool,
     pub truncating: bool,
     pub reported_diagnostic: bool,
@@ -366,13 +367,13 @@ impl Checker {
             return c.truncating;
         }
         let max_length = if c.flags.intersects(NodeBuilderFlags::NO_TRUNCATION) {
-            NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
+            i64::from(NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH)
         } else if c.max_truncation_length > 0 {
             c.max_truncation_length
         } else {
-            DEFAULT_MAXIMUM_TRUNCATION_LENGTH
+            i64::from(DEFAULT_MAXIMUM_TRUNCATION_LENGTH)
         };
-        c.truncating = c.approximate_length > max_length;
+        c.truncating = i64::from(c.approximate_length) > max_length;
         c.truncating
     }
 

@@ -1366,7 +1366,7 @@ impl Printer {
                         let mut number_of_single_spaces_to_emit = spaces_to_emit % indent_size;
                         let indent_size_space_string = get_indent_string(
                             (spaces_to_emit - number_of_single_spaces_to_emit) / indent_size,
-                            indent_size,
+                            i64::from(indent_size),
                         );
 
                         // Write indent size string ( in eg 1: = "", 2: "" , 3: string with 8 spaces 4: string with 12 spaces
