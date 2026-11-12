@@ -224,6 +224,10 @@ fn build_watch_parses_a_written_dts_again_in_the_next_cycle() {
 /// A `tsgo -b --watch` run with the OS watcher, for
 /// `build_watch_parses_a_written_dts_again_in_the_next_cycle`.
 #[cfg(target_os = "linux")]
+#[path = "common/mtime_order.rs"]
+mod mtime_order;
+
+#[cfg(target_os = "linux")]
 mod os_watch {
     use std::io::Read;
     use std::path::Path;
@@ -352,21 +356,16 @@ mod os_watch {
 
     /// Puts the text of the project file `source` in place of `target`, as
     /// an editor saves: a new file under `root`, renamed over the target.
-    /// The new file gets a later mtime than every file under `root`, as in
-    /// `goport_watch`'s `write_after_outputs` (see there): with an earlier
-    /// one, a wall clock stepped back, `tsc -b` keeps the project up to
-    /// date and the edit builds nothing.
+    /// The new file gets a later mtime than every file under `root` (see
+    /// `mtime_order`): with an earlier one, a wall clock stepped back,
+    /// `tsc -b` keeps the project up to date and the edit builds nothing.
     pub fn replace(root: &Path, project: &Path, target: &str, source: &str) {
         let staged = root.join("edit.tmp");
-        let newest = super::newest_mtime(root);
-        loop {
+        let newest = super::mtime_order::newest_mtime(root);
+        super::mtime_order::write_until_after(&staged, newest, || {
             std::fs::copy(project.join(source), &staged)
                 .unwrap_or_else(|error| panic!("copy {source}: {error}"));
-            if super::mtime(&staged) > newest {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        });
         std::fs::rename(&staged, project.join(target))
             .unwrap_or_else(|error| panic!("rename to {target}: {error}"));
     }
@@ -445,32 +444,6 @@ fn copy_dir(from: &Path, to: &Path) {
                 .unwrap_or_else(|error| panic!("copy to {}: {error}", target.display()));
         }
     }
-}
-
-/// The latest mtime of a file under `dir`. Symbolic links are not followed.
-#[cfg(target_os = "linux")]
-fn newest_mtime(dir: &Path) -> SystemTime {
-    let entries =
-        fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
-    entries
-        .map(|entry| {
-            let entry = entry.unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => newest_mtime(&path),
-                _ => mtime(&path),
-            }
-        })
-        .max()
-        .unwrap_or(UNIX_EPOCH)
-}
-
-/// The mtime of `path` itself (a link's own time).
-#[cfg(target_os = "linux")]
-fn mtime(path: &Path) -> SystemTime {
-    fs::symlink_metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .unwrap_or_else(|error| panic!("mtime of {}: {error}", path.display()))
 }
 
 fn read(path: &Path) -> String {

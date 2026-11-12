@@ -29,8 +29,14 @@ use rustix::fs::{AtFlags, Mode, OFlags, Timespec, Timestamps, UTIME_NOW};
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal, kill_process};
 
+#[path = "common/mtime_order.rs"]
+mod mtime_order;
+
 /// The longest wait for a step that ends in milliseconds when it works.
 const LIMIT: Duration = Duration::from_secs(20);
+
+/// More than one step of a coarse file system clock.
+const TICK: Duration = Duration::from_millis(20);
 
 /// The longest time from a signal to the exit of a watch loop that waits.
 /// tsgo ends in milliseconds; the rest is room for a loaded host.
@@ -163,15 +169,15 @@ impl Project {
     /// a new file a time up to one step before the clock, and then neither
     /// Go nor the port reads the FIFO. The build is done when this runs, so
     /// the test sets the FIFO's time to now again until it is after the
-    /// clock time at the start. The rename keeps that time.
+    /// clock time at the start, and after every file of the build by more
+    /// than one step: the wall clock can step back after the build (see
+    /// `mtime_order`), and then the clock time at the start is before the
+    /// one Go kept. The rename keeps that time.
     fn hold_a_ts(&self) -> Fifo {
-        let start = SystemTime::now();
+        let after = SystemTime::now().max(mtime_order::newest_mtime(&self.proj) + TICK);
         let staged = self.root.join("x").join("a.fifo");
         rustix::fs::mkfifoat(rustix::fs::CWD, &staged, Mode::RUSR | Mode::WUSR).unwrap();
-        let end = Instant::now() + LIMIT;
-        while modified(&staged) <= start {
-            assert!(Instant::now() < end, "the FIFO time is not after {start:?}");
-            std::thread::sleep(Duration::from_millis(1));
+        mtime_order::write_until_after(&staged, after, || {
             let now = Timespec {
                 tv_sec: 0,
                 tv_nsec: UTIME_NOW,
@@ -181,16 +187,11 @@ impl Project {
                 last_modification: now,
             };
             rustix::fs::utimensat(rustix::fs::CWD, &staged, &times, AtFlags::empty()).unwrap();
-        }
+        });
         let path = self.proj.join("src/a.ts");
         std::fs::rename(&staged, &path).unwrap();
         Fifo(path)
     }
-}
-
-/// The modification time of `path`.
-fn modified(path: &Path) -> SystemTime {
-    std::fs::metadata(path).unwrap().modified().unwrap()
 }
 
 impl Drop for Project {
