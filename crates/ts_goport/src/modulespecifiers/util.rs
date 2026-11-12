@@ -163,17 +163,6 @@ fn string_to_regex(pattern: &str) -> Option<Arc<regexp::Regexp>> {
     }
 }
 
-// Go: modulespecifiers/util.go:136 ensurePathIsNonModuleName (at 673a5f17d713;
-// ts#64159 uses tspath.EnsurePathIsNonModuleName, tspath/path.go:987)
-/// Ensures a path is either absolute (prefixed with `/` or `c:`) or dot-relative (prefixed
-/// with `./` or `../`) so as not to be confused with an unprefixed module name.
-pub(crate) fn ensure_path_is_non_module_name(path: &str) -> String {
-    if path_is_bare_specifier(path) {
-        return format!("./{path}");
-    }
-    path.to_string()
-}
-
 // Go: modulespecifiers/util.go:125 GetJSExtensionForDeclarationFileExtension
 pub fn get_js_extension_for_declaration_file_extension(ext: &str) -> String {
     match ext {

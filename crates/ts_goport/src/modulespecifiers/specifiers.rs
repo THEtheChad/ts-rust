@@ -648,7 +648,7 @@ fn get_local_module_specifier(
     }
     if relative_path.is_empty() {
         relative_path = process_ending(
-            &ensure_path_is_non_module_name(&tspath::get_relative_path_from_directory(
+            &tspath::ensure_path_is_non_module_name(&tspath::get_relative_path_from_directory(
                 source_directory,
                 module_file_name,
                 &tspath::ComparePathsOptions {
@@ -954,7 +954,7 @@ fn try_get_module_name_from_root_dirs(
     for source_path in &normalized_source_paths {
         for target_path in &normalized_target_paths {
             let candidate =
-                ensure_path_is_non_module_name(&tspath::get_relative_path_from_directory(
+                tspath::ensure_path_is_non_module_name(&tspath::get_relative_path_from_directory(
                     source_path,
                     target_path,
                     &tspath::ComparePathsOptions {
