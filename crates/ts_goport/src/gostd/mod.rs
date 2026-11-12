@@ -1,6 +1,6 @@
 //! Go runtime and standard library pieces used by the language-service port
 //! (Go's float-to-int conversion on amd64, `context`, `encoding/base64`, `errors`, `errgroup`, `slices`, `net/url`, `net/netip`,
-//! `strconv`, `time` timers, `unicode`, `regexp` with its `unicode` tables,
+//! `strconv`, `strings.Repeat`, `time` timers, `unicode`, `regexp` with its `unicode` tables,
 //! `golang.org/x/text/collate` and `unicode/norm`, the dispatch-thread `go`
 //! queue, the goroutine stack size, `GOMAXPROCS` and the open-file limit),
 //! the `internal/debug` checks and the backtrace text that takes the place
@@ -23,6 +23,7 @@ pub mod runtime;
 pub mod slices;
 pub mod stack;
 pub mod strconv;
+pub mod strings;
 pub mod timer;
 pub mod unicode;
 pub mod unicode_tables;

@@ -68,13 +68,18 @@ impl TextWriter {
     }
 
     // PORT: Go `w.builder.WriteString(getIndentString(w.indent, w.indentSize))`.
-    // This pushes the same spaces from a static string, with no allocation.
+    // This pushes the same spaces from a static string, with no allocation,
+    // after Go `strings.Repeat`'s checks and panics (`gostd::strings::repeat_len`).
     fn push_indent(&mut self) {
         // 64 spaces.
         const SPACES: &str = "                                                                ";
-        // Go `strings.Repeat` panics on a negative count.
-        let mut n = usize::try_from(i64::from(self.indent).wrapping_mul(self.indent_size))
-            .expect("strings: negative Repeat count");
+        if self.indent == 0 {
+            return;
+        }
+        let mut n = crate::gostd::strings::repeat_len(
+            1,
+            i64::from(self.indent).wrapping_mul(self.indent_size),
+        );
         while n > 0 {
             let k = n.min(SPACES.len());
             self.builder.push_str(&SPACES[..k]);
@@ -108,8 +113,10 @@ impl EmitTextWriter for TextWriter {
     // Go: printer/textwriter.go:30 Grow
     fn grow(&mut self, n: i32) {
         // Go `strings.Builder.Grow` panics on a negative count.
-        self.builder
-            .reserve(usize::try_from(n).expect("strings.Builder.Grow: negative count"));
+        let Ok(n) = usize::try_from(n) else {
+            panic!("strings.Builder.Grow: negative count");
+        };
+        self.builder.reserve(n);
     }
 
     // Go: printer/textwriter.go:34 DecreaseIndent
@@ -123,6 +130,10 @@ impl EmitTextWriter for TextWriter {
     fn get_column(&self) -> i32 {
         if self.line_start {
             // PORT: Go `int`; the printer's columns are `i32` here (emitter-wide).
+            // Only source-map generation reads a column, and the change tracker's
+            // printer (the one writer whose indent size comes from the user's
+            // preferences) has no source-map generator, so the narrowing is not
+            // observable.
             return i64::from(self.indent).wrapping_mul(self.indent_size) as i32;
         }
         // Count UTF-16 code units from the last line start.
@@ -299,11 +310,7 @@ pub fn get_indent_string(indent: i32, indent_size: i64) -> String {
         return String::new();
     }
     // TODO: This is cached in tsc - should it be cached here?
-    // Go `strings.Repeat` panics on a negative count.
-    " ".repeat(
-        usize::try_from(i64::from(indent).wrapping_mul(indent_size))
-            .expect("strings: negative Repeat count"),
-    )
+    crate::gostd::strings::repeat(" ", i64::from(indent).wrapping_mul(indent_size))
 }
 
 // Go: printer/textwriter.go:218 NewTextWriter

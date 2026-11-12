@@ -1584,26 +1584,6 @@ impl<'t> FormatSpanWorker<'t> {
     }
 }
 
-/// Go `strings.Repeat(s, count)` (go1.27 strings/strings.go Repeat): the
-/// same panics on a negative count and on a length past `math.MaxInt`.
-// PORT: a length Go can't allocate is a fatal "out of memory" in Go and an
-// allocation failure here; neither is an answer.
-fn strings_repeat(s: &str, count: i64) -> String {
-    match count {
-        0 => return String::new(),
-        1 => return s.to_string(),
-        _ => {}
-    }
-    if count < 0 {
-        panic!("strings: negative Repeat count");
-    }
-    let len = (s.len() as u128) * (count as u128);
-    if len > i64::MAX as u128 {
-        panic!("strings: Repeat output length overflow");
-    }
-    s.repeat(count as usize)
-}
-
 // Go: format/span.go:998 getIndentationString
 // PORT: Go `int(math.Floor(...))` is `gostd::conv::float64_to_int64`, and
 // the arithmetic wraps as Go's `int` does.
@@ -1617,14 +1597,14 @@ pub fn get_indentation_string(indentation: i64, options: &lsutil::FormatCodeSett
             (indentation as f64 / options.editor_settings.tab_size as f64).floor(),
         );
         let spaces = indentation.wrapping_sub(tabs.wrapping_mul(options.editor_settings.tab_size));
-        let mut res = strings_repeat("\t", tabs);
+        let mut res = crate::gostd::strings::repeat("\t", tabs);
         if spaces > 0 {
-            res = res + &strings_repeat(" ", spaces);
+            res = res + &crate::gostd::strings::repeat(" ", spaces);
         }
 
         res
     } else {
-        strings_repeat(" ", indentation)
+        crate::gostd::strings::repeat(" ", indentation)
     }
 }
 
