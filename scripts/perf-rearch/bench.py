@@ -360,7 +360,10 @@ def scratch_copy(src, dst):
     Path(dst).mkdir(parents=True)
     files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=src,
                            capture_output=True, check=True).stdout
-    subprocess.run(["rsync", "-a", "--files-from=-", "--from0", f"{src}/", f"{dst}/"], input=files, check=True)
+    # The inputs are read-only (brief, 2026-11-10); the copy must not be: runs write into it (emit next to sources
+    # outside the common root, -b outputs, incr-edit's edit) and the next scratch_copy deletes it.
+    subprocess.run(["rsync", "-a", "--chmod=u+w", "--files-from=-", "--from0", f"{src}/", f"{dst}/"], input=files,
+                   check=True)
     # The top-level node_modules becomes a link to the original. A package's own node_modules (pnpm: links,
     # relative, into the top-level store and to the workspace's packages) is copied as it is, links kept, so
     # workspace packages resolve inside the copy and their sources stay under the copy's root.
@@ -375,6 +378,7 @@ def scratch_copy(src, dst):
             link.symlink_to(nm)
         else:
             subprocess.run(["cp", "-a", nm, str(link)], check=True)
+            subprocess.run(["chmod", "-R", "u+w", str(link)], check=True)  # links are not followed
 
 
 def clean_copy(repo, dst):
