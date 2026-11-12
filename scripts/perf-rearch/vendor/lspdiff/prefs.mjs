@@ -243,6 +243,7 @@ const FILES = [
   "src/use.ts",
   "src/quoted.ts",
   "src/deep/nested/use2.ts",
+  "src/lib/consumer.ts",
   "src/hints.ts",
   "src/long.ts",
   "src/longlit.ts",
@@ -347,18 +348,21 @@ const ASK = {
   rename: at("src/hints.ts", "rename", "textDocument/rename", "message =", 0, { newName: "msg" }),
 };
 
-// The whole battery: every request.
+// The whole battery: every request, after the initialization options (the only step that asks range
+// and on-type formatting: one smoke check each; document formatting reads the same settings).
 async function battery(s, label) {
   for (const ask of Object.values(ASK)) await ask(s, label);
 }
 
+// The requests by name (ASK keys).
+const asks = (...names) => names.map((n) => ASK[n]);
+
 // Sends one workspace/didChangeConfiguration, waits (the checkpoint takes the refreshes it makes), and
-// asks `asks` (default: the whole battery).
-async function configure(s, label, settings, asks) {
+// asks `requests`: the ones that read the preferences the step changes.
+async function configure(s, label, settings, requests) {
   s.client.notify("workspace/didChangeConfiguration", { settings });
   await s.checkpoint(`${label} configured`);
-  if (asks) for (const ask of asks) await ask(s, label);
-  else await battery(s, label);
+  for (const ask of requests) await ask(s, label);
 }
 
 // A { "a.b.c": v } map as nested objects.
@@ -504,7 +508,7 @@ SCENARIOS.prefs = {
       javascript: { preferences: { quoteStyle: "double", importModuleSpecifier: "relative" }, inlayHints: { variableTypes: { enabled: true } } },
       typescript: { quotePreference: "double", unstable: { quotePreference: "auto" }, preferences: { quoteStyle: "single", importModuleSpecifierEnding: "js" }, inlayHints: { parameterNames: { enabled: "literals" } } },
       "js/ts": { quotePreference: "double", importModuleSpecifierPreference: "non-relative", implementationsCodeLens: { enabled: true } },
-    });
+    }, asks("quickFix", "quickFixQuoted", "quickFixNested", "inlayHints", "codeLens"));
     // null: skipped on a raw name; on a nested path it keeps the fallback path from being read
     // (suggest.jsdoc.enabled, format.enabled), and a null section is no section.
     await configure(s, "null", {
@@ -519,7 +523,7 @@ SCENARIOS.prefs = {
         unstable: null,
       },
       "js/ts": { unstable: { quotePreference: "single", includeInlayVariableTypeHints: true } },
-    });
+    }, asks("quickFix", "quickFixQuoted", "quickFixNested", "hover", "jsdoc", "formatting", "inlayHints", "organizeImports"));
     // Wrong types: arrays and numbers where strings are expected, strings for booleans and numbers,
     // fractional and huge numbers, an object for a raw name, a section that is not an object.
     await configure(s, "types", {
@@ -536,14 +540,19 @@ SCENARIOS.prefs = {
         reportStyleChecksAsWarnings: "yes",
       },
       "js/ts": "not an object",
-    });
+    }, asks("quickFix", "quickFixNested", "autoImportValue", "autoImportType", "inlayHints", "formatting", "implementInterface", "hover", "classMember", "objectLiteral", "optionalChain", "diagnostics"));
     // A negative baseIndentSize: Go's formatter panics (strings: negative Repeat count), and its LSP
     // answers the request with an InternalError. Apart from the other format probes, which then answer.
-    await configure(s, "negative base indent", { "js/ts": { format: { baseIndentSize: -2 } } }, [ASK.formatting, ASK.organizeImports, ASK.implementInterface]);
+    await configure(s, "negative base indent", { "js/ts": { format: { baseIndentSize: -2 } } }, asks("formatting", "organizeImports"));
+    // A base indent of 2^62: Go's strings.Repeat asks for more than the runtime's maxAlloc and panics
+    // (runtime error: makeslice: len out of range), which its LSP recovers; the hover after it shows the
+    // server still answers.
+    await configure(s, "huge base indent", { "js/ts": { format: { baseIndentSize: 4611686018427387904 } } }, asks("formatting", "hover"));
     // Unknown enum strings, then unknown keys and sections only: back to the defaults.
     const ENUM_PATHS = PROBES.filter(([, values]) => typeof values[0] === "string").map(([path]) => path);
-    await configure(s, "unknown enums", { typescript: nest(Object.fromEntries(ENUM_PATHS.map((p) => [p, "bogus"]))) });
-    await configure(s, "unknown keys", { typo: { quoteStyle: "single" }, TypeScript: { preferences: { quoteStyle: "single" } }, "js/ts": { notAPreference: true } });
+    const ENUM_ASKS = asks("quickFix", "quickFixQuoted", "quickFixNested", "jsxAttribute", "inlayHints", "organizeImports", "organizeImports2", "symbolOwned", "formatting", "implementInterfaceAfterConstructor");
+    await configure(s, "unknown enums", { typescript: nest(Object.fromEntries(ENUM_PATHS.map((p) => [p, "bogus"]))) }, ENUM_ASKS);
+    await configure(s, "unknown keys", { typo: { quoteStyle: "single" }, TypeScript: { preferences: { quoteStyle: "single" } }, "js/ts": { notAPreference: true } }, ENUM_ASKS);
     // Off switches: validation, formatting, JSDoc completion, code lenses, maximumHoverLength 0
     // (Go: the default 500).
     await configure(s, "off", {
@@ -554,22 +563,28 @@ SCENARIOS.prefs = {
         referencesCodeLens: { enabled: false },
         unstable: { maximumHoverLength: 0, allowRenameOfImportPath: true, providePrefixAndSuffixTextForRename: false },
       },
-    });
+    }, asks("diagnostics", "formatting", "jsdoc", "autoImportValue", "importStatement", "codeLens", "hover", "rename"));
     // Numbers beyond 32 and 64 bits (Go int is 64 bits; a float64 beyond it converts to the minimum on
     // amd64): 1844674407370955264 * 10 wraps to 1024 in Go's hover cutoff; a tab size beyond 32 bits
     // gives 0 tabs and 4 spaces at column 4, and a negative one panics in strings.Repeat.
-    await configure(s, "wide ints", { "js/ts": { unstable: { maximumHoverLength: 1e19 }, format: { indentStyle: 4294967296 } } });
-    await configure(s, "hover cutoff wraps", { "js/ts": { unstable: { maximumHoverLength: 1844674407370955264 } } }, [ASK.hover, ASK.hoverLiteral]);
-    await configure(s, "wide tab size", { "js/ts": { format: { tabSize: 4294967296, convertTabsToSpaces: false, indentSize: 4 } } }, [ASK.implementInterface]);
-    await configure(s, "negative wide tab size", { "js/ts": { format: { tabSize: -4294967292, convertTabsToSpaces: false, indentSize: 4 } } }, [ASK.implementInterface]);
-    await configure(s, "locale", { "js/ts": { locale: "de", customConfigFileName: " tsconfig.alt.json ", workspaceSymbols: { excludeLibrarySymbols: false } } });
-    await configure(s, "config path", { "js/ts": { locale: "bogus", customConfigFileName: "../tsconfig.alt.json" } });
+    await configure(s, "wide ints", { "js/ts": { unstable: { maximumHoverLength: 1e19 }, format: { indentStyle: 4294967296 } } }, asks("hover", "hoverLiteral", "implementInterface", "implementInterfaceAfterConstructor"));
+    await configure(s, "hover cutoff wraps", { "js/ts": { unstable: { maximumHoverLength: 1844674407370955264 } } }, asks("hoverLiteral"));
+    await configure(s, "wide tab size", { "js/ts": { format: { tabSize: 4294967296, convertTabsToSpaces: false, indentSize: 4 } } }, asks("implementInterface"));
+    await configure(s, "negative wide tab size", { "js/ts": { format: { tabSize: -4294967292, convertTabsToSpaces: false, indentSize: 4 } } }, asks("implementInterface"));
+    await configure(s, "locale", { "js/ts": { locale: "de", customConfigFileName: " tsconfig.alt.json ", workspaceSymbols: { excludeLibrarySymbols: false } } }, asks("diagnostics", "quickFix", "symbolLib"));
+    await configure(s, "config path", { "js/ts": { locale: "bogus", customConfigFileName: "../tsconfig.alt.json" } }, asks("diagnostics", "quickFix"));
     // The editor section alone (Go ParseUserPreferences: tabSize is indentSize too, insertSpaces is
     // convertTabsToSpaces, both unless set).
-    await configure(s, "editor only", { editor: { tabSize: 6, insertSpaces: false, convertTabsToSpaces: true, trimTrailingWhitespace: false } });
+    await configure(s, "editor only", { editor: { tabSize: 6, insertSpaces: false, convertTabsToSpaces: true, trimTrailingWhitespace: false } }, asks("implementInterface", "formatting"));
     // Settings that are not an object, and null settings: ignored (the editor-only preferences stay).
-    await configure(s, "not an object", ["typescript"]);
-    await configure(s, "null settings", null);
+    await configure(s, "not an object", ["typescript"], asks("implementInterface"));
+    await configure(s, "null settings", null, asks("implementInterface"));
+    // Go's stale specifier cache, explicitly: warm it with one ending, change the ending alone (Go keeps
+    // the cached specifier), then change the exclude regexes too (Go clears the cache; ls/autoimport
+    // registry.go). The quote and specifier probes below send a new regex with every value for this reason.
+    await configure(s, "specifier cache warm", { "js/ts": { preferences: { importModuleSpecifierEnding: "minimal" } } }, asks("quickFix"));
+    await configure(s, "ending changed, same regexes", { "js/ts": { preferences: { importModuleSpecifierEnding: "js" } } }, asks("quickFix"));
+    await configure(s, "ending changed, new regexes", { "js/ts": { preferences: { importModuleSpecifierEnding: "js", autoImportSpecifierExcludeRegexes: ["^b6-stale-cache$"] } } }, asks("quickFix"));
     // One preference at a time, every value.
     await probes(s);
   },

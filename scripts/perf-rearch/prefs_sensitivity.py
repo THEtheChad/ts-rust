@@ -5,6 +5,7 @@ value: a probe bites when every value got other answers than every other value o
 of values the probe declares alike (Go defines them to behave the same), which must answer alike.
 
 usage: python3 -I scripts/perf-rearch/prefs_sensitivity.py <server log .jsonl> [--json]
+Self-test: python3 -I scripts/perf-rearch/prefs_sensitivity_test.py.
 
 The log is one server run of the session: an lspdiff log (go.jsonl in a Go cache dir or an lspdiff out
 dir). A step of a probe is named `probe <path>=<value> <what>`; its checkpoint items (watch, diagnostics
@@ -33,18 +34,18 @@ def probes():
 
 
 def normalize(answer, root):
+    """An answer ({result, error}) as compared text: the root masked, a completion list's
+    `result.items` sorted (Go itself does not keep their order)."""
     text = json.dumps(answer, sort_keys=True).replace(root, '<root>') if root else json.dumps(answer, sort_keys=True)
     value = json.loads(text)
-    if isinstance(value, dict) and isinstance(value.get('items'), list):
-        value['items'] = sorted(value['items'], key=lambda i: json.dumps(i, sort_keys=True))
+    result = value.get('result')
+    if isinstance(result, dict) and isinstance(result.get('items'), list):
+        result['items'] = sorted(result['items'], key=lambda i: json.dumps(i, sort_keys=True))
     return json.dumps(value, sort_keys=True)
 
 
-def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help', 'help'):
-        print(__doc__)
-        return 0
-    rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]
+def judge(rows, probe_list):
+    """(report, ok) for a server log's rows and the probes [(path, values, alike)]."""
     init = next((r for r in rows if r.get('method') == 'initialize'), {})
     root = ((init.get('params') or {}).get('rootUri') or '').removeprefix('file://')
     answers = {}  # (path, value) -> [(what, normalized answer)]
@@ -54,7 +55,7 @@ def main():
             continue
         answers.setdefault((m.group(1), m.group(2)), []).append((m.group(3), normalize({'result': r.get('result'), 'error': r.get('error')}, root)))
     report, ok = [], True
-    for path, values, alike in probes():
+    for path, values, alike in probe_list:
         got = {v: tuple(answers.get((path, v), ())) for v in values}
         missing = [v for v, a in got.items() if not a]
         groups = {}
@@ -65,6 +66,15 @@ def main():
         ok = ok and status == 'OK'
         report.append({'path': path, 'values': values, 'distinct': len(groups), 'status': status,
                        'same': same, 'declaredAlike': alike, 'missing': missing, 'requests': sorted({w for a in got.values() for w, _ in a})})
+    return report, ok
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help', 'help'):
+        print(__doc__)
+        return 0
+    rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]
+    report, ok = judge(rows, probes())
     if '--json' in sys.argv:
         print(json.dumps(report, indent=1))
     else:
