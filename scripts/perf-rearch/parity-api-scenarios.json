@@ -1624,6 +1624,95 @@
    ]
   },
   {
+   "name": "raw-options-target-int32",
+   "about": "B9 (audit A2): raw compiler options with an enum value outside int32 (target, module, moduleResolution, jsx, newLine, moduleDetection); Go tsoptions floatOrInt32ToFlag converts float64 to int32 as amd64 does (out of range gives -2147483648), so the options echo it and the emit follows it (no \"use strict\" for target -2147483648)",
+   "fs": {
+    "kind": "full",
+    "files": {
+     "@ROOT@/a.ts": "export const x = 1;\nexport class C { #p = 1; m() { return this.#p ?? 2; } }\nexport const f = async () => { for await (const y of []) {} };\n",
+     "@ROOT@/globals.d.ts": "@GLOBALS@"
+    }
+   },
+   "createPrograms": [
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "target": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "target": 4294967297
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "module": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "moduleResolution": 2147483648,
+      "module": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "jsx": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "newLine": 2147483648
+     }
+    },
+    {
+     "rootFiles": [
+      "@ROOT@/a.ts",
+      "@ROOT@/globals.d.ts"
+     ],
+     "compilerOptions": {
+      "noLib": true,
+      "moduleDetection": -2147483649
+     }
+    }
+   ],
+   "requests": [
+    "getProgramDiagnostics",
+    "getSemanticDiagnostics",
+    "emitToString"
+   ]
+  },
+  {
    "name": "typeacq-empty-include",
    "about": "B9 (audit B1): a tsconfig with typeAcquisition include and exclude set to [] (Go keeps the non-nil empty slices and writes them, omitzero), and one whose include is not an array (nil, omitted) and exclude has a name; createSnapshot's parsedCommandLine.typeAcquisition shows both",
    "disk": {

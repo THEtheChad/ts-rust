@@ -651,7 +651,9 @@ fn float_or_int32_to_flag<T>(
         return v;
     }
     let go_type = match value {
-        CompilerOptionsValue::Number(f) => return from_i32(*f as i32),
+        CompilerOptionsValue::Number(f) => {
+            return from_i32(crate::gostd::conv::float64_to_int32(*f));
+        }
         CompilerOptionsValue::Nil => "nil",
         CompilerOptionsValue::Bool(_) => "bool",
         CompilerOptionsValue::String(_) => "string",
