@@ -1929,6 +1929,69 @@
      "build": "@ROOT@/tsconfig.json"
     }
    ]
+  },
+  {
+   "name": "callback-build-interleave",
+   "about": "B8 round 3 (Astra B8 r2 finding 1): two single-threaded build orchestrators over a client file system; while the first build waits for the client to answer a checker probe (fileExists a/src/lib.ts), the client sends the second build, then the answer. Go runs the second build after the first (buildMu, api/session.go:1891) and keeps handling responses (ipc/conn_async.go:96)",
+   "callbacks": {
+    "enable": [
+     "readFile",
+     "fileExists",
+     "directoryExists",
+     "getAccessibleEntries",
+     "realpath",
+     "stat",
+     "writeFile"
+    ],
+    "files": {
+     "@ROOT@/a/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/reexport.ts\",\"src/lib/index.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/a/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/a/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/a/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/a/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n",
+     "@ROOT@/b/tsconfig.json": "{\"compilerOptions\":{\"noLib\":true,\"declaration\":true,\"outDir\":\"out\",\"rootDir\":\"src\",\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"src/main.ts\",\"src/reexport.ts\",\"src/lib/index.ts\",\"src/globals.d.ts\"]}",
+     "@ROOT@/b/src/globals.d.ts": "@GLOBALS@",
+     "@ROOT@/b/src/lib/index.ts": "export interface Foo { a: number }\nexport function make(): Foo { return { a: 1 }; }\n",
+     "@ROOT@/b/src/reexport.ts": "export { make } from \"./lib/index\";\n",
+     "@ROOT@/b/src/main.ts": "import { make } from \"./reexport\";\nexport const v = make();\n",
+     "@ROOT@/a/src/lib.ts": "export const sibling = 0;\n"
+    }
+   },
+   "build": [
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/a/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "singleThreaded": true
+      }
+     }
+    },
+    {
+     "create": {
+      "rootNames": [
+       "@ROOT@/b/tsconfig.json"
+      ],
+      "compilerOptions": {
+       "singleThreaded": true
+      }
+     }
+    },
+    {
+     "interleave": {
+      "build": [
+       0,
+       "@ROOT@/a/tsconfig.json"
+      ],
+      "callback": "fileExists @ROOT@/a/src/lib.ts",
+      "then": [
+       1,
+       "@ROOT@/b/tsconfig.json"
+      ]
+     }
+    }
+   ]
   }
  ]
 }
