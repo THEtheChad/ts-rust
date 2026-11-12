@@ -115,7 +115,7 @@ prints `PARITY OK` or `PARITY FAIL` (see `docs/perf-rearch/parity.md`).
 - **full:** about 17 minutes (45 cold). Required before you report a change
   as done.
 - **Base:** `base-current` is a symlink to the latest accepted full run of
-  this branch (now head e81a14807 (C1–C3 and the C2 follow-up, L1, P1, P3, ND1/ND2, WIN, H5), under the H5 hermetic harness; run b8-e2941610d-full (all of waves 2 and 3, Q7–Q9, H7–H9, B2–B8, T1: every lsp server message compared, paced by the server; the prefs session; api callback mode; api tier 49 MATCH, lsp 2,681 MATCH and 29 GO-BROKEN), 0 lost; on main the Effect items were known
+  this branch (now head e81a14807 (C1–C3 and the C2 follow-up, L1, P1, P3, ND1/ND2, WIN, H5), under the H5 hermetic harness; run c2close-3733fe44b-full (the code-quality close-out: every lane through B10, F5, C1 and C2; all of waves 2 and 3, Q7–Q9, H7–H9, B2–B8, T1: every lsp server message compared, paced by the server; the prefs session; api callback mode; api tier 49 MATCH, lsp 2,681 MATCH and 29 GO-BROKEN), 0 lost; on main the Effect items were known
   diffs). Root moves it after each merge. `base-main` stays as the main
   record.
 - **Referees:** on the cli, fuzz and corpus tiers the gate applies the

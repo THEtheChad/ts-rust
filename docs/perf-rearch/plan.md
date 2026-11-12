@@ -2513,3 +2513,27 @@ once a **reconciliation step** is built and tested.
   - `docs/perf-rearch/closeout.md`.
 
   No other lane is running, so the machine is quiet for timing.
+- **C2 close-out done; merged.** The code-quality phase is complete
+  (`closeout.md`).
+  - **Parity:** PARITY OK on `3733fe44b` (`runs/c2close-3733fe44b-full`):
+    0 lost, and the 37 new items are all good. base-current moved there.
+  - **Timing:** all 93 window-2 cells ≤ Go. Closest: ttfd 0.95×, `-b`
+    warm query 0.92–0.93×, open12 0.90×. Flat against the phase start
+    (`e81a14807`): `-b` warm zod +0.9% wall with equal instructions.
+  - **icount, phase start → end:** single-threaded −0.06% to +0.05%.
+  - **Quality, q0 → end:**
+    - functions over cog 25: 713 → 541;
+    - port bloat Δ ≥ 10: 166 → 10 (4 after residue);
+    - own code over 25: 117 → 0;
+    - duplication: 3.58% → 3.16%;
+    - `clippy::all`: 2,120 → 1,132;
+    - env names: 19 → 11;
+    - dups: 288 → 244.
+  - **Bench fixes** in `bench.py`:
+    - read-only scratch modes;
+    - repeats redo their setup: a repeated `build-cold` was warm, which gave
+      a false hono FAIL; the perf-phase window 2 had the same bug, but its
+      conclusions stand;
+    - incr-edit resume.
+  - **Open** (`closeout.md`): the backlog items left out of scope. Pushing
+    `perf/first-principles` waits for Chad.
