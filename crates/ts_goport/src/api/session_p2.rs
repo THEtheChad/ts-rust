@@ -1129,6 +1129,25 @@ fn emit_program(
     Ok(program_emit::emit(options))
 }
 
+// Go `UTF16ToUTF8(int(params.Position))` in handleFormatNodeForInsertion
+// (session.go:4167). Go converts the uint32 position to a 64-bit int, so a
+// position at or above 2^31 is past any text: Go's GetIndentation takes its
+// past-EOF branch (format/indent.go:25) and the line start is not the
+// position, and the request succeeds (lane B9: Go gives the formatted node at
+// 2147483648 and 4294967295). The port's positions are `i32`: a position
+// whose port offset (the UTF-16 position plus the largest delta of the map)
+// does not fit is `i32::MAX`, which is past any text too and takes the same
+// branches.
+fn format_insertion_position(source_file: Node, position: u32) -> i32 {
+    let position_map = source_file_get_position_map(source_file);
+    let port_position =
+        i64::from(position) + i64::from(position_map.entries.last().map_or(0, |e| e.delta));
+    match i32::try_from(port_position) {
+        Ok(_) => position_map.utf16_to_utf8(position as i32),
+        Err(_) => i32::MAX,
+    }
+}
+
 // Go: api/session.go:3715 nonNilDiagnostics (tsgo#4699)
 // PORT: a Rust `Vec` has no nil. An empty list marshals as `[]`, the same as
 // Go's non-nil empty slice.
@@ -1232,8 +1251,7 @@ impl Session {
             }
         };
 
-        let pos =
-            source_file_get_position_map(target_source_file).utf16_to_utf8(params.position as i32);
+        let pos = format_insertion_position(target_source_file, params.position);
         let format_options = sd.snapshot.user_preferences().format_code_settings;
         let new_line = format_options.editor_settings.new_line_character.clone();
 
