@@ -32,16 +32,17 @@ fork's queue never drains because it runs requests that the editor cancelled whi
   - **Finding 1:** the API barrier is Go's `APIUpdate`, not any API callback. An independent
     `createSnapshot` blocks nothing.
   - **Finding 2:** inside an `APIUpdate`:
-    - every message whose Go sync part takes the snapshot locks is a barrier, didChange included;
+    - a message whose Go sync part takes the snapshot locks is a barrier, didChange included (an
+      explicit list since the fix-up);
     - a message the port already served out of order stays a barrier until the `APIUpdate` ends;
     - `setContentMapperContributions` without dynamic sync still counts.
   - **Finding 3:** dequeue, the published sync-part state and the classification of a cancel are one
     transition under the request queue's lock.
   - **Finding 5:** every cancel is acknowledged before a hold is released, and pause points replace
     sleeps.
-  - **Finding 4 and 6:** the code's barrier list is exactly the documented family list below, each
-    with its Go lines and the direction of possible mismatch, and every claim is stated as this
-    approximate contract.
+  - **Findings 4 and 6:** the code's barrier list matches the documented families below (family 5 is
+    not classified), each with its Go lines and the direction of possible mismatch. Claims are stated
+    as this approximate contract; the Go-feasibility argument is in "Bounded fix-up after round 3".
   - Each round-2 bug has a test that fails on round 2's code (table in "Tests").
 - **Round 2** (Astra FAIL on `6845fb0d3`): round 1 kept a cancel whenever the dispatch thread was outside
   a sync part, which missed barriers queued ahead of the request (the reviewer's
@@ -80,10 +81,140 @@ fork's queue never drains because it runs requests that the editor cancelled whi
   - In both, the fork's answer is the one Go gives when the cancel arrives at a different moment
     relative to Go's own progress. It depends on speed, not on message order.
   - The written exception does not name this case. I report it for root's take/drop decision.
+- **Parity (fix-up, `045e30717`):** **PARITY OK**, 0 lost
+  (`~/.cache/perf-rearch/parity/runs/20261113-040634-full-1e9fe4049d`).
 - **Parity (round 3):** the full gate against `base-current` (`c2close-3733fe44b-full`) gives **PARITY OK**,
   with 0 lost. Run dir: `~/.cache/perf-rearch/parity/runs/20261113-024238-full-2a9b6d31a7`, bin
   `tsgo-r3-774f6e4e4`. The quick gate on the final `58bec2a12` (doc and type-alias edits only) is also
   OK.
+
+## Bounded fix-up after round 3 (root decision: TAKE)
+
+Round-3 Astra review on `1d1ef7787`. Root took the branch on condition of a bounded fix-up with no design
+change. All four findings were fixed within design (a).
+
+- **Finding 1, sync-handler order (exact Go ordering, not part of the exception).**
+  - A queued request whose Go handler and answer run entirely in the sync part holds the requests
+    queued behind it (`answers_in_sync_part`, `ANSWERS_IN_SYNC_PART` in `server.rs`). These are the
+    `registerRequestHandler` kinds (lsp/server.go:1354-1376):
+    - initialize :1269, shutdown :1271, willRenameFiles :1282, rename :1312;
+    - callHierarchy incoming :1315 and outgoing :1316;
+    - workspace/symbol :1318, completionItem/resolve :1319, codeLens/resolve :1320;
+    - runGC, saveHeapProfile, saveAllocProfile, startCPUProfile, stopCPUProfile :1325-1329;
+    - initializeAPISession :1331, projectInfo :1332, setContentMapperContributions :1333.
+  - Go registers the request behind one of them only after it answered (:1041-1062).
+  - The running one was already covered: the port's `register_request_handler` sends the result
+    inside the handler, within the flagged sync part (`dispatch_request` clears `sync_part` only after
+    `handle_request_or_notification` returns).
+- **Finding 2, the APIUpdate list.** `blocks_on_api_update` is an explicit list
+  (`TAKES_SNAPSHOT_LOCK`, the Go path per entry; the family 4 row above), with false as the default.
+  The changed messages:
+  - didChangeConfiguration (no snapshot lock, null settings or not: `Configure` takes `configureMu`
+    and `userConfigRWMu` only, session.go:286-311);
+  - the profiling requests;
+  - initializeAPISession;
+  - unknown methods.
+  - **A conflict between the requested negative tests:** the profiling requests are sync handlers, so
+    finding 1's rule makes them hold the requests behind them anyway, with or without an APIUpdate.
+    Go also answers runGC before it takes the next request. So the profiling negative test checks the
+    list directly (`queued_cancel_blocks_on_api_update("custom/runGC") == false`). Its behavioural half
+    expects the hover behind runGC to keep its result, by the sync-handler order.
+- **Finding 3:** `lsp_server_cancel_test` is behind `#[cfg(feature = "test-hooks")]` on its `mod`
+  line. Its `cancel` and kept-count helpers have no no-op variant any more. The phase-sensitive API
+  tests were already gated, and the suite compiles without the feature, with no warnings.
+- **Finding 4:** claims are reworded to what the argument below shows.
+
+### Go feasibility: every outcome the port produces is one Go can produce, outside the exception
+
+- **Claim.** Take any message sequence and any positions of the `$/cancelRequest`s in it, with no
+  exception-family message involved (families 1–5; family 4 includes the API's `api_update_blocked`).
+  The port's outcome for every request is one that Go produces under some timing. The outcome is
+  "RequestCancelled" or "its answer".
+  - Not every Go outcome is produced: the port picks one. The answers that do not depend on a cancel
+    are the same code in both: results, handler errors, content-mapper fallbacks, unknown-method errors.
+- **The Go schedule.** Go's dispatch loop handles messages in order. A message M is "taken" (registered,
+  if it has an id) when every message ahead of it has finished its sync part. Choose:
+  - **(s1)** for every message that answers in its async part, and for every notification: a sync part
+    of zero length;
+  - **(s2)** for every sync handler H (`ANSWERS_IN_SYNC_PART`): a sync part, and with it H's answer,
+    that ends exactly when the port's sync part of H ends;
+  - **(s3)** an async part, per request, of a length chosen below;
+  - **(s4)** every cancel arrives at Go at the position where the port read it.
+- **A cancel is a no-op for both** when the request is unknown or already answered in the port: Go has
+  answered it too, because Go answers no later than the port under this schedule.
+- **A cancel for a registered request lands in both.** It reaches a request the port runs, in its sync
+  part, the run_pending between the parts, or its async part.
+  - Go took R no later than the port did: every sync handler ahead of R ended in the port before the
+    port took R, and by (s2) in Go too.
+  - Choose R's Go run long enough to be running at the cancel, so it lands and both answer -32800 at
+    the same check.
+- **A cancel the port keeps for queued R.** The port keeps it only when it is not in a sync part and no
+  sync handler is queued ahead of R. Then every sync handler ahead of R has ended in the port, hence in
+  Go (s2), and everything else ahead is zero-length (s1). So Go took R before the cancel, and choosing
+  R running at that point makes the cancel land. If R is itself a sync handler, its Go sync part runs
+  until the port's ends (s2), which is after the cancel, because the port has not started R.
+- **A cancel the port drops for queued R** (R then answers its result, unless another cancel for R
+  lands later, which is consistent with Go as above).
+  - **(a) A sync handler H is queued ahead of R, or running in the port.** By (s2), H has not ended in
+    Go, so Go has not taken R and drops the cancel. ✓
+  - **(b) The port is in the sync part of an async-kind message or a notification M.** Under (s1), Go
+    took R long ago. Choose R's Go run to have answered before the cancel arrives, so Go's cancel is
+    a no-op and R answers its result in both. ✓
+    - This needs R's Go answer to come before the cancel position. That holds, because R is taken in
+      Go no later than the latest sync-handler end ahead of it, which is before the cancel by (a).
+    - If R is itself a sync handler: R ahead of later requests with kept cancels would contradict R
+      being answered early. But a request behind R cannot have its cancel kept while R is queued or
+      running (rule (a)). After the port finished R, by (s2) Go's R also ended, so letting Go's R end
+      earlier than the port's only makes more of Go's takes earlier. The port drops in that window,
+      which (b) explains by answers before the cancels.
+  - **(c) The cancel comes between the port's dequeue of R and R's registration** (the dequeue sets
+    `sync_part`): the same as (b) with M = R. Go has the identical `Get`-to-register window as well.
+- **Why the old rule failed this argument.** Without (a) for sync handlers, the reviewer's sequence
+  needs B taken before A ends in Go, since B's cancel was kept while A was queued. It also needs A
+  still running at A's later cancel, since A's cancel was kept. That contradicts Go's order. With (a),
+  B's cancel is dropped and the schedule exists.
+- **Where the argument stops** (the exception):
+  - a message of families 1–4 ahead of R, or one taken during an APIUpdate: its Go duration depends on
+    a client reply or an API connection that the port's order cannot reproduce;
+  - family 5 (process waits).
+  - Round 1's timing notes (Go answering fast requests before the editor's cancel) are case (b) and
+    the "answered before the cancel" choices above. They are Go-feasible outcomes, not exceptions.
+- **I found no case outside the exception** where the rule cannot be matched within design (a).
+
+### Tests of the fix-up
+
+| test | round 1 | round 2 | round 3 | fix-up |
+|---|---|---|---|---|
+| `a_sync_handler_ahead_drops_the_cancel_of_the_request_behind_it` (reverse order, async pause) | FAIL | FAIL | **FAIL** | ok |
+| `a_cancel_behind_a_canceled_sync_handler_is_dropped` (forward order) | FAIL | FAIL | **FAIL** | ok |
+| `a_request_canceled_while_queued_outside_a_sync_part_answers_request_cancelled` (now expects workspace/symbol, queued behind rename, to keep its result) | FAIL | FAIL | **FAIL** | ok |
+| `api_update_does_not_count_messages_that_take_no_snapshot_lock` (null-settings configuration, unknown method) | ok | FAIL | **FAIL** | ok |
+| `api_update_lock_list_is_explicit` (list check; runGC holds the hover by sync-handler order) | FAIL | FAIL | **FAIL** | ok |
+| the other 13 cancel and API tests | as in the round-3 table | | ok | ok |
+
+- Rounds 1–3 were built with the current test hooks (`hooks-variant.py`; raw logs
+  `logs/variants4.log`, `logs/variants4b.log`).
+- 18 of 18 pass on the fix-up, 10 stress runs in a row.
+
+### Parity and quality of the fix-up (`045e30717`)
+
+- **Full gate:** `parity.sh full ~/.cache/perf-rearch/lsp-queued-cancel/bins/tsgo-r4-045e30717 --base
+  ~/.cache/perf-rearch/parity/base-current`. Run dir
+  `~/.cache/perf-rearch/parity/runs/20261113-040634-full-1e9fe4049d`.
+
+  | tier | result |
+  |---|---|
+  | cli | MATCH 179 |
+  | tests | PASS 140,052 |
+  | lsp | MATCH 3,316, GO-BROKEN 29 |
+  | api | MATCH 73 |
+  | fuzz | as base: 36 grandfathered DIFF, GO-BROKEN 8, JS-AGREES 1 |
+  | corpus | MATCH 12,727 |
+
+  0 lost, 0 new items not good. **PARITY OK.**
+- `quality.sh gating HEAD`: **GATING OK**.
+- **No T3 Code re-bench:** the dispatch hot path is unchanged. The fix-up changes only the reader
+  thread's classification, which compares queued methods against two short constant lists.
 
 ## How Go does it (pin 3e9236361fa9, `internal/lsp/server.go`)
 
@@ -144,15 +275,19 @@ cancel arrives. It was not a missing check.
   the dispatch loop is in one right then.
 - **The families of sync parts that may wait outside the loop**, which are the fidelity exception's
   scope. "Classified" means the port drops a cancel for a request queued behind such a message
-  (`ServerShared::sync_part_may_wait`). Those are exactly the four classified families below and nothing
-  else.
+  (`ServerShared::sync_part_may_wait`).
+  - The code classifies families 1–4 below, and family 4 only through the explicit list
+    `TAKES_SNAPSHOT_LOCK`.
+  - It does not classify family 5.
+  - Separately, and not as part of the exception, it holds requests behind a queued sync handler (Go's
+    exact order; see "Bounded fix-up after round 3").
 
 | # | family | Go (pin 3e9236361fa9) | the port | possible mismatch |
 |---|---|---|---|---|
 | 1 | `initialized` | workspace/configuration (server.go:1791 → :854, when the client has the capability, :839-840); config watch registration, always (:1797) | classified, always | Go took R because the client answered before cancelling: Go -32800, port result |
 | 2 | `custom/setContentMapperContributions` | with RunExternalCode (session.go:344): `updateContentMapperRegistrations` (:359 → :1592) takes `contentMapperRegistrationMu` (:1601), held also by a snapshot update's background task while it calls the client (:1438); if the extensions changed and the client registers sync dynamically (server.go:460), it (un)registers and waits (:1616 → server.go:459, :499, :731) | classified with RunExternalCode and dynamic text document sync | unchanged extensions and no background registration in flight, or the client answered first: Go -32800, port result |
 | 3 | `shutdown` | `session.Close` (server.go:1833 → session.go:1710) → `backgroundQueue.Close` (:1722) waits for every running background task (background/queue.go:51-56), among them watch (un)registrations (session.go:1526, :1575) and content-mapper registrations (:1438) | classified, always | no background task waiting in Go: Go -32800, port result (needs a request after shutdown) |
-| 4 | snapshot-lock waits during an API `APIUpdate` | `getCurrentLanguageServerSnapshot` and session close (api/session.go:1817, :5217) → `APIUpdate` holds `snapshotUpdateMu` (project/api.go:19) and, while it clones, `snapshotMu` (session.go:1384). Waiting: `getSnapshot` (:1060, every LS request), `DidOpenFile` (:322), `SetContentMapperContributions` with RunExternalCode (:348), `DidChangeFile` and `DidChangeWatchedFiles` via `Snapshot()` (:393, :403, :423, :1046), `Close` (:1724). Not waiting: `DidCloseFile` (:362), `DidSaveFile` (:410), `$/setTrace`, `custom/setLogVerbosity`, `exit` (server.go:1875, :1882, :1837). `createSnapshot` takes neither lock (api/session.go:1440 → snapshothost.go:111, :137) | classified only between `api_update`'s start and end (`Session::api_update_hook`): any queued waiting message ahead of R, and any waiting message the port already served in that update (`api_update_blocked`) | the API message's start differs: Go starts `APIUpdate` on its own goroutine when the message arrives, the port when the dispatch thread reaches it. A cancel in between is judged against the port's order. Either direction |
+| 4 | snapshot-lock waits during an API `APIUpdate` | `getCurrentLanguageServerSnapshot` and session close (api/session.go:1817, :5217) → `APIUpdate` holds `snapshotUpdateMu` (project/api.go:19) and, while it clones, `snapshotMu` (session.go:1384). Waiting (the explicit list `TAKES_SNAPSHOT_LOCK` in `server.rs`, Go path per entry): every language-service request through `getSnapshot` (:1060; the document, auto-import and multi-project wrappers, server.go:1378, :1405, :1440), rename, codeLens/resolve, call hierarchy, completionItem/resolve, workspace/symbol, willRenameFiles, projectInfo (session.go:1145, :1153, :1180, :1229, :1243), `DidOpenFile` (:322), `SetContentMapperContributions` with RunExternalCode (:348), `DidChangeFile` and `DidChangeWatchedFiles` via `Snapshot()` (:393, :403, :423, :1046), `Close` (:1724). Everything else does not wait: `DidCloseFile` (:362), `DidSaveFile` (:410), `$/setTrace`, `custom/setLogVerbosity`, `exit` (server.go:1875, :1882, :1837), `workspace/didChangeConfiguration` (:1841, `Configure` session.go:286), the profiling requests (:2467-2506), `initializeAPISession` (:1331), unknown methods (:1224). `createSnapshot` takes neither lock (api/session.go:1440 → snapshothost.go:111, :137) | classified only between `api_update`'s start and end (`Session::api_update_hook`): any queued waiting message ahead of R, and any waiting message the port already served in that update (`api_update_blocked`) | the API message's start differs: Go starts `APIUpdate` on its own goroutine when the message arrives, the port when the dispatch thread reaches it. A cancel in between is judged against the port's order. Either direction |
 | 5 | content-mapper process or lifecycle waits | the snapshot clone spawns and talks to mapper processes with RunExternalCode (contentmapper host); ATA npm calls | not classified (treated as work; the port runs the same work in the same sync part) | Go still waits on the process when the cancel comes: Go result, port -32800 |
 
 - **Not waits, and treated as work:**
@@ -182,8 +317,9 @@ cancel arrives. It was not a missing check.
   lock). Keep the cancel iff all of these hold:
   - `sync_part` and `api_update_blocked` are false;
   - the id is in the queue;
-  - no queued message ahead of it satisfies `sync_part_may_wait`. That is families 1–3, or family 4
-    while `api_update_depth > 0`, combined without an early return.
+  - no queued message ahead of it is a sync handler (`answers_in_sync_part`, added in the fix-up), or
+    satisfies `sync_part_may_wait`: families 1–3, or family 4 while `api_update_depth > 0`, combined
+    without an early return.
   Kept ids go into `canceled_queued_requests`; `dispatch_request` cancels the request when it registers
   it, as in rounds 1–2.
 - **What the shared lock rules out** (finding 3): a reader that saw "outside a sync part" and then a

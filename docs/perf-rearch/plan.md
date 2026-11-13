@@ -2560,3 +2560,5 @@ once a **reconciliation step** is built and tested.
   - **The tests tier didn't run:** the gate builds with the
     `diagnostics`/`test-hooks` features, which `main` lacks, so its tests
     can't be compared this way.
+
+- **lsp-queued-cancel (2026-11-13):** 3 Astra rounds FAIL; root decision TAKE after bounded fix-up of r3 findings (sync-handler ordering, explicit APIUpdate list, test-hooks gating); narrow re-check; Chad approved the queued-cancel fidelity exception 2026-11-13. Report: `docs/perf-rearch/experiments/lsp-queued-cancel.md`; exception: brief.md, "Fidelity exceptions".
