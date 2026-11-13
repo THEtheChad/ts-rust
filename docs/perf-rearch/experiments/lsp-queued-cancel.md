@@ -28,7 +28,8 @@ fork's queue never drains because it runs requests that the editor cancelled whi
     without a context check (Go server.go:1192-1196, `contentMapperFallbackResponse`; the port's
     `handle_request_or_notification`, the same).
   The probe below shows the first case for 10 kinds on ChatView and BranchPicker.
-- **ChatView.tsx (476 KB) typing, 120 ms/key, all pulls:** the queue drains now.
+- **ChatView.tsx (476 KB) typing, 120 ms/key, all pulls** (round-1 binary; round 2 makes the same
+  decision for every cancel of this bench, see "Timing"): the queue drains now.
   - Completion p50 12.6 s → 0.53 s (Go 0.14 s).
   - Hover 21.3 s → 0.51 s (Go 4 ms).
   - Edited-file diagnostic pulls answered as cancelled: 13 → 447 of 492 (Go 449).
@@ -41,7 +42,9 @@ fork's queue never drains because it runs requests that the editor cancelled whi
   longer (Go rebuilds the program, the fork reuses it), so a cancel 30 ms after the request finds Go still
   in a sync part (cancel dropped, result) but the fork already past it (-32800). Each answer is one Go
   gives for some timing; only worker threads could match the timing itself.
-- **Parity:** the full gate against `base-current` (`c2close-3733fe44b-full`) gives **PARITY OK**, with 0 lost. Run dir: `~/.cache/perf-rearch/parity/runs/20261112-211909-full-98d7a01752`.
+- **Parity (round 2):** the full gate against `base-current` (`c2close-3733fe44b-full`) gives **PARITY OK**,
+  with 0 lost. Run dir: `~/.cache/perf-rearch/parity/runs/20261112-235845-full-758c06a015`, bin
+  `tsgo-r2-a0a82419a`.
 
 ## How Go does it (pin 3e9236361fa9, `internal/lsp/server.go`)
 
@@ -233,13 +236,20 @@ on one of its own replies, so each case is deterministic.
 | `a_cancel_behind_a_sync_part_that_waits_for_the_client_is_dropped` (the counterexample) | didOpen's watch registration, with RunExternalCode, dynamic sync registration and a tsconfig content mapper; then setContentMapperContributions, a hover and its cancel | the hover answers its **result**. The content-mapper extensions were registered. Reused ids: results; 0 kept | **FAIL** (hover -32800) | ok |
 | `a_shutdown_canceled_while_queued_answers_request_cancelled` | the watch registration | the queued shutdown, cancelled: 1 kept. Its handler runs, then -32800 at the check (server.go:1371). exit ends the server | ok | ok |
 | `a_request_canceled_during_its_async_part_answers_request_cancelled` | the watch registration of a diagnostic pull of an unopened 20,000-statement file, released 50 ms before the cancel | -32800, 0 kept. The cancel reaches the registered request in its async part or just before it; both give -32800 by Go's path (pending map). This is a timing sample of *where* it lands; the answer is the same either way | ok | ok |
-| `api_callback_wait_keeps_the_cancel_of_the_first_waiting_request_only` (`test-hooks` only) | an API createSnapshot whose callback the client holds; didChange is served in the wait (nested dispatch), then two hovers and their cancels | the first hover: 1 kept, -32800 (Go: taken, then blocked on `snapshotUpdateMu`). The second (behind it): result. didChange was served before the hovers | n/a (needs the accessor) | ok |
+| `api_callback_wait_keeps_the_cancel_of_the_first_waiting_request_only` (`test-hooks` only) | an API createSnapshot whose callback the client holds. didChange is served in the wait (nested dispatch); the test waits for its log line and for its sync part to end (`queued_cancel_in_sync_part`). Then two hovers and their cancels, the second hover's first | the first hover: 1 kept, -32800 (Go: taken, then blocked on `snapshotUpdateMu`). The second (behind it): dropped, result | n/a (needs the accessor) | ok |
 
 - Round 1's code fails only the counterexample. I ran it without `test-hooks`, because round 1 has no
   accessor.
 - Base `1b6aba1a8` fails the first and third tests, as in round 1.
 - Run: `scripts/run-cargo-capped.sh test -p ts_goport --features test-hooks --test go_baselines --
   lsp_server_cancel lsp_server_apisession`: 10 passed.
+- **Stress:** the 8 cancel tests (6 in `lsp_server_cancel_test`, 2 `api_callback_wait`) ran 15 times in a
+  row at load 35–45: 15 of 15 green.
+  - Two test-side races came out under load, one in the first round-2 parity run (FLAKY, "failed, then
+    passed alone") and both in the stress runs, at load ~50:
+    - the "handled method" log line goes out before the dispatch thread leaves the sync part;
+    - a log-order check raced the second hover's log line.
+  - Both are fixed in the test (`91a234b29`, `a0a82419a`). Neither is a server behaviour.
 - The parity gate's tests tier (below) runs the whole suite.
 
 ## LSP comparison with Go: `scripts/lspdiff/probe-cancel.mjs`
@@ -302,6 +312,18 @@ a separate probe. It runs the same messages against each server and records the 
     30 ms the fork itself was still in the pull's sync part, and both agree with Go.
 
 ## Timing
+
+**Round 2: why the T3 Code bench was not re-run.**
+- **The dispatch hot path is the same as round 1.** `dispatch_request`'s registration and its sync-part
+  flag did not change. Only the reader thread's `cancel_request` changed, and it already walked the
+  queue in round 1; it now also compares each queued message's method.
+- **No barrier occurs in the typing bench.** It sends no `initialized`, `shutdown`,
+  `setContentMapperContributions` or API traffic during typing, so round 2 decides every cancel the way
+  round 1 did.
+- **No valid timing was possible.** From about 22:00 on 2026-11-12 until this report, another project
+  on the machine kept the 1-minute load at 25–80, far from the brief's start condition of < 1.5. I
+  started a run (`t3bench-r2`), and it waited about 30 minutes without starting, so I stopped it.
+- The numbers below are round 1's (`6845fb0d3`), taken on an idle machine.
 
 **Method.**
 - Binaries: base `1b6aba1a8` and new `6845fb0d3` (the lane's compiler commit; later commits change only
@@ -461,43 +483,63 @@ go 126, base 77, new 78; 500 ms/key go 127, base 81, new 79. Go's 120 ms runs en
 
 ## Parity gate
 
-`scripts/perf-rearch/parity.sh full ~/.cache/perf-rearch/lsp-queued-cancel/bins/tsgo-new-6845fb0d3 --base
-~/.cache/perf-rearch/parity/base-current`, under the heavy-run rule. Run dir `~/.cache/perf-rearch/parity/runs/20261112-211909-full-98d7a01752`.
+### Round 2
+
+`scripts/perf-rearch/parity.sh full ~/.cache/perf-rearch/lsp-queued-cancel/bins/tsgo-r2-a0a82419a --base
+~/.cache/perf-rearch/parity/base-current`, under the heavy-run rule, at load 35–55 (another project's
+builds). Run dir `~/.cache/perf-rearch/parity/runs/20261112-235845-full-758c06a015`.
 
 | tier | result |
 |---|---|
 | cli | MATCH 179 |
-| tests | PASS 140,040, IGNORED 1,731 |
+| tests | PASS 140,044, IGNORED 1,731 (the new tests included, with `test-hooks`) |
 | lsp | MATCH 3,316, GO-BROKEN 29 |
 | api | MATCH 73 |
-| fuzz | MATCH 29,955, DIFF 36 (all grandfathered: Go timeouts on deep nesting, Go crashes reproduced on purpose, the known fuzz/1:5391 trace line), GO-BROKEN 8, JS-AGREES 1 |
+| fuzz | MATCH 29,955, DIFF 36 (all grandfathered), GO-BROKEN 8, JS-AGREES 1 |
 | corpus | MATCH 12,727 |
 
-- Compare: 188,092 items, 186,361 of them base items that a full run must have. 0 lost, 0 not run,
-  0 known-bad not as pinned, 0 new items not good, 0 crashes on good items. 36 grandfathered, 0 stale
-  grandfather entries.
-- 0 items newly good by a referee (GO-BROKEN 0, GO-PARTITION 0, JS-AGREES 0). The GO-BROKEN and
-  JS-AGREES items above are the base's own.
-- **PARITY OK.**
+- Compare: 188,092 items (186,361 base items). 0 lost, 0 not run, 0 new items not good, 0 crashes on
+  good items, 36 grandfathered, 0 newly good by a referee. **PARITY OK.**
+- **An earlier round-2 run gave PARITY FAIL**: `20261112-224026-full-6448457a83`, bin
+  `tsgo-r2-7104d6cd7`, at load 50–80. It had two items:
+  - **lost:** `cli/umami/root/incr`, ERROR ClockStepped ("the wall clock stepped during each of 6
+    attempts"). This is the machine's timesyncd step every 32 s; at that load each attempt outlasted
+    32 s. It is not a behaviour difference, and it was MATCH in the run above.
+  - **FLAKY:** the new API test, a test-side race fixed in `91a234b29` and `a0a82419a` (see Tests).
+  - Its lsp, api, fuzz and corpus tiers were the same as in the run above.
+
+### Round 1
+
+Run dir `~/.cache/perf-rearch/parity/runs/20261112-211909-full-98d7a01752` (bin `tsgo-new-6845fb0d3`):
+cli MATCH 179, tests PASS 140,040, lsp MATCH 3,316 + GO-BROKEN 29, api 73, fuzz and corpus as above.
+0 lost. **PARITY OK.**
 
 The gate's LSP sessions send no `$/cancelRequest`, so this proves that requests nobody cancels answer as
 before. The cancel answers themselves are covered by the tests and the probe above.
 
-Quality (`quality.sh report HEAD --base perf/first-principles`):
-- Prod churn +73/−12 in one file.
-- Escape hatches 11 → 11 (switches 4 → 4).
-- Functions with cognitive complexity >25: 541 → 541. One new function (`is_queued`, cog 1);
-  `cancel_request` goes from cog 1 to 3 (Go's: 1).
-- Duplication 3.16% → 3.16%. Hygiene: no change.
-- Clippy (repo config) 0 → 0; `--force-warn clippy::all` 1,132 → 1,132.
+### Quality (round 2, `quality.sh report HEAD --base perf/first-principles` at `a0a82419a`)
 
-`quality.sh gating HEAD`: **GATING OK**. No allow entry was added.
+- **Prod churn** +170/−16 in `server.rs`. The test-hooks accessors are counted as prod.
+- **Escape hatches** 11 → 11 (switches 4 → 4).
+- **Cognitive complexity:** functions over 25: 541 → 541. 5 new functions, the largest
+  `go_took_queued_request` (cog 10) and `sync_part_waits_for_client` (cog 5). `cancel_request` cog
+  1 → 2 (Go's: 1).
+- **Duplication** 3.16% → 3.16%. **Hygiene:** no change.
+- **Clippy** (repo config) 0 → 0; `--force-warn clippy::all` 1,132 → 1,132.
+- `quality.sh gating HEAD` (`a0a82419a`): **GATING OK**. The new `test_hooks` module is gated whole by
+  `#[cfg(feature = "test-hooks")]`; no allow entry was added.
 
 ## Files and commits
 
-- `crates/ts_goport/src/lsp/server.rs`: `ServerShared::{canceled_queued_requests, dispatch_in_sync_part,
-  is_queued}`, `cancel_request`, `dispatch_request`, module comment.
-- `crates/ts_goport/tests/go_baselines/project_lsp/lsp_server_cancel_test.rs` (new), `mod.rs`.
+- `crates/ts_goport/src/lsp/server.rs`:
+  - `ServerShared::{canceled_queued_requests, dispatch_in_sync_part, api_calls_waiting,
+    go_took_queued_request, sync_part_waits_for_client}`;
+  - `cancel_request`, `dispatch_request`;
+  - `ApiSessionConn` (`shared`, `PendingCall::new`);
+  - the `test_hooks` module (`queued_cancel_count`, `queued_cancel_in_sync_part`);
+  - the module comment.
+- `crates/ts_goport/tests/go_baselines/project_lsp/lsp_server_cancel_test.rs` (new), `mod.rs`,
+  `lsp_server_apisession_test.rs` (one test), `lsptestutil.rs` (`LspClient::shared`).
 - `scripts/lspdiff/probe-cancel.mjs` (new): the probe above.
 - `scripts/perf-rearch/lsp-queued-cancel/`: `heavy.sh` (heavy-run wrapper), `t3bench.sh`,
   `t3bench-agg.mjs`.
