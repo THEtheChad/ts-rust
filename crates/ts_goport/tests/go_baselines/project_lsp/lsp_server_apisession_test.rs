@@ -525,6 +525,11 @@ child_test! {
             assert!(std::time::Instant::now() < deadline, "didChange was not served");
             std::thread::sleep(Duration::from_millis(5));
         }
+        // Its log line goes out before its sync part ends.
+        while client.shared.queued_cancel_in_sync_part() {
+            assert!(std::time::Instant::now() < deadline, "didChange's sync part did not end");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let send_hover = || {
             let id = client.next_id();
             let rx = client.send_request_message(

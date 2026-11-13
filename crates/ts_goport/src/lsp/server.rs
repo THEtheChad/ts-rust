@@ -5900,5 +5900,13 @@ pub mod test_hooks {
         pub fn queued_cancel_count(&self) -> usize {
             super::lock(&self.canceled_queued_requests).len()
         }
+
+        /// Whether the dispatch thread runs a sync part
+        /// (`dispatch_in_sync_part`), for a test that must cancel outside
+        /// one.
+        pub fn queued_cancel_in_sync_part(&self) -> bool {
+            self.dispatch_in_sync_part
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
     }
 }
