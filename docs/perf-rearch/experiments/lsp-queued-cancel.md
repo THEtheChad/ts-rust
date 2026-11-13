@@ -7,16 +7,27 @@ fork's queue never drains because it runs requests that the editor cancelled whi
 
 ## Summary
 
+- **Round 2** (Astra FAIL on `6845fb0d3`): round 1 kept a cancel whenever the dispatch thread was outside
+  a sync part. That is not Go's condition. Go takes a request only after every message ahead of it has
+  finished its sync part, and some sync parts wait for the client. The reviewer's counterexample (a
+  `custom/setContentMapperContributions` queued ahead of the hover) answered -32800 where Go answers the
+  result. Round 2 decides per request; see "Go's exact model" and "Design". The counterexample is now a
+  test and a probe case against the pinned Go oracle, and both agree with Go.
 - **The change** (`crates/ts_goport/src/lsp/server.rs`): a `$/cancelRequest` for a request that still waits
-  in the port's request queue now reaches it, the way Go's would reach a request its dispatch loop has
-  taken. The request runs with an already-cancelled context and answers what Go's handler answers then:
-  -32800 at the wrapper's `ctx.Err()` check. While the dispatch thread runs a handler's **sync part**,
-  Go's dispatch loop would also be busy and the request would sit in Go's queue, so the cancel is
-  dropped, as Go drops it.
+  in the port's request queue is kept when Go's dispatch loop would have taken that request by then. The
+  request then runs with an already-cancelled context and answers what Go's handler answers:
+  -32800 at the wrapper's `ctx.Err()` check, in every case but the two exceptions below. Otherwise
+  (Go would still have it queued) the cancel is dropped, as Go drops it.
 - **Per request kind:** every Go request wrapper checks `ctx.Err()` before it sends a result, so no kind
-  answers a result *because it lacks a check*. Go answers a result for a cancelled request only when the
-  cancel misses it: the request is still in Go's queue behind a sync part, or it has already finished.
-  The probe below shows this for 10 kinds on ChatView and BranchPicker.
+  answers a result *because it lacks a check*. A cancelled request answers a result in three cases:
+  - the cancel missed it: still in Go's queue, or already answered;
+  - it came in the short window after the wrapper's last check and before `sendResult` (Go
+    server.go:1397-1400; the port's `register_language_service_document_request_handler`, the same
+    order);
+  - the request got a content-mapper fallback answer, which is sent from the sync part's error path
+    without a context check (Go server.go:1192-1196, `contentMapperFallbackResponse`; the port's
+    `handle_request_or_notification`, the same).
+  The probe below shows the first case for 10 kinds on ChatView and BranchPicker.
 - **ChatView.tsx (476 KB) typing, 120 ms/key, all pulls:** the queue drains now.
   - Completion p50 12.6 s → 0.53 s (Go 0.14 s).
   - Hover 21.3 s → 0.51 s (Go 4 ms).
@@ -73,58 +84,163 @@ Order of effects for one request with an id:
    diagnostics, `checker` stops at each statement; `getDeclarationDiagnosticsForFile`
    (`compiler/program.go:1655`) has no check and runs to the end.
 
-So, per kind: a cancel that reaches a request gives -32800 for every kind. A result means the cancel
-missed it: it came while Go's dispatch loop was busy with a sync part ahead of it, or after the answer.
+So, per kind: a cancel that reaches a request gives -32800 for every kind, with two exceptions. One is a
+cancel that lands between the wrapper's last check and `sendResult` (1397-1400). The other is a
+content-mapper fallback answer (1192-1196), which never checks. Otherwise a result means the cancel missed
+the request: it came while Go's dispatch loop had not yet taken it, or after the answer.
 The earlier lane `lspwait1` (dropped 2026-10-04) saw results for hover, documentSymbol, references,
 workspace/symbol and rename "3 of 3". That was the second case: those requests finish in Go before the
 cancel arrives. It was not a missing check.
 
-## Design
+## Go's exact model: when has Go taken a queued request? (round 2)
 
-- **Where Go's model and the port's differ:** the port's dispatch thread runs the sync part and the async
-  part of a request back to back (PORTING.md, "Threads"; `server.rs` module comment), so the requests
-  behind a running request wait in `request_queue` for its whole run. Go's would wait only for its sync
-  part.
-- **The emulation** (`ServerShared::cancel_request`, `Server::dispatch_request`):
-  - `dispatch_in_sync_part: AtomicBool` is true while the dispatch thread runs
-    `handle_request_or_notification` (the sync part). It is saved and restored around it, so a nested
-    dispatch (an API call's wait serving LSP messages) keeps the outer value.
-  - On the reader thread, under the `pending_client_requests` lock:
-    - a registered request is cancelled, as before (Go's path);
-    - otherwise, if the dispatch thread is outside a sync part and the id is in `request_queue`, the id
-      goes into `canceled_queued_requests` (a set, read and written only under that lock);
-    - otherwise the cancel is dropped (Go: queued behind a sync part, finished, or unknown).
-  - In `dispatch_request`, at registration, under the same lock: if the id is in the set, it is removed,
-    the new context is cancelled, and no pending entry is made. That is what Go's `cancelRequest` leaves
-    behind. The request then runs its sync part and its async part with the cancelled context, so the
-    answer comes from the same wrapper checks as in Go.
-- **Races:** the reader holds the pending lock while it checks the queue and inserts, and the dispatch
-  thread takes that lock to register. So a cancel either finds the request queued (and registration sees
-  the mark) or registered (and cancels it). If the dispatch thread has taken the request from the queue
-  but not yet registered it, the cancel is dropped. Go has the same window between `Get` and the map
-  insert.
-- **Threads:** only `Send` data crosses: the id set and the flag live in `ServerShared` (`Arc`, `Sync`).
-- **What it does not change:** answers for requests that nobody cancels, the order of answers, when
-  background tasks run, and which work a cancelled request still does (the same as a request cancelled
-  while it runs, which the port already handled).
-- **No switch:** the old behaviour (drop every cancel for a queued request) is gone. No env var, feature or
-  option was added.
+- **The condition.** Go's dispatch loop is one goroutine: `Get`, register, sync part, `go` the async part,
+  then the next `Get` (server.go:1005-1063). So a cancel for request R reaches it (`cancelRequest`, 991)
+  exactly when every message ahead of R in Go's queue has finished its sync part.
+- **Ordinary sync parts are work.** Unmarshalling, the snapshot clone, the program update, loading a
+  project and checker-free LS setup are CPU work. Go finishes them well before an editor's cancel unless
+  the dispatch loop is in one right then.
+- **The sync parts that can wait for the client** (Go, pin 3e9236361fa9):
+  1. **`initialized`** (`handleInitialized`, server.go:1714):
+     - `RequestConfiguration` sends workspace/configuration and waits (:1791 → :854), when the client has
+       `workspace.configuration` (:839-840);
+     - the config watch registration, client/registerCapability, always (:1797).
+  2. **`custom/setContentMapperContributions`** (:2524 → session.go:343). With RunExternalCode
+     (session.go:344):
+     - after its snapshot update, `updateContentMapperRegistrations` (session.go:359 → :1592) takes
+       `contentMapperRegistrationMu` (:1601);
+     - if the extension set changed, it calls `RegisterContentMapperExtensions` (:1616 →
+       server.go:459). That unregisters (:499) and registers (:731) and waits for both; it runs only when
+       the client registers text document sync dynamically (:460).
+     - The same mutex is held by the background task of every snapshot update while it makes those calls
+       (session.go:1438). So this sync part can also wait for a background task that waits for the
+       client. That is the reviewer's counterexample.
+  3. **`shutdown`** (:1828): `session.Close` (:1833 → session.go:1710) calls `backgroundQueue.Close`
+     (:1722), which waits for every running background task (background/queue.go:51-56). Those include
+     watch (un)registrations that wait for the client (session.go:1526, :1575, each with a 1 s timeout)
+     and the content-mapper registrations (:1438).
+  4. **While an API request runs `APIUpdate`** (project/api.go:18-20): it holds `snapshotUpdateMu`. Its
+     program build can call the API client (callback file system and module resolver). Every LSP sync
+     part that takes that lock waits:
+     - `getSnapshot` (session.go:1060), i.e. every language-service request;
+     - `DidOpenFile` (:322) and `SetContentMapperContributions` (:348).
+     The port already models which LSP messages do not wait there: `served_during_api_call`.
+- **Not client waits, and treated as work:**
+  - `WaitForBackgroundTasks` (session.go:1503) is test-only.
+  - Background tasks hold no lock that a sync part takes while they wait for the client, except the
+    content-mapper mutex in item 2.
+  - `RefreshDiagnostics` / `RefreshInlayHints` / `RefreshCodeLens` (server.go:742-791) are
+    fire-and-forget.
+  - `snapshotUpdateMu` held by the scheduled snapshot update or the idle cache clean (session.go:620,
+    :684) is CPU work.
+  - Content-mapper processes (spawned in the snapshot clone with RunExternalCode) and npm (ATA) are
+    external processes, not the client. The port runs the same work in the same sync part.
+
+## Design (round 2)
+
+- **Candidate (a), chosen: a per-request rule.** On the reader thread, under the
+  `pending_client_requests` lock, for a cancel whose id is not registered,
+  `ServerShared::go_took_queued_request(id)` is true iff all of these hold:
+  - the dispatch thread is not in a sync part (`dispatch_in_sync_part`, as in round 1; the current
+    message's sync part is ahead of every queued request);
+  - the id is in `request_queue`;
+  - no message queued ahead of it is a sync part that waits for the client
+    (`sync_part_waits_for_client`): `initialized`; `shutdown`;
+    `custom/setContentMapperContributions` when RunExternalCode is on and the client registers text
+    document sync dynamically (the two static preconditions of item 2); and, while an API request
+    waits for a call to its client (`api_calls_waiting`, counted in `ApiSessionConn::call`), any
+    message that needs the session (`!served_during_api_call`).
+  If it is true, the id goes into `canceled_queued_requests` and `dispatch_request` cancels the request
+  when it registers it, as in round 1. Otherwise the cancel is dropped.
+- **Why it is exact for the counterexample and items 1–4:** in each, Go's dispatch loop is still inside
+  the barrier's sync part when the cancel comes, so Go has R queued.
+  - The port decides from the barrier message itself, before it runs. The decision does not depend on
+    the order in which the port later runs the barrier's work. In the counterexample, the port's
+    didOpen background task registers the content-mapper extensions after the client releases the watch
+    reply. Go's `setContentMapperContributions` sync part registers them, because Go's task is still
+    stuck on the watch reply. Either way the hover's cancel is dropped.
+- **Candidate (b), not chosen: run each sync part in arrival order and schedule the async parts as
+  separate dispatch-thread jobs.**
+  - **It cannot be exact on one thread.** A sync part can only run when the thread is free. Behind a
+    running async part (the 0.8 s ChatView pull) every later sync part still waits, so registration
+    would still come after it, and the cancels that motivate this lane would still be lost.
+  - **Making it exact needs one of two things:**
+    - preempting the async part at its context checks and running other sync parts inside it. That is
+      re-entrancy into the session from the middle of a checker run (`RefCell` borrows; the `lspwait1`
+      serving-wait failure, `scripts/state history --kind note`, `lspwait1-dropped-2026-10-04`);
+    - running async parts on worker threads, which the `Rc` language-service state does not allow.
+  - **What it would change, even unexact:**
+    - answers would go out of arrival order;
+    - `gostd::local` tasks queued by a sync part would run after later messages' sync parts;
+    - background `publishDiagnostics` would land in different places (the LSP oracle compares where they
+      land);
+    - every async part would have to hold its own snapshot while later sync parts replace the session's.
+  - That is a concurrency redesign with a parity surface across every LSP session, for no gain in
+    exactness here.
+- **Residual cases (a) cannot match, with their client preconditions:**
+  1. **The client answers Go's barrier request before it cancels.** A barrier M is queued ahead of R
+     while the port runs an earlier request. The client answers M's request (which Go sent at once and
+     the port has not sent yet) and then cancels R. Go has taken R: -32800. The port drops the cancel:
+     result. Precondition: the port has a backlog when M arrives. M is `initialized` (session start),
+     `setContentMapperContributions` (RunExternalCode and dynamic sync registration only), `shutdown`, or
+     a session-needing message during an API callback. No information available to the port decides
+     this: the answer depends on how fast the client replies to a request the port has not sent.
+  2. **`setContentMapperContributions` that does not wait in Go.** The extension set is unchanged and no
+     background registration holds the mutex, so Go's sync part does not wait. The port still drops the
+     cancel (result; Go: -32800). The port can only tell after running it, and by then the decision
+     about R has been made.
+  3. **`shutdown` with no Go background task waiting for the client:** the same as 2. It needs a request
+     sent after `shutdown`, which the protocol does not allow.
+  4. **API interleaving:**
+     - Go starts `APIUpdate` on its own goroutine as soon as the API message arrives; the port runs it
+       when the dispatch thread reaches it. A cancel that comes in between is judged against the port's
+       order.
+     - The port treats every API call to the client as holding the lock. That is the port's existing
+       `served_during_api_call` model.
+  5. **Process waits** (content mappers, npm) in a sync part of a message queued ahead of R: Go may still
+     be waiting while the port counts the message as work.
+  6. **Timing (round 1):**
+     - Go finishes fast requests beside a slow one before the editor's cancel; the port queues them.
+     - Go's sync part on a `.tsx` edit is longer than the port's.
+- **Races** (unchanged): the reader holds the pending lock while it walks the queue and inserts, and the
+  dispatch thread takes it to register. So a cancel finds the request queued or registered, except
+  between `Get` and registration, where it is dropped. Go has the same window.
+- **Threads:** the id set, the flags and the API call count are `Send + Sync` in `ServerShared`. The API
+  connection gets an `Arc<ServerShared>` to count its calls.
+- **No switch:** the old drop-all path is gone. No env var, feature or option was added. The test-only
+  accessor `ServerShared::queued_cancel_count` is in `server.rs`'s `test_hooks` module, behind
+  `#[cfg(feature = "test-hooks")]`.
 
 ## Tests
 
-`crates/ts_goport/tests/go_baselines/project_lsp/lsp_server_cancel_test.rs`, in-process server
-(`lsptestutil`). The client holds the dispatch thread on one of its own replies, so each case is
-deterministic:
+`crates/ts_goport/tests/go_baselines/project_lsp/lsp_server_cancel_test.rs` and
+`lsp_server_apisession_test.rs`, in-process server (`lsptestutil`). The client holds the dispatch thread
+on one of its own replies, so each case is deterministic.
+- **With `test-hooks`** (the parity gate's tests tier builds with it), each test also checks the number of
+  kept cancels through `ServerShared::queued_cancel_count`. `lsptestutil` now exposes the server's
+  `Arc<ServerShared>`.
+- **`assert_late_cancels_dropped`:**
+  - it cancels every finished id and an unknown id (999);
+  - then it sends one request per kind that **reuses** those ids, 999 included, and each must answer its
+    result;
+  - then the kept-cancel count must be 0.
 
-| test | hold | expected | base `1b6aba1a8` | this branch |
+| test | hold | expected | round 1 `6845fb0d3` | round 2 |
 |---|---|---|---|---|
-| `a_request_canceled_while_queued_outside_a_sync_part_answers_request_cancelled` | the watch `client/registerCapability` that didOpen's sync part queued (a background task, outside any sync part) | 9 kinds queued and cancelled (hover, documentSymbol, references, rename, workspace/symbol, completion, diagnostic, semanticTokens/full, definition): -32800 each. One queued hover that is not cancelled: result. Then cancels for the finished ids and for an unknown id change nothing: one request of each kind answers its result | FAIL (hover answered a result) | ok |
-| `a_cancel_while_the_dispatch_thread_runs_a_sync_part_is_dropped` | `workspace/configuration` in the sync part of `initialized` | the same 9 kinds queued and cancelled: result each (Go drops these cancels). Late and unknown cancels: no effect | ok | ok |
-| `a_request_canceled_while_it_runs_answers_request_cancelled` | the watch registration that the hover's own snapshot update queued (a.ts not open), between the hover's sync and async parts | the running hover: -32800. A documentSymbol queued behind it and cancelled: -32800. Late and unknown cancels: no effect | FAIL (queued documentSymbol answered a result; the running hover was cancelled, as before) | ok |
+| `a_request_canceled_while_queued_outside_a_sync_part_answers_request_cancelled` | the watch registration that didOpen's sync part queued (a background task) | 9 kinds queued and cancelled: 9 kept, -32800 each. One uncancelled hover: result. Reused ids: results; 0 kept | ok | ok |
+| `a_cancel_while_the_dispatch_thread_runs_a_sync_part_is_dropped` | `workspace/configuration` in `initialized`'s sync part | the 9 kinds: result each. Reused ids: results; 0 kept | ok | ok |
+| `a_request_canceled_while_it_runs_answers_request_cancelled` | the watch registration that the hover's own sync part queued, between its sync and async parts | running hover -32800 (pending map). Queued documentSymbol: 1 kept, -32800 | ok | ok |
+| `a_cancel_behind_a_sync_part_that_waits_for_the_client_is_dropped` (the counterexample) | didOpen's watch registration, with RunExternalCode, dynamic sync registration and a tsconfig content mapper; then setContentMapperContributions, a hover and its cancel | the hover answers its **result**. The content-mapper extensions were registered. Reused ids: results; 0 kept | **FAIL** (hover -32800) | ok |
+| `a_shutdown_canceled_while_queued_answers_request_cancelled` | the watch registration | the queued shutdown, cancelled: 1 kept. Its handler runs, then -32800 at the check (server.go:1371). exit ends the server | ok | ok |
+| `a_request_canceled_during_its_async_part_answers_request_cancelled` | the watch registration of a diagnostic pull of an unopened 20,000-statement file, released 50 ms before the cancel | -32800, 0 kept. The cancel reaches the registered request in its async part or just before it; both give -32800 by Go's path (pending map). This is a timing sample of *where* it lands; the answer is the same either way | ok | ok |
+| `api_callback_wait_keeps_the_cancel_of_the_first_waiting_request_only` (`test-hooks` only) | an API createSnapshot whose callback the client holds; didChange is served in the wait (nested dispatch), then two hovers and their cancels | the first hover: 1 kept, -32800 (Go: taken, then blocked on `snapshotUpdateMu`). The second (behind it): result. didChange was served before the hovers | n/a (needs the accessor) | ok |
 
-Run: `scripts/run-cargo-capped.sh test -p ts_goport --test go_baselines -- lsp_server_cancel` (3 passed).
-The parity gate's tests tier (below) builds this checkout and runs the whole suite: 140,040 PASS,
-1,731 ignored.
+- Round 1's code fails only the counterexample. I ran it without `test-hooks`, because round 1 has no
+  accessor.
+- Base `1b6aba1a8` fails the first and third tests, as in round 1.
+- Run: `scripts/run-cargo-capped.sh test -p ts_goport --features test-hooks --test go_baselines --
+  lsp_server_cancel lsp_server_apisession`: 10 passed.
+- The parity gate's tests tier (below) runs the whole suite.
 
 ## LSP comparison with Go: `scripts/lspdiff/probe-cancel.mjs`
 
@@ -134,12 +250,28 @@ a separate probe. It runs the same messages against each server and records the 
 3 times per kind (`~/.cache/perf-rearch/lsp-queued-cancel/probe/{ChatView,BranchPicker}.json`). C =
 -32800, R = result.
 
+- **barrier** (round 2: the reviewer's counterexample against the pinned Go oracle).
+  - Setup: a one-file fixture with a tsconfig content mapper; RunExternalCode; dynamic watch and text
+    document sync registration.
+  - The client holds every server request from didOpen's watch registration on. It sends
+    setContentMapperContributions, a hover and the hover's cancel, then answers the held requests
+    300 ms later. Data: `probe/barrier.json`.
+
+| barrier | go | base `1b6aba1a8` | round 1 `6845fb0d3` | round 2 |
+|---|---|---|---|---|
+| setContentMapperContributions | result | result | result | result |
+| hover (cancelled) | **result** | result | **-32800** | **result** |
+| content-mapper extensions registered | yes | yes | yes | yes |
+
 - **held-sync** (one-file fixture, the dispatch loop held in `initialized`'s sync part): R for all 10 kinds,
-  on all three servers.
+  on all servers, round 2 included (`probe/barrier.json` has the round-2 run).
 - **after** (cancel after the answer, plus an unknown id; then a hover): R, and the next hover R, for all
   kinds on all servers.
-- **in-sync** (didChange, the request, its cancel 2 ms later: it lands in the request's sync part, the
-  snapshot update):
+- **in-sync** (didChange, the request, its cancel 2 ms later). These rows are **timing samples**:
+  - nothing holds the server, so they do not prove where the cancel lands;
+  - it usually lands in the request's own sync part (the snapshot update);
+  - the deterministic cases are the tests above.
+  - The round-1 binary ran these; round 2 changes nothing on this path (no barrier message is queued).
 
 | file | go | base | new |
 |---|---|---|---|

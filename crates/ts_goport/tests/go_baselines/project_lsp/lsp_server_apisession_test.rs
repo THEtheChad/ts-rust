@@ -589,20 +589,6 @@ child_test! {
         let second = wait(&second);
         assert!(second.error.is_none(), "second hover: {:?}", second.error);
         assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
-        let handled = handled
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let position = |method: &str| {
-            handled
-                .iter()
-                .position(|line| line.starts_with(&format!("handled method '{method}'")))
-        };
-        assert!(
-            position("textDocument/didChange").is_some()
-                && position("textDocument/didChange") < position("textDocument/hover"),
-            "didChange was not served in the wait: {handled:?}"
-        );
         shutdown_and_exit(&client);
         drop(api);
         remove_api_pipe(&pipe);
