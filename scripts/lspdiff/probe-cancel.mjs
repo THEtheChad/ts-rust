@@ -277,6 +277,7 @@ for (const key of ["contributions", "hover", "contentMapperRegistered"]) console
 console.log();
 console.log(`| scenario | kind | ${names.join(" | ")} |`);
 console.log(`|---|---|${names.map(() => "---|").join("")}`);
-for (const scenario of ["held-sync", "in-sync", "behind-30", "behind-300", "after"]) {
+const scenarios = args.includes("--no-project") ? ["held-sync"] : ["held-sync", "in-sync", "behind-30", "behind-300", "after"];
+for (const scenario of scenarios) {
   for (const kind of KINDS) console.log(`| ${scenario} | ${kind} | ${names.map((n) => count(results[n][scenario]?.[kind])).join(" | ")} |`);
 }
