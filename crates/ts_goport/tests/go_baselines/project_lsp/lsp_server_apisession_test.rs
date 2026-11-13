@@ -26,6 +26,14 @@ const A_TS: &str = "export const a = 1;\n";
 fn start_server(
     on_server_notification: Option<lsptestutil::ServerNotificationHandler>,
 ) -> LspClient {
+    start_server_with(on_server_notification, false)
+}
+
+/// `start_server` with Go `initializationOptions.RunExternalCode`.
+fn start_server_with(
+    on_server_notification: Option<lsptestutil::ServerNotificationHandler>,
+    run_external_code: bool,
+) -> LspClient {
     let on_server_request: lsptestutil::ServerRequestHandler = Arc::new(|req| {
         if req.method == lsproto::Method::CLIENT_REGISTER_CAPABILITY
             || req.method == lsproto::Method::CLIENT_UNREGISTER_CAPABILITY
@@ -53,6 +61,14 @@ fn start_server(
         &lsproto::INITIALIZE_INFO,
         lsproto::InitializeParams {
             capabilities: Some(lsproto::ClientCapabilities::default()),
+            initialization_options: run_external_code.then(|| {
+                lsproto::InitializationOptionsOrNull {
+                    initialization_options: Some(lsproto::InitializationOptions {
+                        run_external_code: Some(true),
+                        ..Default::default()
+                    }),
+                }
+            }),
             ..Default::default()
         },
     );
@@ -451,5 +467,382 @@ child_test! {
         assert_eq!(second, socket);
         shutdown_and_exit(&client);
         assert!(!dir.exists(), "{} stays after shutdown", dir.display());
+    }
+}
+
+/// lsp-queued-cancel: an API request (`id` 3, `method`) that builds a
+/// program with a callback module resolver, held at its first callback,
+/// which the client does not answer yet. Returns the API client and the
+/// callback message.
+#[cfg(feature = "test-hooks")]
+fn api_request_held_at_callback(client: &LspClient, method: &str) -> (PathBuf, ApiClient, String) {
+    let pipe = init_api_session(client);
+    let mut api = ApiClient::connect(&pipe);
+    api.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+    api.recv();
+    api.send(
+        r#"{"jsonrpc":"2.0","id":2,"method":"createModuleResolver","params":{"compilerOptions":{"module":199,"moduleResolution":99},"resolveModuleNameCallback":"resolveCb"}}"#,
+    );
+    let answer = api.recv();
+    let resolver = answer
+        .split_once(r#""result":"#)
+        .and_then(|(_, rest)| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .unwrap_or_else(|| panic!("no resolver id: {answer}"))
+        .to_string();
+    let programs = format!(
+        r#"[{{"rootFiles":["/home/projects/b.ts"],"compilerOptions":{{"module":199,"moduleResolution":99,"noEmit":true}},"options":{{"moduleResolver":{resolver}}}}}]"#
+    );
+    let params = if method == "createSnapshot" {
+        format!(r#"{{"createPrograms":{programs}}}"#)
+    } else {
+        format!(r#"{{"changes":{{"createPrograms":{programs}}}}}"#)
+    };
+    api.send(&format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"{method}","params":{params}}}"#
+    ));
+    let callback = api.recv();
+    assert!(callback.contains(r#""method":"resolveCb""#), "{callback}");
+    (pipe, api, callback)
+}
+
+/// Answers the API callbacks with null until request 3 answers.
+#[cfg(feature = "test-hooks")]
+fn answer_callbacks(api: &mut ApiClient, mut message: String) {
+    loop {
+        if !message.contains(r#""method""#) {
+            assert!(message.contains(r#""id":3"#), "{message}");
+            return;
+        }
+        let id = message
+            .split_once(r#""id":"#)
+            .map(|(_, rest)| {
+                rest.split([',', '}'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .unwrap_or_else(|| panic!("no callback id: {message}"));
+        api.send(&format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null}}"#));
+        message = api.recv();
+    }
+}
+
+/// Sends a hover and returns its id and answer channel.
+#[cfg(feature = "test-hooks")]
+fn send_hover(client: &LspClient) -> (i32, std::sync::mpsc::Receiver<lsproto::ResponseMessage>) {
+    let id = client.next_id();
+    let rx = client.send_request_message(
+        lsproto::TEXT_DOCUMENT_HOVER_INFO
+            .new_request_message(Some(jsonrpc::new_id_int(id)), hover_params()),
+        jsonrpc::new_id_int(id),
+    );
+    (id, rx)
+}
+
+/// Sends `$/cancelRequest` and waits until the reader thread handled it.
+#[cfg(feature = "test-hooks")]
+fn cancel_handled(client: &LspClient, id: i32) {
+    let before = client.shared.cancel_hooks.cancel_handled();
+    client.send_notification(
+        &lsproto::CANCEL_REQUEST_INFO,
+        lsproto::CancelParams {
+            id: lsproto::IntegerOrString {
+                integer: Some(id),
+                ..Default::default()
+            },
+        },
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while client.shared.cancel_hooks.cancel_handled() <= before {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the reader did not handle the cancel"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+fn cancel_code(rx: &std::sync::mpsc::Receiver<lsproto::ResponseMessage>) -> Option<i32> {
+    let resp = rx.recv_timeout(Duration::from_mins(2)).expect("an answer");
+    resp.error.map(|err| err.code)
+}
+
+/// Waits until the dispatch thread is out of the sync part of a message
+/// it served in the API wait.
+#[cfg(feature = "test-hooks")]
+fn wait_sync_part_end(client: &LspClient) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while client.shared.queued_cancel_in_sync_part() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sync part did not end"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+fn did_change_a(client: &LspClient) {
+    client.send_notification(
+        &lsproto::TEXT_DOCUMENT_DID_CHANGE_INFO,
+        lsproto::DidChangeTextDocumentParams {
+            text_document: lsproto::VersionedTextDocumentIdentifier {
+                uri: uri("file:///home/projects/a.ts"),
+                version: 2,
+            },
+            content_changes: vec![lsproto::TextDocumentContentChangePartialOrWholeDocument {
+                partial: None,
+                whole_document: Some(lsproto::TextDocumentContentChangeWholeDocument {
+                    text: format!("{A_TS}export const c = 2;\n"),
+                }),
+            }],
+        },
+    );
+}
+
+#[cfg(feature = "test-hooks")]
+const CANCELLED: Option<i32> = Some(lsproto::ErrorCode::REQUEST_CANCELLED.0);
+
+child_test! {
+    // lsp-queued-cancel review round 2, finding 1: Go's createSnapshot
+    // clones an independent snapshot (api/session.go:1440,
+    // project/snapshothost.go:111) without APIUpdate or a session lock, so
+    // a held callback does not stop Go's dispatch loop: it takes both
+    // hovers, and both cancels land (RequestCancelled). The port keeps
+    // both. (Round 2 treated every API callback as holding the lock and
+    // answered the second hover's result.)
+    #[cfg(feature = "test-hooks")]
+    fn independent_api_snapshot_callback_keeps_every_cancel() {
+        let client = start_server(None);
+        let (pipe, mut api, callback) = api_request_held_at_callback(&client, "createSnapshot");
+        let (first_id, first) = send_hover(&client);
+        let (second_id, second) = send_hover(&client);
+        cancel_handled(&client, first_id);
+        cancel_handled(&client, second_id);
+        assert_eq!(client.shared.queued_cancel_count(), 2, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        assert_eq!(cancel_code(&first), CANCELLED, "first hover");
+        assert_eq!(cancel_code(&second), CANCELLED, "second hover");
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}
+
+child_test! {
+    // Finding 1, APIUpdate (getCurrentLanguageServerSnapshot,
+    // api/session.go:1817): Go's APIUpdate holds snapshotUpdateMu
+    // (project/api.go:19) while the callback waits. Go's dispatch loop
+    // takes the first hover and blocks in its sync part on that lock, so
+    // the second hover is still queued: the first answers
+    // RequestCancelled, the second its result.
+    #[cfg(feature = "test-hooks")]
+    fn api_update_callback_keeps_the_cancel_of_the_first_waiting_request_only() {
+        let client = start_server(None);
+        let (pipe, mut api, callback) =
+            api_request_held_at_callback(&client, "getCurrentLanguageServerSnapshot");
+        let (first_id, first) = send_hover(&client);
+        let (second_id, second) = send_hover(&client);
+        cancel_handled(&client, second_id);
+        cancel_handled(&client, first_id);
+        assert_eq!(client.shared.queued_cancel_count(), 1, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        assert_eq!(cancel_code(&first), CANCELLED, "first hover");
+        assert_eq!(cancel_code(&second), None, "second hover");
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}
+
+child_test! {
+    // Finding 2: during APIUpdate, Go's didChange blocks on snapshotMu
+    // (DidChangeFile -> isContentMapperFile -> Snapshot(), session.go:393,
+    // :403, :1046; APIUpdate clones under snapshotMu, :1384). The port
+    // serves didChange in its API wait (nested dispatch); the hover behind
+    // it is still in Go's queue, so Go drops its cancel and answers the
+    // result. (Round 2 kept it.)
+    #[cfg(feature = "test-hooks")]
+    fn api_update_counts_a_served_did_change_as_a_barrier() {
+        let handled = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = Arc::clone(&handled);
+        let client = start_server(Some(Arc::new(move |msg| {
+            if msg.method == lsproto::Method::WINDOW_LOG_MESSAGE
+                && let Ok(params) = lsproto::unmarshal_params::<lsproto::LogMessageParams>(msg)
+                && params.message.starts_with("handled method")
+            {
+                log.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(params.message);
+            }
+        })));
+        let (pipe, mut api, callback) =
+            api_request_held_at_callback(&client, "getCurrentLanguageServerSnapshot");
+        did_change_a(&client);
+        // The port serves didChange in the wait; its log line comes before
+        // its sync part ends.
+        let deadline = std::time::Instant::now() + Duration::from_mins(1);
+        while !handled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|line| line.starts_with("handled method 'textDocument/didChange'"))
+        {
+            assert!(std::time::Instant::now() < deadline, "didChange was not served");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        wait_sync_part_end(&client);
+        let (hover_id, hover) = send_hover(&client);
+        cancel_handled(&client, hover_id);
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        assert_eq!(cancel_code(&hover), None, "hover behind didChange");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}
+
+child_test! {
+    // Finding 2: with RunExternalCode and no dynamic text document sync, a
+    // setContentMapperContributions does not register anything, but its
+    // sync part still waits for snapshotUpdateMu (session.go:348) while an
+    // APIUpdate holds it. The hover behind it is still in Go's queue: Go
+    // drops its cancel and answers the result. (Round 2 returned "not a
+    // barrier" before it looked at the API update.)
+    #[cfg(feature = "test-hooks")]
+    fn api_update_counts_set_content_mapper_contributions_as_a_barrier() {
+        let client = start_server_with(None, true);
+        let (pipe, mut api, callback) =
+            api_request_held_at_callback(&client, "getCurrentLanguageServerSnapshot");
+        let contributions = client.send_request_async(
+            &lsproto::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS_INFO,
+            lsproto::SetContentMapperContributionsParams::default(),
+        );
+        let (hover_id, hover) = send_hover(&client);
+        cancel_handled(&client, hover_id);
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        let (msg, _) = contributions();
+        assert!(msg.error.is_none(), "{:?}", msg.error);
+        assert_eq!(cancel_code(&hover), None, "hover behind setContentMapperContributions");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}
+
+child_test! {
+    // Round-3 review, finding 2 (negative): during APIUpdate, a message
+    // whose Go sync handler takes neither snapshot lock does not hold Go's
+    // loop: workspace/didChangeConfiguration with null settings
+    // (lsp/server.go:1841-1847) and an unknown method (:1224-1228, answered
+    // InvalidRequest at once). Go takes the hover behind them, which then
+    // blocks on snapshotUpdateMu, so its cancel lands. (Round 3 counted every
+    // message but five as a barrier and answered the hover's result.)
+    #[cfg(feature = "test-hooks")]
+    fn api_update_does_not_count_messages_that_take_no_snapshot_lock() {
+        let client = start_server(None);
+        let (pipe, mut api, callback) =
+            api_request_held_at_callback(&client, "getCurrentLanguageServerSnapshot");
+        client.send_notification(
+            &lsproto::WORKSPACE_DID_CHANGE_CONFIGURATION_INFO,
+            lsproto::DidChangeConfigurationParams {
+                settings: ts_goport::frontend::json_ext::LspAny::Null,
+            },
+        );
+        let unknown_id = client.next_id();
+        let unknown = client.send_request_message(
+            lsproto::RequestMessage {
+                id: Some(jsonrpc::new_id_int(unknown_id)),
+                method: lsproto::Method("custom/lspQueuedCancelNoSuchMethod".into()),
+                ..Default::default()
+            },
+            jsonrpc::new_id_int(unknown_id),
+        );
+        let (hover_id, hover) = send_hover(&client);
+        cancel_handled(&client, hover_id);
+        assert_eq!(client.shared.queued_cancel_count(), 1, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        assert_eq!(
+            cancel_code(&unknown),
+            Some(lsproto::ErrorCode::INVALID_REQUEST.0),
+            "unknown method"
+        );
+        assert_eq!(cancel_code(&hover), CANCELLED, "hover behind them");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}
+
+child_test! {
+    // Finding 2: the APIUpdate list is explicit (`TAKES_SNAPSHOT_LOCK`,
+    // default false). A profiling request takes no snapshot lock
+    // (server.go:2467-2506), but it is a registerRequestHandler kind
+    // (:1325): Go answers it in its sync part and takes the hover behind it
+    // only afterwards, so the hover's cancel is dropped for that reason
+    // (finding 1), with or without an APIUpdate.
+    #[cfg(feature = "test-hooks")]
+    fn api_update_lock_list_is_explicit() {
+        let client = start_server(None);
+        let blocks = |method: &str| client.shared.queued_cancel_blocks_on_api_update(method);
+        for method in [
+            "workspace/didChangeConfiguration",
+            "custom/runGC",
+            "custom/saveHeapProfile",
+            "custom/startCPUProfile",
+            "custom/initializeAPISession",
+            "custom/lspQueuedCancelNoSuchMethod",
+            "textDocument/didClose",
+            "textDocument/didSave",
+            "$/setTrace",
+            "exit",
+        ] {
+            assert!(!blocks(method), "{method} takes no snapshot lock");
+        }
+        for method in [
+            "textDocument/didOpen",
+            "textDocument/didChange",
+            "workspace/didChangeWatchedFiles",
+            "textDocument/hover",
+            "textDocument/completion",
+            "textDocument/references",
+            "workspace/symbol",
+            "custom/projectInfo",
+            "shutdown",
+        ] {
+            assert!(blocks(method), "{method} takes a snapshot lock");
+        }
+
+        let (pipe, mut api, callback) =
+            api_request_held_at_callback(&client, "getCurrentLanguageServerSnapshot");
+        let gc_id = client.next_id();
+        let gc = client.send_request_message(
+            lsproto::RequestMessage {
+                id: Some(jsonrpc::new_id_int(gc_id)),
+                method: lsproto::Method::CUSTOM_RUN_GC,
+                ..Default::default()
+            },
+            jsonrpc::new_id_int(gc_id),
+        );
+        let (hover_id, hover) = send_hover(&client);
+        cancel_handled(&client, hover_id);
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        answer_callbacks(&mut api, callback);
+
+        assert_eq!(cancel_code(&gc), None, "runGC");
+        assert_eq!(cancel_code(&hover), None, "hover behind runGC");
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
     }
 }

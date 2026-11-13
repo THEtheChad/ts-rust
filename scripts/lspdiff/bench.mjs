@@ -20,12 +20,20 @@ const isIdent = (ch) => /[\w$]/.test(ch ?? "");
 
 // pulls: "all", "no-diagnostics" (what completions would wait for if diagnostics ran off the
 // dispatch thread) or "none" (completions and hovers alone).
-export async function runBench(cmd, root, files, { serial, interval, pulls: which = "all", stderr }) {
+// trace: also keep each sample's request id and send/answer times, the keystroke times and the
+// server's window/logMessage lines (all in performance.now() ms), and the clock pair that maps
+// them to CLOCK_MONOTONIC (an external profiler's sample clock). runBench then returns
+// { samples, trace }.
+export async function runBench(cmd, root, files, { serial, interval, pulls: which = "all", stderr, trace = false, killAfter }) {
   const client = await startServer(cmd, root, { stderr });
   const samples = [];
+  const keys = [];
+  let measureFrom;
   const track = (kind, promise) =>
     promise.then((r) => {
-      samples.push({ kind, ms: r.ms, cancelled: r.error?.code === -32800, error: r.error && r.error.code !== -32800 ? r.error.message : undefined });
+      const s = { kind, ms: r.ms, cancelled: r.error?.code === -32800, error: r.error && r.error.code !== -32800 ? r.error.message : undefined };
+      if (trace) Object.assign(s, { id: r.id, start: r.start, end: r.end, firstByte: r.firstByte, lastByte: r.lastByte, bytes: r.bytes });
+      samples.push(s);
       return r;
     });
   try {
@@ -38,6 +46,7 @@ export async function runBench(cmd, root, files, { serial, interval, pulls: whic
     const hoverAt = pickPositions(other.text, 3).idents[1] ?? { line: 0, character: 0 };
     await client.request("textDocument/hover", { textDocument: { uri: other.uri }, position: hoverAt });
 
+    measureFrom = performance.now();
     const inFlight = new Map(); // kind or uri -> pending request, for editor-style cancellation
     const debounceKeys = Math.max(1, Math.round(DEBOUNCE / interval));
     let key = 0;
@@ -45,6 +54,7 @@ export async function runBench(cmd, root, files, { serial, interval, pulls: whic
       for (let i = 0; i < TYPED.length; i++, key++) {
         const ch = TYPED[i];
         const position = append(client, edited, ch);
+        if (trace) keys.push({ key, round, ch, at: performance.now() });
         const sends = []; // [slot, kind, () => promise]
         if (ch === ".") sends.push(["completion", "completion", () => client.request("textDocument/completion", { textDocument: td, position, context: { triggerKind: 2, triggerCharacter: "." } })]);
         else if (/[A-Za-z_$]/.test(ch) && !isIdent(TYPED[i - 1]) && TYPED[i - 1] !== ".") {
@@ -76,9 +86,12 @@ export async function runBench(cmd, root, files, { serial, interval, pulls: whic
     }
     while (client.pending.size) await sleep(20);
   } finally {
-    await client.shutdown();
+    await client.shutdown(killAfter ? { killAfter } : {});
   }
-  return samples;
+  if (!trace) return samples;
+  const clock = { perfNow: performance.now(), monoMs: Number(process.hrtime.bigint()) / 1e6 };
+  const logs = client.notifications.filter((n) => n.method === "window/logMessage").map((n) => ({ at: n.at, type: n.params.type, message: n.params.message }));
+  return { samples, trace: { measureFrom, keys, samples, logs, clock } };
 }
 
 const quantile = (sorted, q) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];

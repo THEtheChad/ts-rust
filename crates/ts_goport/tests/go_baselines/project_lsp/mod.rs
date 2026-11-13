@@ -130,6 +130,10 @@ mod lsp_dynamic_queue_test;
 mod lsp_progress_test;
 mod lsp_replay_test;
 mod lsp_server_apisession_test;
+// Phase-sensitive: it reads the server's cancel state and pause points
+// (`test-hooks`).
+#[cfg(feature = "test-hooks")]
+mod lsp_server_cancel_test;
 mod lsp_server_completion_test;
 mod lsp_server_contentmapper_internal_test;
 mod lsp_server_contentmapper_test;
