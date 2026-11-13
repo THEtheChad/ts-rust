@@ -90,10 +90,22 @@
 //! wait (on an API connection, of one pipelined burst). Other releases free
 //! them at once, so that the next check reuses their memory.
 //!
-//! Cancellation is Go's: `$/cancelRequest` reaches only a request that the
-//! dispatch loop took (`pending_client_requests`); a cancel for a queued
-//! request is dropped. The LS loops check the request context. The checker
-//! checks it at each top-level statement and deferred node, like Go.
+//! Cancellation follows Go's queue, not the port's. Go's
+//! `$/cancelRequest` reaches a request that the dispatch loop took
+//! (`pendingClientRequests`) and is dropped for one still in its request
+//! queue. Go's dispatch loop is busy only in a handler's sync part, so a
+//! request waits in Go's queue only behind a sync part. Here the requests
+//! behind the running one wait in the queue for its whole run, so
+//! `cancel_request` treats a queued request as Go would at that moment:
+//! taken (the cancel is kept and lands when `dispatch_request` registers
+//! it), unless the dispatch thread is in a sync part
+//! (`dispatch_in_sync_part`), where Go's request would be queued too and
+//! the cancel is dropped. A request that the cancel reached runs with a
+//! canceled context, as Go's does, and answers what Go's handler answers
+//! then: RequestCancelled at the wrapper's `ctx.Err()` check, or the
+//! error of its sync part. The LS loops check the request context. The
+//! checker checks it at each top-level statement and deferred node, like
+//! Go.
 //!
 //! When the `run` context ends (Go `signal.NotifyContext` in
 //! `cmd/tsc/lsp.go`), every loop returns `context canceled`, as in Go. A
@@ -203,6 +215,8 @@ pub fn new_server(opts: ServerOptions) -> Rc<Server> {
         queued_cond: Condvar::new(),
         outgoing_queue: new_dynamic_queue(),
         pending_client_requests: Mutex::new(FxHashMap::default()),
+        canceled_queued_requests: Mutex::new(FxHashSet::default()),
+        dispatch_in_sync_part: AtomicBool::new(false),
         pending_server_requests: Mutex::new(FxHashMap::default()),
         cwd,
         initialize_params: OnceLock::new(),
@@ -517,6 +531,14 @@ pub struct ServerShared {
     // response channel; `None` on that channel is the context wake-up of
     // `send_client_request`.
     pub pending_client_requests: Mutex<FxHashMap<crate::jsonrpc::ID, PendingClientRequest>>,
+    // PORT: the ids of queued requests that a `$/cancelRequest` reached
+    // (`cancel_request`). `dispatch_request` cancels each when it registers
+    // it. Read and written only under `pending_client_requests`.
+    pub canceled_queued_requests: Mutex<FxHashSet<crate::jsonrpc::ID>>,
+    // PORT: true while the dispatch thread runs the sync part of a handler
+    // (`dispatch_request`), the only time Go's dispatch loop is busy and so
+    // the only time a request waits in Go's request queue.
+    pub dispatch_in_sync_part: AtomicBool,
     pub pending_server_requests:
         Mutex<FxHashMap<crate::jsonrpc::ID, SyncSender<Option<lsproto::ResponseMessage>>>>,
 
@@ -2088,13 +2110,33 @@ impl ServerShared {
     }
 
     // Go: server.go:991 cancelRequest
+    // PORT: Go's dispatch loop takes a request (server.go:1009-1024) as
+    // soon as the sync part of the message ahead of it ends, so in Go a
+    // request is queued only while that loop runs a sync part. Here a
+    // request waits in `request_queue` until every message ahead of it has
+    // run to its end. A cancel for such a request is kept while the
+    // dispatch thread is outside a sync part (Go took the request) and
+    // lands when `dispatch_request` registers it; inside a sync part it is
+    // dropped, as Go drops a cancel for a request in its queue. A cancel
+    // for an unknown or finished request is dropped, as in Go.
     pub fn cancel_request(&self, raw_id: &lsproto::IntegerOrString) {
         let id = lsproto::new_id(raw_id);
         let mut pending_client_requests = lock(&self.pending_client_requests);
         if let Some(pending_req) = pending_client_requests.get(&id) {
             (pending_req.cancel)();
             pending_client_requests.remove(&id);
+        } else if !self.dispatch_in_sync_part.load(Ordering::SeqCst) && self.is_queued(&id) {
+            lock(&self.canceled_queued_requests).insert(id);
         }
+    }
+
+    /// PORT: whether a request with this id waits in `request_queue`.
+    fn is_queued(&self, id: &crate::jsonrpc::ID) -> bool {
+        self.request_queue.with_items(|items| {
+            items.iter().any(
+                |item| matches!(item, QueuedRequest::Request(req) if req.id.as_ref() == Some(id)),
+            )
+        })
     }
 
     // Go: server.go:1001 read
@@ -2205,13 +2247,22 @@ impl Server {
             ));
             request_ctx = c;
             cancel = Some(f.clone());
-            lock(&self.shared.pending_client_requests).insert(
-                id.clone(),
-                PendingClientRequest {
-                    method: req.method.clone(),
-                    cancel: f,
-                },
-            );
+            let mut pending_client_requests = lock(&self.shared.pending_client_requests);
+            if lock(&self.shared.canceled_queued_requests).remove(id) {
+                // PORT: a cancel reached this request while it was queued
+                // (`ServerShared::cancel_request`). It lands now, as Go's
+                // cancelRequest (server.go:991) does on a request its
+                // dispatch loop took: cancel, and no pending entry.
+                f();
+            } else {
+                pending_client_requests.insert(
+                    id.clone(),
+                    PendingClientRequest {
+                        method: req.method.clone(),
+                        cancel: f,
+                    },
+                );
+            }
         }
 
         let handle_error = |err: GoError| {
@@ -2239,7 +2290,17 @@ impl Server {
             }
         };
 
-        match self.handle_request_or_notification(&request_ctx, req) {
+        // PORT: Go's dispatch loop runs the sync part before it takes the
+        // next request (see `ServerShared::cancel_request`).
+        let in_sync_part = self
+            .shared
+            .dispatch_in_sync_part
+            .swap(true, Ordering::SeqCst);
+        let sync_result = self.handle_request_or_notification(&request_ctx, req);
+        self.shared
+            .dispatch_in_sync_part
+            .store(in_sync_part, Ordering::SeqCst);
+        match sync_result {
             Err(err) => {
                 handle_error(err);
                 remove_request();
