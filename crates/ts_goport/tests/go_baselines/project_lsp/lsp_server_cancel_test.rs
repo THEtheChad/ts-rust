@@ -317,7 +317,12 @@ fn send_with_id(client: &LspClient, method: &str, id: i32) -> Receiver<lsproto::
     client.send_request_message(request(method, id), jsonrpc::new_id_int(id))
 }
 
+/// Sends `$/cancelRequest` for `id`. With `test-hooks` it returns only once
+/// the server's reader thread has handled it, so a hold that the test
+/// releases next cannot overtake it.
 fn cancel(client: &LspClient, id: i32) {
+    #[cfg(feature = "test-hooks")]
+    let before = client.shared.cancel_hooks.cancel_handled();
     client.send_notification(
         &lsproto::CANCEL_REQUEST_INFO,
         lsproto::CancelParams {
@@ -327,6 +332,17 @@ fn cancel(client: &LspClient, id: i32) {
             },
         },
     );
+    #[cfg(feature = "test-hooks")]
+    {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while client.shared.cancel_hooks.cancel_handled() <= before {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the reader did not handle the cancel"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 fn answer(rx: &Receiver<lsproto::ResponseMessage>) -> lsproto::ResponseMessage {
@@ -579,36 +595,67 @@ child_test! {
 }
 
 child_test! {
-    // A cancel that comes during the async part of a request: a diagnostic
-    // pull of a large file that is not open, so its sync part loads the
-    // project and queues the watch registration, held until the cancel is
-    // sent. The cancel reaches the registered request
-    // (`pending_client_requests`, as in Go) during or just before its async
-    // part; both give RequestCancelled at the checker's or the wrapper's
-    // context check.
-    fn a_request_canceled_during_its_async_part_answers_request_cancelled() {
-        let big: String = (0..20_000)
-            .map(|i| format!("export const v{i} = [1, 2, 3].map((x) => x + {i}).filter((y) => y > 1);\n"))
-            .collect();
-        let (on_server_request, hold) = held_server_requests(is_watch_registration, true);
-        let client = start_with(
-            on_server_request,
-            files(&[
-                ("/home/projects/tsconfig.json", "{}"),
-                ("/home/projects/a.ts", big.as_str()),
-            ]),
-            false,
-        );
+    // A cancel that comes when the request's async part starts: the
+    // dispatch thread stops at the async-part pause point (`test-hooks`),
+    // the cancel reaches the registered request (`pending_client_requests`,
+    // as in Go), and the async part answers RequestCancelled at its
+    // context checks (server.go:1397).
+    #[cfg(feature = "test-hooks")]
+    fn a_request_canceled_at_the_start_of_its_async_part_answers_request_cancelled() {
+        let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
+        let client = start(on_server_request);
         client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        let (entered, release) = client
+            .shared
+            .cancel_hooks
+            .cancel_pause("async", "textDocument/diagnostic");
         let (pull_id, pull) = send(&client, "textDocument/diagnostic");
-        hold.asked
+        entered
             .recv_timeout(Duration::from_secs(30))
-            .expect("the pull's snapshot registers the file watchers");
-        hold.release.send(()).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
+            .expect("the pull reaches its async part");
         cancel(&client, pull_id);
+        assert_kept_cancels(&client, 0);
+        release.send(()).unwrap();
 
         assert_cancelled("diagnostic pull", &answer(&pull));
+        assert_late_cancels_dropped(&client, &[pull_id]);
+    }
+}
+
+child_test! {
+    // Review round 2, finding 3: the dequeue that starts a sync part and
+    // the classification of a cancel are one state transition. The
+    // dispatch thread stops right after it took the first hover out of the
+    // queue (pause point "dequeued", before its registration and sync
+    // part). Go's dispatch loop is in that hover's sync part then, so the
+    // second hover is still in Go's queue and Go drops its cancel: both
+    // hovers answer their results. (Round 2 published the sync part only
+    // when `dispatch_request` began, so it kept this cancel.)
+    #[cfg(feature = "test-hooks")]
+    fn a_cancel_right_after_the_dispatch_thread_took_the_message_ahead_is_dropped() {
+        let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
+        let client = start(on_server_request);
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        let (_, warm) = send(&client, "textDocument/hover");
+        assert_result("first hover", &answer(&warm));
+
+        let (entered, release) = client
+            .shared
+            .cancel_hooks
+            .cancel_pause("dequeued", "textDocument/hover");
+        let (first_id, first) = send(&client, "textDocument/hover");
+        entered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the dispatch thread takes the hover");
+        let (second_id, second) = send(&client, "textDocument/hover");
+        cancel(&client, second_id);
         assert_kept_cancels(&client, 0);
+        release.send(()).unwrap();
+
+        assert_result("hover being taken", &answer(&first));
+        assert_result("hover behind it", &answer(&second));
+        assert_late_cancels_dropped(&client, &[first_id, second_id]);
     }
 }

@@ -76,6 +76,13 @@ impl<T: Send + 'static> DynamicQueue<T> {
 
     // Go: lsp/dynamic_queue.go:50 Get
     pub fn get(&self, ctx: &Context) -> Result<T, GoError> {
+        self.get_with(ctx, |_| {})
+    }
+
+    /// PORT: `get` that runs `took` on the item while it still holds the
+    /// state, so the caller's bookkeeping changes in the same step as the
+    /// dequeue (the LSP server's `GoDispatchModel`).
+    pub fn get_with(&self, ctx: &Context, took: impl FnOnce(&T)) -> Result<T, GoError> {
         if let Some(err) = ctx.err() {
             return Err(err);
         }
@@ -86,6 +93,7 @@ impl<T: Send + 'static> DynamicQueue<T> {
             .items
             .pop_front()
             .expect("dynamicQueue: ready state without items");
+        took(&item);
 
         // Go: an empty state goes back to "idle", a non-empty one to "ready".
         let has_more = !state.items.is_empty();

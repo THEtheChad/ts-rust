@@ -27,6 +27,20 @@ impl Session {
         api_file_changes: FileChangeSummary,
         api_request: Option<&APISnapshotRequest>,
     ) -> Result<Rc<Snapshot>, GoError> {
+        // PORT: Go holds `snapshotUpdateMu` from here to the return; the LSP
+        // server's dispatch model hears of it (`api_update_hook`).
+        struct ApiUpdateScope<'a>(&'a Session);
+        impl Drop for ApiUpdateScope<'_> {
+            fn drop(&mut self) {
+                if let Some(hook) = self.0.api_update_hook.borrow().as_ref() {
+                    hook(false);
+                }
+            }
+        }
+        if let Some(hook) = self.api_update_hook.borrow().as_ref() {
+            hook(true);
+        }
+        let _scope = ApiUpdateScope(self);
         self.cancel_scheduled_snapshot_update();
 
         let (host_file_changes, overlays, ata_changes, _) = self.flush_changes(ctx);

@@ -194,6 +194,11 @@ pub struct Session {
     // PORT: the `Send` copy of `warm_auto_import_cancel` for the LSP reader
     // thread. See `WarmAutoImportPreempt`.
     pub warm_auto_import_preempt: WarmAutoImportPreempt,
+    // PORT: no Go counterpart. Called with `true` when an `api_update`
+    // starts and `false` when it ends, for the LSP server's model of Go's
+    // dispatch loop (Go's `APIUpdate` holds `snapshotUpdateMu`, which LSP
+    // sync parts wait for).
+    pub api_update_hook: RefCell<Option<Box<dyn Fn(bool)>>>,
     // PORT: the auto-import warm whose clone waits for idle time (see
     // `warm_auto_import_cache`), and whether an idle job for it is queued.
     pub warm_auto_import_pending: RefCell<Option<PendingWarm>>,
@@ -310,6 +315,7 @@ pub fn new_session(init: &SessionInit) -> Rc<Session> {
         diagnostics_refresh_generation: Cell::new(0),
         warm_auto_import_cancel: RefCell::new(None),
         warm_auto_import_preempt: WarmAutoImportPreempt::default(),
+        api_update_hook: RefCell::new(None),
         warm_auto_import_pending: RefCell::new(None),
         warm_auto_import_queued: Cell::new(false),
         warm_auto_import_slow: Cell::new(false),
