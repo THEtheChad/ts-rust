@@ -180,6 +180,15 @@ change. All four findings were fixed within design (a).
   - Round 1's timing notes (Go answering fast requests before the editor's cancel) are case (b) and
     the "answered before the cancel" choices above. They are Go-feasible outcomes, not exceptions.
 - **I found no case outside the exception** where the rule cannot be matched within design (a).
+- **Review note (Astra fix-up re-check, PASS-WITH-NITS).** The construction above is a sketch, not a
+  proof. Premise (s2) fixes a sync handler's Go answer at the port's time, while case (b) lets a sync
+  handler R answer early. For example: hover M is in the port's sync part, workspace/symbol R is queued,
+  and cancel(R) is dropped. The outcome stays Go-feasible, because Go can keep M's sync part running
+  through the cancel (`lsp/server.go:1017`, `:1050`) or finish R before it (`:1371`). But the
+  schedule should be one globally consistent choice judged on the final per-request outcomes, not
+  case by case. The reviewer found no Go-impossible outcome in the interleavings it examined:
+  notifications, running or cancelled sync handlers, and nested API dispatch. Repeated cancels for one
+  id are not covered by the sketch.
 
 ### Tests of the fix-up
 

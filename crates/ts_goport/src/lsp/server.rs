@@ -549,6 +549,10 @@ const ANSWERS_IN_SYNC_PART: &[lsproto::Method] = &[
 
 /// The messages whose Go sync handler takes `snapshotUpdateMu` or
 /// `snapshotMu` (`ServerShared::blocks_on_api_update`), with the Go path.
+/// `initialized` also reaches `snapshotMu` when the client sends options for
+/// inferred projects (server.go:1818 DidChangeCompilerOptionsForInferredProjects
+/// -> session.go:497 UpdateSnapshot -> :1384), but it is not listed here:
+/// `sync_part_may_wait` already treats every `initialized` as a barrier.
 const TAKES_SNAPSHOT_LOCK: &[lsproto::Method] = &[
     // Notifications: DidOpenFile (project/session.go:322); DidChangeFile
     // -> isContentMapperFile -> Snapshot() (:393, :403, :1046);
