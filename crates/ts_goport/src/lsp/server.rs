@@ -2199,6 +2199,7 @@ impl ServerShared {
     ///   part waits for its locks;
     /// - a message queued ahead of `id` is a barrier
     ///   (`sync_part_may_wait`).
+    ///
     /// Other Go sync parts are work, which Go has done by the time a client
     /// cancels.
     fn go_took_queued_request(&self, id: &crate::jsonrpc::ID) -> bool {

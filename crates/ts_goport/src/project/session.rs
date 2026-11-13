@@ -108,6 +108,9 @@ pub struct SessionInit {
     pub content_mapped_parse_cache: Option<Rc<ContentMappedParseCache>>,
 }
 
+/// PORT: no Go counterpart. See `Session::api_update_hook`.
+pub type ApiUpdateHook = Box<dyn Fn(bool)>;
+
 // Go: project/session.go:104 Session
 // Session manages the state of an LSP session. It receives textDocument
 // events and requests for LanguageService objects from the LPS server
@@ -198,7 +201,7 @@ pub struct Session {
     // starts and `false` when it ends, for the LSP server's model of Go's
     // dispatch loop (Go's `APIUpdate` holds `snapshotUpdateMu`, which LSP
     // sync parts wait for).
-    pub api_update_hook: RefCell<Option<Box<dyn Fn(bool)>>>,
+    pub api_update_hook: RefCell<Option<ApiUpdateHook>>,
     // PORT: the auto-import warm whose clone waits for idle time (see
     // `warm_auto_import_cache`), and whether an idle job for it is queued.
     pub warm_auto_import_pending: RefCell<Option<PendingWarm>>,
