@@ -60,6 +60,47 @@ measurement must end up equal to or faster than Go `tsc` at the pin.
     registrations, pull-diagnostic order) have no JS referee. GO-BROKEN
     applies everywhere.
   - **Speed is not a difference.** Faster is always the goal.
+- **Fidelity exceptions (Chad, 2026-11-13).** Narrow, written cases where Go's
+  own concurrency decides an answer and the port cannot reproduce it. Outside
+  each scope, output must match Go.
+  - **Queued-cancel outcomes behind a sync part that may wait** (lane
+    lsp-queued-cancel, `docs/perf-rearch/experiments/lsp-queued-cancel.md`).
+    - **Scope:** a `$/cancelRequest` for request R arrives while R is still
+      in the port's request queue (the port is backlogged). A message queued
+      ahead of R, or the one running, belongs to a sync-part family that may
+      or may not wait in Go:
+      - `initialized`: configuration request and registration;
+      - `custom/setContentMapperContributions`: registration, or its mutex;
+      - `shutdown`: background cleanup;
+      - snapshot-lock waits during an API `APIUpdate`;
+      - content-mapper process or lifecycle waits.
+    - **In scope,** the port may answer RequestCancelled where Go answers the
+      result, or the reverse.
+    - **Client preconditions:** the port has a backlog when the barrier
+      arrives. Then, either:
+      - Go's answer depends on whether the client answered Go's request
+        (which the port has not sent yet) before it cancelled; or
+      - the barrier does not wait in Go after all (unchanged contributions,
+        no background registration or task in flight, an API callback
+        outside the lock).
+    - **Why it cannot be exact on one thread:**
+      - Go takes R as soon as every sync part ahead of it ends, and those
+        sync parts run at once on Go's dispatch goroutine.
+      - The port runs them only after the request in front, so it must
+        decide before running the barrier. The decision then depends on a
+        client reply to a request it has not sent, or on work it has not
+        done.
+      - Running sync parts early would need re-entrancy into the session or
+        worker threads.
+    - **The port's rule** (`ServerShared::go_took_queued_request`): it drops
+      the cancel behind any classified barrier
+      (`ServerShared::sync_part_may_wait`) and treats content-mapper process
+      waits as work.
+    - **Pinned by:**
+      - `crates/ts_goport/tests/go_baselines/project_lsp/lsp_server_cancel_test.rs`
+        and `lsp_server_apisession_test.rs` (with `test-hooks`);
+      - the `barrier` case of `scripts/lspdiff/probe-cancel.mjs` against the
+        Go oracle.
 - **Oracles:** Go at pin `3e9236361fa9` (`~/.local/bin/tsgo-oracle-3e9236361fa9`,
   LSP `~/.local/bin/tsgo-lsp-oracle-3e9236361fa9 --lsp --stdio`), Go source
   `~/.explore/repos/microsoft__TypeScript@3e9236361fa9/tsc`. Go is the default
