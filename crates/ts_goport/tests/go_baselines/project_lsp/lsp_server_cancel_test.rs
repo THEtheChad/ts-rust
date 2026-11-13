@@ -28,7 +28,9 @@
 //!   queued ahead of the request: Go's dispatch loop waits in its sync part
 //!   for the content-mapper registration, so Go drops the cancel.
 //!
-//! With `test-hooks` the tests also read the number of kept cancels
+//! The module needs `test-hooks` (mod.rs): `cancel` waits until the reader
+//! thread handled the cancel, pause points hold the dispatch thread at a
+//! phase, and the tests read the number of kept cancels
 //! (`ServerShared::queued_cancel_count`), so a mark that outlives its
 //! request shows.
 
@@ -295,16 +297,18 @@ fn request(method: &str, id: i32) -> lsproto::RequestMessage {
     }
 }
 
+/// The kinds, the two whose Go handler answers in the sync part
+/// (registerRequestHandler: rename, workspace/symbol) last.
 const KINDS: &[&str] = &[
     "textDocument/hover",
     "textDocument/documentSymbol",
     "textDocument/references",
-    "textDocument/rename",
-    "workspace/symbol",
     "textDocument/completion",
     "textDocument/diagnostic",
     "textDocument/semanticTokens/full",
     "textDocument/definition",
+    "textDocument/rename",
+    "workspace/symbol",
 ];
 
 fn send(client: &LspClient, method: &str) -> (i32, Receiver<lsproto::ResponseMessage>) {
@@ -317,11 +321,10 @@ fn send_with_id(client: &LspClient, method: &str, id: i32) -> Receiver<lsproto::
     client.send_request_message(request(method, id), jsonrpc::new_id_int(id))
 }
 
-/// Sends `$/cancelRequest` for `id`. With `test-hooks` it returns only once
-/// the server's reader thread has handled it, so a hold that the test
-/// releases next cannot overtake it.
+/// Sends `$/cancelRequest` for `id` and returns once the server's reader
+/// thread has handled it, so a hold that the test releases next cannot
+/// overtake it.
 fn cancel(client: &LspClient, id: i32) {
-    #[cfg(feature = "test-hooks")]
     let before = client.shared.cancel_hooks.cancel_handled();
     client.send_notification(
         &lsproto::CANCEL_REQUEST_INFO,
@@ -332,16 +335,13 @@ fn cancel(client: &LspClient, id: i32) {
             },
         },
     );
-    #[cfg(feature = "test-hooks")]
-    {
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while client.shared.cancel_hooks.cancel_handled() <= before {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the reader did not handle the cancel"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while client.shared.cancel_hooks.cancel_handled() <= before {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the reader did not handle the cancel"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -364,20 +364,15 @@ fn assert_result(method: &str, resp: &lsproto::ResponseMessage) {
     assert!(resp.result.is_some(), "{method}: no result");
 }
 
-/// With `test-hooks`: waits until the server keeps `n` cancels of queued
-/// requests (the reader thread handles the cancels after the test sent
-/// them), then checks that it keeps no more.
+/// Waits until the server keeps `n` cancels of queued requests (the reader
+/// thread handles the cancels after the test sent them), then checks that
+/// it keeps no more.
 fn assert_kept_cancels(client: &LspClient, n: usize) {
-    #[cfg(feature = "test-hooks")]
-    {
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while client.shared.queued_cancel_count() < n && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(client.shared.queued_cancel_count(), n, "kept cancels");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while client.shared.queued_cancel_count() < n && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
     }
-    #[cfg(not(feature = "test-hooks"))]
-    let _ = (client, n);
+    assert_eq!(client.shared.queued_cancel_count(), n, "kept cancels");
 }
 
 /// The unknown id that the tests cancel.
@@ -402,7 +397,10 @@ child_test! {
     // The dispatch thread runs the background watch registration of
     // didOpen, outside any sync part. Go has taken the requests sent then,
     // so a cancel for one of them reaches it: each kind answers
-    // RequestCancelled. A request that is not canceled answers its result.
+    // RequestCancelled. The exception is workspace/symbol, queued behind
+    // rename: Go answers rename in its sync part (registerRequestHandler)
+    // before it takes workspace/symbol, so that cancel is dropped and it
+    // answers its result. A request that is not canceled answers its result.
     fn a_request_canceled_while_queued_outside_a_sync_part_answers_request_cancelled() {
         let (on_server_request, hold) = held_server_requests(is_watch_registration, true);
         let client = start(on_server_request);
@@ -418,11 +416,15 @@ child_test! {
             cancel(&client, *id);
         }
         cancel(&client, UNKNOWN_ID);
-        assert_kept_cancels(&client, KINDS.len());
+        assert_kept_cancels(&client, KINDS.len() - 1);
         hold.release.send(()).unwrap();
 
         for (method, (_, rx)) in &canceled {
-            assert_cancelled(method, &answer(rx));
+            if *method == "workspace/symbol" {
+                assert_result(method, &answer(rx));
+            } else {
+                assert_cancelled(method, &answer(rx));
+            }
         }
         assert_result("kept hover", &answer(&kept));
         assert_kept_cancels(&client, 0);
@@ -600,7 +602,6 @@ child_test! {
     // the cancel reaches the registered request (`pending_client_requests`,
     // as in Go), and the async part answers RequestCancelled at its
     // context checks (server.go:1397).
-    #[cfg(feature = "test-hooks")]
     fn a_request_canceled_at_the_start_of_its_async_part_answers_request_cancelled() {
         let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
         let client = start(on_server_request);
@@ -632,7 +633,6 @@ child_test! {
     // second hover is still in Go's queue and Go drops its cancel: both
     // hovers answer their results. (Round 2 published the sync part only
     // when `dispatch_request` began, so it kept this cancel.)
-    #[cfg(feature = "test-hooks")]
     fn a_cancel_right_after_the_dispatch_thread_took_the_message_ahead_is_dropped() {
         let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
         let client = start(on_server_request);
@@ -657,5 +657,80 @@ child_test! {
         assert_result("hover being taken", &answer(&first));
         assert_result("hover behind it", &answer(&second));
         assert_late_cancels_dropped(&client, &[first_id, second_id]);
+    }
+}
+
+/// A `workspace/symbol` request (a Go `registerRequestHandler` kind:
+/// lsp/server.go:1318, its whole handler and answer in the sync part).
+fn workspace_symbol(client: &LspClient) -> (i32, Receiver<lsproto::ResponseMessage>) {
+    send(client, "workspace/symbol")
+}
+
+/// Starts a diagnostic pull and holds the dispatch thread at the start of
+/// its async part, the port's state while a slow request runs. Returns the
+/// pull's answer channel and the release.
+fn hold_a_slow_pull(client: &LspClient) -> (Receiver<lsproto::ResponseMessage>, SyncSender<()>) {
+    let (entered, release) = client
+        .shared
+        .cancel_hooks
+        .cancel_pause("async", "textDocument/diagnostic");
+    let (_, pull) = send(client, "textDocument/diagnostic");
+    entered
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the pull reaches its async part");
+    (pull, release)
+}
+
+child_test! {
+    // Round-3 review, finding 1 (reverse order). A slow request runs its
+    // async part; two workspace/symbol requests A and B wait behind it, and
+    // the client cancels B, then A. Go registers B only after A's handler
+    // answered (server.go:1041-1062, :1354-1376), so Go cannot cancel both:
+    // here B's cancel comes while A still holds Go's loop and is dropped,
+    // and A's lands. Round 3 kept both (an outcome Go cannot produce).
+    fn a_sync_handler_ahead_drops_the_cancel_of_the_request_behind_it() {
+        let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
+        let client = start(on_server_request);
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        let (pull, release) = hold_a_slow_pull(&client);
+
+        let (a_id, a) = workspace_symbol(&client);
+        let (b_id, b) = workspace_symbol(&client);
+        cancel(&client, b_id);
+        cancel(&client, a_id);
+        assert_kept_cancels(&client, 1);
+        release.send(()).unwrap();
+
+        assert_result("diagnostic pull", &answer(&pull));
+        assert_cancelled("workspace/symbol A", &answer(&a));
+        assert_result("workspace/symbol B", &answer(&b));
+        assert_late_cancels_dropped(&client, &[a_id, b_id]);
+    }
+}
+
+child_test! {
+    // Finding 1 (forward order): the client cancels A, then B. A's cancel
+    // lands (Go took A), B's comes while A holds Go's loop and is dropped:
+    // A answers RequestCancelled, B its result, an outcome Go gives when
+    // both cancels arrive during A's handler.
+    fn a_cancel_behind_a_canceled_sync_handler_is_dropped() {
+        let (on_server_request, _hold) = held_server_requests(is_watch_registration, false);
+        let client = start(on_server_request);
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        let (pull, release) = hold_a_slow_pull(&client);
+
+        let (a_id, a) = workspace_symbol(&client);
+        let (b_id, b) = workspace_symbol(&client);
+        cancel(&client, a_id);
+        cancel(&client, b_id);
+        assert_kept_cancels(&client, 1);
+        release.send(()).unwrap();
+
+        assert_result("diagnostic pull", &answer(&pull));
+        assert_cancelled("workspace/symbol A", &answer(&a));
+        assert_result("workspace/symbol B", &answer(&b));
+        assert_late_cancels_dropped(&client, &[a_id, b_id]);
     }
 }

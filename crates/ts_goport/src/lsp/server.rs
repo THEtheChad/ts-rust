@@ -514,6 +514,102 @@ impl ApiSessionState {
 }
 
 // Go: server.go:172 Server (the fields that other threads use)
+/// PORT: whether Go's whole handler of a `method` request, its answer
+/// included, runs in the sync part on the dispatch loop: the
+/// `registerRequestHandler` kinds (lsp/server.go:1354-1376; registered at
+/// :1269, :1271, :1282, :1312, :1315, :1316, :1318-1320, :1325-1329,
+/// :1331-1333). Go takes the request behind one of them only after it
+/// answered (server.go:1041-1062), so the port treats a queued one as
+/// holding the requests behind it. This is Go's own order, not part of the
+/// fidelity exception.
+fn answers_in_sync_part(method: &lsproto::Method) -> bool {
+    ANSWERS_IN_SYNC_PART.contains(method)
+}
+
+/// The `registerRequestHandler` kinds (lsp/server.go:1269-1333).
+const ANSWERS_IN_SYNC_PART: &[lsproto::Method] = &[
+    lsproto::Method::INITIALIZE,                              // :1269
+    lsproto::Method::SHUTDOWN,                                // :1271
+    lsproto::Method::WORKSPACE_WILL_RENAME_FILES,             // :1282
+    lsproto::Method::TEXT_DOCUMENT_RENAME,                    // :1312
+    lsproto::Method::CALL_HIERARCHY_INCOMING_CALLS,           // :1315
+    lsproto::Method::CALL_HIERARCHY_OUTGOING_CALLS,           // :1316
+    lsproto::Method::WORKSPACE_SYMBOL,                        // :1318
+    lsproto::Method::COMPLETION_ITEM_RESOLVE,                 // :1319
+    lsproto::Method::CODE_LENS_RESOLVE,                       // :1320
+    lsproto::Method::CUSTOM_RUN_GC,                           // :1325
+    lsproto::Method::CUSTOM_SAVE_HEAP_PROFILE,                // :1326
+    lsproto::Method::CUSTOM_SAVE_ALLOC_PROFILE,               // :1327
+    lsproto::Method::CUSTOM_START_CPU_PROFILE,                // :1328
+    lsproto::Method::CUSTOM_STOP_CPU_PROFILE,                 // :1329
+    lsproto::Method::CUSTOM_INITIALIZE_API_SESSION,           // :1331
+    lsproto::Method::CUSTOM_PROJECT_INFO,                     // :1332
+    lsproto::Method::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS, // :1333
+];
+
+/// The messages whose Go sync handler takes `snapshotUpdateMu` or
+/// `snapshotMu` (`ServerShared::blocks_on_api_update`), with the Go path.
+const TAKES_SNAPSHOT_LOCK: &[lsproto::Method] = &[
+    // Notifications: DidOpenFile (project/session.go:322); DidChangeFile
+    // -> isContentMapperFile -> Snapshot() (:393, :403, :1046);
+    // DidChangeWatchedFiles -> Snapshot() (:423).
+    lsproto::Method::TEXT_DOCUMENT_DID_OPEN,
+    lsproto::Method::TEXT_DOCUMENT_DID_CHANGE,
+    lsproto::Method::WORKSPACE_DID_CHANGE_WATCHED_FILES,
+    // registerLanguageServiceDocumentRequestHandler (lsp/server.go:1378):
+    // GetLanguageService -> getSnapshot (session.go:1145, :1060).
+    lsproto::Method::TEXT_DOCUMENT_DIAGNOSTIC,
+    lsproto::Method::TEXT_DOCUMENT_HOVER,
+    lsproto::Method::TEXT_DOCUMENT_DEFINITION,
+    lsproto::Method::CUSTOM_TEXT_DOCUMENT_SOURCE_DEFINITION,
+    lsproto::Method::TEXT_DOCUMENT_TYPE_DEFINITION,
+    lsproto::Method::TEXT_DOCUMENT_SIGNATURE_HELP,
+    lsproto::Method::TEXT_DOCUMENT_FORMATTING,
+    lsproto::Method::TEXT_DOCUMENT_RANGE_FORMATTING,
+    lsproto::Method::TEXT_DOCUMENT_ON_TYPE_FORMATTING,
+    lsproto::Method::TEXT_DOCUMENT_DOCUMENT_SYMBOL,
+    lsproto::Method::TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT,
+    lsproto::Method::CUSTOM_TEXT_DOCUMENT_MULTI_DOCUMENT_HIGHLIGHT,
+    lsproto::Method::TEXT_DOCUMENT_SELECTION_RANGE,
+    lsproto::Method::TEXT_DOCUMENT_INLAY_HINT,
+    lsproto::Method::TEXT_DOCUMENT_CODE_LENS,
+    lsproto::Method::TEXT_DOCUMENT_PREPARE_CALL_HIERARCHY,
+    lsproto::Method::TEXT_DOCUMENT_FOLDING_RANGE,
+    lsproto::Method::TEXT_DOCUMENT_PREPARE_RENAME,
+    lsproto::Method::TEXT_DOCUMENT_LINKED_EDITING_RANGE,
+    lsproto::Method::TEXT_DOCUMENT_VS_ON_AUTO_INSERT,
+    lsproto::Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
+    lsproto::Method::TEXT_DOCUMENT_SEMANTIC_TOKENS_RANGE,
+    // registerLanguageServiceWithAutoImportsRequestHandler (:1405):
+    // WithLanguageServiceAndSnapshot -> getSnapshotAndDefaultProject
+    // (session.go:1284, :1126).
+    lsproto::Method::TEXT_DOCUMENT_COMPLETION,
+    lsproto::Method::TEXT_DOCUMENT_CODE_ACTION,
+    // registerMultiProjectReferenceRequestHandler (:1440):
+    // GetLanguageServiceAndProjectsForFile (server.go:1506, session.go:1153).
+    lsproto::Method::TEXT_DOCUMENT_REFERENCES,
+    lsproto::Method::TEXT_DOCUMENT_VS_REFERENCES,
+    lsproto::Method::TEXT_DOCUMENT_IMPLEMENTATION,
+    // registerRequestHandler kinds that reach the session's snapshot:
+    // rename, codeLens/resolve, incoming calls through
+    // getLanguageServiceAndCrossProjectOrchestrator (server.go:1505);
+    // outgoing calls and completionItem/resolve through GetLanguageService
+    // (session.go:1145); workspace/symbol through WithSnapshotForDocument
+    // or WithSnapshotLoadingProjectTree (:1243, :1229); willRenameFiles
+    // through GetLanguageServicesForDocumentsLoadingProjectTree (:1180);
+    // projectInfo through GetLanguageServiceAndProjectsForFile (:1153);
+    // shutdown through Close (:1724).
+    lsproto::Method::TEXT_DOCUMENT_RENAME,
+    lsproto::Method::CODE_LENS_RESOLVE,
+    lsproto::Method::CALL_HIERARCHY_INCOMING_CALLS,
+    lsproto::Method::CALL_HIERARCHY_OUTGOING_CALLS,
+    lsproto::Method::COMPLETION_ITEM_RESOLVE,
+    lsproto::Method::WORKSPACE_SYMBOL,
+    lsproto::Method::WORKSPACE_WILL_RENAME_FILES,
+    lsproto::Method::CUSTOM_PROJECT_INFO,
+    lsproto::Method::SHUTDOWN,
+];
+
 /// PORT: no Go counterpart. What the port knows of Go's dispatch loop
 /// (server.go:1005 dispatchLoop) when a `$/cancelRequest` comes for a
 /// request that still waits in `request_queue`
@@ -2197,11 +2293,15 @@ impl ServerShared {
     /// - the dispatch thread runs a sync part;
     /// - in an `APIUpdate`, the port already took a message whose Go sync
     ///   part waits for its locks;
-    /// - a message queued ahead of `id` is a barrier
+    /// - a message queued ahead of `id` holds Go's loop: its whole Go
+    ///   handler and answer run in the sync part (`answers_in_sync_part`,
+    ///   exact Go ordering), or it is in a family that may wait
     ///   (`sync_part_may_wait`).
     ///
     /// Other Go sync parts are work, which Go has done by the time a client
-    /// cancels.
+    /// cancels. The report (docs/perf-rearch/experiments/lsp-queued-cancel.md,
+    /// "Go feasibility") argues that every resulting outcome is one Go can
+    /// produce under some timing.
     fn go_took_queued_request(&self, id: &crate::jsonrpc::ID) -> bool {
         self.request_queue.with_items(|items| {
             let model = &self.go_dispatch;
@@ -2218,7 +2318,9 @@ impl ServerShared {
                 if req.id.as_ref() == Some(id) {
                     return true;
                 }
-                if self.sync_part_may_wait(&req.method, api_update) {
+                if answers_in_sync_part(&req.method)
+                    || self.sync_part_may_wait(&req.method, api_update)
+                {
                     return false;
                 }
             }
@@ -2258,23 +2360,18 @@ impl ServerShared {
 
     /// PORT: whether Go's sync part of a `method` message waits while an
     /// `APIUpdate` holds `snapshotUpdateMu` (project/api.go:19) and
-    /// `snapshotMu` (session.go:1384, held while it clones the snapshot).
-    /// Every LSP handler takes one of them (`getSnapshot` session.go:1060;
-    /// `DidOpenFile` :322; `DidChangeFile` and `DidChangeWatchedFiles`
-    /// through `Snapshot()` :1046, :393, :423; `Close` :1724) except
-    /// `DidCloseFile` (:362) and `DidSaveFile` (:410), which only queue
-    /// the change, and `$/setTrace`, `custom/setLogVerbosity` and `exit`
-    /// (server.go:1875, :1882, :1837). `SetContentMapperContributions`
-    /// returns before the lock without RunExternalCode (session.go:344).
+    /// `snapshotMu` (session.go:1384, held while it clones the snapshot):
+    /// the messages whose Go sync handler takes one of them
+    /// (`TAKES_SNAPSHOT_LOCK`), and `SetContentMapperContributions` with
+    /// RunExternalCode (session.go:344, :348). Every other message,
+    /// `workspace/didChangeConfiguration` (server.go:1841, session.go:286),
+    /// the profiling requests (server.go:1325-1329), `initializeAPISession`
+    /// (:1331), and unknown methods (:1224) among them, takes neither.
     fn blocks_on_api_update(&self, method: &lsproto::Method) -> bool {
         if *method == lsproto::Method::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS {
             return self.run_external_code();
         }
-        !(*method == lsproto::Method::TEXT_DOCUMENT_DID_CLOSE
-            || *method == lsproto::Method::TEXT_DOCUMENT_DID_SAVE
-            || *method == lsproto::Method::SET_TRACE
-            || *method == lsproto::Method::CUSTOM_SET_LOG_VERBOSITY
-            || *method == lsproto::Method::EXIT)
+        TAKES_SNAPSHOT_LOCK.contains(method)
     }
 
     /// Go `initializationOptions.RunExternalCode` (server.go:1724).
@@ -6066,6 +6163,12 @@ pub mod test_hooks {
         /// (`canceled_queued_requests`).
         pub fn queued_cancel_count(&self) -> usize {
             super::lock(&self.canceled_queued_requests).len()
+        }
+
+        /// Whether a `method` message's Go sync part waits during an
+        /// `APIUpdate` (`blocks_on_api_update`).
+        pub fn queued_cancel_blocks_on_api_update(&self, method: &str) -> bool {
+            self.blocks_on_api_update(&lsproto::Method(method.to_string().into()))
         }
 
         /// Whether the dispatch thread runs a sync part
