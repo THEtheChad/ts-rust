@@ -3,15 +3,23 @@
 // request kind, to a request that the client cancels while it waits or runs.
 //
 //   node scripts/lspdiff/probe-cancel.mjs --server name=<binary> [--server ...] --project <dir>
-//        --file <edited file> [--repeat 3] [--out result.json]
+//        --file <edited file> [--repeat 3] [--out result.json] [--no-project]
+// (--no-project: only the fixture scenarios, held-sync and barrier.)
 //
 // Scenarios (each request kind, --repeat times):
 // - held-sync: the server's dispatch loop is held in the sync part of `initialized` (the client
 //   delays its answer to workspace/configuration) while the client sends didOpen, one request of
 //   each kind and a cancel for each. Go's dispatch loop is busy, so the requests wait in its
 //   queue and Go drops the cancels (lsp/server.go:991). Runs on a one-file fixture in --scratch.
-// - in-sync: didChange of the edited file, the request, and its cancel 2 ms later. The request's
-//   sync part updates the snapshot, so the cancel comes while the server runs it.
+// - barrier (one-file fixture with a tsconfig content mapper; RunExternalCode, dynamic watch and
+//   text document sync registration): the client holds every server request from didOpen's watch
+//   registration on, then sends custom/setContentMapperContributions, a hover and its cancel, and
+//   answers the held requests 300 ms later. Go's dispatch loop waits in setContentMapperContributions'
+//   sync part for the content-mapper registration, so the hover is still in its queue and Go drops
+//   the cancel (the reviewer's round-2 counterexample). One run per server.
+// - in-sync: didChange of the edited file, the request, and its cancel 2 ms later. A timing sample,
+//   not a barrier: the cancel usually comes while the request's own sync part (the snapshot update)
+//   runs, but nothing holds the server there.
 // - behind-<D>: didChange, a diagnostic pull for the edited file (not cancelled), the request, and
 //   its cancel D ms later (30 and 300). Go runs the request beside the pull once the pull's sync
 //   part ends; the fork queues it behind the whole pull.
@@ -130,6 +138,81 @@ async function heldSync(bin) {
   return answers;
 }
 
+// barrier, on a raw connection: the client holds server requests.
+async function barrier(bin) {
+  const dir = join(scratch, "barrier");
+  mkdirSync(join(dir, "node_modules/mapper"), { recursive: true });
+  const text = "export const a = 1;\nexport function f(x: number) { return x + a; }\nf(a);\n";
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ contentMappers: [{ package: "mapper", extensions: [".vue"] }] }) + "\n");
+  writeFileSync(join(dir, "node_modules/mapper/package.json"), JSON.stringify({ name: "mapper", version: "1.0.0", typescript: { contentMapper: { exec: ["probe-cancel-no-such-mapper"] } } }) + "\n");
+  writeFileSync(join(dir, "a.ts"), text);
+  const uri = fileUri(join(dir, "a.ts"));
+  const p = spawn(bin, ["--lsp", "--stdio"], { cwd: dir, stdio: ["pipe", "pipe", "ignore"] });
+  const send = (m) => {
+    const b = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...m }));
+    p.stdin.write(`Content-Length: ${b.length}\r\n\r\n`);
+    p.stdin.write(b);
+  };
+  let holding = false;
+  const held = [];
+  const registered = [];
+  const answers = {};
+  let buf = Buffer.alloc(0);
+  const done = new Promise((resolveDone) => {
+    p.stdout.on("data", (d) => {
+      buf = Buffer.concat([buf, d]);
+      for (;;) {
+        const h = buf.indexOf("\r\n\r\n");
+        if (h < 0) return;
+        const len = Number(/Content-Length: *(\d+)/i.exec(buf.subarray(0, h).toString())[1]);
+        if (buf.length < h + 4 + len) return;
+        const msg = JSON.parse(buf.subarray(h + 4, h + 4 + len).toString());
+        buf = buf.subarray(h + 4 + len);
+        if (msg.method && msg.id !== undefined) {
+          for (const r of msg.params?.registrations ?? []) registered.push(r.id);
+          const watch = msg.method === "client/registerCapability" && msg.params.registrations.some((r) => r.method === "workspace/didChangeWatchedFiles");
+          if (watch && !holding && !answers.started) {
+            answers.started = true;
+            holding = true;
+            held.push(msg.id);
+            send({ id: "contributions", method: "custom/setContentMapperContributions", params: { contributions: [], openDocuments: [] } });
+            send({ id: "hover", method: "textDocument/hover", params: { textDocument: { uri }, position: { line: 2, character: 0 } } });
+            send({ method: "$/cancelRequest", params: { id: "hover" } });
+            setTimeout(() => {
+              holding = false;
+              for (const id of held.splice(0)) send({ id, result: null });
+            }, 300);
+          } else if (holding) held.push(msg.id);
+          else send({ id: msg.id, result: null });
+        } else if (msg.id !== undefined && !msg.method) {
+          if (msg.id === "init") {
+            send({ method: "initialized", params: {} });
+            send({ method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "typescript", version: 1, text } } });
+            continue;
+          }
+          if (msg.id === "shutdown") {
+            send({ method: "exit" });
+            p.stdin.end();
+            resolveDone();
+            continue;
+          }
+          answers[msg.id] = verdict(msg);
+          if (answers.contributions && answers.hover) send({ id: "shutdown", method: "shutdown" });
+        }
+      }
+    });
+  });
+  const init = initializeParams(dir);
+  init.capabilities.workspace.didChangeWatchedFiles = { dynamicRegistration: true };
+  init.capabilities.textDocument.synchronization.dynamicRegistration = true;
+  init.initializationOptions.runExternalCode = true;
+  send({ id: "init", method: "initialize", params: init });
+  const timer = setTimeout(() => p.kill("SIGKILL"), 120000);
+  await done;
+  clearTimeout(timer);
+  return { contributions: answers.contributions, hover: answers.hover, contentMapperRegistered: registered.some((id) => id.startsWith("content-mapper-")) };
+}
+
 async function onProject(bin) {
   const client = await startServer([bin, "--lsp", "--stdio"], project);
   const res = {};
@@ -177,7 +260,7 @@ async function onProject(bin) {
 const results = {};
 for (const { name, bin } of servers) {
   const t = performance.now();
-  results[name] = { "held-sync": await heldSync(bin), ...(await onProject(bin)) };
+  results[name] = { "held-sync": await heldSync(bin), barrier: await barrier(bin), ...(args.includes("--no-project") ? {} : await onProject(bin)) };
   console.error(`${name}: ${((performance.now() - t) / 1000).toFixed(1)} s`);
 }
 if (out) writeFileSync(out, JSON.stringify(results, null, 2));
@@ -189,6 +272,9 @@ const count = (list) => {
   return Object.entries(c).map(([v, n]) => `${v} x${n}`).join(", ");
 };
 const names = servers.map((s) => s.name);
+console.log(`| barrier | ${names.join(" | ")} |\n|---|${names.map(() => "---|").join("")}`);
+for (const key of ["contributions", "hover", "contentMapperRegistered"]) console.log(`| ${key} | ${names.map((n) => results[n].barrier[key]).join(" | ")} |`);
+console.log();
 console.log(`| scenario | kind | ${names.join(" | ")} |`);
 console.log(`|---|---|${names.map(() => "---|").join("")}`);
 for (const scenario of ["held-sync", "in-sync", "behind-30", "behind-300", "after"]) {

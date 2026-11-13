@@ -93,19 +93,18 @@
 //! Cancellation follows Go's queue, not the port's. Go's
 //! `$/cancelRequest` reaches a request that the dispatch loop took
 //! (`pendingClientRequests`) and is dropped for one still in its request
-//! queue. Go's dispatch loop is busy only in a handler's sync part, so a
-//! request waits in Go's queue only behind a sync part. Here the requests
-//! behind the running one wait in the queue for its whole run, so
-//! `cancel_request` treats a queued request as Go would at that moment:
-//! taken (the cancel is kept and lands when `dispatch_request` registers
-//! it), unless the dispatch thread is in a sync part
-//! (`dispatch_in_sync_part`), where Go's request would be queued too and
-//! the cancel is dropped. A request that the cancel reached runs with a
-//! canceled context, as Go's does, and answers what Go's handler answers
-//! then: RequestCancelled at the wrapper's `ctx.Err()` check, or the
-//! error of its sync part. The LS loops check the request context. The
-//! checker checks it at each top-level statement and deferred node, like
-//! Go.
+//! queue. Go's dispatch loop takes a request once every message ahead of
+//! it has finished its sync part. Here the requests behind the running one
+//! wait in the queue for its whole run, so `cancel_request` keeps a cancel
+//! for a queued request when Go would have taken it
+//! (`ServerShared::go_took_queued_request`): the dispatch thread is not in
+//! a sync part, and no message queued ahead of it has a sync part that
+//! waits for a client (`sync_part_waits_for_client`). The cancel then
+//! lands when `dispatch_request` registers the request, which runs with a
+//! canceled context and answers what Go's handler answers then:
+//! RequestCancelled at the wrapper's `ctx.Err()` check, or the error of its
+//! sync part. The LS loops check the request context. The checker checks
+//! it at each top-level statement and deferred node, like Go.
 //!
 //! When the `run` context ends (Go `signal.NotifyContext` in
 //! `cmd/tsc/lsp.go`), every loop returns `context canceled`, as in Go. A
@@ -217,6 +216,7 @@ pub fn new_server(opts: ServerOptions) -> Rc<Server> {
         pending_client_requests: Mutex::new(FxHashMap::default()),
         canceled_queued_requests: Mutex::new(FxHashSet::default()),
         dispatch_in_sync_part: AtomicBool::new(false),
+        api_calls_waiting: AtomicUsize::new(0),
         pending_server_requests: Mutex::new(FxHashMap::default()),
         cwd,
         initialize_params: OnceLock::new(),
@@ -536,9 +536,14 @@ pub struct ServerShared {
     // it. Read and written only under `pending_client_requests`.
     pub canceled_queued_requests: Mutex<FxHashSet<crate::jsonrpc::ID>>,
     // PORT: true while the dispatch thread runs the sync part of a handler
-    // (`dispatch_request`), the only time Go's dispatch loop is busy and so
-    // the only time a request waits in Go's request queue.
+    // (`dispatch_request`). Go's dispatch loop takes no request then, so
+    // the requests behind it are still in Go's queue.
     pub dispatch_in_sync_part: AtomicBool,
+    // PORT: the calls from API requests to their clients that wait for
+    // their answers (`ApiSessionConn::call`). Go's API request holds
+    // `snapshotUpdateMu` there (project/api.go:18 APIUpdate), so the sync
+    // part of an LSP message that needs the session waits for it.
+    pub api_calls_waiting: AtomicUsize,
     pub pending_server_requests:
         Mutex<FxHashMap<crate::jsonrpc::ID, SyncSender<Option<lsproto::ResponseMessage>>>>,
 
@@ -2110,33 +2115,88 @@ impl ServerShared {
     }
 
     // Go: server.go:991 cancelRequest
-    // PORT: Go's dispatch loop takes a request (server.go:1009-1024) as
-    // soon as the sync part of the message ahead of it ends, so in Go a
-    // request is queued only while that loop runs a sync part. Here a
-    // request waits in `request_queue` until every message ahead of it has
-    // run to its end. A cancel for such a request is kept while the
-    // dispatch thread is outside a sync part (Go took the request) and
-    // lands when `dispatch_request` registers it; inside a sync part it is
-    // dropped, as Go drops a cancel for a request in its queue. A cancel
-    // for an unknown or finished request is dropped, as in Go.
+    // PORT: a cancel for a request that waits in `request_queue` is kept
+    // when Go's dispatch loop would have taken that request by now
+    // (`go_took_queued_request`), and lands when `dispatch_request`
+    // registers it. Otherwise it is dropped, as Go drops a cancel for a
+    // request in its queue. A cancel for an unknown or finished request is
+    // dropped, as in Go.
     pub fn cancel_request(&self, raw_id: &lsproto::IntegerOrString) {
         let id = lsproto::new_id(raw_id);
         let mut pending_client_requests = lock(&self.pending_client_requests);
         if let Some(pending_req) = pending_client_requests.get(&id) {
             (pending_req.cancel)();
             pending_client_requests.remove(&id);
-        } else if !self.dispatch_in_sync_part.load(Ordering::SeqCst) && self.is_queued(&id) {
+        } else if self.go_took_queued_request(&id) {
             lock(&self.canceled_queued_requests).insert(id);
         }
     }
 
-    /// PORT: whether a request with this id waits in `request_queue`.
-    fn is_queued(&self, id: &crate::jsonrpc::ID) -> bool {
+    /// PORT: whether Go's dispatch loop would have taken (registered) the
+    /// queued request `id` by now. Go's loop takes a request once every
+    /// message ahead of it has finished its sync part (server.go:1005
+    /// dispatchLoop: `Get`, register, sync part, `go` the async part). So
+    /// the request is still in Go's queue while the dispatch thread runs a
+    /// sync part (`dispatch_in_sync_part`), and while a message queued
+    /// ahead of it has a sync part that waits for a client
+    /// (`sync_part_waits_for_client`). Any other sync part ahead of it is
+    /// work, which Go has done by the time a client cancels.
+    fn go_took_queued_request(&self, id: &crate::jsonrpc::ID) -> bool {
+        if self.dispatch_in_sync_part.load(Ordering::SeqCst) {
+            return false;
+        }
+        let api_call_waits = self.api_calls_waiting.load(Ordering::SeqCst) != 0;
         self.request_queue.with_items(|items| {
-            items.iter().any(
-                |item| matches!(item, QueuedRequest::Request(req) if req.id.as_ref() == Some(id)),
-            )
+            for item in items.iter() {
+                let QueuedRequest::Request(req) = item else {
+                    continue;
+                };
+                if req.id.as_ref() == Some(id) {
+                    return true;
+                }
+                if self.sync_part_waits_for_client(&req.method, api_call_waits) {
+                    return false;
+                }
+            }
+            false
         })
+    }
+
+    /// PORT: whether Go's sync part of a `method` message can wait for a
+    /// client, so that Go's dispatch loop stops there until the client
+    /// answers:
+    /// - `initialized`: workspace/configuration (server.go:1791, :854,
+    ///   when the client has the capability) and the configuration watch
+    ///   registration (:1797);
+    /// - `custom/setContentMapperContributions`, with RunExternalCode and a
+    ///   client that registers text document sync dynamically: the
+    ///   content-mapper (un)registration (session.go:359, :1616; server.go:459,
+    ///   :499, :731), or the wait for `contentMapperRegistrationMu` while a
+    ///   background task makes that call (session.go:1438, :1601);
+    /// - `shutdown`: `session.Close` waits for the background tasks
+    ///   (server.go:1833, session.go:1722 `backgroundQueue.Close`,
+    ///   background/queue.go:51),
+    ///   which can wait for watch registrations (session.go:1526, :1575);
+    /// - while an API request waits for its client (`api_calls_waiting`), any
+    ///   message that needs the session (`served_during_api_call`): its
+    ///   sync part waits for `snapshotUpdateMu` (project/api.go:18).
+    fn sync_part_waits_for_client(&self, method: &lsproto::Method, api_call_waits: bool) -> bool {
+        if *method == lsproto::Method::INITIALIZED || *method == lsproto::Method::SHUTDOWN {
+            return true;
+        }
+        if *method == lsproto::Method::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS {
+            return self
+                .initialization_options
+                .get()
+                .and_then(|options| options.run_external_code)
+                .unwrap_or(false)
+                && self
+                    .client_capabilities()
+                    .text_document
+                    .synchronization
+                    .dynamic_registration;
+        }
+        api_call_waits && !served_during_api_call(method)
     }
 
     // Go: server.go:1001 read
@@ -5096,6 +5156,7 @@ impl Server {
             api_session.set_connection(Rc::new(ApiSessionConn {
                 conn: conn.clone(),
                 state: state.clone(),
+                shared: self.shared.clone(),
             }));
             // PORT: when the dispatch loop ended while the connection
             // waited (stdin EOF while a call to the client waits), Go's
@@ -5377,6 +5438,8 @@ struct ApiConnState {
 struct ApiSessionConn {
     conn: Rc<ipc::AsyncConn>,
     state: Rc<ApiConnState>,
+    /// For `ServerShared::api_calls_waiting`.
+    shared: Arc<ServerShared>,
 }
 
 impl ApiSessionConn {
@@ -5390,12 +5453,22 @@ impl ApiSessionConn {
     }
 }
 
-/// Counts one call to the client until it is dropped (also on a panic).
-struct PendingCall<'a>(&'a Cell<u32>);
+/// Counts one call to the client, in the connection's `calls` and the
+/// server's `api_calls_waiting`, until it is dropped (also on a panic).
+struct PendingCall<'a>(&'a Cell<u32>, &'a AtomicUsize);
+
+impl<'a> PendingCall<'a> {
+    fn new(calls: &'a Cell<u32>, waiting: &'a AtomicUsize) -> Self {
+        calls.set(calls.get() + 1);
+        waiting.fetch_add(1, Ordering::SeqCst);
+        PendingCall(calls, waiting)
+    }
+}
 
 impl Drop for PendingCall<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get() - 1);
+        self.1.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -5411,8 +5484,7 @@ impl ipc::Conn for ApiSessionConn {
         params: Option<Box<dyn AnyValue>>,
     ) -> Result<json_ext::JsonValue, GoError> {
         self.check_idle()?;
-        self.state.calls.set(self.state.calls.get() + 1);
-        let _pending = PendingCall(&self.state.calls);
+        let _pending = PendingCall::new(&self.state.calls, &self.shared.api_calls_waiting);
         self.conn.call(ctx, method, params)
     }
 
@@ -5815,5 +5887,18 @@ mod tests {
         })
         .join()
         .expect("idle test thread");
+    }
+}
+
+/// Tests (`test-hooks`): the queued-cancel state that
+/// `lsp_server_cancel_test` checks.
+#[cfg(feature = "test-hooks")]
+pub mod test_hooks {
+    impl super::ServerShared {
+        /// The number of kept cancels of queued requests
+        /// (`canceled_queued_requests`).
+        pub fn queued_cancel_count(&self) -> usize {
+            super::lock(&self.canceled_queued_requests).len()
+        }
     }
 }

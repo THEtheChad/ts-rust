@@ -453,3 +453,153 @@ child_test! {
         assert!(!dir.exists(), "{} stays after shutdown", dir.display());
     }
 }
+
+child_test! {
+    // lsp-queued-cancel round 2: cancels while an API request waits for a
+    // client callback. Go's API request holds `snapshotUpdateMu`
+    // (project/api.go:18 APIUpdate) while it waits, so Go's dispatch loop
+    // serves didChange and setTrace, takes the first hover and blocks in
+    // its sync part on that lock; the second hover is still in Go's queue.
+    // So Go's first hover answers RequestCancelled and the second its
+    // result. The port serves didChange in its wait (nested
+    // dispatch), keeps the first hover's cancel and drops the second's.
+    // It reads the kept cancels, so it needs `test-hooks`.
+    #[cfg(feature = "test-hooks")]
+    fn api_callback_wait_keeps_the_cancel_of_the_first_waiting_request_only() {
+        let handled = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = Arc::clone(&handled);
+        let client = start_server(Some(Arc::new(move |msg| {
+            if msg.method != lsproto::Method::WINDOW_LOG_MESSAGE {
+                return;
+            }
+            if let Ok(params) = lsproto::unmarshal_params::<lsproto::LogMessageParams>(msg)
+                && params.message.starts_with("handled method")
+            {
+                log.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(params.message);
+            }
+        })));
+        let pipe = init_api_session(&client);
+        let mut api = ApiClient::connect(&pipe);
+        api.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+        api.recv();
+        api.send(
+            r#"{"jsonrpc":"2.0","id":2,"method":"createModuleResolver","params":{"compilerOptions":{"module":199,"moduleResolution":99},"resolveModuleNameCallback":"resolveCb"}}"#,
+        );
+        let answer = api.recv();
+        let resolver = answer
+            .split_once(r#""result":"#)
+            .and_then(|(_, rest)| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .unwrap_or_else(|| panic!("no resolver id: {answer}"))
+            .to_string();
+        api.send(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"createSnapshot","params":{{"createPrograms":[{{"rootFiles":["/home/projects/b.ts"],"compilerOptions":{{"module":199,"moduleResolution":99,"noEmit":true}},"options":{{"moduleResolver":{resolver}}}}}]}}}}"#
+        ));
+        let mut callback = api.recv();
+        assert!(callback.contains(r#""method":"resolveCb""#), "{callback}");
+
+        client.send_notification(
+            &lsproto::TEXT_DOCUMENT_DID_CHANGE_INFO,
+            lsproto::DidChangeTextDocumentParams {
+                text_document: lsproto::VersionedTextDocumentIdentifier {
+                    uri: uri("file:///home/projects/a.ts"),
+                    version: 2,
+                },
+                content_changes: vec![lsproto::TextDocumentContentChangePartialOrWholeDocument {
+                    partial: None,
+                    whole_document: Some(lsproto::TextDocumentContentChangeWholeDocument {
+                        text: format!("{A_TS}export const c = 2;\n"),
+                    }),
+                }],
+            },
+        );
+        // The wait serves didChange (nested dispatch) before the hovers come.
+        let deadline = std::time::Instant::now() + Duration::from_mins(1);
+        while !handled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|line| line.starts_with("handled method 'textDocument/didChange'"))
+        {
+            assert!(std::time::Instant::now() < deadline, "didChange was not served");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let send_hover = || {
+            let id = client.next_id();
+            let rx = client.send_request_message(
+                lsproto::TEXT_DOCUMENT_HOVER_INFO
+                    .new_request_message(Some(jsonrpc::new_id_int(id)), hover_params()),
+                jsonrpc::new_id_int(id),
+            );
+            (id, rx)
+        };
+        let (first_id, first) = send_hover();
+        let (second_id, second) = send_hover();
+        // The second hover's cancel goes first: once the server keeps the
+        // first one's, it has handled both.
+        for id in [second_id, first_id] {
+            client.send_notification(
+                &lsproto::CANCEL_REQUEST_INFO,
+                lsproto::CancelParams {
+                    id: lsproto::IntegerOrString {
+                        integer: Some(id),
+                        ..Default::default()
+                    },
+                },
+            );
+        }
+        let deadline = std::time::Instant::now() + Duration::from_mins(1);
+        while client.shared.queued_cancel_count() == 0 {
+            assert!(std::time::Instant::now() < deadline, "no cancel was kept");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(client.shared.queued_cancel_count(), 1, "kept cancels");
+
+        // Answer the callbacks until createSnapshot answers.
+        loop {
+            if callback.contains(r#""id":3"#) && !callback.contains(r#""method""#) {
+                break;
+            }
+            if callback.contains(r#""method""#) {
+                let id = callback
+                    .split_once(r#""id":"#)
+                    .map(|(_, rest)| rest.split([',', '}']).next().unwrap_or_default().to_string())
+                    .unwrap_or_else(|| panic!("no callback id: {callback}"));
+                api.send(&format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null}}"#));
+            }
+            callback = api.recv();
+        }
+
+        let wait = |rx: &std::sync::mpsc::Receiver<lsproto::ResponseMessage>| {
+            rx.recv_timeout(Duration::from_mins(2)).expect("an answer to the hover")
+        };
+        let first = wait(&first);
+        assert_eq!(
+            first.error.as_ref().map(|err| err.code),
+            Some(lsproto::ErrorCode::REQUEST_CANCELLED.0),
+            "first hover: {:?}",
+            first.error
+        );
+        let second = wait(&second);
+        assert!(second.error.is_none(), "second hover: {:?}", second.error);
+        assert_eq!(client.shared.queued_cancel_count(), 0, "kept cancels");
+        let handled = handled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let position = |method: &str| {
+            handled
+                .iter()
+                .position(|line| line.starts_with(&format!("handled method '{method}'")))
+        };
+        assert!(
+            position("textDocument/didChange").is_some()
+                && position("textDocument/didChange") < position("textDocument/hover"),
+            "didChange was not served in the wait: {handled:?}"
+        );
+        shutdown_and_exit(&client);
+        drop(api);
+        remove_api_pipe(&pipe);
+    }
+}

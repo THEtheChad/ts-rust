@@ -11,8 +11,11 @@
 //! cancel for a request still in Go's queue, finished or unknown is dropped.
 //!
 //! The port's dispatch thread runs each request to its end, so a request
-//! waits in the queue for the whole run of the requests ahead of it. The
-//! tests hold the dispatch thread on a client reply at two places:
+//! waits in the queue for the whole run of the requests ahead of it. A
+//! cancel for it is kept when Go's loop would have taken it: the dispatch
+//! thread is not in a sync part, and no message ahead of it has a sync part
+//! that waits for a client (`ServerShared::go_took_queued_request`). The
+//! tests hold the dispatch thread on one of the client's replies:
 //!
 //! - in the sync part of `initialized` (its `workspace/configuration`):
 //!   Go's dispatch loop is busy there too, so a request behind it is in
@@ -20,7 +23,14 @@
 //! - in the watch registration that the sync part of `didOpen` queues
 //!   (`client/registerCapability`, a background task): Go runs it on a
 //!   goroutine and has taken the requests behind it, so their cancels land
-//!   and each answers RequestCancelled, the request held at that point too.
+//!   and each answers RequestCancelled, the request held at that point too;
+//! - in that registration, with a `custom/setContentMapperContributions`
+//!   queued ahead of the request: Go's dispatch loop waits in its sync part
+//!   for the content-mapper registration, so Go drops the cancel.
+//!
+//! With `test-hooks` the tests also read the number of kept cancels
+//! (`ServerShared::queued_cancel_count`), so a mark that outlives its
+//! request shows.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -33,7 +43,8 @@ use ts_goport::ls::lsconv;
 use ts_goport::lsp::lsproto;
 
 use super::lsptestutil::{self, LspClient, result_response};
-use super::projecttestutil::files;
+use super::projecttestutil::{FileMap, files};
+use crate::support::contentmappertest;
 
 const SOURCE: &str = "export const a = 1;\nexport function f(x: number) { return x + a; }\nf(a);\n";
 
@@ -101,17 +112,28 @@ fn is_watch_registration(req: &lsproto::RequestMessage) -> bool {
 }
 
 fn start(on_server_request: lsptestutil::ServerRequestHandler) -> LspClient {
-    let client = lsptestutil::new_lsp_client(
-        lsptestutil::server_setup(
-            "/home/projects",
-            files(&[
-                ("/home/projects/tsconfig.json", "{}"),
-                ("/home/projects/a.ts", SOURCE),
-            ]),
-        ),
-        Some(on_server_request),
-        None,
-    );
+    start_with(
+        on_server_request,
+        files(&[
+            ("/home/projects/tsconfig.json", "{}"),
+            ("/home/projects/a.ts", SOURCE),
+        ]),
+        false,
+    )
+}
+
+/// `external`: RunExternalCode and a client that registers text document
+/// sync dynamically, with the in-process content mappers.
+fn start_with(
+    on_server_request: lsptestutil::ServerRequestHandler,
+    file_map: FileMap,
+    external: bool,
+) -> LspClient {
+    let mut setup = lsptestutil::server_setup("/home/projects", file_map);
+    if external {
+        setup.spawner = Some(contentmappertest::new_spawner);
+    }
+    let client = lsptestutil::new_lsp_client(setup, Some(on_server_request), None);
     let (init_msg, _) = client.send_request(
         &lsproto::INITIALIZE_INFO,
         lsproto::InitializeParams {
@@ -126,7 +148,20 @@ fn start(on_server_request: lsptestutil::ServerRequestHandler) -> LspClient {
                     ),
                     ..Default::default()
                 }),
+                text_document: external.then(|| lsproto::TextDocumentClientCapabilities {
+                    synchronization: Some(lsproto::TextDocumentSyncClientCapabilities {
+                        dynamic_registration: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
                 ..Default::default()
+            }),
+            initialization_options: external.then(|| lsproto::InitializationOptionsOrNull {
+                initialization_options: Some(lsproto::InitializationOptions {
+                    run_external_code: Some(true),
+                    ..Default::default()
+                }),
             }),
             ..Default::default()
         },
@@ -153,22 +188,6 @@ fn did_open(client: &LspClient) {
     );
 }
 
-fn did_change(client: &LspClient, version: i32, text: String) {
-    client.send_notification(
-        &lsproto::TEXT_DOCUMENT_DID_CHANGE_INFO,
-        lsproto::DidChangeTextDocumentParams {
-            text_document: lsproto::VersionedTextDocumentIdentifier {
-                uri: uri(),
-                version,
-            },
-            content_changes: vec![lsproto::TextDocumentContentChangePartialOrWholeDocument {
-                partial: None,
-                whole_document: Some(lsproto::TextDocumentContentChangeWholeDocument { text }),
-            }],
-        },
-    );
-}
-
 fn doc() -> lsproto::TextDocumentIdentifier {
     lsproto::TextDocumentIdentifier { uri: uri() }
 }
@@ -181,8 +200,8 @@ fn pos() -> lsproto::Position {
     }
 }
 
-/// A request of each kind the editor cancels, by method.
-fn request(client: &LspClient, method: &str) -> (i32, lsproto::RequestMessage) {
+/// A request of each kind the editor cancels, by method, with id `id`.
+fn request(method: &str, id: i32) -> lsproto::RequestMessage {
     fn msg<P: AnyValue, R>(
         info: &lsproto::RequestInfo<P, R>,
         id: i32,
@@ -190,8 +209,7 @@ fn request(client: &LspClient, method: &str) -> (i32, lsproto::RequestMessage) {
     ) -> lsproto::RequestMessage {
         info.new_request_message(Some(jsonrpc::new_id_int(id)), params)
     }
-    let id = client.next_id();
-    let req = match method {
+    match method {
         "textDocument/hover" => msg(
             &lsproto::TEXT_DOCUMENT_HOVER_INFO,
             id,
@@ -274,8 +292,7 @@ fn request(client: &LspClient, method: &str) -> (i32, lsproto::RequestMessage) {
             },
         ),
         other => panic!("no request for {other}"),
-    };
-    (id, req)
+    }
 }
 
 const KINDS: &[&str] = &[
@@ -291,11 +308,13 @@ const KINDS: &[&str] = &[
 ];
 
 fn send(client: &LspClient, method: &str) -> (i32, Receiver<lsproto::ResponseMessage>) {
-    let (id, req) = request(client, method);
-    (
-        id,
-        client.send_request_message(req, jsonrpc::new_id_int(id)),
-    )
+    let id = client.next_id();
+    (id, send_with_id(client, method, id))
+}
+
+/// Sends `method` with an id the test picks (a reused one).
+fn send_with_id(client: &LspClient, method: &str, id: i32) -> Receiver<lsproto::ResponseMessage> {
+    client.send_request_message(request(method, id), jsonrpc::new_id_int(id))
 }
 
 fn cancel(client: &LspClient, id: i32) {
@@ -329,17 +348,38 @@ fn assert_result(method: &str, resp: &lsproto::ResponseMessage) {
     assert!(resp.result.is_some(), "{method}: no result");
 }
 
-/// Cancels for finished and unknown requests change nothing: the next
-/// request of each kind answers its result.
+/// With `test-hooks`: waits until the server keeps `n` cancels of queued
+/// requests (the reader thread handles the cancels after the test sent
+/// them), then checks that it keeps no more.
+fn assert_kept_cancels(client: &LspClient, n: usize) {
+    #[cfg(feature = "test-hooks")]
+    {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while client.shared.queued_cancel_count() < n && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(client.shared.queued_cancel_count(), n, "kept cancels");
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    let _ = (client, n);
+}
+
+/// The unknown id that the tests cancel.
+const UNKNOWN_ID: i32 = 999;
+
+/// Cancels for finished and unknown requests change nothing, and no mark
+/// stays behind: requests that reuse the finished ids and the unknown id
+/// answer their results, and the server keeps no cancel.
 fn assert_late_cancels_dropped(client: &LspClient, finished: &[i32]) {
     for &id in finished {
         cancel(client, id);
     }
-    cancel(client, 999);
-    for method in KINDS {
-        let (_, rx) = send(client, method);
-        assert_result(method, &answer(&rx));
+    cancel(client, UNKNOWN_ID);
+    let reused = finished.iter().copied().chain([UNKNOWN_ID]);
+    for (method, id) in KINDS.iter().cycle().zip(reused) {
+        assert_result(method, &answer(&send_with_id(client, method, id)));
     }
+    assert_kept_cancels(client, 0);
 }
 
 child_test! {
@@ -361,13 +401,15 @@ child_test! {
         for (_, (id, _)) in &canceled {
             cancel(&client, *id);
         }
-        cancel(&client, 999);
+        cancel(&client, UNKNOWN_ID);
+        assert_kept_cancels(&client, KINDS.len());
         hold.release.send(()).unwrap();
 
         for (method, (_, rx)) in &canceled {
             assert_cancelled(method, &answer(rx));
         }
         assert_result("kept hover", &answer(&kept));
+        assert_kept_cancels(&client, 0);
         let mut finished: Vec<i32> = canceled.iter().map(|(_, (id, _))| *id).collect();
         finished.push(kept_id);
         assert_late_cancels_dropped(&client, &finished);
@@ -420,10 +462,153 @@ child_test! {
         let (queued_id, queued) = send(&client, "textDocument/documentSymbol");
         cancel(&client, running_id);
         cancel(&client, queued_id);
+        assert_kept_cancels(&client, 1);
         hold.release.send(()).unwrap();
 
         assert_cancelled("running hover", &answer(&running));
         assert_cancelled("queued documentSymbol", &answer(&queued));
         assert_late_cancels_dropped(&client, &[running_id, queued_id]);
+    }
+}
+
+child_test! {
+    // The reviewer's counterexample (round 2). The dispatch thread runs
+    // didOpen's watch registration, which the client holds. Meanwhile the
+    // client sends custom/setContentMapperContributions, a hover and the
+    // hover's cancel. Go runs the watch registration on a goroutine, so its
+    // dispatch loop takes setContentMapperContributions at once, and its
+    // sync part registers the project's content-mapper extensions with
+    // the client (session.go:359, server.go:731) and waits for the answer.
+    // The hover is still in Go's queue when the cancel comes: Go drops it
+    // and answers the hover's result. The port answers the same.
+    fn a_cancel_behind_a_sync_part_that_waits_for_the_client_is_dropped() {
+        let mapper = contentmappertest::package_json(contentmappertest::COMPONENT_MAPPER);
+        let registrations: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (on_server_request, hold) = held_server_requests(is_watch_registration, true);
+        let recorded = registrations.clone();
+        let on_server_request: lsptestutil::ServerRequestHandler = Arc::new(move |req| {
+            if req.method == lsproto::Method::CLIENT_REGISTER_CAPABILITY
+                && let Ok(params) = lsproto::unmarshal_params::<lsproto::RegistrationParams>(req)
+            {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .extend(params.registrations.into_iter().map(|r| r.id));
+            }
+            on_server_request(req)
+        });
+        let client = start_with(
+            on_server_request,
+            files(&[
+                (
+                    "/home/projects/tsconfig.json",
+                    r#"{ "contentMappers": [ { "package": "mapper", "extensions": [".vue"] } ] }"#,
+                ),
+                ("/home/projects/node_modules/mapper/package.json", mapper.as_str()),
+                ("/home/projects/a.ts", SOURCE),
+            ]),
+            true,
+        );
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        hold.asked
+            .recv_timeout(Duration::from_mins(2))
+            .expect("didOpen registers the file watchers");
+
+        let contributions = client.send_request_async(
+            &lsproto::CUSTOM_SET_CONTENT_MAPPER_CONTRIBUTIONS_INFO,
+            lsproto::SetContentMapperContributionsParams::default(),
+        );
+        let (hover_id, hover) = send(&client, "textDocument/hover");
+        cancel(&client, hover_id);
+        hold.release.send(()).unwrap();
+
+        let (msg, _) = contributions();
+        assert!(msg.error.is_none(), "{:?}", msg.error);
+        assert_result("hover behind setContentMapperContributions", &answer(&hover));
+        assert!(
+            registrations
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|id| id == "content-mapper-did-open"),
+            "the content-mapper extensions were registered"
+        );
+        assert_late_cancels_dropped(&client, &[hover_id]);
+    }
+}
+
+child_test! {
+    // A cancelled shutdown that waited in the queue: Go's shutdown handler
+    // (registerRequestHandler, server.go:1354) runs to its end and answers
+    // RequestCancelled at its `ctx.Err()` check (:1371). Exit then ends the
+    // server.
+    fn a_shutdown_canceled_while_queued_answers_request_cancelled() {
+        let (on_server_request, hold) = held_server_requests(is_watch_registration, true);
+        let client = start(on_server_request);
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        did_open(&client);
+        hold.asked
+            .recv_timeout(Duration::from_mins(2))
+            .expect("didOpen registers the file watchers");
+
+        let shutdown_id = client.next_id();
+        let shutdown = client.send_request_message(
+            lsproto::RequestMessage {
+                id: Some(jsonrpc::new_id_int(shutdown_id)),
+                method: lsproto::Method::SHUTDOWN,
+                ..Default::default()
+            },
+            jsonrpc::new_id_int(shutdown_id),
+        );
+        cancel(&client, shutdown_id);
+        assert_kept_cancels(&client, 1);
+        hold.release.send(()).unwrap();
+
+        assert_cancelled("shutdown", &answer(&shutdown));
+        assert_kept_cancels(&client, 0);
+        client.write_msg(
+            lsproto::RequestMessage {
+                method: lsproto::Method::EXIT,
+                ..Default::default()
+            }
+            .message(),
+        );
+        assert!(client.wait_server_end(Duration::from_mins(1)), "exit ends the server");
+    }
+}
+
+child_test! {
+    // A cancel that comes during the async part of a request: a diagnostic
+    // pull of a large file that is not open, so its sync part loads the
+    // project and queues the watch registration, held until the cancel is
+    // sent. The cancel reaches the registered request
+    // (`pending_client_requests`, as in Go) during or just before its async
+    // part; both give RequestCancelled at the checker's or the wrapper's
+    // context check.
+    fn a_request_canceled_during_its_async_part_answers_request_cancelled() {
+        let big: String = (0..20_000)
+            .map(|i| format!("export const v{i} = [1, 2, 3].map((x) => x + {i}).filter((y) => y > 1);\n"))
+            .collect();
+        let (on_server_request, hold) = held_server_requests(is_watch_registration, true);
+        let client = start_with(
+            on_server_request,
+            files(&[
+                ("/home/projects/tsconfig.json", "{}"),
+                ("/home/projects/a.ts", big.as_str()),
+            ]),
+            false,
+        );
+        client.send_notification(&lsproto::INITIALIZED_INFO, lsproto::InitializedParams::default());
+        let (pull_id, pull) = send(&client, "textDocument/diagnostic");
+        hold.asked
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the pull's snapshot registers the file watchers");
+        hold.release.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        cancel(&client, pull_id);
+
+        assert_cancelled("diagnostic pull", &answer(&pull));
+        assert_kept_cancels(&client, 0);
     }
 }

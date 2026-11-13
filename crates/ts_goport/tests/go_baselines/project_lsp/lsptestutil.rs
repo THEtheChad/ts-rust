@@ -102,6 +102,9 @@ pub struct ServerSetup {
 // Go: lspclient.go:66 LSPClient
 // LSPClient provides infrastructure for communicating with an LSP server in tests.
 pub struct LspClient {
+    /// The server's thread-shared state (no Go counterpart), for tests
+    /// that read it through `test-hooks`.
+    pub shared: Arc<lsp::ServerShared>,
     input_writer: SyncSender<Option<lsproto::Message>>,
     id: std::cell::Cell<i32>,
     pending_requests: Pending,
@@ -151,6 +154,7 @@ pub fn new_lsp_client(
 
     // Start server thread
     let server_ctx = ctx.clone();
+    let (shared_tx, shared_rx) = sync_channel::<Arc<lsp::ServerShared>>(1);
     let server = std::thread::Builder::new()
         .name("lsp-server".to_string())
         .stack_size(256 * 1024 * 1024)
@@ -179,6 +183,7 @@ pub fn new_lsp_client(
                 progress_delay: Duration::ZERO,
                 set_parent_process_id: None,
             });
+            let _ = shared_tx.send(server.shared.clone());
             let result = server.run(&server_ctx);
             // Go: defer outputWriter.Close()
             let _ = output_writer.send(None);
@@ -206,6 +211,9 @@ pub fn new_lsp_client(
         .expect("start the lsp router thread");
 
     LspClient {
+        shared: shared_rx
+            .recv()
+            .expect("the server thread makes the server"),
         input_writer,
         id: std::cell::Cell::new(0),
         pending_requests,
