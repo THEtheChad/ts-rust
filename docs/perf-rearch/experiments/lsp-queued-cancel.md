@@ -21,7 +21,7 @@ fork's queue never drains because it runs requests that the editor cancelled whi
   - Completion p50 12.6 s → 0.53 s (Go 0.14 s).
   - Hover 21.3 s → 0.51 s (Go 4 ms).
   - Edited-file diagnostic pulls answered as cancelled: 13 → 447 of 492 (Go 449).
-  - A bench run takes 47 s instead of 194 s (Go 36 s).
+  - A bench run takes 48 s instead of 194 s (Go 36 s).
 - **Other T3 Code files and umami:** no change outside noise (tables below).
 - **Where the fork still differs from Go:** Go runs the requests behind a slow one at the same time, so a
   fast request (hover, documentSymbol, definition, completion) often finishes before the editor's
